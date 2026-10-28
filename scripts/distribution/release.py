@@ -183,6 +183,36 @@ def metadata(root=ROOT):
     (output / "release-notes.txt").write_text(notes + "\n")
 
 
+def upload_assets(release_id, output):
+    endpoint = f"releases/{release_id}/assets?per_page=100"
+    for asset in api("GET", endpoint):
+        if asset["name"] in ASSETS:
+            subprocess.run(
+                ["gh", "api", "--method", "DELETE",
+                 f"repos/{repository()}/releases/assets/{asset['id']}", "--silent"],
+                check=True,
+            )
+    for name in ASSETS:
+        subprocess.run(
+            ["gh", "api", "--method", "POST",
+             f"https://uploads.github.com/repos/{repository()}/releases/{release_id}/assets?name={name}",
+             "--header", "Content-Type: application/octet-stream",
+             "--input", str(output / name), "--silent"],
+            check=True,
+        )
+    uploaded = api("GET", endpoint)
+    if len(uploaded) != len(ASSETS) or {asset["name"] for asset in uploaded} != set(ASSETS):
+        raise ValueError("Draft release is missing the complete expected asset set")
+    for asset in uploaded:
+        path = output / asset["name"]
+        if (
+            asset["state"] != "uploaded"
+            or asset["size"] != path.stat().st_size
+            or asset.get("digest") not in (None, "sha256:" + sha256(path))
+        ):
+            raise ValueError(f"Draft release asset does not match the verified file: {asset['name']}")
+
+
 def publish(root=ROOT):
     version, notes = release_notes(root)
     output = root / "dist/distribution"
@@ -212,11 +242,7 @@ def publish(root=ROOT):
         })
     elif release["target_commitish"] != commit:
         raise ValueError("An unfinished release belongs to another commit; use a new version")
-    subprocess.run(
-        ["gh", "release", "upload", tag, "--repo", repository(), "--clobber",
-         *[str(output / asset) for asset in ASSETS]],
-        check=True,
-    )
+    upload_assets(release["id"], output)
     published = api("PATCH", f"releases/{release['id']}", {
         "body": notes, "draft": False, "prerelease": False, "make_latest": "true",
     })

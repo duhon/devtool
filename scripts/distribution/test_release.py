@@ -145,23 +145,72 @@ class ReleaseTests(unittest.TestCase):
     def test_upload_failure_never_publishes_draft(self):
         with self.package() as (root, _):
             release.metadata(root)
-            with patch.object(release, "api", side_effect=[None, None, {"id": 42, "draft": True}]) as api:
+            with patch.object(release, "api", side_effect=[None, None, {"id": 42, "draft": True}, []]) as api:
                 with patch.object(release.subprocess, "run", side_effect=subprocess.CalledProcessError(1, "gh")):
                     with self.assertRaises(subprocess.CalledProcessError):
                         release.publish(root)
-                self.assertEqual([call.args[0] for call in api.call_args_list], ["GET", "GET", "POST"])
+                self.assertEqual([call.args[0] for call in api.call_args_list], ["GET", "GET", "POST", "GET"])
+
+    def assets(self, output):
+        return [
+            {"name": name, "size": (output / name).stat().st_size,
+             "state": "uploaded", "digest": "sha256:" + release.sha256(output / name)}
+            for name in release.ASSETS
+        ]
 
     def test_complete_upload_is_followed_by_publication(self):
         with self.package() as (root, output):
             release.metadata(root)
             with patch.object(release, "api", side_effect=[
-                None, None, {"id": 42, "draft": True}, {"html_url": "https://github.com/owner/repo/releases/tag/devtool-v3.0.0"},
+                None, None, {"id": 42, "draft": True}, [], self.assets(output),
+                {"html_url": "https://github.com/owner/repo/releases/tag/devtool-v3.0.0"},
             ]) as api:
                 with patch.object(release.subprocess, "run") as upload:
                     release.publish(root)
                 self.assertEqual(api.call_args_list[-1].args[0:2], ("PATCH", "releases/42"))
                 self.assertFalse(api.call_args_list[-1].args[2]["draft"])
-                self.assertEqual(upload.call_args.args[0][-4:], [str(output / asset) for asset in release.ASSETS])
+                self.assertEqual(upload.call_count, len(release.ASSETS))
+                for call, name in zip(upload.call_args_list, release.ASSETS):
+                    command = call.args[0]
+                    self.assertEqual(
+                        command[4],
+                        f"https://uploads.github.com/repos/owner/repo/releases/42/assets?name={name}",
+                    )
+                    self.assertEqual(command[command.index("--input") + 1], str(output / name))
+
+    def test_incomplete_or_corrupt_upload_never_publishes_draft(self):
+        with self.package() as (root, output):
+            release.metadata(root)
+            valid = self.assets(output)
+            for uploaded in (
+                [],
+                valid[:-1],
+                [dict(asset, size=0) for asset in valid],
+                [dict(asset, state="new") for asset in valid],
+                [dict(asset, digest="sha256:" + "0" * 64) for asset in valid],
+            ):
+                with self.subTest(uploaded=uploaded):
+                    with patch.object(release, "api", side_effect=[
+                        None, None, {"id": 42, "draft": True}, [], uploaded,
+                    ]) as api:
+                        with patch.object(release.subprocess, "run"):
+                            with self.assertRaises(ValueError):
+                                release.publish(root)
+                        self.assertNotIn("PATCH", [call.args[0] for call in api.call_args_list])
+
+    def test_retry_replaces_assets_by_id_in_the_selected_draft(self):
+        with self.package() as (root, output):
+            release.metadata(root)
+            with patch.object(release, "api", side_effect=[
+                [{"id": 7, "name": "checksums.txt"}], self.assets(output),
+            ]):
+                with patch.object(release.subprocess, "run") as upload:
+                    release.upload_assets(42, output)
+            self.assertEqual(upload.call_count, 1 + len(release.ASSETS))
+            self.assertEqual(upload.call_args_list[0].args[0], [
+                "gh", "api", "--method", "DELETE",
+                "repos/owner/repo/releases/assets/7", "--silent",
+            ])
 
 
 if __name__ == "__main__":
