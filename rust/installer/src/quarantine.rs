@@ -70,32 +70,6 @@ fn create(path: &Path, value: &[u8]) -> io::Result<()> {
     Err(error)
 }
 
-pub fn mark_download(path: &Path) -> io::Result<()> {
-    #[cfg(target_os = "macos")]
-    {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        if read(path)?.is_none() {
-            let timestamp = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_err(io::Error::other)?
-                .as_secs();
-            create(
-                path,
-                format!("0081;{timestamp:x};ServicesDevTools;").as_bytes(),
-            )?;
-        }
-        Ok(())
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = path;
-        Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "Native release downloads require macOS",
-        ))
-    }
-}
-
 pub fn copy(source: &Path, target: &Path) -> io::Result<()> {
     #[cfg(target_os = "macos")]
     if let Some(value) = read(source)? {
@@ -117,7 +91,7 @@ mod tests {
         let target = directory.path().join("copy");
         std::fs::write(&source, "ordinary text").unwrap();
         std::fs::write(&target, "ordinary text").unwrap();
-        mark_download(&source).unwrap();
+        create(&source, b"0081;0;FixtureDownloader;").unwrap();
         assert!(
             read(&source)
                 .unwrap()
@@ -127,8 +101,20 @@ mod tests {
         copy(&source, &target).unwrap();
         assert_eq!(read(&target).unwrap(), expected);
         let before = read(&target).unwrap().unwrap();
-        mark_download(&target).unwrap();
         create(&target, b"0081;0;OtherDownloader;").unwrap();
         assert_eq!(read(&target).unwrap().unwrap(), before);
+    }
+
+    #[test]
+    fn copying_an_unmarked_file_does_not_add_quarantine() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("source");
+        let target = directory.path().join("copy");
+        std::fs::write(&source, "ordinary text").unwrap();
+        std::fs::write(&target, "ordinary text").unwrap();
+        assert_eq!(read(&source).unwrap(), None);
+        assert_eq!(read(&target).unwrap(), None);
+        copy(&source, &target).unwrap();
+        assert_eq!(read(&target).unwrap(), None);
     }
 }

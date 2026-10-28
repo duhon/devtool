@@ -13,7 +13,6 @@ path = "src/main.rs"
 
 [dependencies]
 services-contracts = { path = "../contracts" }
-services-installer = { path = "../installer" }
 tempfile = "3"
 sha2 = "0.10"
 serde = { version = "1", features = ["derive"] }

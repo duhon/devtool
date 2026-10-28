@@ -77,11 +77,6 @@ async fn download(
     #[cfg(unix)]
     options.mode(0o600);
     let mut file = options.open(path).await.map_err(Error::from)?;
-    services_installer::quarantine::mark_download(path).map_err(|error| {
-        Error::new(format!(
-            "Could not preserve downloaded file provenance: {error}"
-        ))
-    })?;
     let mut digest = Sha256::new();
     let mut size = 0u64;
     while let Some(chunk) = response.chunk().await.map_err(|error| {
@@ -286,8 +281,11 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[tokio::test]
-    async fn native_download_verifies_streamed_bytes_and_private_file_permissions() {
-        use std::os::unix::fs::PermissionsExt;
+    async fn native_download_verifies_bytes_and_private_permissions_without_adding_quarantine() {
+        use std::{
+            ffi::CString,
+            os::unix::{ffi::OsStrExt, fs::PermissionsExt},
+        };
         let (url, server) = server(StatusCode::OK, true).await;
         let temporary = tempfile::tempdir().unwrap();
         let path = temporary.path().join("archive");
@@ -300,6 +298,20 @@ mod tests {
             std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
             0o600
         );
+        let native_path = CString::new(path.as_os_str().as_bytes()).unwrap();
+        let quarantine_size = unsafe {
+            libc::getxattr(
+                native_path.as_ptr(),
+                c"com.apple.quarantine".as_ptr(),
+                std::ptr::null_mut(),
+                0,
+                0,
+                0,
+            )
+        };
+        let error = std::io::Error::last_os_error();
+        assert_eq!(quarantine_size, -1, "Download acquired quarantine metadata");
+        assert_eq!(error.raw_os_error(), Some(libc::ENOATTR));
         server.abort();
         drop(temporary);
         assert!(!path.exists());

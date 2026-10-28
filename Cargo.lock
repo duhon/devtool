@@ -2979,7 +2979,6 @@ dependencies = [
  "serde",
  "serde_json",
  "services-contracts",
- "services-installer",
  "sha2",
  "tempfile",
  "tokio",

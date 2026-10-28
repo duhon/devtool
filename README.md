@@ -136,7 +136,9 @@ tests, to reduce runner-minute usage.
 The release includes `services-macos-arm64.tar.gz`, `checksums.txt`,
 `install.sh` and `version.json`; its description comes from the matching notes.
 Assets are uploaded to a draft before publication. Failed builds do not
-publish an update, and published assets are never replaced.
+publish an update, and published assets are normally never replaced.
+The 2.6.0 personal-testing preview is an explicit exception: it was rebuilt
+to remove the downloader-added quarantine marker.
 
 Public releases in `duhon/devtool` do not require GitHub authentication.
 Releases in a private repository require GitHub access. For those, download
@@ -147,11 +149,13 @@ Release URL to Bash is not supported.
 
 ### In-app updater preview
 
-Version 2.6.0 is a preview for personal verification. Install the local 2.5.23
+Version 2.6.0 is a preview for personal verification. Install the local 2.5.24
 bootstrap containing the native downloader first, then use Settings to test
 the update to 2.6.0 after the GitHub release is published.
-The bootstrap is in `dist/native-bootstrap-2.5.23/`; its installer must be run
+The bootstrap is in `dist/native-bootstrap-2.5.24/`; its installer must be run
 manually, followed by reloading the installed extension in Chrome.
+Earlier local bootstraps add a quarantine marker themselves and must be
+replaced before retrying this scenario.
 CI derives published versions from `RELEASE_NOTES.md`.
 
 The preview is not Developer ID signed or notarized. macOS Gatekeeper blocked
@@ -174,8 +178,9 @@ click **Update** to save the workspace, download through the native runtime,
 verify the SHA-256 and package identity, install transactionally, and reload
 the extension. Downloads use private temporary files, a five-minute deadline
 and a 2 GiB limit; redirects stay on approved HTTPS GitHub asset hosts.
-Downloaded-file quarantine is retained through extraction and staging, never
-removed to avoid an OS rejection. Failed downloads, access errors, and installation
+The native downloader does not add a quarantine marker. Any already-existing
+quarantine is retained through extraction and staging, never removed.
+Failed downloads, access errors, and installation
 failures are shown explicitly. A published release must exist before checks
 can succeed.
 
