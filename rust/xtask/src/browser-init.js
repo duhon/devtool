@@ -10,8 +10,8 @@
   const assert = (value, message) => { if (!value) throw new Error(message); };
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
   globalThis.updateFixture = {release:null,error:null,requests:[],installs:[],branch:'devtool'};
-  const connectNative = chrome.runtime.connectNative.bind(chrome.runtime);
-  chrome.runtime.connectNative = (...args) => {
+  const connectNative = globalThis.chrome?.runtime?.connectNative?.bind(chrome.runtime);
+  if (connectNative) chrome.runtime.connectNative = (...args) => {
     const port = connectNative(...args);
     port.onMessage.addListener(message => {
       if (message.ok && message.result?.currentVersion && message.result?.branch)
