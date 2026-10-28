@@ -16,6 +16,7 @@ use std::{
 };
 
 mod browser_profiles;
+pub mod quarantine;
 pub mod updates;
 
 const APPLICATION: &str = "ServicesDevTools";
@@ -68,6 +69,7 @@ pub fn copy_tree(source: &Path, target: &Path) -> Result<()> {
         fs::copy(source, target)?;
         fs::set_permissions(target, metadata.permissions())?;
     }
+    quarantine::copy(source, target)?;
     Ok(())
 }
 

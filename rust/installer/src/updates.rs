@@ -6,8 +6,52 @@ use sha2::{Digest, Sha256};
 use std::{
     fs,
     io::{Read, Write},
-    path::{Component, Path},
+    path::{Component, Path, PathBuf},
 };
+
+struct DownloadDirectory(PathBuf);
+
+impl Drop for DownloadDirectory {
+    fn drop(&mut self) {
+        if let Err(error) = fs::remove_dir_all(&self.0) {
+            eprintln!(
+                "Could not clean native download {}: {error}",
+                self.0.display()
+            );
+        }
+    }
+}
+
+pub fn install_downloaded_archive(
+    home: &Path,
+    archive: &Path,
+    expected_sha: &str,
+    expected_version: &str,
+) -> Result<super::Locations> {
+    let directory = archive
+        .parent()
+        .context("Native download directory is missing")?;
+    let metadata = fs::symlink_metadata(directory)?;
+    ensure!(
+        archive.is_absolute()
+            && archive.file_name().and_then(|name| name.to_str())
+                == Some(services_contracts::updates::ARCHIVE)
+            && metadata.is_dir()
+            && !metadata.file_type().is_symlink()
+            && directory
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("services-download-"))
+            && directory
+                .parent()
+                .context("Native download parent is missing")?
+                .canonicalize()?
+                == std::env::temp_dir().canonicalize()?,
+        "Refusing ownership of an unexpected native download directory"
+    );
+    let _download = DownloadDirectory(directory.to_path_buf());
+    install_archive(home, archive, expected_sha, expected_version)
+}
 
 pub fn install_archive(
     home: &Path,
@@ -50,6 +94,7 @@ pub fn install_archive(
         "Update checksum mismatch; nothing was installed"
     );
     drop(copy);
+    super::quarantine::copy(archive, &verified)?;
     let mut package = tar::Archive::new(GzDecoder::new(fs::File::open(&verified)?));
     let mut bytes = 0u64;
     for (count, entry) in package.entries()?.enumerate() {
@@ -78,6 +123,7 @@ pub fn install_archive(
             entry.unpack_in(temporary.path())?,
             "Unsafe update archive entry"
         );
+        super::quarantine::copy(archive, &temporary.path().join(&path))?;
     }
     let payload = temporary.path().join("ServicesDevTools");
     let metadata = super::validate_payload(&payload)?;
@@ -147,6 +193,38 @@ pub(super) fn validate_upgrade(
                 .is_none_or(|values| values.iter().all(|value| previous.contains(value))),
             "This update requests new Chrome permissions; install it manually to approve them"
         );
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn failed_native_archive_is_cleaned_by_the_installer() {
+            let directory = tempfile::Builder::new()
+                .prefix("services-download-")
+                .tempdir()
+                .unwrap();
+            let archive = directory.path().join(services_contracts::updates::ARCHIVE);
+            fs::write(&archive, b"not an archive").unwrap();
+            let directory = directory.keep();
+            let home = tempfile::tempdir().unwrap();
+            let sha = format!("{:x}", Sha256::digest(b"not an archive"));
+            assert!(install_downloaded_archive(home.path(), &archive, &sha, "2.6.0").is_err());
+            assert!(!directory.exists());
+        }
+
+        #[test]
+        fn ordinary_archive_directories_are_never_claimed_or_deleted() {
+            let directory = tempfile::tempdir().unwrap();
+            let archive = directory.path().join(services_contracts::updates::ARCHIVE);
+            fs::write(&archive, b"keep").unwrap();
+            assert!(
+                install_downloaded_archive(directory.path(), &archive, &"a".repeat(64), "2.6.0")
+                    .is_err()
+            );
+            assert_eq!(fs::read(&archive).unwrap(), b"keep");
+        }
     }
     Ok(())
 }

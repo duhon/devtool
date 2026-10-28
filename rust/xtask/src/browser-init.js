@@ -9,7 +9,27 @@
   });
   const assert = (value, message) => { if (!value) throw new Error(message); };
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-  globalThis.updateFixture = {release:null,error:null,requests:[],downloads:[]};
+  globalThis.updateFixture = {release:null,error:null,requests:[],installs:[],branch:'devtool'};
+  const connectNative = chrome.runtime.connectNative.bind(chrome.runtime);
+  chrome.runtime.connectNative = (...args) => {
+    const port = connectNative(...args);
+    port.onMessage.addListener(message => {
+      if (message.ok && message.result?.currentVersion && message.result?.branch)
+        updateFixture.branch = message.result.branch;
+    });
+    const send = port.postMessage.bind(port);
+    port.postMessage = message => {
+      if (message.service === 'updates' && message.op === 'install') {
+        assert(!('archivePath' in message),
+          'The interface must request native downloading, not supply a browser download');
+        updateFixture.installs.push(message);
+        if (updateFixture.archive)
+          message = {...message, archivePath:updateFixture.archive};
+      }
+      return send(message);
+    };
+    return port;
+  };
   const fetchOriginal = globalThis.fetch.bind(globalThis);
   globalThis.fetch = (input, options) => {
     const url = typeof input === 'string' ? input : input.url;
@@ -24,7 +44,7 @@
     const base = `https://github.com/${match[1]}/releases/download/devtool-v${version}`;
     const release = updateFixture.release || {
       schemaVersion:1,application:'ServicesDevTools',version,tag:`devtool-v${version}`,
-      commit:'a'.repeat(40),repository:match[1],branch:'devtool',
+      commit:'a'.repeat(40),repository:match[1],branch:updateFixture.branch,
       platform:'darwin',arch:'arm64',minimumMacOS:'13.5',
       archive:'services-macos-arm64.tar.gz',sha256:'b'.repeat(64),
       archiveUrl:`${base}/services-macos-arm64.tar.gz`,

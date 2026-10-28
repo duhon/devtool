@@ -1,5 +1,14 @@
 # Release notes
 
+## 2.6.0
+
+- Download approved public GitHub release archives directly through the native Rust runtime; Chrome no longer downloads the archive.
+- Verify SHA-256 during download and again before installation, with bounded size, HTTPS redirects and download time.
+- Keep downloaded files private and temporary, and preserve macOS quarantine metadata through extraction and installation.
+- Remove the extension's downloads permission. Save the workspace before updating, retain rollback checks and reload only after confirmed installation.
+- Test the transition using the local 2.5.23 bootstrap configured for duhon/devtool on main.
+- This remains an updater preview for personal verification, not a confirmed end-to-end installation. Releases are not Developer ID signed or notarized; Gatekeeper can still block execution and is not bypassed.
+
 ## 2.5.23
 
 - Preview for personal verification of the in-app updater; use the local 2.5.22 package as the initial installation.

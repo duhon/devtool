@@ -502,7 +502,7 @@ async fn installed_reload(
     let asset_base = format!("https://github.com/{repository}/releases/download/devtool-v99.0.1");
     let release = json!({
         "schemaVersion":1,"application":"ServicesDevTools","version":"99.0.1","tag":"devtool-v99.0.1",
-        "commit":"a".repeat(40),"repository":repository,"branch":"devtool","platform":"darwin",
+        "commit":"a".repeat(40),"repository":repository,"branch":distribution["branch"],"platform":"darwin",
         "arch":"arm64","minimumMacOS":"13.5","archive":"services-macos-arm64.tar.gz","sha256":sha,
         "archiveUrl":format!("{asset_base}/services-macos-arm64.tar.gz"),
         "checksumsUrl":format!("{asset_base}/checksums.txt"),"installerUrl":format!("{asset_base}/install.sh"),
@@ -530,24 +530,14 @@ async fn installed_reload(
         ()=>`Approved update did not become available: ${document.body.innerText}; requests=${JSON.stringify(updateFixture.requests)}; release=${JSON.stringify(updateFixture.release)}`);
       updateFixture.reloads=0;
       chrome.runtime.reload=()=>{updateFixture.reloads++;};
-      chrome.downloads.download=async options=>{
-        assert(options.url===updateFixture.release.archiveUrl && options.saveAs===false
-          && options.filename.startsWith('ServicesDevTools/updates/devtool-v99.0.1/'),
-          'Chrome must download exactly the approved private archive using its browser session');
-        updateFixture.downloads.push(options);
-        return 701;
-      };
-      chrome.downloads.search=async options=>{
-        assert(options.id===701,'Only the owned update download may be inspected');
-        return [{id:701,state:'complete',filename:updateFixture.archive}];
-      };
       await click(testid('settings-update-install'));
       await wait(()=>updateFixture.reloads===1,
         ()=>`Client updater failed: ${document.body.innerText}`, 60000);
       const saved=await testDriver.sessionLibrary();
       assert(JSON.stringify(saved.temporary.console.documents).includes('#check update persistence\\n'),
         'Workspace edits must be durably saved before installing and reloading');
-      assert(updateFixture.downloads.length===1,'An update must download only one approved archive');
+      assert(updateFixture.installs.length===1,
+        'An update must request exactly one native download and installation');
       await testDriver.clearSessions();
       return true;
     })()"##).await? == true, "Client-controlled native archive update did not complete");

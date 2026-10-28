@@ -19,8 +19,16 @@ fn run() -> Result<()> {
                 args[3].to_str().context("Invalid update version")?,
             )?;
         }
+        Some("update-downloaded") if args.len() == 4 => {
+            services_installer::updates::install_downloaded_archive(
+                &home,
+                &PathBuf::from(&args[1]),
+                args[2].to_str().context("Invalid update checksum")?,
+                args[3].to_str().context("Invalid update version")?,
+            )?;
+        }
         _ => bail!(
-            "Usage: services-install install PAYLOAD | update ARCHIVE SHA256 VERSION | uninstall"
+            "Usage: services-install install PAYLOAD | update ARCHIVE SHA256 VERSION | update-downloaded ARCHIVE SHA256 VERSION | uninstall"
         ),
     }
     Ok(())

@@ -14,7 +14,7 @@
   const version = '65000.0.0', base = `https://github.com/${repository}/releases/download/devtool-v${version}`;
   const release = {
     schemaVersion:1,application:'ServicesDevTools',version,tag:`devtool-v${version}`,
-    commit:'a'.repeat(40),repository,branch:'devtool',platform:'darwin',arch:'arm64',
+    commit:'a'.repeat(40),repository,branch:updateFixture.branch,platform:'darwin',arch:'arm64',
     minimumMacOS:'13.5',archive:'services-macos-arm64.tar.gz',sha256:'b'.repeat(64),
     archiveUrl:`${base}/services-macos-arm64.tar.gz`,
     checksumsUrl:`${base}/checksums.txt`,installerUrl:`${base}/install.sh`,
@@ -48,7 +48,7 @@
   await click(testid('settings-update-check'));
   await wait(() => testid('settings-update-status').textContent === 'Up to date');
   await click(testid('console-settings-toggle'));
-  assert(updateFixture.downloads.length === 0,
+  assert(updateFixture.installs.length === 0,
     'Checking releases must not download or install without user consent');
   return true;
 })()

@@ -27,7 +27,7 @@ or `sudo`. JavaScript is limited to generated WASM/browser bootstrapping
 and vendored editor dependencies.
 
 The Console's right-hand **Settings** panel shows the current application
-version. Update checks and in-app installation are not implemented yet.
+version and available releases, with an explicit Update action.
 
 The publisher hosts three generated files in the root of a public GitHub
 branch: `install.sh`, `checksums.txt`, and `services-macos-arm64.tar.gz`.
@@ -147,10 +147,12 @@ Release URL to Bash is not supported.
 
 ### In-app updater preview
 
-Version 2.5.23 is a preview for personal verification. Install the local 2.5.22
-distribution manually first, then use Settings to test the update to 2.5.23
-after the GitHub release is published. The local package intentionally stays at
-2.5.22; CI derives the published version from `RELEASE_NOTES.md`.
+Version 2.6.0 is a preview for personal verification. Install the local 2.5.23
+bootstrap containing the native downloader first, then use Settings to test
+the update to 2.6.0 after the GitHub release is published.
+The bootstrap is in `dist/native-bootstrap-2.5.23/`; its installer must be run
+manually, followed by reloading the installed extension in Chrome.
+CI derives published versions from `RELEASE_NOTES.md`.
 
 The preview is not Developer ID signed or notarized. macOS Gatekeeper blocked
 the new runtime in the isolated Chrome update scenario. A data-only diagnostic
@@ -159,18 +161,21 @@ unlike the terminal-origin baseline. Personal acceptance of the full update is
 pending; system protections are not disabled or bypassed.
 
 Install the update-capable version manually once and reload the unpacked
-extension in Chrome. It adds download access and access to GitHub release
-hosts; it does not request cookie access. For a private release source, sign
-in to GitHub in the same Chrome profile using an account with repository
-access. Public release sources need no sign-in. End users do not need `gh`,
-Rust, or an API token.
+extension in Chrome. It accesses GitHub release metadata but requires neither
+the downloads permission nor cookie access. The native downloader supports
+public release assets without GitHub sign-in, `gh`, Rust or an API token.
+Private assets must be installed manually; browser credentials are not copied
+into the native process.
 
 The extension checks for a newer release at startup. An unseen update turns
 the Settings indicator green; Settings shows the current and available
 versions and a **Check for updates** action. Checks never install automatically:
-click **Update** to save the workspace, download through Chrome's authenticated
-browser session, verify the SHA-256 and package identity, install transactionally,
-and reload the extension. Failed downloads, access errors, and installation
+click **Update** to save the workspace, download through the native runtime,
+verify the SHA-256 and package identity, install transactionally, and reload
+the extension. Downloads use private temporary files, a five-minute deadline
+and a 2 GiB limit; redirects stay on approved HTTPS GitHub asset hosts.
+Downloaded-file quarantine is retained through extraction and staging, never
+removed to avoid an OS rejection. Failed downloads, access errors, and installation
 failures are shown explicitly. A published release must exist before checks
 can succeed.
 
@@ -178,7 +183,7 @@ Stop active operations and close other Services DevTools windows before updating
 The installed updater rejects downgrades, unsafe archives, different update
 sources, and new Chrome permissions. Releases requiring additional permissions
 need manual installation. The standalone HTTP interface cannot use Chrome's
-authenticated updater.
+native updater.
 
 To build and verify locally without a GitHub location:
 

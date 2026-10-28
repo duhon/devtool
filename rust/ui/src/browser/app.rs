@@ -148,7 +148,7 @@ pub enum Msg {
     UpdateSource(u64, Reply),
     UpdateChecked(u64, Result<services_contracts::updates::Release, String>),
     InstallUpdate,
-    UpdateDownloaded(Result<String, String>),
+    UpdatePrepared(Result<(), String>),
     UpdateInstalled(Reply),
     ReloadUpdate,
     UpdateReloadReady(Result<(), String>),
@@ -561,38 +561,37 @@ impl Component for App {
                     self.notice = Some(error);
                     return true;
                 }
-                let Some(release) = self.updates.release.clone() else {
+                if self.updates.release.is_none() {
                     self.updates
                         .fail("Approved update metadata is missing".into());
                     return true;
-                };
+                }
                 self.persist_console();
-                self.updates.phase = UpdatePhase::Downloading;
+                self.updates.phase = UpdatePhase::Preparing;
                 self.updates.error = None;
                 let sessions = self.sessions.clone();
                 let link = ctx.link().clone();
                 spawn_local(async move {
-                    let result = match super::sessions::Store::flush(&sessions).await {
-                        Ok(()) => updates::download(&release).await,
-                        Err(error) => Err(format!(
-                            "Workspace could not be saved before updating: {error}"
-                        )),
-                    };
-                    link.send_message(Msg::UpdateDownloaded(result));
+                    let result = super::sessions::Store::flush(&sessions)
+                        .await
+                        .map_err(|error| {
+                            format!("Workspace could not be saved before updating: {error}")
+                        });
+                    link.send_message(Msg::UpdatePrepared(result));
                 });
             }
-            Msg::UpdateDownloaded(result) => match result {
-                Ok(path) => {
+            Msg::UpdatePrepared(result) => match result {
+                Ok(()) => {
                     if let Err(error) = updates::ensure_single_window() {
                         self.updates.fail(error);
                         return true;
                     }
                     self.updates.phase = UpdatePhase::Installing;
                     self.transport.request(
-                            json!({"service":"updates","op":"install","release":self.updates.release,"archivePath":path}),
-                            false,
-                            ctx.link().callback(Msg::UpdateInstalled),
-                        );
+                        json!({"service":"updates","op":"install","release":self.updates.release}),
+                        false,
+                        ctx.link().callback(Msg::UpdateInstalled),
+                    );
                 }
                 Err(error) => self.updates.fail(error),
             },
