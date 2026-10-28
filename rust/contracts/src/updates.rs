@@ -50,8 +50,10 @@ impl Source {
         {
             return Err("Update source is not configured with a valid GitHub repository".into());
         }
-        if self.branch != "devtool" {
-            return Err("This update source does not use the devtool release channel".into());
+        if !matches!(self.branch.as_str(), "main" | "devtool") {
+            return Err(
+                "This update source does not use the main or devtool release channel".into(),
+            );
         }
         Ok(())
     }
@@ -175,6 +177,28 @@ mod tests {
             " 2.5.1",
         ] {
             assert!(version(value).is_err(), "{value}");
+        }
+    }
+
+    #[test]
+    fn main_and_legacy_sources_keep_release_channels_bound() {
+        for branch in ["main", "devtool"] {
+            let mut source = source();
+            source.branch = branch.into();
+            let mut release = release();
+            release.branch = branch.into();
+            assert!(release.validate(&source).is_ok());
+            assert_eq!(
+                source.manifest_url().unwrap(),
+                "https://github.com/owner/repository/releases/latest/download/version.json"
+            );
+            release.branch = if branch == "main" { "devtool" } else { "main" }.into();
+            assert!(release.validate(&source).is_err());
+        }
+        for branch in ["", "feature", "main/other"] {
+            let mut source = source();
+            source.branch = branch.into();
+            assert!(source.validate().is_err(), "{branch}");
         }
     }
 

@@ -71,7 +71,7 @@ class ReleaseTests(unittest.TestCase):
             self.assertEqual(manifest.read_bytes(), before)
 
     @contextmanager
-    def package(self):
+    def package(self, branch="main"):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "RELEASE_NOTES.md").write_text("## 3.0.0\n\n- Major release\n")
@@ -81,7 +81,7 @@ class ReleaseTests(unittest.TestCase):
             with tarfile.open(archive, "w:gz") as package:
                 for name, value in {
                     "ServicesDevTools/distribution.json": {
-                        "version": "3.0.0", "repository": "owner/repo", "branch": "devtool",
+                        "version": "3.0.0", "repository": "owner/repo", "branch": branch,
                     },
                     "ServicesDevTools/extension/manifest.json": {"version": "3.0.0"},
                 }.items():
@@ -92,7 +92,10 @@ class ReleaseTests(unittest.TestCase):
             digest = hashlib.sha256(archive.read_bytes()).hexdigest()
             (output / "checksums.txt").write_text(f"{digest}  {release.ARCHIVE}\n")
             (output / "install.sh").write_text("#!/bin/bash\n")
-            with patch.dict(os.environ, {"GITHUB_REPOSITORY": "owner/repo", "GITHUB_SHA": "a" * 40}):
+            with patch.dict(os.environ, {
+                "GITHUB_REPOSITORY": "owner/repo", "GITHUB_SHA": "a" * 40,
+                "GITHUB_REF_NAME": branch,
+            }):
                 yield root, output
 
     def test_metadata_uses_exact_major_version_and_verified_archive(self):
@@ -101,12 +104,24 @@ class ReleaseTests(unittest.TestCase):
             metadata = json.loads((output / "version.json").read_text())
             self.assertEqual(metadata["version"], "3.0.0")
             self.assertEqual(metadata["tag"], "devtool-v3.0.0")
+            self.assertEqual(metadata["branch"], "main")
             self.assertEqual(metadata["commit"], "a" * 40)
             self.assertEqual(metadata["sha256"], release.sha256(output / release.ARCHIVE))
             self.assertEqual((output / "release-notes.txt").read_text(), "- Major release\n")
             (output / "checksums.txt").write_text("invalid\n")
             with self.assertRaises(ValueError):
                 release.metadata(root)
+
+    def test_metadata_preserves_legacy_channel_and_rejects_mismatched_or_unknown_branches(self):
+        with self.package("devtool") as (root, output):
+            release.metadata(root)
+            self.assertEqual(json.loads((output / "version.json").read_text())["branch"], "devtool")
+            with patch.dict(os.environ, {"GITHUB_REF_NAME": "main"}):
+                with self.assertRaisesRegex(ValueError, "update source"):
+                    release.metadata(root)
+            with patch.dict(os.environ, {"GITHUB_REF_NAME": "feature"}):
+                with self.assertRaisesRegex(ValueError, "main or devtool"):
+                    release.metadata(root)
 
     def test_only_not_found_can_be_treated_as_missing(self):
         with patch.dict(os.environ, {"GITHUB_REPOSITORY": "owner/repo", "GH_TOKEN": "fixture"}):

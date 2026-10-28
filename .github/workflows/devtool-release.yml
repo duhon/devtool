@@ -2,7 +2,7 @@ name: Services DevTools release
 
 on:
   push:
-    branches: [devtool]
+    branches: [main]
 
 permissions:
   contents: read
@@ -67,7 +67,7 @@ jobs:
           cargo test --workspace --locked
           cargo clippy --locked -p services-ui --target wasm32-unknown-unknown --lib -- -D warnings
       - name: Build distribution
-        run: cargo run --locked -p xtask -- build --repository "$GITHUB_REPOSITORY" --branch devtool
+        run: cargo run --locked -p xtask -- build --repository "$GITHUB_REPOSITORY" --branch "$GITHUB_REF_NAME"
       - name: Verify clean installation and updates
         run: cargo test --locked -p services-installer --test packaged -- --ignored
       - name: Generate update metadata

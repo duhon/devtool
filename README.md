@@ -115,9 +115,12 @@ distribution branch and commit/push them together. Never publish private keys,
 Variables or other user data.
 The generated archive contains neither IWA prototypes nor private keys.
 
-### Automatic releases from `devtool`
+### Automatic releases from `main`
 
-`.github/workflows/devtool-release.yml` runs on pushes to `devtool`.
+`.github/workflows/devtool-release.yml` runs on pushes to `main`.
+The generated package and update metadata use the current repository and
+`main` as their source. The updater also accepts the legacy `devtool` channel,
+but never switches repositories or channels automatically.
 `RELEASE_NOTES.md` controls releases: add a new `## X.Y.Z` section at the top
 with its release notes, followed by older versions in descending order.
 The workflow prepares the Cargo and Chrome versions from that section without
@@ -135,7 +138,8 @@ The release includes `services-macos-arm64.tar.gz`, `checksums.txt`,
 Assets are uploaded to a draft before publication. Failed builds do not
 publish an update, and published assets are never replaced.
 
-Releases in a private repository require GitHub access. For now, download
+Public releases in `duhon/devtool` do not require GitHub authentication.
+Releases in a private repository require GitHub access. For those, download
 the archive, checksum and installer through your authorized browser into the
 same directory, then run `bash install.sh` there. The installer's existing
 remote fallback still uses branch-based public downloads; piping a private
@@ -156,8 +160,9 @@ pending; system protections are not disabled or bypassed.
 
 Install the update-capable version manually once and reload the unpacked
 extension in Chrome. It adds download access and access to GitHub release
-hosts; it does not request cookie access. Sign in to GitHub in the same Chrome
-profile using an account with repository access. End users do not need `gh`,
+hosts; it does not request cookie access. For a private release source, sign
+in to GitHub in the same Chrome profile using an account with repository
+access. Public release sources need no sign-in. End users do not need `gh`,
 Rust, or an API token.
 
 The extension checks for a newer release at startup. An unseen update turns

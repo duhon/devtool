@@ -61,6 +61,13 @@ def repository():
     return name
 
 
+def release_branch():
+    branch = os.environ["GITHUB_REF_NAME"]
+    if branch not in ("main", "devtool"):
+        raise ValueError("Releases must use the main or devtool branch")
+    return branch
+
+
 def api(method, path, body=None, missing_ok=False):
     data = None if body is None else json.dumps(body).encode()
     request = Request(
@@ -138,6 +145,7 @@ def prepare(root=ROOT):
 
 def metadata(root=ROOT):
     version, notes = release_notes(root)
+    branch = release_branch()
     output = root / "dist/distribution"
     archive = output / ARCHIVE
     digest = sha256(archive)
@@ -148,7 +156,7 @@ def metadata(root=ROOT):
         manifest = json.load(package.extractfile("ServicesDevTools/extension/manifest.json"))
     if distribution["version"] != version or manifest["version"] != version:
         raise ValueError("Packaged application/extension version differs from release notes")
-    if distribution["repository"] != repository() or distribution["branch"] != "devtool":
+    if distribution["repository"] != repository() or distribution["branch"] != branch:
         raise ValueError("Packaged update source differs from the release repository")
     commit = os.environ["GITHUB_SHA"]
     if not re.fullmatch(r"[0-9a-f]{40}", commit):
@@ -161,7 +169,7 @@ def metadata(root=ROOT):
         "tag": PREFIX + version,
         "commit": commit,
         "repository": repository(),
-        "branch": "devtool",
+        "branch": branch,
         "platform": "darwin",
         "arch": "arm64",
         "minimumMacOS": "13.5",
