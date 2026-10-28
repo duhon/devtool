@@ -1,0 +1,82 @@
+/* This page is just a toolbar row, the editor, and a status line — instead
+   of a fixed/manually-resized editor height, the editor stretches to fill
+   whatever vertical space the viewport actually has. */
+html, body {
+  height: 100%;
+  box-sizing: border-box;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+#vars-root {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+/* The profile tabs live inside the shared #tab-strip (see workbench.js's
+   custom-mount branch), right of the service picker — same row the
+   Console's own service tabs share. Wrapped in one group so it can be
+   found/replaced as a unit on every render without disturbing the picker
+   itself, which workbench.js re-inserts at the strip's front on every
+   activation. */
+.vars-tab-group {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+}
+
+.vars-tab-add {
+  margin-bottom: 4px;
+  padding: 4px 10px;
+  font-weight: bold;
+}
+
+
+/* CodeMirror replaces/hides the original <textarea>, so sizing
+   .vars-textarea itself would do nothing — the block actually on screen is
+   CodeMirror's own wrapper. min-height: 0 overrides flexbox's default
+   "never shrink below content size", which would otherwise stop this from
+   shrinking back down when the window does. */
+#vars-root .CodeMirror {
+  width: 100%;
+  box-sizing: border-box;
+  flex: 1;
+  min-height: 0;
+  font-family: monospace;
+  border: 1px solid #43454a;
+  border-radius: 4px;
+}
+
+.vars-status {
+  display: block;
+  margin-top: 8px;
+  color: #89ca78;
+  flex-shrink: 0;
+}
+
+.vars-status.is-error {
+  color: #ff8980;
+}
+
+/* Standing summary of every stored profile's validation (cycles, dangling
+   {{profile:var}} references, ...) — distinct from .vars-status, which is
+   the one-off outcome of whatever action was just clicked. Amber, not red:
+   this can point at a DIFFERENT profile than the one on screen, so it's a
+   "something needs attention" flag, not necessarily "that last thing you
+   did failed". */
+.vars-validation {
+  display: block;
+  margin-top: 4px;
+  color: #ffb86c;
+  flex-shrink: 0;
+}
+
+.vars-validation[hidden] {
+  display: none;
+}

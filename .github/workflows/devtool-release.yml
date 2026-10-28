@@ -1,0 +1,99 @@
+name: Services DevTools release
+
+on:
+  push:
+    branches: [devtool]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: services-devtool-release
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      publish: ${{ steps.release.outputs.publish }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Test release planning
+        run: python3 -m unittest discover -s scripts/distribution -p test_release.py
+      - name: Find a new version in release notes
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/distribution/release.py plan
+
+  build:
+    needs: plan
+    if: needs.plan.outputs.publish == 'true'
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "13.5"
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify Apple Silicon runner
+        run: test "$(uname -m)" = arm64
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install 1.96.0 --profile minimal --component rustfmt --component clippy --target wasm32-unknown-unknown
+          rustup default 1.96.0
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: devtool-macos-arm64-rust-1.96-${{ hashFiles('Cargo.lock') }}
+          restore-keys: devtool-macos-arm64-rust-1.96-
+      - name: Prepare versions from release notes
+        run: |
+          python3 scripts/distribution/release.py prepare
+          cargo update --workspace
+          cargo fetch --locked
+      - name: Install matching WASM bindgen
+        run: cargo install wasm-bindgen-cli --version 0.2.108 --locked
+      - name: Check formatting, tests and WASM
+        run: |
+          cargo fmt --all -- --check
+          cargo test --workspace --locked
+          cargo clippy --locked -p services-ui --target wasm32-unknown-unknown --lib -- -D warnings
+      - name: Build distribution
+        run: cargo run --locked -p xtask -- build --repository "$GITHUB_REPOSITORY" --branch devtool
+      - name: Verify clean installation and updates
+        run: cargo test --locked -p services-installer --test packaged -- --ignored
+      - name: Generate update metadata
+        run: python3 scripts/distribution/release.py metadata
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: services-devtool-distribution
+          path: dist/distribution/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: services-devtool-distribution
+          path: dist/distribution/
+      - name: Publish verified release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/distribution/release.py publish

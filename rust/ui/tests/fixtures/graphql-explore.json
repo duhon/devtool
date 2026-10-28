@@ -1,0 +1,13 @@
+{
+  "variables": {
+    "primaryCode": "PL",
+    "filter": {
+      "code": {
+        "in": ["PL", "DE", "FR"]
+      }
+    },
+    "withLanguages": true,
+    "hideCurrency": false
+  },
+  "query": "fragment CountrySummary on Country {\n  __typename\n  code\n  displayName: name\n}\nfragment LanguageDetails on Language {\n  code\n  name\n  native\n}\nfragment CountryDetails on Country {\n  ...CountrySummary\n  capital\n  currency @skip(if: $hideCurrency)\n  continent {\n    code\n    name\n  }\n  ... on Country @include(if: $withLanguages) {\n    languages {\n      ...LanguageDetails\n    }\n  }\n}\nquery ExploreCountries(\n  $primaryCode: ID!\n  $secondaryCode: ID! = \"DE\"\n  $filter: CountryFilterInput = { continent: { eq: \"EU\" } }\n  $withLanguages: Boolean! = true\n  $hideCurrency: Boolean! = false\n) {\n  primary: country(code: $primaryCode) {\n    ...CountryDetails\n  }\n\n  secondary: country(code: $secondaryCode) {\n    ...CountryDetails\n  }\n\n  matchingCountries: countries(filter: $filter) {\n    ...CountrySummary\n\n    languages @include(if: $withLanguages) {\n      ...LanguageDetails\n    }\n  }\n}"
+}

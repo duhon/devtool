@@ -1,0 +1,734 @@
+[
+  {
+    "function": "parseSql",
+    "args": [
+      " SELECT * FROM users; ",
+      "mysql://db"
+    ],
+    "result": {
+      "sql": "SELECT * FROM users;",
+      "connectionString": "mysql://db",
+      "vertical": false
+    }
+  },
+  {
+    "function": "parseMysqlRequest",
+    "args": [
+      "#endpoint\nmysql://localhost/app\n\nSELECT * FROM users;"
+    ],
+    "error": "MySQL request needs an explicit #query marker before its body"
+  },
+  {
+    "function": "parseMysqlRequest",
+    "args": [
+      "SELECT * FROM users;"
+    ],
+    "error": "MySQL request needs a #endpoint block (a mysql:// connection string)"
+  },
+  {
+    "function": "parseMysqlRequest",
+    "args": [
+      "#endpoint\nmysql://localhost/app\n\n#query\nSELECT * FROM users;"
+    ],
+    "result": {
+      "sql": "SELECT * FROM users;",
+      "connectionString": "mysql://localhost/app",
+      "vertical": false
+    }
+  },
+  {
+    "function": "parseSql",
+    "args": [
+      "SELECT * FROM t \\G"
+    ],
+    "result": {
+      "sql": "SELECT * FROM t",
+      "connectionString": "",
+      "vertical": true
+    }
+  },
+  {
+    "function": "parseSql",
+    "args": [
+      "SELECT * FROM t \\G;"
+    ],
+    "result": {
+      "sql": "SELECT * FROM t",
+      "connectionString": "",
+      "vertical": true
+    }
+  },
+  {
+    "function": "parseSql",
+    "args": [
+      "SELECT * FROM t; \\G"
+    ],
+    "result": {
+      "sql": "SELECT * FROM t",
+      "connectionString": "",
+      "vertical": true
+    }
+  },
+  {
+    "function": "parseHttp",
+    "args": [
+      "#endpoint\nGET https://example.com\n\n#headers\nAuthorization: token\n{\"a\":1}"
+    ],
+    "error": "REST request needs an explicit #body marker before its body"
+  },
+  {
+    "function": "parseHttp",
+    "args": [
+      "GET https://example.com"
+    ],
+    "error": "REST request needs a #endpoint block (METHOD URL)"
+  },
+  {
+    "function": "parseHttp",
+    "args": [
+      "#endpoint\nnot a request"
+    ],
+    "error": "#endpoint must be METHOD URL"
+  },
+  {
+    "function": "parseHttp",
+    "args": [
+      "#endpoint\nPOST https://example.com\n\n#headers\nContent-Type: application/json\n#body\n{\"a\":1}"
+    ],
+    "result": {
+      "method": "POST",
+      "url": "https://example.com",
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": "{\"a\":1}"
+    }
+  },
+  {
+    "function": "parseHttp",
+    "args": [
+      "#endpoint\nPOST https://example.com\n\n#headers\nContent-Type: application/json\n\n#body\n{\"a\":1}"
+    ],
+    "result": {
+      "method": "POST",
+      "url": "https://example.com",
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": "{\"a\":1}"
+    }
+  },
+  {
+    "function": "parseGraphqlRequest",
+    "args": [
+      "#endpoint\nhttps://example.com/graphql\n\n#headers\nAuthorization: token\n\nquery { viewer { id } }\n\n#variables\n{\"id\":\"1\"}"
+    ],
+    "error": "GraphQL request needs an explicit #query marker before its body"
+  },
+  {
+    "function": "parseGraphqlRequest",
+    "args": [
+      "{ viewer { id } }"
+    ],
+    "error": "GraphQL request needs a #endpoint block"
+  },
+  {
+    "function": "parseGraphqlRequest",
+    "args": [
+      "#endpoint\nPOST https://example.com/graphql\n\n{ viewer { id } }"
+    ],
+    "error": "#endpoint must be a GraphQL URL"
+  },
+  {
+    "function": "parseGraphqlRequest",
+    "args": [
+      "#endpoint\nhttps://example.com/graphql\n\n#headers\nAuthorization: token\n\n#variables\n{\"id\":\"1\"}\n\n#query\nquery { viewer { id } }"
+    ],
+    "result": {
+      "url": "https://example.com/graphql",
+      "headers": {
+        "Authorization": "token"
+      },
+      "query": "query { viewer { id } }",
+      "variables": {
+        "id": "1"
+      }
+    }
+  },
+  {
+    "function": "parseGrpcRequest",
+    "args": [
+      "#endpoint\ngrpc://localhost:50051/demo.Greeter/SayHello\n\n#proto\nsyntax = \"proto3\";\n\n#message\n{\"name\":\"Ada\"}"
+    ],
+    "result": {
+      "endpoint": "grpc://localhost:50051/demo.Greeter/SayHello",
+      "headers": {},
+      "proto": "syntax = \"proto3\";",
+      "requestMessage": {
+        "name": "Ada"
+      }
+    }
+  },
+  {
+    "function": "parseGrpcRequest",
+    "args": [
+      "{\"name\":\"Ada\"}"
+    ],
+    "error": "gRPC request needs a #endpoint block"
+  },
+  {
+    "function": "parseGrpcRequest",
+    "args": [
+      "#endpoint\ngrpc://localhost:50051/demo.Greeter/SayHello\n\n{\"name\":\"Ada\"}"
+    ],
+    "error": "gRPC request needs an explicit #message marker before its body"
+  },
+  {
+    "function": "parseGrpcRequest",
+    "args": [
+      "#endpoint\ngrpc://localhost:50051/demo.Greeter/LotsOfGreetings\n\n[{\"name\":\"Ada\"},{\"name\":\"Grace\"}]"
+    ],
+    "error": "gRPC request needs an explicit #message marker before its body"
+  },
+  {
+    "function": "parseGrpcRequest",
+    "args": [
+      "#endpoint\ngrpc://localhost:50051/demo.Greeter/SayHello"
+    ],
+    "result": {
+      "endpoint": "grpc://localhost:50051/demo.Greeter/SayHello",
+      "headers": {},
+      "proto": ""
+    }
+  },
+  {
+    "function": "parseSplunkRequest",
+    "args": [
+      "#endpoint\nhttps://splunk.example.com:8089\n\n#headers\nAuthorization: Splunk x\n\n#search\nindex=main error\n\n#options\nFrom: -24h\nTo: now"
+    ],
+    "result": {
+      "baseUrl": "https://splunk.example.com:8089",
+      "headers": {
+        "Authorization": "Splunk x"
+      },
+      "search": "index=main error",
+      "earliestTime": "-24h",
+      "latestTime": "now"
+    }
+  },
+  {
+    "function": "parseSplunkRequest",
+    "args": [
+      "#endpoint\nhttps://splunk.example.com:8089\n\n#headers\nAuthorization: Splunk x\n\n#options\nFrom: -14m\nTo: now\nApp: search\nCount: 100\n\n#search\nindex=main error"
+    ],
+    "result": {
+      "baseUrl": "https://splunk.example.com:8089",
+      "headers": {
+        "Authorization": "Splunk x"
+      },
+      "search": "index=main error",
+      "earliestTime": "-14m",
+      "latestTime": "now",
+      "app": "search",
+      "count": "100"
+    }
+  },
+  {
+    "function": "parseSplunkRequest",
+    "args": [
+      "#search\nindex=main error"
+    ],
+    "error": "Splunk request needs a #endpoint block"
+  },
+  {
+    "function": "parseSplunkRequest",
+    "args": [
+      "#endpoint\nhttps://splunk.example.com:8089"
+    ],
+    "error": "Splunk request needs a #search block"
+  },
+  {
+    "function": "parseSplunkRequest",
+    "args": [
+      "#search\nindex=main error\n#endpoint\nhttps://splunk.example.com:8089\n#headers\nAuthorization: Splunk x"
+    ],
+    "result": {
+      "baseUrl": "https://splunk.example.com:8089",
+      "headers": {
+        "Authorization": "Splunk x"
+      },
+      "search": "index=main error"
+    }
+  },
+  {
+    "function": "parseTerminalRequest",
+    "args": [
+      "#endpoint\nbash -c\n\n#env\nNAME: value\n\n#command\necho \"$NAME\""
+    ],
+    "result": {
+      "endpoint": "bash -c",
+      "env": {
+        "NAME": "value"
+      },
+      "command": "echo \"$NAME\""
+    }
+  },
+  {
+    "function": "parseTerminalRequest",
+    "args": [
+      "#endpoint\nbash -c\n\necho \"hi\""
+    ],
+    "result": {
+      "endpoint": "bash -c",
+      "env": {},
+      "command": "echo \"hi\""
+    }
+  },
+  {
+    "function": "parseTerminalRequest",
+    "args": [
+      "echo \"hi\""
+    ],
+    "error": "Terminal request needs a #endpoint block"
+  },
+  {
+    "function": "parseConsoleRequest",
+    "args": [
+      "mysql",
+      "#endpoint\nmysql://localhost/db\n\n#query\nselect 1"
+    ],
+    "result": {
+      "sql": "select 1",
+      "connectionString": "mysql://localhost/db",
+      "vertical": false
+    }
+  },
+  {
+    "function": "parseCurlCommand",
+    "args": [
+      "curl 'https://api.example.com/users' -H 'Content-Type: application/json' --data-raw '{\"name\":\"Ada\"}'"
+    ],
+    "result": {
+      "method": "POST",
+      "url": "https://api.example.com/users",
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": "{\"name\":\"Ada\"}"
+    }
+  },
+  {
+    "function": "parseCurlCommand",
+    "args": [
+      "curl 'https://api.example.com/users'"
+    ],
+    "result": {
+      "method": "GET",
+      "url": "https://api.example.com/users",
+      "headers": {}
+    }
+  },
+  {
+    "function": "parseCurlCommand",
+    "args": [
+      "curl -d '{}' 'https://api.example.com/users'"
+    ],
+    "result": {
+      "method": "POST",
+      "url": "https://api.example.com/users",
+      "headers": {},
+      "body": "{}"
+    }
+  },
+  {
+    "function": "parseCurlCommand",
+    "args": [
+      "curl -X DELETE 'https://api.example.com/users/1'"
+    ],
+    "result": {
+      "method": "DELETE",
+      "url": "https://api.example.com/users/1",
+      "headers": {}
+    }
+  },
+  {
+    "function": "parseCurlCommand",
+    "args": [
+      "curl --request POST --url 'https://api.example.com/users' --header 'Content-Type: application/json' --data '{\"name\":\"Ada\"}'"
+    ],
+    "result": {
+      "method": "POST",
+      "url": "https://api.example.com/users",
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": "{\"name\":\"Ada\"}"
+    }
+  },
+  {
+    "function": "parseCurlCommand",
+    "args": [
+      "curl 'https://api.example.com/users' \\\n  -H 'Authorization: Bearer abc' \\\n  -X PUT"
+    ],
+    "result": {
+      "method": "PUT",
+      "url": "https://api.example.com/users",
+      "headers": {
+        "Authorization": "Bearer abc"
+      }
+    }
+  },
+  {
+    "function": "parseCurlCommand",
+    "args": [
+      "wget https://example.com"
+    ],
+    "error": "Command must start with \"curl\""
+  },
+  {
+    "function": "parseCurlCommand",
+    "args": [
+      "curl -H 'Accept: */*'"
+    ],
+    "error": "Could not find a URL in the curl command"
+  },
+  {
+    "function": "importCurlAsRestBlock",
+    "args": [
+      "curl 'https://api.example.com/users' -H 'Content-Type: application/json' --data-raw '{\"name\":\"Ada\"}'"
+    ],
+    "result": "#endpoint\nPOST https://api.example.com/users\n#headers\nContent-Type: application/json\n#body\n{\n  \"name\": \"Ada\"\n}"
+  },
+  {
+    "function": "importCurlAsGraphqlBlock",
+    "args": [
+      "curl 'https://api.example.com/graphql' -H 'content-type: application/json' --data-raw '{\"query\":\"query Foo($id: ID!) { foo(id: $id) { name } }\",\"variables\":{\"id\":\"1\"}}'"
+    ],
+    "result": "#endpoint\nhttps://api.example.com/graphql\n#headers\ncontent-type: application/json\n#variables\n{\n  \"id\": \"1\"\n}\n#query\nquery Foo($id: ID!) { foo(id: $id) { name } }"
+  },
+  {
+    "function": "importCurlAsGraphqlBlock",
+    "args": [
+      "curl 'https://api.example.com/graphql' --data-raw '{ foo { name } }'"
+    ],
+    "result": "#endpoint\nhttps://api.example.com/graphql\n#query\n{ foo { name } }"
+  },
+  {
+    "function": "importCurlAsGraphqlBlock",
+    "args": [
+      "curl 'https://api.example.com/graphql'"
+    ],
+    "error": "Could not find a GraphQL query in the curl command"
+  },
+  {
+    "function": "parseGrpcurlCommand",
+    "args": [
+      "grpcurl -plaintext -H 'authorization: ******' -d '{\"name\":\"world\"}' localhost:50051 helloworld.Greeter/SayHello"
+    ],
+    "result": {
+      "endpoint": "grpc://localhost:50051/helloworld.Greeter/SayHello",
+      "headers": {
+        "authorization": "******"
+      },
+      "body": {
+        "name": "world"
+      }
+    }
+  },
+  {
+    "function": "parseGrpcurlCommand",
+    "args": [
+      "grpcurl -d '{\"name\":\"world\"}' api.example.com:443 helloworld.Greeter/SayHello"
+    ],
+    "result": {
+      "endpoint": "grpcs://api.example.com:443/helloworld.Greeter/SayHello",
+      "headers": {},
+      "body": {
+        "name": "world"
+      }
+    }
+  },
+  {
+    "function": "parseGrpcurlCommand",
+    "args": [
+      "grpcurl -plaintext localhost:50051 helloworld.Greeter.SayHello"
+    ],
+    "result": {
+      "endpoint": "grpc://localhost:50051/helloworld.Greeter/SayHello",
+      "headers": {}
+    }
+  },
+  {
+    "function": "parseGrpcurlCommand",
+    "args": [
+      "grpcurl -plaintext localhost:50051"
+    ],
+    "error": "Could not find both a target and a Service/Method in the grpcurl command"
+  },
+  {
+    "function": "importGrpcurlAsGrpcBlock",
+    "args": [
+      "grpcurl -plaintext -H 'authorization: ******' -d '{\"name\":\"world\"}' localhost:50051 helloworld.Greeter/SayHello"
+    ],
+    "result": "#endpoint\ngrpc://localhost:50051/helloworld.Greeter/SayHello\n#headers\nauthorization: ******\n#message\n{\n  \"name\": \"world\"\n}"
+  },
+  {
+    "function": "importRequestBlock",
+    "args": [
+      "rest",
+      "curl 'https://example.com'"
+    ],
+    "result": "#endpoint\nGET https://example.com"
+  },
+  {
+    "function": "importRequestBlock",
+    "args": [
+      "mysql",
+      "curl https://example.com"
+    ],
+    "error": "Import isn't supported for mysql"
+  },
+  {
+    "function": "exportRequestBlock",
+    "args": [
+      "rest",
+      "#endpoint\nPOST https://api.example.com/users\n#headers\nContent-Type: application/json\n#body\n{\"name\":\"Ada\"}"
+    ],
+    "result": "curl \\\n  --request POST \\\n  --url 'https://api.example.com/users' \\\n  --header 'Content-Type: application/json' \\\n  --data '{\"name\":\"Ada\"}'"
+  },
+  {
+    "function": "exportRequestBlock",
+    "args": [
+      "graphql",
+      "#endpoint\nhttps://api.example.com/graphql\n#variables\n{\"id\":\"1\"}\n#query\nquery Foo($id: ID!) { foo(id: $id) { name } }"
+    ],
+    "result": "curl \\\n  --request POST \\\n  --url 'https://api.example.com/graphql' \\\n  --header 'Content-Type: application/json' \\\n  --data '{\n  \"query\": \"query Foo($id: ID!) { foo(id: $id) { name } }\",\n  \"variables\": {\n    \"id\": \"1\"\n  }\n}'"
+  },
+  {
+    "function": "exportRequestBlock",
+    "args": [
+      "grpc",
+      "#endpoint\ngrpc://localhost:50051/helloworld.Greeter/SayHello\n#headers\nx-trace-id: abc\n#message\n{\"name\":\"world\"}"
+    ],
+    "result": "grpcurl \\\n  -plaintext \\\n  -emit-defaults \\\n  -H 'x-trace-id: abc' \\\n  -d '{\n  \"name\": \"world\"\n}' \\\n  localhost:50051 \\\n  helloworld.Greeter/SayHello"
+  },
+  {
+    "function": "exportRequestBlock",
+    "args": [
+      "grpc",
+      "#endpoint\ngrpcs://api.example.com:443/pkg.Greeter/SayHello"
+    ],
+    "result": "grpcurl \\\n  -emit-defaults \\\n  api.example.com:443 \\\n  pkg.Greeter/SayHello"
+  },
+  {
+    "function": "exportRequestBlock",
+    "args": [
+      "mysql",
+      "#endpoint\nmysql://localhost/app\n\n#query\nSELECT 1"
+    ],
+    "error": "Export isn't supported for mysql"
+  },
+  {
+    "function": "formatResult",
+    "args": [
+      {
+        "columns": [
+          "a"
+        ],
+        "rows": []
+      }
+    ],
+    "result": {
+      "kind": "grid",
+      "columns": [
+        "a"
+      ],
+      "rows": []
+    }
+  },
+  {
+    "function": "formatResult",
+    "args": [
+      {
+        "ok": true
+      }
+    ],
+    "result": {
+      "kind": "json",
+      "value": {
+        "ok": true
+      }
+    }
+  },
+  {
+    "function": "formatError",
+    "args": [
+      {
+        "durationMs": 2
+      }
+    ],
+    "result": {
+      "error": "nope",
+      "durationMs": 2
+    }
+  },
+  {
+    "function": "formatMysqlTable",
+    "args": [
+      {
+        "columns": [
+          "id",
+          "name"
+        ],
+        "rows": [
+          {
+            "id": 1,
+            "name": "Ada"
+          }
+        ]
+      }
+    ],
+    "result": "+----+------+\n| id | name |\n+----+------+\n| 1  | Ada  |\n+----+------+"
+  },
+  {
+    "function": "formatMysqlVertical",
+    "args": [
+      {
+        "columns": [
+          "id",
+          "feed"
+        ],
+        "rows": [
+          {
+            "id": 1,
+            "feed": "{\n  \"a\": 1\n}"
+          },
+          {
+            "id": 2,
+            "feed": "{\n  \"b\": 2\n}"
+          }
+        ]
+      }
+    ],
+    "result": "*************************** 1. row ***************************\n  id: 1\nfeed: {\n  \"a\": 1\n}\n*************************** 2. row ***************************\n  id: 2\nfeed: {\n  \"b\": 2\n}"
+  },
+  {
+    "function": "formatConsoleResponse",
+    "args": [
+      "mysql",
+      {
+        "columns": [
+          "id"
+        ],
+        "rows": [
+          {
+            "id": 1
+          }
+        ]
+      }
+    ],
+    "result": "+----+\n| id |\n+----+\n| 1  |\n+----+"
+  },
+  {
+    "function": "formatMysqlTable",
+    "args": [
+      {
+        "columns": [
+          "id"
+        ],
+        "rows": [
+          {
+            "id": 1
+          }
+        ]
+      }
+    ],
+    "result": "+----+\n| id |\n+----+\n| 1  |\n+----+"
+  },
+  {
+    "function": "formatConsoleResponse",
+    "args": [
+      "mysql",
+      {
+        "columns": [
+          "id"
+        ],
+        "rows": [
+          {
+            "id": 1
+          }
+        ]
+      },
+      {
+        "vertical": true
+      }
+    ],
+    "result": "*************************** 1. row ***************************\nid: 1"
+  },
+  {
+    "function": "formatMysqlVertical",
+    "args": [
+      {
+        "columns": [
+          "id"
+        ],
+        "rows": [
+          {
+            "id": 1
+          }
+        ]
+      }
+    ],
+    "result": "*************************** 1. row ***************************\nid: 1"
+  },
+  {
+    "function": "formatConsoleResponse",
+    "args": [
+      "rest",
+      {
+        "body": "<pet><id>2</id></pet>"
+      }
+    ],
+    "result": "<pet><id>2</id></pet>"
+  },
+  {
+    "function": "formatConsoleResponse",
+    "args": [
+      "rest",
+      {
+        "body": "{\"ok\":true}\n"
+      }
+    ],
+    "result": "{\n  \"ok\": true\n}"
+  },
+  {
+    "function": "formatConsoleResponse",
+    "args": [
+      "graphql",
+      {
+        "body": "{\"data\":{\"country\":{\"name\":\"United States\"}}}"
+      }
+    ],
+    "result": "{\n  \"data\": {\n    \"country\": {\n      \"name\": \"United States\"\n    }\n  }\n}"
+  },
+  {
+    "function": "formatConsoleResponse",
+    "args": [
+      "grpc",
+      {
+        "body": "{\"greeting\":\"hi\"}"
+      }
+    ],
+    "result": "{\n  \"greeting\": \"hi\"\n}"
+  },
+  {
+    "function": "formatConsoleResponse",
+    "args": [
+      "graphql",
+      {
+        "body": "not json"
+      }
+    ],
+    "result": "not json"
+  }
+]

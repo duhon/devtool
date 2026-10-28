@@ -1,0 +1,69 @@
+[
+  {
+    "service": "mysql",
+    "description": "Run a SQL query against a MySQL connection.",
+    "params": [
+      {"name":"connectionString","flag":"connection","alias":"c","positional":true,"type":"string","required":true},
+      {"name":"sql","flag":"sql","alias":"q","positional":true,"type":"string","required":true},
+      {"name":"options","flag":"options","alias":"o","multi":true,"type":"keyvalue","keys":{"columns-type":"columnsType"}},
+      {"name":"columnsType","type":"string","resolve":"none"}
+    ]
+  },
+  {
+    "service": "rest",
+    "description": "Send a REST request and inspect the response.",
+    "params": [
+      {"name":"method","flag":"method","alias":"m","positional":true,"type":"string","required":true,"default":"GET"},
+      {"name":"url","flag":"endpoint","alias":"e","positional":true,"type":"string","required":true},
+      {"name":"headers","flag":"headers","alias":"H","type":"json"},
+      {"name":"body","flag":"body","alias":"b","type":"string"}
+    ]
+  },
+  {
+    "service": "graphql",
+    "description": "Send a GraphQL query or mutation and inspect the response.",
+    "params": [
+      {"name":"url","flag":"endpoint","alias":"e","positional":true,"type":"string","required":true},
+      {"name":"headers","flag":"headers","alias":"H","type":"json"},
+      {"name":"query","flag":"query","alias":"q","positional":true,"type":"string","required":true},
+      {"name":"variables","flag":"variables","alias":"v","type":"json"}
+    ]
+  },
+  {
+    "service": "grpc",
+    "description": "Make a gRPC call and inspect the response.",
+    "params": [
+      {"name":"endpoint","flag":"endpoint","alias":"e","positional":true,"type":"string","required":true},
+      {"name":"proto","flag":"proto","alias":"p","type":"string"},
+      {"name":"headers","flag":"headers","alias":"H","type":"json"},
+      {"name":"requestMessage","flag":"message","alias":"m","type":"string"}
+    ]
+  },
+  {
+    "service": "splunk",
+    "description": "Stream Splunk export results; Preview enables provisional snapshots, Offset skips rows locally, Count limits the portion (default 100, 0 = all).",
+    "params": [
+      {"name":"baseUrl","flag":"endpoint","alias":"e","positional":true,"type":"string","required":true},
+      {"name":"headers","flag":"headers","alias":"H","type":"json"},
+      {"name":"search","flag":"search","alias":"q","positional":true,"type":"string","required":true},
+      {"name":"options","flag":"options","alias":"o","multi":true,"type":"keyvalue","keys":{"from":"earliestTime","to":"latestTime","app":"app","count":"count","preview":"preview","offset":"offset","columns-type":"columnsType","columns-size":"columnsSize"}},
+      {"name":"earliestTime","type":"string"},
+      {"name":"latestTime","type":"string"},
+      {"name":"app","type":"string"},
+      {"name":"count","type":"string","resolve":"none"},
+      {"name":"preview","type":"string","resolve":"none"},
+      {"name":"offset","type":"string","resolve":"none"},
+      {"name":"columnsType","type":"string","resolve":"none"},
+      {"name":"columnsSize","type":"string","resolve":"none"}
+    ]
+  },
+  {
+    "service": "terminal",
+    "description": "Run a command through an endpoint (a local shell or an ssh connection) and stream its output.",
+    "params": [
+      {"name":"endpoint","flag":"endpoint","alias":"e","positional":true,"type":"string","required":true},
+      {"name":"env","flag":"env","alias":"v","type":"json"},
+      {"name":"command","flag":"command","alias":"c","positional":true,"type":"string","required":true}
+    ]
+  }
+]

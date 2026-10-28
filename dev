@@ -1,0 +1,7 @@
+#!/bin/sh
+
+set -eu
+
+ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+export SERVICES_DATA_DIR="${SERVICES_DATA_DIR:-$ROOT_DIR}"
+exec cargo run --quiet --manifest-path "$ROOT_DIR/Cargo.toml" -p services-native --bin services-devtools -- cli "$@"

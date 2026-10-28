@@ -1,0 +1,35 @@
+[package]
+name = "services-ui"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+services-contracts = { path = "../contracts" }
+serde.workspace = true
+serde_json.workspace = true
+regex = "1"
+url = "2"
+uuid = { version = "1.29.0", features = ["v7", "js"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+pulldown-cmark = { version = "0.13", default-features = false }
+yew = { version = "0.21", features = ["csr"] }
+wasm-bindgen = "=0.2.108"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+serde-wasm-bindgen = "0.6"
+web-sys = { version = "0.3", features = [
+  "Window", "Document", "Element", "HtmlElement", "HtmlInputElement",
+  "HtmlTextAreaElement", "HtmlSelectElement", "Node", "Storage", "Event",
+  "InputEvent", "KeyboardEvent", "MouseEvent", "PointerEvent", "DragEvent", "DataTransfer", "CssStyleDeclaration",
+  "Request", "RequestInit", "Response", "Headers", "WebSocket", "MessageEvent",
+  "RequestCredentials", "RequestCache", "AbortController", "AbortSignal",
+  "CloseEvent", "ErrorEvent", "Location", "console", "DomRect", "Navigator",
+  "Clipboard", "FocusEvent", "ResizeObserver", "BeforeUnloadEvent",
+  "IdbFactory", "IdbOpenDbRequest", "IdbDatabase", "IdbObjectStore",
+  "IdbRequest", "IdbTransaction", "IdbTransactionMode", "DomException"
+] }
