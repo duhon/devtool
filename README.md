@@ -96,8 +96,11 @@ directories under `~/Library/Application Support/Google/` and in Chromium's
 standard directory are adopted too, including earlier manual registrations.
 
 The application distribution is not Apple-notarized. Gatekeeper or corporate
-policy may restrict installation/execution. The installer does not disable
-macOS security checks. Dependency licenses accompany the distribution.
+policy may restrict installation/execution. In-app updates locally ad-hoc sign
+the two verified staged native executables and remove their quarantine markers
+before checking runtime health. This changes their file-level quarantine policy; it
+does not provide a Developer ID signature or notarization. No global macOS
+security settings are changed. Dependency licenses accompany the distribution.
 
 ## Build and publish
 
@@ -147,22 +150,19 @@ same directory, then run `bash install.sh` there. The installer's existing
 remote fallback still uses branch-based public downloads; piping a private
 Release URL to Bash is not supported.
 
-### In-app updater preview
+### In-app updates
 
-Version 2.6.0 is a preview for personal verification. Install the local 2.5.24
-bootstrap containing the native downloader first, then use Settings to test
-the update to 2.6.0 after the GitHub release is published.
-The bootstrap is in `dist/native-bootstrap-2.5.24/`; its installer must be run
-manually, followed by reloading the installed extension in Chrome.
-Earlier local bootstraps add a quarantine marker themselves and must be
-replaced before retrying this scenario.
+Version 2.6.1 includes the signing and quarantine handling personally verified
+with the local 2.5.26-to-2.6.0 Chrome update. Chrome-origin files can receive
+quarantine metadata even when downloaded by the native runtime; local ad-hoc
+signing alone did not resolve the resulting Gatekeeper rejection.
+
+Existing 2.6.0 and older installations execute their own, older installer.
+Install 2.6.1 manually once and reload the extension to enable the corrected
+updater for both native executables. Alternatively, manually install the local
+`dist/native-bootstrap-2.5.27/` package, reload the extension, then install 2.6.1
+through Settings. The earlier 2.5.26 bootstrap prepares only the runtime.
 CI derives published versions from `RELEASE_NOTES.md`.
-
-The preview is not Developer ID signed or notarized. macOS Gatekeeper blocked
-the new runtime in the isolated Chrome update scenario. A data-only diagnostic
-also confirmed that Chrome-origin file creation receives quarantine metadata,
-unlike the terminal-origin baseline. Personal acceptance of the full update is
-pending; system protections are not disabled or bypassed.
 
 Install the update-capable version manually once and reload the unpacked
 extension in Chrome. It accesses GitHub release metadata but requires neither
@@ -179,7 +179,18 @@ verify the SHA-256 and package identity, install transactionally, and reload
 the extension. Downloads use private temporary files, a five-minute deadline
 and a 2 GiB limit; redirects stay on approved HTTPS GitHub asset hosts.
 The native downloader does not add a quarantine marker. Any already-existing
-quarantine is retained through extraction and staging, never removed.
+quarantine is retained through extraction and staging. After package validation,
+the automatic-update installer locally ad-hoc signs the staged `services-devtools`
+runtime and `services-install` updater, removes only their `com.apple.quarantine`
+attributes, verifies both signatures and absence of quarantine, and checks
+runtime health before activation. Preparing both files avoids leaving the next
+installer quarantined. It does not
+recursively clear attributes, strip quarantine from the archive or other files,
+or change global security settings. Choosing Update authorizes this handling
+of the two verified executables. It is not Developer ID signing or notarization.
+Private signing and attribute diagnostics are saved under
+`~/Library/Application Support/ServicesDevTools/data/update-local-signing.json`.
+The next installer's report is saved beside it as `update-installer-signing.json`.
 Failed downloads, access errors, and installation
 failures are shown explicitly. A published release must exist before checks
 can succeed.

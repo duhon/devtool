@@ -1,5 +1,14 @@
 # Release notes
 
+## 2.6.1
+
+- Fix the macOS in-app updater using the signing and quarantine handling personally verified with local 2.5.26.
+- After validating an approved archive, locally ad-hoc sign both staged native executables (`services-devtools` and `services-install`), remove only their `com.apple.quarantine`, verify their signatures and absence of quarantine, then check runtime health before activation. Preparing the next installer avoids leaving it quarantined for a subsequent update.
+- Keep other files' quarantine metadata, archive/source/version/permission checks, user data and transactional rollback. No global macOS security settings are changed.
+- Preserve private diagnostics at `data/update-local-signing.json` and `data/update-installer-signing.json`; signing, quarantine-removal and health failures stop installation instead of activating broken executables.
+- Existing 2.6.0 and older installations still use their old installer. Install 2.6.1 manually once and reload the extension, or install the local 2.5.27 bootstrap first and update through Settings, to enable the corrected updater for both executables.
+- Releases remain ad-hoc signed, not Developer ID signed or notarized. The updater intentionally removes quarantine from the two verified staged executables; managed-device policies can still restrict execution.
+
 ## 2.6.0
 
 - Download approved public GitHub release archives directly through the native Rust runtime; Chrome no longer downloads the archive.

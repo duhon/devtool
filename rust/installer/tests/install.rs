@@ -93,6 +93,8 @@ fn change_version(payload: &std::path::Path, version: &str) {
 fn archive_update_preserves_data_and_refuses_repeat_or_downgrade() {
     let (directory, home, payload, _) = fixture();
     let paths = install(&home, &payload).unwrap();
+    assert!(!paths.data.join("update-local-signing.json").exists());
+    assert!(!paths.data.join("update-installer-signing.json").exists());
     fs::write(paths.data.join("saved-request"), "keep this request").unwrap();
     change_version(&payload, "2.0.0");
     let path = directory.path().join("update.tar.gz");
@@ -103,6 +105,34 @@ fn archive_update_preserves_data_and_refuses_repeat_or_downgrade() {
     )
     .unwrap();
     assert_eq!(installed["version"], "2.0.0");
+    let signing: Value =
+        serde_json::from_slice(&fs::read(paths.data.join("update-local-signing.json")).unwrap())
+            .unwrap();
+    assert_eq!(signing["phase"], "ready-for-health-check");
+    assert_eq!(signing["signing"]["success"], true);
+    assert_eq!(signing["verification"]["success"], true);
+    assert_eq!(signing["quarantineAbsent"], true);
+    assert!(signing["after"]["quarantine"].is_null());
+    assert!(
+        signing["stagedExecutable"]
+            .as_str()
+            .unwrap()
+            .contains(".extension-install-")
+    );
+    let installer_signing: Value = serde_json::from_slice(
+        &fs::read(paths.data.join("update-installer-signing.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(installer_signing["phase"], "ready-for-health-check");
+    assert_eq!(installer_signing["signing"]["success"], true);
+    assert_eq!(installer_signing["verification"]["success"], true);
+    assert_eq!(installer_signing["quarantineAbsent"], true);
+    assert!(
+        installer_signing["stagedExecutable"]
+            .as_str()
+            .unwrap()
+            .ends_with("/native/bin/services-install")
+    );
     assert_eq!(
         fs::read_to_string(paths.data.join("saved-request")).unwrap(),
         "keep this request"
@@ -113,6 +143,95 @@ fn archive_update_preserves_data_and_refuses_repeat_or_downgrade() {
     change_version(&payload, "1.0.0");
     let sha = archive(&payload, &path);
     assert!(services_installer::updates::install_archive(&home, &path, &sha, "1.0.0").is_err());
+}
+
+#[test]
+fn quarantined_archive_update_clears_only_the_two_staged_executable_markers() {
+    let (directory, home, payload, _) = fixture();
+    let paths = install(&home, &payload).unwrap();
+    change_version(&payload, "2.0.0");
+    let path = directory.path().join("update.tar.gz");
+    let sha = archive(&payload, &path);
+    let marked = std::process::Command::new("/usr/bin/xattr")
+        .args([
+            "-w",
+            "com.apple.quarantine",
+            "0081;6ae242f3;Google Chrome for Testing;",
+        ])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(marked.status.success());
+    services_installer::updates::install_archive(&home, &path, &sha, "2.0.0").unwrap();
+    let signing: Value =
+        serde_json::from_slice(&fs::read(paths.data.join("update-local-signing.json")).unwrap())
+            .unwrap();
+    assert!(signing["before"]["quarantine"].is_array());
+    assert_eq!(signing["quarantineRemoval"]["attempted"], true);
+    assert_eq!(signing["quarantineRemoval"]["success"], true);
+    assert_eq!(signing["quarantineAbsent"], true);
+    assert_eq!(signing["phase"], "ready-for-health-check");
+    let installer_signing: Value = serde_json::from_slice(
+        &fs::read(paths.data.join("update-installer-signing.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(installer_signing["before"]["quarantine"].is_array());
+    assert_eq!(installer_signing["quarantineRemoval"]["success"], true);
+    assert_eq!(installer_signing["quarantineAbsent"], true);
+    assert_eq!(installer_signing["phase"], "ready-for-health-check");
+    for name in ["services-devtools", "services-install"] {
+        let executable = paths.base.join("extension/native/bin").join(name);
+        let attributes = std::process::Command::new("/usr/bin/xattr")
+            .arg(&executable)
+            .output()
+            .unwrap();
+        assert!(attributes.status.success());
+        assert!(!String::from_utf8_lossy(&attributes.stdout).contains("com.apple.quarantine"));
+    }
+    for unchanged in [path, paths.base.join("extension/manifest.json")] {
+        let quarantine = std::process::Command::new("/usr/bin/xattr")
+            .args(["-p", "com.apple.quarantine"])
+            .arg(&unchanged)
+            .output()
+            .unwrap();
+        assert!(quarantine.status.success(), "{}", unchanged.display());
+    }
+}
+
+#[test]
+fn failed_local_signing_preserves_the_installed_version_and_diagnostics() {
+    for (name, diagnostics) in [
+        ("services-devtools", "update-local-signing.json"),
+        ("services-install", "update-installer-signing.json"),
+    ] {
+        let (directory, home, payload, _) = fixture();
+        let paths = install(&home, &payload).unwrap();
+        fs::write(paths.data.join("saved-request"), "preserve").unwrap();
+        change_version(&payload, "2.0.0");
+        let executable = fs::read(std::env::current_exe().unwrap()).unwrap();
+        fs::write(payload.join("native/bin").join(name), &executable[..64]).unwrap();
+        let path = directory.path().join("update.tar.gz");
+        let sha = archive(&payload, &path);
+        let error =
+            services_installer::updates::install_archive(&home, &path, &sha, "2.0.0").unwrap_err();
+        assert!(
+            format!("{error:#}").contains("Local ad-hoc signing failed"),
+            "{name}: {error:#}"
+        );
+        let installed: Value = serde_json::from_slice(
+            &fs::read(paths.base.join("extension/native/distribution.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(installed["version"], "1.0.0");
+        assert_eq!(
+            fs::read_to_string(paths.data.join("saved-request")).unwrap(),
+            "preserve"
+        );
+        let signing: Value =
+            serde_json::from_slice(&fs::read(paths.data.join(diagnostics)).unwrap()).unwrap();
+        assert_eq!(signing["signing"]["success"], false);
+        assert_eq!(signing["phase"], "after-signing");
+    }
 }
 
 #[test]

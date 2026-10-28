@@ -16,6 +16,8 @@ use std::{
 };
 
 mod browser_profiles;
+#[cfg(target_os = "macos")]
+mod local_signing;
 pub mod quarantine;
 pub mod updates;
 
@@ -678,10 +680,16 @@ fn install_payload(home: &Path, payload: &Path, automatic: bool) -> Result<Locat
                 launcher.as_bytes(),
                 0o755,
             )?;
-            check_host(
-                &staged_extension.join("native/bin/services-devtools"),
-                &paths.data,
-            )?;
+            let staged_host = staged_extension.join("native/bin/services-devtools");
+            #[cfg(target_os = "macos")]
+            if automatic {
+                local_signing::resign(&staged_host, &paths.data.join("update-local-signing.json"))?;
+                local_signing::resign(
+                    &staged_extension.join("native/bin/services-install"),
+                    &paths.data.join("update-installer-signing.json"),
+                )?;
+            }
+            check_host(&staged_host, &paths.data)?;
             if previous_extension != ExtensionPath::Missing {
                 fs::rename(&extension, &extension_backup)?;
                 extension_backed_up = true;

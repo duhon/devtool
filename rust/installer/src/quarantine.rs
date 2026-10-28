@@ -1,7 +1,7 @@
 use std::{io, path::Path};
 
 #[cfg(target_os = "macos")]
-fn read(path: &Path) -> io::Result<Option<Vec<u8>>> {
+pub(super) fn read(path: &Path) -> io::Result<Option<Vec<u8>>> {
     use std::{ffi::CString, os::unix::ffi::OsStrExt};
     let path = CString::new(path.as_os_str().as_bytes())?;
     let size = unsafe {
