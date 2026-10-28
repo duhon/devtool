@@ -156,29 +156,34 @@ pub async fn run(runtime: Runtime, args: &[String]) -> Result<i32> {
     }
     let params = parse_params(&config, args)?;
     if name == "terminal" {
+        let mut stdout = tokio::io::stdout();
+        let mut stderr = tokio::io::stderr();
         let cancel = CancellationToken::new();
         let (tx, mut rx) = mpsc::channel(128);
         let run = runtime.registry.stream(&name, &params, cancel.clone(), tx);
         tokio::pin!(run);
         let mut interrupted = false;
-        let info = loop {
+        let result = loop {
             tokio::select! {
                 event=rx.recv()=>if let Some(event)=event {
                     let data=event["data"].as_str().unwrap_or("").as_bytes();
-                    if event["type"]=="stderr"{tokio::io::stderr().write_all(data).await?;}else{tokio::io::stdout().write_all(data).await?;}
+                    if event["type"]=="stderr"{stderr.write_all(data).await?;}else{stdout.write_all(data).await?;}
                 },
-                result=&mut run=>break result?,
+                result=&mut run=>break result,
                 _=tokio::signal::ctrl_c(),if !interrupted=>{interrupted=true;cancel.cancel();}
             }
         };
         while let Ok(event) = rx.try_recv() {
             let data = event["data"].as_str().unwrap_or("").as_bytes();
             if event["type"] == "stderr" {
-                tokio::io::stderr().write_all(data).await?;
+                stderr.write_all(data).await?;
             } else {
-                tokio::io::stdout().write_all(data).await?;
+                stdout.write_all(data).await?;
             }
         }
+        stdout.flush().await?;
+        stderr.flush().await?;
+        let info = result?;
         if let Some(error) = info["error"].as_str() {
             eprintln!("{error}");
         }

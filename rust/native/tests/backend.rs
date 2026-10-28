@@ -2361,6 +2361,27 @@ fn binary_default_native_fragmented_health_eof_cli_help_and_version() {
     assert_eq!(output.stdout, b"cli-fixture");
 }
 
+#[test]
+fn binary_terminal_flushes_both_output_streams_before_exit() {
+    let data = Data::new();
+    for iteration in 0..32 {
+        let code = if iteration % 2 == 0 { 7 } else { 0 };
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_services-devtools"))
+            .args([
+                "cli",
+                "terminal",
+                "sh -c",
+                &format!("printf cli-fixture; printf cli-error >&2; exit {code}"),
+            ])
+            .env("SERVICES_DATA_DIR", &data.0)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(code), "iteration {iteration}");
+        assert_eq!(output.stdout, b"cli-fixture", "iteration {iteration}");
+        assert_eq!(output.stderr, b"cli-error", "iteration {iteration}");
+    }
+}
+
 #[tokio::test]
 async fn splunk_rate_limit_retries_once_preserves_trace_and_header_date() {
     let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
