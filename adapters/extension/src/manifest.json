@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Services (DevTools)",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA72tc+/6rKrWITn3PewvOSgPp6c+szIECjUCz0mDuRGF+oMxGifuWzd9VrNUBuUvOqqhPzaznhdGdO2JBStCwRzi7xwp5dXUzKi4qM6UtZm2jEWZwh2hz6773FX/yv4PBRyzDU7GIAvmqc/04P5byGT1mo6vCoMYzB5uz7zWlgbpEjquj5+/gXtRkOg5QkkoSXFPkq6bH0QmhPkN9zRipQRREmsJM02x+XN7A/4jo+fgE6davGyyDF00bclHmkUkCu/XRxmpOscRbiMa1YrOXJEX4cfINK2zWKNcGA7eEs93yyjLTFt3RyV8a+Yy7RKNdhkQ4anulvL5Wa43suslyqQIDAQAB",
   "description": "A DevTools \"Services\" panel: one tab bar over the shared app-shell for MySQL, REST, GraphQL, gRPC, Splunk and Terminal, talking to a native-messaging host.",
   "devtools_page": "devtools.html",

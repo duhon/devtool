@@ -8,6 +8,7 @@ use super::{
     views::{ConsoleStatus, OperationStatus, indicator},
     window,
 };
+use crate::activity::Indicator;
 use crate::{console, format, profiles, storage};
 use serde_json::{Value, json};
 use services_contracts::manifest::{DiscoveryKind, View};
@@ -223,6 +224,8 @@ pub struct App {
     history_error_seen: bool,
     updates: updates::State,
     settings_status: Option<OperationStatus>,
+    /// Start of the Settings warning or error last shown, and when it was first shown.
+    settings_seen: Option<(f64, f64)>,
     settings_visited: bool,
     console_service: String,
     console_order: Vec<String>,
@@ -316,6 +319,7 @@ impl Component for App {
             history_error_seen: false,
             updates: updates::State::default(),
             settings_status: None,
+            settings_seen: None,
             settings_visited: false,
             console_service,
             console_order,
@@ -1441,9 +1445,20 @@ impl Component for App {
     fn rendered(&mut self, _: &Context<Self>, _: bool) {
         self.observe_console_status();
         if self.console_panel == Some(ConsolePanel::Settings) && !self.hidden {
-            self.updates.signal.observe(self.updates.indicator());
-            if let Some(status) = self.settings_status.as_mut() {
-                status.observe();
+            let shown = self
+                .settings_operation()
+                .map(|status| (status.started, status.indicator()));
+            let operation = shown.is_some();
+            let (started, state) =
+                shown.unwrap_or((self.updates.status.started, self.updates.indicator()));
+            if matches!(state, Indicator::Warning | Indicator::Error)
+                && !self.settings_seen.is_some_and(|(seen, _)| seen == started)
+            {
+                self.settings_seen = Some((started, js_sys::Date::now()));
+            }
+            match self.settings_status.as_mut().filter(|_| operation) {
+                Some(status) => status.observe(),
+                None => self.updates.signal.observe(self.updates.indicator()),
             }
         }
     }
@@ -1484,10 +1499,27 @@ impl App {
         }
     }
 
+    /// Settings shows its newest operation, except that one which finished quietly
+    /// never hides an older warning or error before it has been shown.
     fn settings_operation(&self) -> Option<&OperationStatus> {
-        self.settings_status
-            .as_ref()
-            .filter(|status| status.started >= self.updates.status.started)
+        let operation = self.settings_status.as_ref()?;
+        let current = (operation.started, operation.indicator());
+        let update = (self.updates.status.started, self.updates.indicator());
+        let newest = current.0 >= update.0;
+        let (newer, older) = if newest {
+            (current, update)
+        } else {
+            (update, current)
+        };
+        let unseen = matches!(older.1, Indicator::Warning | Indicator::Error)
+            && !matches!(
+                newer.1,
+                Indicator::Warning | Indicator::Error | Indicator::Running
+            )
+            && !self
+                .settings_seen
+                .is_some_and(|(started, at)| started == older.0 && at < newer.0);
+        (newest != unseen).then_some(operation)
     }
 
     fn settings_indicator(&self) -> crate::activity::Indicator {

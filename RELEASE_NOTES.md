@@ -1,5 +1,10 @@
 # Release notes
 
+## 3.0.1
+
+- Settings no longer hides an unseen warning or error, such as a failed background update
+  check, behind a newer successful operation like loading the Copilot models.
+
 ## 3.0.0
 
 - The Console is the only interface. The per-service forms, service picker and O button are

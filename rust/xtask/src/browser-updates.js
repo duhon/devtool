@@ -1,5 +1,5 @@
 (async () => {
-  const {assert, wait, testid, click, openConsole} = testDriver;
+  const {assert, wait, testid, click, openConsole, activateSession} = testDriver;
   // A fresh panel: wait for the restored Console session before using its toolbar.
   await openConsole();
   const status = () => testid('settings-update-status');
@@ -144,5 +144,24 @@
     updateFixture.installResult = null;
   }
   await click(testid('console-settings-toggle'));
+  // A session switch rechecks updates in the background; the model catalog that
+  // loads later when Settings opens must not hide that unseen failure.
+  const light = id => testid(id).querySelector('.console-state-light').dataset.state;
+  updateFixture.error = 'signed out';
+  try {
+    await activateSession(0);
+    await wait(() => light('console-settings-toggle') === 'error',
+      () => `A failed background update check must illuminate Settings red: ${light('console-settings-toggle')}`);
+    await click(testid('console-settings-toggle'));
+    await wait(() => testid('agent-model-input') && !testid('agent-model-input').disabled,
+      () => `Model settings did not load: ${text()}`);
+    assert(text().includes('HTTP 404') && light('settings-title') === 'error',
+      `A newer successful Settings operation must not hide an unseen update error: ${text()}`);
+    await click(testid('console-settings-toggle'));
+    assert(light('console-settings-toggle') === 'ready',
+      'Viewing the update error must acknowledge the traffic-light notification');
+  } finally {
+    updateFixture.error = null;
+  }
   return true;
 })()
