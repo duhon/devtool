@@ -27,7 +27,7 @@ The driver talks to Chrome through the DevTools Protocol from Rust, without
 Node.js or Playwright; browser-only JavaScript fixtures run inside Chrome and
 the fixture server is Rust. Install Chrome for Testing or Chromium and set
 `CHROME_BIN` if it is not in `/Applications`; an existing cached Chromium is
-also found, and no browser is downloaded (CI installs stable Chrome with
-`browser-actions/setup-chrome`). The clean-install check also verifies
+also found, and no browser is downloaded (CI installs a pinned Chrome version
+with `browser-actions/setup-chrome`). The clean-install check also verifies
 registration of an already-running custom Chrome without a restart. All test
 installations, environment files and Variables are disposable.
