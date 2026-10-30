@@ -1,0 +1,17 @@
+{
+  "id": "echo",
+  "name": "Echo",
+  "description": "Example module: sends the text of a check back.",
+  "params": [
+    {"name": "endpoint", "flag": "endpoint", "alias": "e", "positional": true, "type": "string", "required": true},
+    {"name": "text", "flag": "text", "alias": "t", "positional": true, "type": "string", "required": true}
+  ],
+  "console": {
+    "sections": [
+      {"name": "endpoint", "shape": "line", "language": "endpoint", "param": "endpoint"},
+      {"name": "text", "shape": "block", "param": "text"}
+    ],
+    "payload": "text",
+    "response": "body-headers"
+  }
+}

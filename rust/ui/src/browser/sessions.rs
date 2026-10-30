@@ -4,11 +4,7 @@ use super::{
     transport::{Reply, Transport},
     window,
 };
-use crate::{
-    console, descriptors,
-    sessions::{Library, Snapshot},
-    storage::State,
-};
+use crate::sessions::{Library, Snapshot};
 use js_sys::Promise;
 use serde_json::json;
 use std::{
@@ -266,7 +262,14 @@ impl PartialEq for AppProps {
             && Rc::ptr_eq(&self.sessions, &other.sessions)
     }
 }
+/// `restored`: the module list came from the panel's cache, so the host is not asked first.
+#[derive(Properties, PartialEq)]
+pub struct HostProps {
+    pub restored: bool,
+}
 pub enum Msg {
+    Modules(Reply),
+    ModulesReady,
     Loaded(Result<(Database, Option<Library>), String>),
     Imported(Result<Library, String>),
     Storage,
@@ -283,6 +286,9 @@ pub struct Host {
     storage_epoch: u64,
     database: Option<Database>,
     loading: bool,
+    /// The console parts of packaged modules are attached; the console waits for them so
+    /// a fresh panel opens on the same tabs and can run checks at once.
+    modules_ready: bool,
     unsaved: Rc<Cell<bool>>,
     before_unload: Closure<dyn FnMut(BeforeUnloadEvent)>,
 }
@@ -322,7 +328,7 @@ impl Host {
 }
 impl Component for Host {
     type Message = Msg;
-    type Properties = ();
+    type Properties = HostProps;
     fn create(ctx: &Context<Self>) -> Self {
         let unsaved = Rc::new(Cell::new(false));
         let dirty = unsaved.clone();
@@ -348,14 +354,38 @@ impl Component for Host {
             storage_epoch: 0,
             database: None,
             loading: false,
+            modules_ready: false,
             unsaved,
             before_unload,
         };
+        if ctx.props().restored {
+            super::module_ui::prepare(&this.transport, ctx.link().callback(|_| Msg::ModulesReady));
+        } else {
+            this.transport.request(
+                json!({"service":"modules"}),
+                false,
+                ctx.link().callback(Msg::Modules),
+            );
+        }
         this.load(ctx);
         this
     }
     fn update(&mut self, ctx: &Context<Self>, msg: Msg) -> bool {
         match msg {
+            Msg::Modules(reply) => {
+                // Without a module list the console opens with the built-in modules.
+                if let Reply::Result(value) = reply
+                    && let Err(error) = super::accept_modules(&value)
+                {
+                    web_sys::console::warn_1(&format!("Modules: {error}").into());
+                }
+                super::module_ui::prepare(
+                    &self.transport,
+                    ctx.link().callback(|_| Msg::ModulesReady),
+                );
+                return false;
+            }
+            Msg::ModulesReady => self.modules_ready = true,
             Msg::Storage => {
                 if let Some(store) = &self.store {
                     store.borrow_mut().refresh();
@@ -408,16 +438,9 @@ impl Component for Host {
                             .map_err(|e| e.to_string())?,
                         ..Default::default()
                     };
-                    if let Some(raw) = read(descriptors::store_key("console"))? {
+                    if let Some(raw) = read("servicesConsole.state")? {
                         snapshot.console = serde_json::from_str(&raw)
                             .map_err(|e| format!("Cannot import saved checks: {e}"))?;
-                    }
-                    for service in console::SERVICES {
-                        if let Some(raw) = read(descriptors::store_key(service))? {
-                            snapshot
-                                .legacy
-                                .insert(service.into(), State::restore(service, &raw)?);
-                        }
                     }
                     for (key, drafts) in [
                         (
@@ -502,7 +525,7 @@ impl Component for Host {
         true
     }
     fn view(&self, ctx: &Context<Self>) -> Html {
-        if let Some(store) = &self.store {
+        if let Some(store) = self.store.as_ref().filter(|_| self.modules_ready) {
             html! {<>
                 if let Some(error)=&self.error {<div class="banner banner-error" role="alert">{error}<button onclick={ctx.link().callback(|_|Msg::Retry)}>{"Retry"}</button></div>}
                 <App key={format!("{}:{}",self.active,self.epoch)} sessions={store.clone()} session_id={self.active} storage_epoch={self.storage_epoch} onselect={ctx.link().callback(Msg::Select)} onretry={ctx.link().callback(|_|Msg::Retry)}/>

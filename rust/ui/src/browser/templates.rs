@@ -154,7 +154,7 @@ impl Component for Templates {
             for key in drafts.keys() {
                 let (service, section) =
                     key.split_once('/').ok_or("Invalid Templates draft key")?;
-                if !templates::sections(service).contains(&section) {
+                if !crate::services::has_template_section(service, section) {
                     return Err("Invalid Templates draft section".into());
                 }
             }
@@ -176,7 +176,7 @@ impl Component for Templates {
     fn update(&mut self, ctx: &Context<Self>, msg: Msg) -> bool {
         match msg {
             Msg::Select(section) => {
-                if templates::sections(&ctx.props().owner).contains(&section.as_str()) {
+                if crate::services::has_template_section(&ctx.props().owner, &section) {
                     self.selected.insert(ctx.props().owner.clone(), section);
                 }
             }
@@ -411,8 +411,8 @@ impl Component for Templates {
         let heading = if ctx.props().visible {
             ctx.props().header.cast::<web_sys::Element>().map(|host|yew::create_portal(html!{<>
             <div class="console-panel-tabs" data-testid="templates-sections" role="tablist" aria-label="Template sections">
-                {for templates::sections(service).iter().map(|name|{
-                    let selected=*name==section;let value=(*name).to_owned();
+                {for crate::services::template_sections(service).into_iter().map(|name|{
+                    let selected=name==section;let value=name.clone();
                     html!{<button type="button" class={classes!("tab-button",selected.then_some("active"))} role="tab"
                         aria-selected={selected.to_string()} data-testid={format!("templates-section-{name}")}
                         onclick={ctx.link().callback(move |_|Msg::Select(value.clone()))}>{name}</button>}

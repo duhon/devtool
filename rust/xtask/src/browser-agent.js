@@ -1,13 +1,13 @@
 (async () => {
-  const { assert, wait, sleep, click, doubleClick, testid, cm, choose, setSource, key, assertNativeScrollbars } = testDriver;
-  await choose('console');
+  const { assert, wait, holds, settle, click, doubleClick, testid, cm, openConsole, setSource, key, assertNativeScrollbars } = testDriver;
+  await openConsole();
   await click(testid('console-service-rest'));
   await click(testid('console-agent-toggle'));
   await wait(() => document.querySelector('[data-testid="agent-composer"]'),
     () => `Agent did not mount: ${document.querySelector('[data-testid="console-tool-panel"]')?.textContent}`);
   const source = `#check Agent acceptance\n#endpoint\nGET ${fixtureUrl}/agent-before\n\n#headers\nX-Token: {{second:TOKEN}}\n`;
   setSource(cm('console-editor'), source);
-  await sleep(50);
+  await settle();
   const textarea = testid('agent-composer');
   const input = text => {
     textarea.value = text;
@@ -18,7 +18,7 @@
     input(text);
     await wait(() => testid('agent-stop').disabled);
     textarea.focus();
-    await key('Shift+Enter');
+    await key('Enter');
   };
   const completed = async text => {
     await wait(() => transcript().includes(text),
@@ -26,13 +26,19 @@
     await wait(() => testid('agent-stop').disabled);
   };
   assert(!document.querySelector('[data-testid="agent-share-context"]'), 'Context sharing must not require a checkbox');
-  assert(!document.querySelector('[data-testid="agent-send"]'), 'Sending must use Shift+Enter without a Send button');
+  assert(!document.querySelector('[data-testid="agent-send"]'), 'Sending must use Enter without a Send button');
+  assert(!textarea.getAttribute('placeholder') && !textarea.getAttribute('title'),
+    'The composer must not display placeholder text or hints');
+  assert(textarea.getAttribute('aria-keyshortcuts') === 'Enter', 'The accessible send shortcut must match Enter');
   textarea.focus();
-  await key('Shift+Enter');
+  await key('Enter');
   assert(testid('agent-stop').disabled && textarea.value === '', 'An empty keyboard send must not start a turn');
   input('agent hello');
-  await key('Shift+Enter');
+  await key('Enter');
   await completed('Copilot session ready');
+  assert([...testid('agent-transcript').querySelectorAll('.agent-message-user, .agent-message-assistant')]
+    .every(message => !message.querySelector(':scope > strong')),
+    'User and assistant messages must not show author labels');
   assert(testid('agent-transcript').querySelectorAll('.agent-message-assistant').length === 1,
     'Final assistant messages must replace streamed deltas without duplication');
   const assistantCount = () => testid('agent-transcript').querySelectorAll('.agent-message-assistant').length;
@@ -67,25 +73,25 @@
   input(markdownPrompt);
   textarea.focus();
   const composing = new KeyboardEvent('keydown', {
-    key: 'Enter', shiftKey: true, isComposing: true, bubbles: true, cancelable: true,
+    key: 'Enter', isComposing: true, bubbles: true, cancelable: true,
   });
   textarea.dispatchEvent(composing);
   assert(!composing.defaultPrevented && testid('agent-stop').disabled,
     'IME composition must not trigger sending');
   const repeated = new KeyboardEvent('keydown', {
-    key: 'Enter', shiftKey: true, repeat: true, bubbles: true, cancelable: true,
+    key: 'Enter', repeat: true, bubbles: true, cancelable: true,
   });
   textarea.dispatchEvent(repeated);
   assert(repeated.defaultPrevented && textarea.value === markdownPrompt,
-    'Holding Shift+Enter must not send repeatedly or insert newlines');
-  await key('Enter');
-  await wait(() => textarea.value === `${markdownPrompt}\n`, 'Enter must insert a newline');
-  assert(testid('agent-stop').disabled, 'Enter alone must not send');
+    'Holding Enter must not send repeatedly or insert newlines');
   await key('Shift+Enter');
+  await wait(() => textarea.value === `${markdownPrompt}\n`, 'Shift+Enter must insert a newline');
+  assert(testid('agent-stop').disabled, 'Shift+Enter must not send');
+  await key('Enter');
   await completed('Markdown ready');
   assertNativeScrollbars(testid('agent-transcript'));
   assertNativeScrollbars(textarea);
-  assert(textarea.value === '', 'Shift+Enter must send and clear the draft');
+  assert(textarea.value === '', 'Enter must send and clear the draft');
   const formatted = [...testid('agent-transcript').querySelectorAll('.agent-markdown')].at(-1);
   assert(formatted.querySelector('h2')?.textContent === 'Formatted reply', 'Markdown headings');
   assert(formatted.querySelector('li strong')?.textContent === 'Method and URL:', 'Markdown lists and bold text');
@@ -132,7 +138,7 @@
   assert(editor.getValue().includes(`${fixtureUrl}/agent-before`), 'Omitted connection directives must be preserved locally');
   editor.undo();
   await wait(() => editor.getValue() === source, 'Agent edits must be one normal Undo step');
-  await sleep(30);
+  await settle();
   const before = editor.getValue();
   await send('agent stale edit');
   await completed('Stale edit rejected');
@@ -153,15 +159,14 @@
   const initialCount = await count();
   const runSource = source.replace('/agent-before', '/agent-run');
   setSource(editor, runSource);
-  await sleep(50);
+  await settle();
   await send('agent run denied');
   await wait(() => document.querySelector('[data-testid="agent-run-approval"]'));
-  await sleep(100);
-  assert(await count() === initialCount, 'Agent must never execute before approval');
+  await holds(async () => await count() === initialCount, 'Agent must never execute before approval', 100);
   const sentBeforeBusyShortcut = testid('agent-transcript').querySelectorAll('.agent-message-user').length;
   input('Keep this draft while running');
   textarea.focus();
-  await key('Shift+Enter');
+  await key('Enter');
   assert(testid('agent-transcript').querySelectorAll('.agent-message-user').length === sentBeforeBusyShortcut
     && textarea.value === 'Keep this draft while running', 'Keyboard sending must respect an active turn');
   await click(testid('agent-deny-run'));
@@ -170,12 +175,12 @@
   await send('agent run stale');
   await wait(() => document.querySelector('[data-testid="agent-run-approval"]'));
   editor.replaceRange('\n# changed while waiting', { line: editor.lastLine(), ch: editor.getLine(editor.lastLine()).length });
-  await sleep(50);
+  await settle();
   await click(testid('agent-approve-run'));
   await completed('CONFLICT');
   assert(await count() === initialCount, 'Approval must be bound to the exact request revision');
   setSource(editor, runSource);
-  await sleep(50);
+  await settle();
   await send('agent stop');
   await wait(() => document.querySelector('[data-testid="agent-run-approval"]'));
   await click(testid('agent-stop'));
@@ -211,7 +216,7 @@
   assert(testid('console-service-mysql').classList.contains('active'), 'Agent must visibly select services');
   await click(testid('console-service-rest'));
   input('Draft survives panel changes');
-  await sleep(30);
+  await settle();
   await click(testid('console-variables-toggle'));
   await click(testid('console-agent-toggle'));
   assert(testid('agent-composer').value === 'Draft survives panel changes', 'Closing Agent must preserve drafts');

@@ -1,5 +1,5 @@
 (async () => {
-  const { assert, wait, sleep, click, testid, cm, choose, setSource, key, assertSignalGeometry } = testDriver;
+  const { assert, wait, holds, stable, click, testid, cm, openConsole, setSource, key, assertSignalGeometry } = testDriver;
   const editor = () => cm('console-editor');
   const source = () => editor().getValue();
   const status = () => document.querySelector('.console-status');
@@ -29,6 +29,11 @@
     }
     await wait(() => document.querySelector('[data-testid="agent-composer"]'));
   };
+  // Parses the rendered elapsed clock ("350ms", "1.2s", "1min") into milliseconds.
+  const elapsedMs = element => {
+    const match = element.querySelector('.console-status-elapsed')?.textContent.match(/(\d+(?:\.\d+)?)\s*(ms|s|min)\b/);
+    return match ? Number(match[1]) * {ms: 1, s: 1000, min: 60000}[match[2]] : NaN;
+  };
   const ticks = name => (source().match(new RegExp(`${name}-tick`, 'g')) || []).length;
   const section = name => {
     const lines = source().split('\n');
@@ -37,7 +42,7 @@
     return index < 0 ? '' : lines.slice(starts[index] + 1, starts[index + 1] ?? lines.length).join('\n');
   };
   const stopped = name => /#responce [^\n]+ · Stopped/.test(section(name));
-  await choose('console');
+  await openConsole();
   await click(testid('console-service-terminal'));
   setSource(editor(), `${terminal('duplicate-valid')}\n\n${terminal('duplicate-invalid')}\n\n${terminal('cursor-third')}`);
   await wait(() => checks().length === 3);
@@ -71,9 +76,9 @@
       'Local Debug must retain the duplicate-run cause and the real cancellation reply');
     await click(status());
     const finalTicks = ticks(name);
-    await sleep(350);
-    assert(ticks(name) === finalTicks && status().classList.contains('is-error'),
-      'A rejected process must stop producing output and its cancellation reply must not overwrite the local error');
+    // Window longer than the 0.2 s tick period: a still-running process would print again.
+    await holds(() => ticks(name) === finalTicks && status().classList.contains('is-error'),
+      'A rejected process must stop producing output and its cancellation reply must not overwrite the local error', 350);
   };
   await select(0);
   await rejectRepeatedRun('duplicate-valid');
@@ -182,9 +187,10 @@
   await wait(() => ticks('background') >= 2);
   await click(testid('console-service-rest'));
   setSource(editor(), rest('ordinary'));
+  const beforeOrdinary = await count();
   await run();
   await wait(() => status().classList.contains('is-running'));
-  await sleep(100);
+  await wait(async () => await count() > beforeOrdinary, 'The ordinary REST request must reach the service before Stop');
   await click(testid('console-stop'));
   await wait(() => stopped('ordinary') && testid('console-stop').disabled);
   assert(source().includes('remote server may still finish'),
@@ -219,7 +225,8 @@
   assert(light(testid('console-service-rest')) === 'running'
     && testid('console-service-rest').querySelector('.console-state-light').title.includes('0 errors'),
   'The service signal must prioritize running without counting a previously viewed error as unseen');
-  await sleep(300);
+  await wait(() => elapsedMs(status()) >= 300,
+    () => `The manual request clock must advance before the Agent starts: ${status().textContent}`);
   await select(1);
   await openAgent();
   const send = async text => {
@@ -227,7 +234,7 @@
     textarea.value = text;
     textarea.dispatchEvent(new InputEvent('input', {bubbles: true}));
     textarea.focus();
-    await key('Shift+Enter');
+    await key('Enter');
   };
   await send('agent run');
   await wait(() => document.querySelector('[data-testid="agent-run-approval"]'),
@@ -239,8 +246,9 @@
   await click(testid('agent-approve-run'));
   await wait(async () => await count() >= beforeConcurrent + 2,
     'Both the ordinary and approved Agent requests must actually reach the service before Stop');
-  await wait(() => status().classList.contains('is-running') && agentStatus().classList.contains('is-running'));
-  await sleep(150);
+  await wait(() => status().classList.contains('is-running') && agentStatus().classList.contains('is-running')
+    && elapsedMs(status()) > elapsedMs(agentStatus()),
+    () => `Main and Agent clocks must both run and differ: ${status().textContent} / ${agentStatus().textContent}`);
   const request = status();
   const agent = agentStatus();
   const requestTime = Number.parseInt(request.querySelector('.console-status-elapsed').textContent, 10);
@@ -328,7 +336,6 @@
   const transcript=testid('agent-transcript');
   testid('agent-composer').focus({preventScroll:true});
   transcript.scrollTop=Math.max(0,(transcript.scrollHeight-transcript.clientHeight)/3);
-  await sleep(80);
   const debugGeometry=()=>({
     leftEditorHeight:editor().getWrapperElement().getBoundingClientRect().height,
     leftStatusTop:status().getBoundingClientRect().top,
@@ -336,40 +343,32 @@
     rightScroll:transcript.scrollTop,
     rightStatusTop:agentStatus().getBoundingClientRect().top,
     pageScroll:document.scrollingElement.scrollTop,
-    oldTop:testid('console-old').getBoundingClientRect().top,
   });
-  const bothClosed=debugGeometry();
+  const measured=message=>stable(debugGeometry,{message});
+  const bothClosed=await measured('Debug geometry with both panels closed');
   await click(status());
-  await sleep(100);
-  const leftOpen=debugGeometry();
+  const leftOpen=await measured('Debug geometry after opening the left Debug');
   await click(agentStatus());
-  await sleep(100);
-  const bothOpen=debugGeometry();
+  const bothOpen=await measured('Debug geometry with both Debug panels open');
   const mainDebug=testid('console-main-status-debug');
   const agentDebug=testid('agent-status-debug');
   mainDebug.style.height='100px';
-  await sleep(100);
-  const leftResized=debugGeometry();
+  const leftResized=await measured('Debug geometry after resizing the left Debug');
   agentDebug.style.height='80px';
-  await sleep(100);
-  const rightResized=debugGeometry();
+  const rightResized=await measured('Debug geometry after resizing the Agent Debug');
   mainDebug.style.removeProperty('height');
   agentDebug.style.removeProperty('height');
-  await sleep(100);
+  await measured('Debug geometry after restoring Debug heights');
   await click(status());
-  await sleep(100);
-  const rightOpen=debugGeometry();
+  const rightOpen=await measured('Debug geometry with only the Agent Debug open');
   await click(agentStatus());
-  await sleep(100);
-  const closedAgain=debugGeometry();
+  const closedAgain=await measured('Debug geometry after closing both Debug panels');
   transcript.scrollTop=transcript.scrollHeight;
-  await sleep(80);
-  const bottomClosed=debugGeometry();
+  const bottomClosed=await measured('Debug geometry with Agent history at the bottom');
   await click(agentStatus());
-  await sleep(100);
-  const bottomOpen=debugGeometry();
+  const bottomOpen=await measured('Debug geometry after opening Agent Debug at the bottom');
   await click(agentStatus());
-  await sleep(100);
+  await measured('Debug geometry after closing Agent Debug');
   const near=(a,b)=>Math.abs(a-b)<=1;
   assert(near(leftOpen.rightHeight,bothClosed.rightHeight)
     &&near(leftOpen.rightStatusTop,bothClosed.rightStatusTop)
@@ -378,14 +377,14 @@
     &&near(rightOpen.leftStatusTop,bothClosed.leftStatusTop),
     `Debug expansion must affect only its own column: ${JSON.stringify({bothClosed,leftOpen,bothOpen,rightOpen,closedAgain,bottomClosed,bottomOpen})}`);
   assert([leftOpen,bothOpen,rightOpen,closedAgain].every(value=>near(value.rightScroll,bothClosed.rightScroll)
-    &&near(value.pageScroll,bothClosed.pageScroll)&&near(value.oldTop,value.leftStatusTop)),
-    `Debug must not scroll Agent history/page to reveal elements, or detach O from the left status: ${JSON.stringify({bothClosed,leftOpen,bothOpen,rightOpen,closedAgain})}`);
+    &&near(value.pageScroll,bothClosed.pageScroll)),
+    `Debug must not scroll Agent history/page to reveal elements: ${JSON.stringify({bothClosed,leftOpen,bothOpen,rightOpen,closedAgain})}`);
   assert(leftResized.leftEditorHeight>bothOpen.leftEditorHeight
     &&near(leftResized.rightHeight,bothOpen.rightHeight)
     &&rightResized.rightHeight>leftResized.rightHeight
     &&near(rightResized.leftEditorHeight,leftResized.leftEditorHeight)
     &&[leftResized,rightResized].every(value=>near(value.rightScroll,bothClosed.rightScroll)
-      &&near(value.pageScroll,bothClosed.pageScroll)&&near(value.oldTop,value.leftStatusTop)),
+      &&near(value.pageScroll,bothClosed.pageScroll)),
     `Resizing either Debug must keep the other column and Agent reading position unchanged: ${JSON.stringify({bothOpen,leftResized,rightResized})}`);
   assert(near(bottomOpen.rightScroll,bottomClosed.rightScroll)&&near(bottomOpen.pageScroll,bottomClosed.pageScroll),
     `Opening Debug must not automatically scroll even when Agent history was at the bottom: ${JSON.stringify({bottomClosed,bottomOpen})}`);
@@ -440,31 +439,5 @@
   await wait(() => source().includes('#responce') && source().includes('after-show-ready')
     && testid('console-stop').disabled,
   'Showing the panel again must allow fresh operations after stopping all hidden work');
-
-  globalThis.startClosingStopFixture = async () => {
-    await choose('console');
-    await click(testid('console-service-terminal'));
-    setSource(editor(), `${terminal('closingfirst')}\n\n${terminal('closingsecond')}`);
-    await wait(() => checks().length === 2);
-    await select(0);
-    await run();
-    await wait(() => /closingfirst-pid:\d+/.test(source()));
-    await select(1);
-    await run();
-    await wait(() => /closingsecond-pid:\d+/.test(source()));
-    const pids = [...source().matchAll(/closing(?:first|second)-pid:(\d+)/g)].map(match => Number(match[1]));
-    await click(testid('console-service-rest'));
-    setSource(editor(), `${rest('closingrest')}\n\n${rest('closingagent')}`);
-    await wait(() => checks().length === 2);
-    await select(0);
-    await run();
-    await wait(() => status().classList.contains('is-running'));
-    await openAgent();
-    await select(1);
-    await send('agent stop');
-    await wait(() => document.querySelector('[data-testid="agent-run-approval"]'));
-    await select(0);
-    return pids;
-  };
   return true;
 })()

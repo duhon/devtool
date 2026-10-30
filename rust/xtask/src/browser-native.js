@@ -1,17 +1,16 @@
 (async () => {
-  const { assert, sleep, wait, visible, find, testid, cm, key, type, move, click, button,
-    choose, setSource, commitRestUrl, candidates, pick } = testDriver;
+  const { assert, wait, during, holds, settle, visible, find, testid, cm, key, type, move, click, button,
+    openConsole, setSource, commitRestUrl, candidates, pick } = testDriver;
   await wait(() => document.querySelector('[data-testid="native-status"]')?.hidden,
     'Installed companion must connect');
-  await choose('console');
+  await openConsole();
   const services = ['mysql', 'rest', 'graphql', 'grpc', 'splunk', 'terminal'];
   for (const service of services) {
     await click(testid(`console-service-${service}`));
     await click(testid('console-editor-editor'), 80, 16);
     const editor = cm('console-editor');
     assert(editor.hasFocus(), `${service}: mouse click must focus empty Console`);
-    await sleep(100);
-    assert(candidates().length === 0, `${service}: mouse click must not open suggestions`);
+    await during(100, () => assert(candidates().length === 0, `${service}: mouse click must not open suggestions`));
     await key('Control+Space');
     await wait(() => candidates().includes('#check'));
     await key('Enter');
@@ -45,29 +44,44 @@
     assert(candidates().every(text => text.startsWith('{{')), `${service}: placeholder completion isolation`);
     await key('Escape');
   }
-  await choose('rest');
-  cm('field-url-editor').setValue(`${fixtureUrl}/browser?env={{env:SERVICES_DEVTOOLS_ENV_PROBE}}&interactive={{env:SERVICES_DEVTOOLS_INTERACTIVE_PROBE}}`);
-  await click(testid('run-request'));
-  await wait(() => testid('response-output').textContent.includes('rust-ui-fixture'));
-  assert(testid('response-output').textContent.includes('/browser?env=companion-fixture-only'), 'Login shell env substitution');
-  assert(testid('response-output').textContent.includes('interactive=interactive-fixture-only'), 'Interactive shell env substitution');
+  // Runs one Console check and returns the text written below its #responce marker.
+  const runConsole = async (service, source, done, message) => {
+    await click(testid(`console-service-${service}`));
+    const editor = cm('console-editor');
+    setSource(editor, source);
+    await key('Shift+Enter');
+    const output = () => {
+      const value = editor.getValue();
+      const marker = value.indexOf('\n#responce ');
+      return marker < 0 ? '' : value.slice(value.indexOf('\n', marker + 1) + 1);
+    };
+    await wait(() => !find('.console-status').classList.contains('is-running') && done(output()),
+      () => `${message}: ${JSON.stringify({status: find('.console-status').textContent, output: output().slice(0, 2000)})}`);
+    return output();
+  };
+  const envOutput = await runConsole('rest',
+    `#check env\n#endpoint\nGET ${fixtureUrl}/browser?env={{env:SERVICES_DEVTOOLS_ENV_PROBE}}&interactive={{env:SERVICES_DEVTOOLS_INTERACTIVE_PROBE}}`,
+    output => output.includes('rust-ui-fixture'), 'The REST fixture must answer through the companion');
+  assert(envOutput.includes('/browser?env=companion-fixture-only'), 'Login shell env substitution');
+  assert(envOutput.includes('interactive=interactive-fixture-only'), 'Interactive shell env substitution');
   const beforeChunks = nativeProbe.chunkMessages;
-  cm('field-url-editor').setValue(`${fixtureUrl}/native-large-response`);
-  await click(testid('run-request'));
-  const expectedLarge = `native-large-start:${'🦀"\\\n'.repeat(180000)}:native-large-end`;
-  await wait(() => testid('response-output').querySelector('.tab-response-body')?.textContent === expectedLarge,
+  const expectedLarge = [...`native-large-start:${'🦀"\\\n'.repeat(180000)}:native-large-end`];
+  // The Console shows the first MAX_RESPONSE_CHARS characters and counts the rest, so the
+  // exact prefix plus the exact omitted count prove that no byte was lost in transit.
+  const shownLarge = `${expectedLarge.slice(0, 300000).join('')}\n\n… response truncated (${expectedLarge.length - 300000} more characters omitted)`;
+  const largeOutput = await runConsole('rest', `#check large\n#endpoint\nGET ${fixtureUrl}/native-large-response`,
+    output => output.includes('response truncated ('),
+    'A response larger than 1 MiB must survive real Chrome native messaging');
+  assert(largeOutput.startsWith(shownLarge),
     'A response larger than 1 MiB must survive real Chrome native messaging without losing bytes');
   assert(nativeProbe.chunkMessages > beforeChunks, 'The large native response must use chunking');
   assert(nativeProbe.maxMessageBytes <= 1024 * 1024, 'Every serialized native reply must fit Chrome\'s 1 MiB limit');
   assert(document.querySelector('[data-testid="native-status"]').hidden,
     'The large response must not disconnect the companion');
-  await choose('terminal');
-  cm('field-endpoint-editor').setValue('/bin/sh -c');
-  cm('field-command-editor').setValue('printf rust-ui-terminal; printf "$SERVICES_DEVTOOLS_INTERACTIVE_PROBE"');
-  await click(testid('run-request'));
-  await wait(() => testid('response-output').textContent.includes('rust-ui-terminal'));
-  await wait(() => testid('response-output').textContent.includes('interactive-fixture-only'));
-  await choose('console');
+  await runConsole('terminal',
+    '#check env\n#endpoint\n/bin/sh -c\n#command\nprintf rust-ui-terminal; printf "$SERVICES_DEVTOOLS_INTERACTIVE_PROBE"',
+    output => output.includes('rust-ui-terminal') && output.includes('interactive-fixture-only'),
+    'Terminal commands must run with the interactive shell environment');
   await click(testid('console-service-rest'));
   const bookEditor = cm('console-editor');
   const pasteRest = text => {
@@ -83,12 +97,10 @@
     setSource(bookEditor, '');
     const before = restDiscoveryCount();
     pasteRest(source);
-    await sleep(150);
-    assert(restDiscoveryCount() === before, 'Pasting URL, headers and body must not start REST discovery');
+    await during(150, () => assert(restDiscoveryCount() === before, 'Pasting URL, headers and body must not start REST discovery'));
     await click(find('.console-status'));
     bookEditor.focus();
-    await sleep(100);
-    assert(restDiscoveryCount() === before, 'Focusing an uncached REST body must not start discovery');
+    await during(100, () => assert(restDiscoveryCount() === before, 'Focusing an uncached REST body must not start discovery'));
     await key('Control+Space');
     await wait(() => bookEditor.__servicesCompletion?.discovery?.specUrl === `${fixtureUrl}/${site}/swagger.json`);
     await wait(() => candidates().some(candidate => candidate.includes(`"${site}"`)),
@@ -109,8 +121,7 @@
   setSource(bookEditor, '#check recovery\n#endpoint\nGET ');
   const beforePaste = restDiscoveryCount();
   pasteRest(`${badOrigin}/api/`);
-  await sleep(100);
-  assert(restDiscoveryCount() === beforePaste, 'Pasting an unreachable REST URL must not discover it');
+  await during(100, () => assert(restDiscoveryCount() === beforePaste, 'Pasting an unreachable REST URL must not discover it'));
   await commitRestUrl(bookEditor);
   await wait(() => find('.console-status').textContent.includes('Discovery · ERROR'),
     'An explicit URL slash must report a real native discovery failure');
@@ -122,8 +133,7 @@
   const failedRestCount = nativeProbe.discoveries.filter(request => request.service === 'rest').length;
   bookEditor.setSelection({line: 2, ch: 4}, {line: 2, ch: 4 + badOrigin.length});
   pasteRest(fixtureUrl);
-  await sleep(100);
-  assert(restDiscoveryCount() === failedRestCount, 'Correcting a host by paste must not automatically discover');
+  await during(100, () => assert(restDiscoveryCount() === failedRestCount, 'Correcting a host by paste must not automatically discover'));
   await commitRestUrl(bookEditor);
   await wait(() => find('.console-status').textContent.includes('Discovery · OK')
     && candidates().includes('/api/v1/Books'),
@@ -138,9 +148,8 @@
     'Recovered automatic path selection must preserve the complete local origin');
   await type('/');
   await type('/');
-  await sleep(700);
-  assert(nativeProbe.discoveries.filter(request => request.service === 'rest').length === failedRestCount + 1,
-    'Typing path slashes after real native success must not rediscover the same API');
+  await during(700, () => assert(nativeProbe.discoveries.filter(request => request.service === 'rest').length === failedRestCount + 1,
+    'Typing path slashes after real native success must not rediscover the same API'));
   await key('Escape');
   const bookEndpoint = `${fixtureUrl}/api/v1/Books/`;
   const bookPrefix = method => `#check test1\n#endpoint\n${method} ${bookEndpoint}\n#headers\nContent-Type: application/json\nAccept: application/json\n#body\n`;
@@ -188,29 +197,6 @@
   }
   assert(restDiscoveryCount() === bookLoaded, 'Book body editing and method changes must not repeat discovery');
   await key('Escape');
-  await choose('rest');
-  setSource(cm('field-url-editor'), bookEndpoint);
-  const methodPicker = testid('field-method');
-  methodPicker.value = 'POST';
-  methodPicker.dispatchEvent(new Event('change', {bubbles: true}));
-  const bookForm = cm('field-body-editor');
-  if (!visible(bookForm.getWrapperElement()))
-    await click(button('Body'));
-  setSource(bookForm, '');
-  await key('Control+Space');
-  const formObject = bookForm.state.completionActive?.data?.list.find(item => item.text === '{\n  \n}');
-  assert(formObject?.displayText === '{} — JSON object' && !formObject.displayText.includes('\n'),
-    'The REST form must use the same compact object menu label as the Console');
-  setSource(bookForm, '{\n  "');
-  await key('Control+Space');
-  await wait(() => bookFields.every(field => candidates().includes(field)),
-    'The separate REST form must also complete Book fields after a quote with a trailing-slash URL');
-  assert(document.querySelector('.CodeMirror-hints')?.textContent.includes('date-time (ISO 8601)'),
-    'The REST form must show the same date-time format as the Console');
-  await pick(bookForm, '"title": ""');
-  await type('Form book');
-  await key('Escape');
-  await choose('console');
   await click(testid('console-service-rest'));
   const magentoEditor = cm('console-editor');
   const magentoPath = '/rest/default/V1/integration/admin/token';
@@ -221,7 +207,7 @@
   const checkLocalBodyHints = async () => {
     for (const source of [magentoPrefix(magentoUrl).trimEnd(), magentoPrefix(magentoUrl)]) {
       setSource(magentoEditor, source);
-      await sleep(100);
+      await settle();
       await wait(() => !find('.console-status').classList.contains('is-running'),
         'The focus bootstrap must finish before counting shortcut-triggered discovery');
       const count = restDiscoveryCount();
@@ -234,9 +220,11 @@
       try {
         for (let index = 0; index < 12; index++) {
           await key('Control+Space');
-          await sleep(25);
+          await settle();
         }
-        await sleep(650);
+        // Window longer than any discovery debounce: repeated shortcuts must never schedule a discovery.
+        await holds(() => restDiscoveryCount() === count && magentoEditor.getValue() === source,
+          'Repeated Ctrl-Space on #body must not discover or modify the request', 650);
         assert(keyNames.length === 12 && keyNames.every(name => name === 'Ctrl-Space'),
           'The repeated shortcut fixture must deliver actual Ctrl-Space events, not Alt-Space');
         assert(restDiscoveryCount() === count && magentoEditor.getValue() === source,
@@ -252,8 +240,7 @@
   };
   const beforeMagento = restDiscoveryCount();
   setSource(magentoEditor, magentoPrefix(magentoUrl));
-  await sleep(100);
-  assert(restDiscoveryCount() === beforeMagento, 'A new variable URL and body must wait for a hint request');
+  await during(100, () => assert(restDiscoveryCount() === beforeMagento, 'A new variable URL and body must wait for a hint request'));
   await key('Control+Space');
   const magentoFixtureUrl = fixtureUrl.replace('127.0.0.1', 'localhost');
   await wait(() => magentoEditor.__servicesCompletion?.discovery?.specUrl === `${magentoFixtureUrl}/rest/default/swagger.json`);
@@ -292,9 +279,8 @@
     assert(magentoEditor.getLine(2) === `POST ${endpoint}`,
       'Looking up a body schema must not expand variables inside the editor');
   }
-  await sleep(650);
-  assert(restDiscoveryCount() === magentoLoaded,
-    'Editing credentials and changing equivalent URL templates must not refetch the loaded API schema');
+  await during(650, () => assert(restDiscoveryCount() === magentoLoaded,
+    'Editing credentials and changing equivalent URL templates must not refetch the loaded API schema'));
   setSource(magentoEditor, magentoPrefix(magentoUrl));
   await key('Control+Space');
   const requiredHint = magentoEditor.state.completionActive?.data?.list.find(item =>
@@ -330,31 +316,6 @@
     'Adding an optional field after the required template must preserve valid JSON and automatic commas');
   assert(restDiscoveryCount() === magentoLoaded && magentoEditor.getLine(2) === `POST ${magentoUrl}`,
     'Required-template selection and filling must not rediscover or rewrite the connection URL');
-  await key('Escape');
-  await choose('rest');
-  setSource(cm('field-url-editor'), magentoUrl);
-  const magentoForm = cm('field-body-editor');
-  if (!visible(magentoForm.getWrapperElement()))
-    await click(button('Body'));
-  setSource(magentoForm, '{\n  "');
-  await key('Control+Space');
-  await wait(() => credentials.every(field => candidates().includes(field)),
-    'The REST form must resolve a variable-based URL when choosing its Swagger body schema');
-  const magentoFormLoaded = restDiscoveryCount();
-  await pick(magentoForm, '"username": ""');
-  await type('form-fixture-admin');
-  await sleep(650);
-  assert(cm('field-url-editor').getValue() === magentoUrl && restDiscoveryCount() === magentoFormLoaded,
-    'Form body edits must preserve URL variables and not repeat native discovery');
-  setSource(magentoForm, '');
-  await key('Control+Space');
-  const formRequired = magentoForm.state.completionActive?.data?.list.find(item =>
-    item.displayText.endsWith(' — Required fields'));
-  assert(formRequired && JSON.stringify(JSON.parse(formRequired.text)) === JSON.stringify(requiredBody),
-    'The REST form must offer the same required-only body template as the Console');
-  await pick(magentoForm, formRequired.text);
-  assert(JSON.stringify(JSON.parse(magentoForm.getValue())) === JSON.stringify(requiredBody),
-    'The form required-body template must insert valid JSON');
   await key('Escape');
   const enumUrl = `http://{{var:magento}}/rest/default/V1/enum-test`;
   const enumLoaded = restDiscoveryCount();
@@ -414,7 +375,6 @@
     assert(restDiscoveryCount() === enumLoaded, 'Enum choices must use the cached schema without discovery');
     await key('Escape');
   };
-  await choose('console');
   await click(testid('console-service-rest'));
   const categoryPath = '/rest/default/V1/categories/{categoryId}/move';
   const pathEditor = cm('console-editor');
@@ -440,20 +400,12 @@
   await checkPathParameterColor(pathEditor, 2);
   assert(pathEditor.getLine(2) === 'PUT http://{{var:magento}}/rest/default/V1/categories/42/move',
     'Discovery insertion must retain the full method and variable-based URL');
-  await choose('rest');
-  setSource(cm('field-url-editor'), `http://{{var:magento}}${categoryPath}`);
-  await checkPathParameterColor(cm('field-url-editor'), 0);
-  setSource(cm('field-body-editor'), '{"note":"{categoryId}"}');
-  assert(!cm('field-body-editor').getLineTokens(0).some(token => token.type?.includes('rest-path-param')),
+  setSource(pathEditor, `#check move\n#endpoint\nPUT http://{{var:magento}}${categoryPath}\n#body\n{"note":"{categoryId}"}`);
+  await checkPathParameterColor(pathEditor, 2);
+  assert(!pathEditor.getLineTokens(4).some(token => token.type?.includes('rest-path-param')),
     'Braces inside a REST JSON body must not become URL-parameter tokens');
   assert(restDiscoveryCount() === enumLoaded, 'Highlighting and replacing path parameters must not run discovery');
-  await choose('console');
-  await click(testid('console-service-rest'));
   await checkRestEnums(cm('console-editor'), magentoPrefix(enumUrl));
-  await choose('rest');
-  setSource(cm('field-url-editor'), enumUrl);
-  await checkRestEnums(cm('field-body-editor'), '');
-  await choose('console');
   await click(testid('console-service-graphql'));
   const discoveryEditor = cm('console-editor');
   const discoveryEndpoint = `${fixtureUrl}/graphql-native-discovery`;
@@ -474,55 +426,14 @@
   await key('Control+Space');
   await wait(() => candidates().includes('products'),
     'Authenticated native discovery must restore real root fields, not just __typename');
-  await key('Escape');
-  await choose('graphql');
-  setSource(cm('field-url-editor'), `${discoveryEndpoint}?form=1`);
-  await click(button('Headers'));
-  setSource(cm('field-headersText-editor'), 'X-Token: {{second:TOKEN}}');
-  if (!visible(cm('field-query-editor').getWrapperElement()))
-    await click(button('Query'));
-  setSource(cm('field-query-editor'), '{\n  ');
-  await key('Alt+Space');
-  await key('Control+Space');
-  await wait(() => candidates().includes('products'), () => `GraphQL form discovery must also pass its headers: ${JSON.stringify({
-    url: cm('field-url-editor').getValue(), headers: cm('field-headersText-editor').getValue(),
-    query: cm('field-query-editor').getValue(), focused: cm('field-query-editor').hasFocus(),
-    visible: visible(cm('field-query-editor').getWrapperElement()), candidates: candidates(),
-    discovery: cm('field-query-editor').__servicesCompletion?.discovery,
-    notices: [...document.querySelectorAll('[role="alert"]')].map(el => el.textContent),
-  })}`);
-  await pick(cm('field-query-editor'), 'products');
+  await pick(discoveryEditor, 'products');
   await key('Space');
-  await pick(cm('field-query-editor'), '{\n    \n  }');
+  await pick(discoveryEditor, '{\n    \n  }');
   await wait(() => candidates().includes('sku') && candidates().includes('images'),
     'Real native introspection must restore nested GraphQL field completion');
   await key('Escape');
   const materializationQuery = 'query ($skus: [String]) { products(skus: $skus) { sku images { url } } }';
   const materializationVariables = '{"skus":["{{var:sku}}"]}';
-  cm('field-url-editor').setValue(`${fixtureUrl}/graphql-materialization`);
-  cm('field-query-editor').setValue(materializationQuery);
-  await click(button('Variables'));
-  setSource(cm('field-variables-editor'), materializationVariables);
-  await click(button('Query'));
-  await click(testid('run-request'));
-  await wait(() => testid('response-output').textContent.includes('received'),
-    'The GraphQL echo fixture must return the actual received request');
-  for (const name of ['received', 'variables', 'skus']) {
-    const property = await wait(() => [...testid('response-output').querySelectorAll('.tab-response-body .cm-property')]
-      .find(element => element.textContent === `"${name}": `), `GraphQL response field missing: ${name}`);
-    const node = property.closest('.json-node');
-    if (!visible(node.querySelector(':scope > .json-children')))
-      await click(node.querySelector(':scope > .json-line > .json-toggle'));
-  }
-  await wait(() => testid('response-output').textContent.includes('fixture-materialized-sku'),
-    () => `GraphQL form materialization failed: ${JSON.stringify({
-      response: testid('response-output').textContent,
-      url: cm('field-url-editor').getValue(), query: cm('field-query-editor').getValue(),
-      variables: cm('field-variables-editor').getValue(),
-    })}`);
-  assert(!testid('response-output').textContent.includes('{{var:sku}}'),
-    'The server must not receive unresolved profile placeholders from form Variables');
-  await choose('console');
   await click(testid('console-service-graphql'));
   const materializationEditor = cm('console-editor');
   const materializationSource = `#check materialization\n#endpoint\n${fixtureUrl}/graphql-materialization\n#variables\n${materializationVariables}\n#query\n${materializationQuery}`;
@@ -535,17 +446,21 @@
   assert(!materializationOutput.includes('{{var:sku}}') && materializationEditor.getValue().startsWith(materializationSource),
     'Materialization must change the network payload, not the editable Console template');
   await testDriver.checkConsoleFolding(materializationEditor);
-  await choose('terminal');
   assert(nativeProbe.clipboardReads === 0, 'Startup and requests must not read clipboard');
-  await choose('dictionary');
-  await click([...document.querySelectorAll('.vars-tab-group .tab-label')].find(el => el.textContent === 'default'));
-  let variables = cm('variables-editor');
-  testid('service-select').focus();
+  const panelEditor = name => document.querySelector(`[data-testid="console-${name}-editor"]`);
+  if (!visible(panelEditor('dictionary'))) await click(testid('console-dictionary-toggle'));
+  await click(await wait(() => [...find('.console-panel-tabs').querySelectorAll('.tab-label')]
+    .find(el => el.textContent === 'default')));
+  await wait(() => cm('console-dictionary').getValue().includes('{{second:TOKEN}}'),
+    'Variable reference fixture must be present');
+  let variables = cm('console-dictionary');
+  testid('console-service-rest').focus();
   const cursor = JSON.stringify(variables.getCursor());
   const lines = variables.getValue().split('\n');
   const line = lines.findIndex(text => text.includes('{{second:TOKEN}}'));
   assert(line >= 0, 'Variable reference fixture must be present');
   const start = lines[line].indexOf('{{second:TOKEN}}');
+  variables.scrollIntoView({ line, ch: start }, 20);
   assert(!variables.hasFocus(), 'Hover must work without focus');
   for (let offset = 0; offset < '{{second:TOKEN}}'.length; offset++) {
     const box = variables.charCoords({ line, ch: start + offset }, 'window');
@@ -555,8 +470,8 @@
     }
   }
   assert(!variables.hasFocus() && JSON.stringify(variables.getCursor()) === cursor, 'Hover must not focus or move cursor');
-  const pickerBox = testid('service-select').getBoundingClientRect();
-  await move(pickerBox.left + 5, pickerBox.top + 5);
+  const outsideBox = testid('console-service-rest').getBoundingClientRect();
+  await move(outsideBox.left + 5, outsideBox.top + 5);
   await wait(() => !document.querySelector('.gw-var-tooltip'));
   const original = variables.getValue();
   setSource(variables, original);
@@ -573,8 +488,9 @@
     await key('Control+Space');
     assert(candidates().length === 0, `Variables leaked suggestions for ${JSON.stringify(suffix)}`);
   }
+  const beforeRestore = nativeProbe.saves;
   setSource(variables, original);
-  await sleep(500);
+  await wait(() => nativeProbe.saves > beforeRestore, 'The debounced autosave of the restored variables must finish');
   const initial = nativeProbe.saves;
   setSource(variables, `${original}\n\nPROBE: `);
   await type('{{env:');
@@ -594,14 +510,21 @@
   await key('Control+Space');
   await wait(() => candidates().includes('{{second:TOKEN}}'));
   await key('Escape');
-  await choose('vars');
-  await click(button(/^env /));
-  await wait(() => cm('variables-editor').getOption('readOnly') === true);
-  variables = cm('variables-editor');
-  assert(variables.getOption('readOnly') === true, 'env must be read-only');
+  const beforeCleanup = nativeProbe.saves;
+  setSource(variables, original);
+  await wait(() => nativeProbe.saves > beforeCleanup, 'The restored dictionary must be saved before the panel checks');
+  await click(testid('console-variables-toggle'));
+  await wait(() => visible(panelEditor('variables')));
+  await click(button(/^env /, find('.console-panel-tabs')));
+  await wait(() => cm('console-variables').getOption('readOnly') === true);
+  variables = cm('console-variables');
   assert(variables.getValue().includes('HOME:'), 'env must include companion HOME');
   assert(variables.getValue().includes('SERVICES_DEVTOOLS_ENV_PROBE: companion-fixture-only'), 'env from .zprofile');
   assert(variables.getValue().includes('SERVICES_DEVTOOLS_INTERACTIVE_PROBE: interactive-fixture-only'), 'env from .zshrc');
+  await click(button(/^var$/, find('.console-panel-tabs')));
+  await wait(() => cm('console-variables').getOption('readOnly') !== true);
+  await click(testid('console-variables-toggle'));
+  await wait(() => !visible(panelEditor('variables')), 'The tool panel must close before the shared Console checks');
   await testDriver.checkConsoleTools(`${fixtureUrl}/panel-tools`);
   const frame = document.createElement('iframe');
   frame.allow = "clipboard-read 'none'; clipboard-write 'none'";

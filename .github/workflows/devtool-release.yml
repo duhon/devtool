@@ -70,6 +70,16 @@ jobs:
         run: cargo run --locked -p xtask -- build --repository "$GITHUB_REPOSITORY" --branch "$GITHUB_REF_NAME"
       - name: Verify clean installation and updates
         run: cargo test --locked -p services-installer --test packaged -- --ignored
+      - name: Install Chrome for Testing
+        id: setup-chrome
+        uses: browser-actions/setup-chrome@48ad923757ca74d66703209fe939badbdf80f2f4 # v2.2.0
+        with:
+          chrome-version: stable
+      - name: Browser acceptance scenarios
+        env:
+          CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
+        # The macOS arm64 runner has 3 vCPU and 7 GB; each job runs its own Chrome, host and fixtures.
+        run: cargo run --locked -p xtask -- test browser --jobs 2
       - name: Generate update metadata
         run: python3 scripts/distribution/release.py metadata
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

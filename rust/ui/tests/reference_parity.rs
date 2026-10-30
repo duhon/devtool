@@ -11,7 +11,7 @@ fn original_javascript_parser_and_formatter_fixtures() {
         let args = fixture["args"].as_array().unwrap();
         let text = |index: usize| args.get(index).and_then(Value::as_str).unwrap_or("");
         let value: Result<Value, String> = match name {
-            "parseSql" => console::parse_sql(text(0), text(1)),
+            "parseSql" => services_module_mysql_ui::parse_sql(text(0), text(1)),
             "parseMysqlRequest" => console::parse("mysql", text(0)),
             "parseHttp" => console::parse("rest", text(0)),
             "parseGraphqlRequest" => console::parse("graphql", text(0)),
@@ -19,8 +19,8 @@ fn original_javascript_parser_and_formatter_fixtures() {
             "parseSplunkRequest" => console::parse("splunk", text(0)),
             "parseTerminalRequest" => console::parse("terminal", text(0)),
             "parseConsoleRequest" => console::parse(text(0), text(1)),
-            "parseCurlCommand" => console::parse_command(text(0), false),
-            "parseGrpcurlCommand" => console::parse_command(text(0), true),
+            "parseCurlCommand" => services_module_ui::command::parse_curl(text(0)),
+            "parseGrpcurlCommand" => services_module_ui::command::parse_grpcurl(text(0)),
             "importCurlAsRestBlock" => console::import("rest", text(0)).map(Value::String),
             "importCurlAsGraphqlBlock" => console::import("graphql", text(0)).map(Value::String),
             "importGrpcurlAsGrpcBlock" => console::import("grpc", text(0)).map(Value::String),

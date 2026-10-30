@@ -1,4 +1,3 @@
-node_modules/
 *.log
 .claude/
 .variable-profiles.json
@@ -14,11 +13,9 @@ node_modules/
 .superpowers/
 adapters/extension/dist/
 adapters/extension/pinned-key.pem
-adapters/native-host/host.sh
-prototypes/iwa-tcp/dist/
-prototypes/iwa-tcp/signing-key.pem
-prototypes/iwa-tcp/extension-key.pem
 /dist/
 /.distribution-cache/
 /target/
+/modules/
 /.playwright-mcp/
+__pycache__/

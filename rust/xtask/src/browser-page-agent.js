@@ -1,6 +1,6 @@
 (async () => {
-  const {assert, wait, click, testid, key, choose, input} = testDriver;
-  await choose('console');
+  const {assert, wait, holds, click, testid, key, openConsole, input} = testDriver;
+  await openConsole();
   if (!document.querySelector('[data-testid="agent-composer"]')?.getBoundingClientRect().width)
     await click(testid('console-agent-toggle'));
   await click(testid('agent-new-session'));
@@ -13,7 +13,7 @@
     composer().value = message;
     composer().dispatchEvent(new InputEvent('input', {bubbles:true}));
     composer().focus();
-    await key('Shift+Enter');
+    await key('Enter');
   };
   const completed = async text => {
     await wait(() => assistants().length > before && assistants().at(-1).textContent.includes(text),
@@ -33,53 +33,95 @@
   const original = Object.getOwnPropertyDescriptor(chrome, 'devtools');
   let pageReads = 0;
   let guideCleanups = 0;
+  let pageWaitReads = 0;
+  let pageWaitPending = 0;
+  let enabledWaitReads = 0;
   Object.defineProperty(chrome, 'devtools', {configurable:true, value:{inspectedWindow:{
     tabId:9001,
     eval(expression, callback) {
       if (expression.includes('"tool":"page_snapshot"')) pageReads++;
+      const pageWait = expression.includes('"tool":"page_wait"');
+      if (pageWait) { pageWaitReads++; pageWaitPending++; }
+      if (expression.includes('"tool":"page_wait"') && expression.includes('"state":"enabled"')) {
+        enabledWaitReads++;
+        if (enabledWaitReads === 1) expression = `(() => {
+          document.querySelector('#apply').disabled=true;
+          // Fixture behaviour: the page enables #apply later so the Agent's page_wait must poll for it.
+          setTimeout(()=>{document.querySelector('#apply').disabled=false;},350);
+          return ${expression};
+        })()`;
+      }
       input('Test.inspectedPage', {expression}).then(result => {
         callback(result.result?.value, result.exceptionDetails
           ? {isException:true,value:result.exceptionDetails.exception?.description || result.exceptionDetails.text}
           : undefined);
         if (expression.includes('"tool":"guide_cleanup"')) guideCleanups++;
+        if (pageWait) pageWaitPending--;
       });
     },
-  }}});
+  }, network: {getHAR(callback) {callback({entries:[
+    {startedDateTime:new Date().toISOString(),request:{url:'https://user:password-secret@api.example.test/safe?token=cookie-secret#storage-secret',
+      method:'GET',headers:[{name:'Authorization',value:'field-secret'}]},
+      response:{status:503,bodySize:123,content:{text:'field-secret'}},time:17},
+    {startedDateTime:'1970-01-01T00:00:00Z',request:{url:'https://api.example.test/old-navigation',method:'GET'},
+      response:{status:200},time:1},
+  ]});}}}});
   try {
+    await send('agent page read');
+    await completed('Page snapshot ready');
+    assert(pageReads === 1, 'Reading must access the inspected page without a permission prompt');
+    await send('agent page inspect');
+    await completed('DOM values ready');
+
     await send('agent page deny');
     assert((await pending()).textContent.includes(new URL(fixtureUrl).origin), 'Approval must identify the inspected site');
-    assert(pageReads === 0, 'Page contents were read before consent');
+    assert(pageReads > 1, 'The Agent should read page state before requesting permission to act');
     await click(testid('agent-deny-page'));
-    await completed('Page rejected: Page access was denied');
-    assert(pageReads === 0, 'Denied turn read the page');
+    await completed('Page writing denied; reading available');
+    assert(await page('window.clicks') === 0, 'Denying writes still allowed a site action');
 
     await send('agent page stop');
     await pending();
     await click(testid('agent-stop'));
     await wait(() => testid('agent-stop').disabled && !document.querySelector('[data-testid="agent-page-approval"]'));
-    assert(pageReads === 0, 'Stopped approval read the page');
+    assert(await page('window.clicks') === 0, 'Stopped approval caused a site action');
 
     await send('agent page read');
+    await completed('Page snapshot ready');
+    assert(!document.querySelector('[data-testid="agent-page-approval"]'), 'Reading asked for write permission');
+    assert(!document.querySelector('[data-testid="agent-run-approval"]'), 'Page permission must be separate from Console run permission');
+    await send('agent page extended');
     await pending();
     await click(testid('agent-approve-page'));
-    await completed('Page snapshot ready');
-    assert(pageReads === 1, 'Approved snapshot did not use the inspected page');
-    assert(!document.querySelector('[data-testid="agent-run-approval"]'), 'Page permission must be separate from Console run permission');
+    await completed('Extended page tools complete');
+    assert(enabledWaitReads > 1, 'The controller did not actually wait for asynchronous website state');
+    await wait(async () => !await page(`!!window.__servicesDevtoolsPageAccess`));
+
+    const waitsBefore = pageWaitReads;
+    await send('agent page wait stop');
+    await wait(() => pageWaitReads > waitsBefore);
+    await click(testid('agent-stop'));
+    await wait(() => testid('agent-stop').disabled);
+    await wait(() => pageWaitPending === 0, 'The page_wait read in flight at Stop must finish');
+    const stoppedWaitReads = pageWaitReads;
+    // Window longer than the 250 ms page_wait poll delay: no further poll may start after Stop.
+    await holds(() => pageWaitReads === stoppedWaitReads, 'Stop left the page wait polling active', 300);
+    await wait(async () => !await page(`!!window.__servicesDevtoolsPageAccess`));
 
     await page(`document.head.insertAdjacentHTML('beforeend','<base target="_blank">');true`);
     await send('agent page actions');
-    await pending();
-    await click(testid('agent-approve-page'));
     await completed('Page actions complete');
     const state = await page(`({name:document.querySelector('#name').value,choice:document.querySelector('#choice').value,
       clicks:window.clicks,y:scrollY,password:document.querySelector('#password').value})`);
     assert(state.name === 'Agent filled' && state.choice === 'two' && state.clicks === 1 && state.y >= 400,
       `Agent actions did not affect the fixed inspected page: ${JSON.stringify(state)}`);
     assert(state.password === 'password-secret', 'Agent modified a password');
+    await send('agent page write');
+    await completed('Page write complete');
+    assert(!document.querySelector('[data-testid="agent-page-approval"]'),
+      'The same document requested interaction permission again in another turn');
 
     await send('agent page constraints');
-    await pending();
-    await click(testid('agent-approve-page'));
     await completed('Page constraints verified');
     assert(await page('window.clicks') === 1, 'Rejected/stale page operation caused a click');
 
@@ -97,13 +139,15 @@
       })()`);
       await mouse(box.x,box.y);
     };
-    const beginGuide = async (mode, guideOnly = true) => {
+    const beginGuide = async mode => {
       await send(`agent page guide ${mode}`);
-      await pending();
-      await click(testid(guideOnly ? 'agent-approve-guide' : 'agent-approve-page'));
     };
-    await beginGuide('permission');
-    await completed('Guide mutation blocked');
+    for (const mode of ['permission','permission focus','permission checked','permission key']) {
+      await beginGuide(mode);
+      await guideStep(1);
+      await guideButton('next');
+      await completed('Guide mutation blocked');
+    }
     assert(await page('window.clicks') === 1, 'Guide-only consent allowed a website action');
 
     assert(await page(`(() => {
@@ -172,7 +216,7 @@
     assert(!await page(`!!document.getElementById('services-devtools-page-guide') || !!window.__servicesDevtoolsPageGuide`),
       'Finished guide leaked overlay or page state');
 
-    await beginGuide('mutation', false);
+    await beginGuide('mutation');
     await guideStep(1);
     await guideButton('next');
     await completed('Guide mutation blocked');
@@ -207,6 +251,7 @@
     await completed('Guide ended: disconnected');
     await beginGuide('navigation');
     await guideStep(1);
+    // Fixture behaviour: the inspected page navigates on its own shortly after this step.
     await page(`setTimeout(() => {location.href=${JSON.stringify(fixtureUrl + '/page-agent-fixture?guide-reload=1')}},25);true`);
     await completed('Guide rejected:');
     assert(!await page(`!!document.getElementById('services-devtools-page-guide') || !!window.__servicesDevtoolsPageGuide`),
@@ -230,6 +275,7 @@
     await pending();
     const changed = fixtureUrl.replace('127.0.0.1', 'localhost');
     assert(changed !== fixtureUrl, 'Origin-change fixture must use a distinct origin');
+    // Fixture behaviour: the inspected page navigates on its own shortly after this step.
     await page(`setTimeout(() => {location.href=${JSON.stringify(changed + '/page-agent-fixture')}},50);true`);
     let navigationResult;
     await wait(async () => {
@@ -237,13 +283,27 @@
       return navigationResult.result?.value === changed;
     }, () => `Inspected page did not finish navigating: ${JSON.stringify(navigationResult)}`);
     await click(testid('agent-approve-page'));
-    assert((await pending()).textContent.includes(changed), 'Cross-origin navigation reused a previous site grant');
+    await completed('Page rejected: The document changed');
+    await send('agent page write');
+    assert((await pending()).textContent.includes(changed), 'Cross-origin navigation reused a previous document grant');
     await click(testid('agent-approve-page'));
-    await completed('Page snapshot ready');
-    await send('agent page renewed turn');
+    await completed('Page write complete');
+    await send('agent page write another turn');
+    await completed('Page write complete');
+    // Fixture behaviour: the inspected page navigates on its own shortly after this step.
+    await page(`setTimeout(() => {location.href=${JSON.stringify(changed + '/page-agent-fixture?reload=1')}},25);true`);
+    let reloadResult;
+    await wait(async () => {
+      // A poll may coincide with the navigation itself, which Chrome reports as a navigated target.
+      reloadResult = await input('Test.inspectedPage', {expression:`location.search === '?reload=1'`});
+      return reloadResult.result?.value === true;
+    }, () => `Inspected page did not finish reloading: ${JSON.stringify(reloadResult)}`);
+    await send('agent page write after reload');
     await pending();
     await click(testid('agent-deny-page'));
-    await completed('Page rejected: Page access was denied');
+    await completed('Page rejected: Page writing was denied');
+    await send('agent page read');
+    await completed('Page snapshot ready');
   } finally {
     if (original) Object.defineProperty(chrome, 'devtools', original);
     else delete chrome.devtools;

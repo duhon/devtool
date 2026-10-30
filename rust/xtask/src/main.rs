@@ -39,6 +39,215 @@ fn target(root: &Path) -> PathBuf {
         .unwrap_or(root.join("target"))
 }
 
+/// A module built as a package: a `cdylib` crate with a `manifest.json` (the shipped ones are
+/// in `rust/modules/<dir>`) and its console part (`ui/`, built for `wasm32-unknown-unknown`)
+/// when it has one.
+#[derive(Clone)]
+struct Package {
+    id: String,
+    version: String,
+    library: String,
+    ui: Option<String>,
+}
+
+/// A crate's `version`, following `version.workspace = true` to the root manifest.
+fn crate_version(root: &Path, manifest: &Path) -> Result<String> {
+    let version = |path: &Path| -> Result<Option<String>> {
+        Ok(fs::read_to_string(path)?.lines().find_map(|line| {
+            line.strip_prefix("version = \"")?
+                .strip_suffix('"')
+                .map(str::to_owned)
+        }))
+    };
+    match version(manifest)? {
+        Some(version) => Ok(version),
+        None => version(&root.join("Cargo.toml"))?
+            .with_context(|| format!("No version for {}", manifest.display())),
+    }
+}
+
+fn crate_name(manifest: &Path) -> Result<String> {
+    fs::read_to_string(manifest)?
+        .lines()
+        .find_map(|line| line.strip_prefix("name = \"")?.strip_suffix('"'))
+        .map(str::to_owned)
+        .with_context(|| format!("No package name in {}", manifest.display()))
+}
+
+fn is_module(dir: &Path) -> bool {
+    fs::read_to_string(dir.join("Cargo.toml")).is_ok_and(|text| text.contains("\"cdylib\""))
+}
+
+/// The package of the module crate in `dir`.
+fn package_at(root: &Path, dir: &Path) -> Result<Package> {
+    ensure!(
+        is_module(dir),
+        "{} is not a module crate (a cdylib with a manifest.json)",
+        dir.display()
+    );
+    let cargo = dir.join("Cargo.toml");
+    let manifest = dir.join("manifest.json");
+    let manifest: Value = serde_json::from_slice(
+        &fs::read(&manifest).with_context(|| format!("Reading {}", manifest.display()))?,
+    )?;
+    let ui = dir.join("ui/Cargo.toml");
+    let package = Package {
+        id: manifest["id"]
+            .as_str()
+            .context("Module manifest without id")?
+            .to_owned(),
+        version: crate_version(root, &cargo)?,
+        library: crate_name(&cargo)?,
+        ui: ui.exists().then(|| crate_name(&ui)).transpose()?,
+    };
+    services_contracts::package::check_id(&package.id).map_err(anyhow::Error::msg)?;
+    services_contracts::package::version(&package.version).map_err(anyhow::Error::msg)?;
+    Ok(package)
+}
+
+/// The shipped modules: the module crates in `rust/modules`.
+fn packages(root: &Path) -> Result<Vec<Package>> {
+    let mut packages = Vec::new();
+    for entry in fs::read_dir(root.join("rust/modules"))? {
+        let dir = entry?.path();
+        if is_module(&dir) {
+            packages.push(package_at(root, &dir)?);
+        }
+    }
+    packages.sort_by(|a, b| a.id.cmp(&b.id));
+    Ok(packages)
+}
+
+/// Builds `packages` and lays each out as `<modules>/<id>/{package.json,module.dylib,ui.wasm}`;
+/// `link` symlinks the build outputs instead of copying them (a development data directory).
+fn build_packages(
+    root: &Path,
+    packages: &[Package],
+    modules: &Path,
+    release: bool,
+    link: bool,
+) -> Result<()> {
+    let profile = if release { "release" } else { "debug" };
+    for wasm in [false, true] {
+        let mut args = vec!["build", "--lib"];
+        if release {
+            args.push("--release");
+        }
+        if wasm {
+            args.extend(["--target", "wasm32-unknown-unknown"]);
+        }
+        let crates: Vec<&str> = packages
+            .iter()
+            .filter_map(|package| {
+                if wasm {
+                    package.ui.as_deref()
+                } else {
+                    Some(&package.library)
+                }
+            })
+            .collect();
+        if crates.is_empty() {
+            continue;
+        }
+        for name in crates {
+            args.extend(["-p", name]);
+        }
+        run(root, "cargo", &args)?;
+    }
+    for package in packages {
+        let dir = modules.join(&package.id);
+        fs::create_dir_all(&dir)?;
+        fs::write(
+            dir.join(services_contracts::package::PACKAGE_FILE),
+            serde_json::to_vec_pretty(&services_contracts::package::Package {
+                id: package.id.clone(),
+                version: package.version.clone(),
+            })?,
+        )?;
+        let mut files = vec![(
+            target(root)
+                .join(profile)
+                .join(format!("lib{}.dylib", package.library.replace('-', "_"))),
+            "module.dylib",
+        )];
+        if let Some(ui) = &package.ui {
+            files.push((
+                target(root)
+                    .join("wasm32-unknown-unknown")
+                    .join(profile)
+                    .join(format!("{}.wasm", ui.replace('-', "_"))),
+                "ui.wasm",
+            ));
+        }
+        for (built, name) in files {
+            let placed = dir.join(name);
+            if fs::symlink_metadata(&placed).is_ok() {
+                fs::remove_file(&placed)?;
+            }
+            if link {
+                std::os::unix::fs::symlink(&built, &placed)?;
+            } else {
+                fs::copy(&built, &placed)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+const PACKAGE_USAGE: &str = "package <module id | module crate folder>... [--out FOLDER]";
+
+/// Package files (`<id>-<version>.module.tgz`, Settings → Modules → Install from file) of
+/// shipped modules (by id) and module crates (by folder), built for release into `--out`
+/// (`target/packages` by default). Returns the files it writes.
+fn package_files(root: &Path, args: &[String]) -> Result<Vec<PathBuf>> {
+    let mut out = target(root).join("packages");
+    let mut selected = Vec::<Package>::new();
+    let mut args = args.iter();
+    while let Some(arg) = args.next() {
+        if arg == "--out" {
+            out = PathBuf::from(args.next().context("--out needs a folder")?);
+            continue;
+        }
+        let package = if Path::new(arg).join("Cargo.toml").is_file() {
+            package_at(root, &fs::canonicalize(arg)?)?
+        } else {
+            packages(root)?
+                .into_iter()
+                .find(|package| package.id == *arg)
+                .with_context(|| {
+                    format!("{arg:?} is neither a shipped module id nor a module crate folder")
+                })?
+        };
+        ensure!(
+            selected.iter().all(|other| other.id != package.id),
+            "Module {} is named twice",
+            package.id
+        );
+        selected.push(package);
+    }
+    ensure!(
+        !selected.is_empty(),
+        "Usage: cargo run -p xtask -- {PACKAGE_USAGE}"
+    );
+    let staging = tempfile::tempdir()?;
+    build_packages(root, &selected, staging.path(), true, false)?;
+    fs::create_dir_all(&out)?;
+    let mut files = Vec::new();
+    for package in &selected {
+        let archive = services_contracts::package::archive::pack(&staging.path().join(&package.id))
+            .map_err(anyhow::Error::msg)?;
+        let file = out.join(services_contracts::package::archive_name(
+            &services_contracts::package::Package {
+                id: package.id.clone(),
+                version: package.version.clone(),
+            },
+        ));
+        fs::write(&file, archive)?;
+        files.push(file);
+    }
+    Ok(files)
+}
+
 fn build_extension(root: &Path, output: &Path) -> Result<String> {
     run(
         root,
@@ -208,6 +417,13 @@ fn build_distribution(root: &Path, args: &[String]) -> Result<()> {
             payload.join("native/bin").join(binary),
         )?;
     }
+    build_packages(
+        root,
+        &packages(root)?,
+        &payload.join(services_installer::MODULES),
+        true,
+        false,
+    )?;
     let id = build_extension(root, &payload.join("extension"))?;
     let manifest: Value =
         serde_json::from_slice(&fs::read(payload.join("extension/manifest.json"))?)?;
@@ -244,9 +460,10 @@ fn build_distribution(root: &Path, args: &[String]) -> Result<()> {
         output.join("checksums.txt"),
         format!("{digest:x}  {archive_name}\n"),
     )?;
+    let version = manifest["version"].as_str().unwrap();
     let installer = fs::read_to_string(root.join("scripts/distribution/install.sh"))?
         .replace("@REPOSITORY@", &repository)
-        .replace("@BRANCH@", &branch);
+        .replace("@VERSION@", version);
     fs::write(output.join("install.sh"), installer)?;
     println!(
         "Distribution: {}\nLocal install: ./install.sh",
@@ -254,12 +471,52 @@ fn build_distribution(root: &Path, args: &[String]) -> Result<()> {
     );
     if !repository.is_empty() {
         println!(
-            "Publish the three files to branch {branch}, then:\ncurl -fsSL https://raw.githubusercontent.com/{repository}/{branch}/install.sh | bash"
+            "Once GitHub release devtool-v{version} has these files:\ncurl -fsSL https://github.com/{repository}/releases/latest/download/install.sh | bash"
         );
     } else {
         println!("Remote installation is not configured; rebuild with --repository OWNER/REPO.");
     }
     println!("This distribution is not Apple-notarized.");
+    Ok(())
+}
+
+const TEST_USAGE: &str = "cargo run -p xtask -- test behavior [--module NAME] | contract | ui | browser [--scenario NAME]... [--jobs N] [--list] [--fail-fast] | install | perf | all";
+
+/// One command per test type, so a failure says which kind of promise broke.
+fn test(root: &Path, args: &[String]) -> Result<()> {
+    let words = |line: &str| {
+        line.split_whitespace()
+            .map(String::from)
+            .collect::<Vec<_>>()
+    };
+    let mut commands = match args.first().map(String::as_str) {
+        Some("behavior") => vec![words(
+            "test -p services-native --lib --test modules --test core",
+        )],
+        Some("contract") => vec![
+            words("test -p services-native --test conformance --test host"),
+            words("test -p services-contracts"),
+        ],
+        Some("ui") => vec![words("test -p services-ui")],
+        Some("browser") => return browser::run(root, browser::Selection::parse(&args[1..])?),
+        Some("install") => vec![words("test -p services-installer")],
+        Some("perf") => vec![words(
+            "test -p services-native --release --test perf -- --ignored --nocapture --test-threads 1",
+        )],
+        Some("all") => vec![words("test --workspace")],
+        _ => bail!("Usage: {TEST_USAGE}"),
+    };
+    match &args[1..] {
+        [] => {}
+        [flag, module] if flag == "--module" && args[0] == "behavior" => {
+            commands[0].extend(["--".into(), format!("{module}::")]);
+        }
+        _ => bail!("Usage: {TEST_USAGE}"),
+    }
+    for command in commands {
+        let command: Vec<&str> = command.iter().map(String::as_str).collect();
+        run(root, "cargo", &command)?;
+    }
     Ok(())
 }
 
@@ -271,11 +528,34 @@ fn main() {
             build_extension(&root, &root.join("adapters/extension/dist")).map(|_| ())
         }
         Some("build") => build_distribution(&root, &args[1..]),
-        Some("test-browser") => browser::run(&root, false),
-        Some("test-agent") => browser::run(&root, true),
+        Some("modules") => {
+            // The development host's data directory is the repository root by default.
+            let data = std::env::var_os("SERVICES_DATA_DIR").map_or(root.clone(), PathBuf::from);
+            let release = args.get(1).is_some_and(|flag| flag == "--release");
+            packages(&root).and_then(|packages| {
+                build_packages(
+                    &root,
+                    &packages,
+                    &data.join(services_installer::MODULES),
+                    release,
+                    true,
+                )
+            })
+        }
+        Some("package") => package_files(&root, &args[1..]).map(|files| {
+            for file in files {
+                println!("{}", file.display());
+            }
+        }),
+        Some("test") => test(&root, &args[1..]),
+        Some("test-browser") => browser::run(&root, browser::Selection::all()),
+        Some("test-agent") => browser::run(&root, browser::Selection::group(browser::Group::Agent)),
+        Some("test-settings") => {
+            browser::run(&root, browser::Selection::group(browser::Group::Settings))
+        }
         Some("copilot-fixture") => copilot_fixture::run(),
         _ => Err(anyhow::anyhow!(
-            "Usage: cargo run -p xtask -- build-extension | build [--repository OWNER/REPO] [--branch distribution] | test-browser | test-agent"
+            "Usage: cargo run -p xtask -- build-extension | build [--repository OWNER/REPO] [--branch distribution] | modules [--release] | {PACKAGE_USAGE} | test-browser | test-agent | test-settings\n       {TEST_USAGE}"
         )),
     };
     if let Err(error) = result {

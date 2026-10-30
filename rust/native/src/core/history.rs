@@ -597,6 +597,7 @@ mod tests {
     #[tokio::test]
     async fn oversize_history_failure_keeps_successful_execution_and_parallel_writes_obey_quota() {
         let data = Data::new();
+        services_testkit::packages::install(&data.0);
         let mut store = data.history();
         store.quota = 500;
         store.target = 250;

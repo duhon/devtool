@@ -1,11 +1,13 @@
-use super::{call, error, get, window};
+use super::{call, error, get, views::OperationStatus, window};
 use crate::activity::{Indicator, Signal};
+use serde_json::{Value, json};
 use services_contracts::updates::{Release, Source};
 use wasm_bindgen::{JsCast, JsValue, closure::Closure};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{AbortController, Request, RequestCache, RequestCredentials, RequestInit, Response};
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Phase {
     Checking,
     Current,
@@ -15,7 +17,6 @@ pub enum Phase {
     Installed,
     Reloading,
     Unconfigured,
-    Unsupported,
     Error,
 }
 
@@ -26,24 +27,27 @@ pub struct State {
     pub error: Option<String>,
     pub generation: u64,
     pub signal: Signal,
+    pub status: OperationStatus,
 }
 
-impl State {
-    pub fn new(native: bool) -> Self {
+impl Default for State {
+    fn default() -> Self {
         Self {
-            phase: if native {
-                Phase::Checking
-            } else {
-                Phase::Unsupported
-            },
+            phase: Phase::Checking,
             source: None,
             release: None,
             error: None,
             generation: 0,
             signal: Default::default(),
+            status: OperationStatus {
+                debug: json!({"operation":"Updates"}),
+                ..Default::default()
+            },
         }
     }
+}
 
+impl State {
     pub fn busy(&self) -> bool {
         matches!(
             self.phase,
@@ -52,21 +56,68 @@ impl State {
     }
 
     pub fn indicator(&self) -> Indicator {
+        if self.error.is_some() {
+            return Indicator::Error;
+        }
         match self.phase {
             Phase::Available => Indicator::Success,
-            Phase::Preparing | Phase::Installing | Phase::Reloading => Indicator::Running,
+            Phase::Checking | Phase::Preparing | Phase::Installing | Phase::Reloading => {
+                Indicator::Running
+            }
             Phase::Error => Indicator::Error,
             _ => Indicator::Ready,
         }
     }
 
     pub fn fail(&mut self, message: String) {
-        self.phase = Phase::Error;
+        self.phase = if matches!(self.phase, Phase::Installed | Phase::Reloading) {
+            Phase::Installed
+        } else {
+            Phase::Error
+        };
         self.error = Some(message);
         self.signal = Default::default();
+        self.record(Value::Null);
+    }
+
+    pub fn begin(&mut self, phase: Phase, operation: &str, details: Value) {
+        self.status = OperationStatus::event(operation, js_sys::Date::now(), None);
+        self.phase = phase;
+        self.error = None;
+        self.record(details);
+    }
+
+    pub fn transition(&mut self, phase: Phase) {
+        self.phase = phase;
+        self.error = None;
+        self.signal = Default::default();
+        self.record(Value::Null);
+    }
+
+    pub fn record(&mut self, details: Value) {
+        let now = js_sys::Date::now();
+        self.status.text = self.text().to_owned();
+        self.status.running = self.phase == Phase::Checking || self.busy();
+        let mut events = self.status.debug["events"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        events.push(json!({
+            "at":now,"phase":self.phase,"status":self.status.text,"details":details
+        }));
+        self.status.debug = json!({
+            "operation":self.status.debug["operation"],
+            "phase":self.phase,"status":self.status.text,
+            "started":self.status.started,"elapsedMs":(now-self.status.started).max(0.0),
+            "currentVersion":env!("CARGO_PKG_VERSION"),
+            "source":self.source,"release":self.release,"error":self.error,"events":events
+        });
     }
 
     pub fn text(&self) -> &str {
+        if let Some(error) = &self.error {
+            return error;
+        }
         match self.phase {
             Phase::Checking => "Checking for updates...",
             Phase::Current => "Up to date",
@@ -78,7 +129,6 @@ impl State {
             Phase::Installed => "Update installed. Reload the extension to finish.",
             Phase::Reloading => "Reloading the extension...",
             Phase::Unconfigured => "Update source is not configured",
-            Phase::Unsupported => "Application updates are available in the Chrome extension",
             Phase::Error => self.error.as_deref().unwrap_or("Update failed"),
         }
     }

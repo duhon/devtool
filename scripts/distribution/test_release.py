@@ -91,7 +91,9 @@ class ReleaseTests(unittest.TestCase):
                     package.addfile(entry, io.BytesIO(data))
             digest = hashlib.sha256(archive.read_bytes()).hexdigest()
             (output / "checksums.txt").write_text(f"{digest}  {release.ARCHIVE}\n")
-            (output / "install.sh").write_text("#!/bin/bash\n")
+            (output / "install.sh").write_text(
+                "#!/bin/bash\nREPOSITORY='owner/repo'\nVERSION='3.0.0'\n"
+            )
             with patch.dict(os.environ, {
                 "GITHUB_REPOSITORY": "owner/repo", "GITHUB_SHA": "a" * 40,
                 "GITHUB_REF_NAME": branch,
@@ -108,6 +110,9 @@ class ReleaseTests(unittest.TestCase):
             self.assertEqual(metadata["commit"], "a" * 40)
             self.assertEqual(metadata["sha256"], release.sha256(output / release.ARCHIVE))
             self.assertEqual((output / "release-notes.txt").read_text(), "- Major release\n")
+            (output / "install.sh").write_text("#!/bin/bash\nREPOSITORY='owner/repo'\nVERSION='2.6.1'\n")
+            with self.assertRaisesRegex(ValueError, "install.sh"):
+                release.metadata(root)
             (output / "checksums.txt").write_text("invalid\n")
             with self.assertRaises(ValueError):
                 release.metadata(root)

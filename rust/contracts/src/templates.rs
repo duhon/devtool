@@ -1,19 +1,8 @@
+use crate::manifest::Manifest;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub type Library = BTreeMap<String, BTreeMap<String, String>>;
-
-pub fn sections(service: &str) -> &'static [&'static str] {
-    match service {
-        "mysql" => &["check", "endpoint", "options", "query"],
-        "rest" => &["check", "endpoint", "headers", "body"],
-        "graphql" => &["check", "endpoint", "headers", "variables", "query"],
-        "grpc" => &["check", "endpoint", "headers", "proto", "message"],
-        "splunk" => &["check", "endpoint", "headers", "options", "search"],
-        "terminal" => &["check", "endpoint", "command", "env"],
-        _ => &[],
-    }
-}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Template {
@@ -77,15 +66,19 @@ pub fn parse(text: &str) -> Result<Vec<Template>, String> {
     Ok(result)
 }
 
+/// Whether `service` has a template section `section` (`check` or a console section).
+pub fn has_section(manifests: &[Manifest], service: &str, section: &str) -> bool {
+    manifests
+        .iter()
+        .find(|manifest| manifest.id == service)
+        .is_some_and(|manifest| manifest.template_sections().any(|name| name == section))
+}
+
+/// Checks every template text. Sections of services or sections no loaded module has are
+/// kept as they are: a module may be removed, fail to load or come back in another version.
 pub fn validate(library: &Library) -> Result<(), String> {
-    for (service, entries) in library {
-        if sections(service).is_empty() {
-            return Err(format!("Unknown template service: {service}"));
-        }
-        for (section, text) in entries {
-            if !sections(service).contains(&section.as_str()) {
-                return Err(format!("Unknown {service} template section: {section}"));
-            }
+    for entries in library.values() {
+        for text in entries.values() {
             parse(text)?;
         }
     }
@@ -96,21 +89,46 @@ pub fn validate(library: &Library) -> Result<(), String> {
 mod tests {
     use super::*;
     #[test]
-    fn splunk_only_accepts_canonical_template_sections() {
-        assert_eq!(
-            sections("splunk"),
-            &["check", "endpoint", "headers", "options", "search"]
-        );
-        for section in ["from", "to", "app", "count"] {
-            let library = BTreeMap::from([(
-                "splunk".into(),
-                BTreeMap::from([(section.into(), "@old Existing template\nvalue".into())]),
-            )]);
-            assert_eq!(
-                validate(&library).unwrap_err(),
-                format!("Unknown splunk template section: {section}")
-            );
+    fn only_manifest_sections_are_template_sections() {
+        let manifests = [Manifest {
+            id: "splunk".into(),
+            console: crate::manifest::Console {
+                sections: ["endpoint", "headers", "options", "search"]
+                    .map(|name| crate::manifest::Section {
+                        name: name.into(),
+                        ..Default::default()
+                    })
+                    .into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        }];
+        for section in ["check", "endpoint", "headers", "options", "search"] {
+            assert!(has_section(&manifests, "splunk", section));
         }
+        for section in ["from", "to", "app", "count"] {
+            assert!(!has_section(&manifests, "splunk", section));
+        }
+        assert!(!has_section(&manifests, "redis", "check"));
+    }
+    #[test]
+    fn templates_of_unloaded_services_and_sections_are_kept_but_still_checked() {
+        let library = BTreeMap::from([
+            (
+                "splunk".into(),
+                BTreeMap::from([("from".into(), "@old Existing template\nvalue".into())]),
+            ),
+            (
+                "redis".into(),
+                BTreeMap::from([("check".into(), "@x\nGET".into())]),
+            ),
+        ]);
+        assert_eq!(validate(&library), Ok(()));
+        let broken = BTreeMap::from([(
+            "redis".into(),
+            BTreeMap::from([("check".into(), "x".into())]),
+        )]);
+        assert!(validate(&broken).unwrap_err().starts_with("Line 1"));
     }
     #[test]
     fn parses_literal_multiline_bodies_without_headers_or_descriptions() {

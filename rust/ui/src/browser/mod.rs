@@ -1,10 +1,13 @@
 mod agent_markdown;
 mod agent_panel;
+mod agent_settings;
 mod app;
 mod check_rail;
 mod console_variables;
 mod editor;
 mod history;
+mod module_settings;
+mod module_ui;
 mod page_agent;
 mod pane_resizer;
 mod session_database;
@@ -52,13 +55,44 @@ pub fn error(value: JsValue) -> String {
 pub fn window() -> web_sys::Window {
     web_sys::window().expect("browser window")
 }
+const MODULES: &str = "servicesConsole.modules";
+
+/// The module list of the last host reply; the built-in one stays without a valid cache.
+fn restore_modules() -> bool {
+    let cached = window()
+        .local_storage()
+        .ok()
+        .flatten()
+        .and_then(|storage| storage.get_item(MODULES).ok().flatten());
+    cached
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .and_then(|value| crate::services::parse(&value).ok())
+        .is_some_and(|manifests| crate::services::install(manifests).is_ok())
+}
+
+/// Installs and caches the host's module list; `true` when it changed.
+pub fn accept_modules(value: &serde_json::Value) -> Result<bool, String> {
+    let manifests = crate::services::parse(value)?;
+    if let Some(storage) = window().local_storage().ok().flatten() {
+        let cached = serde_json::json!({"modules": manifests}).to_string();
+        let _ = storage.set_item(MODULES, &cached);
+    }
+    let changed = crate::services::install(manifests)?;
+    if changed && let Err(error) = editor::register_console_modes() {
+        web_sys::console::error_1(&error);
+    }
+    Ok(changed)
+}
+
 pub fn start() -> Result<(), JsValue> {
+    let restored = restore_modules();
     let root = window()
         .document()
         .ok_or("No document")?
         .get_element_by_id("app")
         .ok_or("Missing #app mount element")?;
     editor::register_modes()?;
-    yew::Renderer::<sessions::Host>::with_root(root).render();
+    yew::Renderer::<sessions::Host>::with_root_and_props(root, sessions::HostProps { restored })
+        .render();
     Ok(())
 }

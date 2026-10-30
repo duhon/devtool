@@ -1,19 +1,25 @@
 use super::error::{Error, Result};
 use serde_json::{Value, json};
-use services_contracts::templates::{self, Library};
+use services_contracts::{
+    manifest::Manifest,
+    templates::{self, Library},
+};
 use std::{
     fs::{self, OpenOptions},
     io::{ErrorKind, Write},
     path::PathBuf,
+    sync::Arc,
 };
 
 #[derive(Clone)]
 pub struct Templates {
     path: PathBuf,
+    /// Template sections come from the loaded modules.
+    manifests: Arc<Vec<Manifest>>,
 }
 impl Templates {
-    pub fn new(path: PathBuf) -> Self {
-        Self { path }
+    pub fn new(path: PathBuf, manifests: Arc<Vec<Manifest>>) -> Self {
+        Self { path, manifests }
     }
     fn read(&self) -> Result<Library> {
         let bytes = match fs::read(&self.path) {
@@ -38,7 +44,7 @@ impl Templates {
         let section = required("section")?;
         let text = required("text")?;
         let base = required("base")?;
-        if !templates::sections(service).contains(&section) {
+        if !templates::has_section(&self.manifests, service, section) {
             return Err(Error::new("Unknown template service or section"));
         }
         templates::parse(text).map_err(Error::new)?;

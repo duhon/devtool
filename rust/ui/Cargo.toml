@@ -9,13 +9,25 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 services-contracts = { path = "../contracts" }
+services-module-ui = { path = "../module-ui" }
 serde.workspace = true
 serde_json.workspace = true
 regex = "1"
 url = "2"
 uuid = { version = "1.29.0", features = ["v7", "js"] }
 
+# Packaged modules' console parts load from their ui.wasm in the browser; native builds
+# (tests) link them instead.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+services-module-rest-ui = { path = "../modules/rest/ui" }
+services-module-graphql-ui = { path = "../modules/graphql/ui" }
+services-module-grpc-ui = { path = "../modules/grpc/ui" }
+services-module-mysql-ui = { path = "../modules/mysql/ui" }
+services-module-splunk-ui = { path = "../modules/splunk/ui" }
+services-module-terminal-ui = { path = "../modules/terminal/ui" }
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+base64 = "0.22"
 pulldown-cmark = { version = "0.13", default-features = false }
 yew = { version = "0.21", features = ["csr"] }
 wasm-bindgen = "=0.2.108"
@@ -26,10 +38,11 @@ web-sys = { version = "0.3", features = [
   "Window", "Document", "Element", "HtmlElement", "HtmlInputElement",
   "HtmlTextAreaElement", "HtmlSelectElement", "Node", "Storage", "Event",
   "InputEvent", "KeyboardEvent", "MouseEvent", "PointerEvent", "DragEvent", "DataTransfer", "CssStyleDeclaration",
-  "Request", "RequestInit", "Response", "Headers", "WebSocket", "MessageEvent",
+  "Request", "RequestInit", "Response", "Headers",
   "RequestCredentials", "RequestCache", "AbortController", "AbortSignal",
-  "CloseEvent", "ErrorEvent", "Location", "console", "DomRect", "Navigator",
+  "console", "DomRect", "Navigator",
   "Clipboard", "FocusEvent", "ResizeObserver", "BeforeUnloadEvent",
   "IdbFactory", "IdbOpenDbRequest", "IdbDatabase", "IdbObjectStore",
-  "IdbRequest", "IdbTransaction", "IdbTransactionMode", "DomException"
+  "IdbRequest", "IdbTransaction", "IdbTransactionMode", "DomException",
+  "Blob", "File", "FileList"
 ] }

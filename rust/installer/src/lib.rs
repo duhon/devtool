@@ -266,6 +266,113 @@ fn valid_build_id(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
 }
 
+/// The modules folder in the data directory: the host loads every package in it, shipped
+/// or installed by the user alike.
+pub const MODULES: &str = "modules";
+/// A package's library inside its `<modules>/<id>/` folder.
+pub const MODULE_LIBRARY: &str = "module.dylib";
+
+/// The shipped package in `dir`: a folder named by its checked `package.json` id, with a
+/// library.
+fn shipped_package(dir: &Path) -> Result<services_contracts::package::Package> {
+    let package = services_contracts::package::Package::read(dir).map_err(anyhow::Error::msg)?;
+    ensure!(
+        dir.file_name() == Some(package.id.as_ref()) && dir.join(MODULE_LIBRARY).is_file(),
+        "Invalid module package: {}",
+        dir.display()
+    );
+    Ok(package)
+}
+
+/// Module packages shipped with a release, moved into the modules folder. Each one replaces
+/// the package of the same id unless the installed one is newer; others (the user's) stay.
+/// Until `commit`, `undo` restores the replaced packages.
+#[derive(Default)]
+struct ShippedModules {
+    /// `(package folder, its previous copy)`.
+    placed: Vec<(PathBuf, Option<PathBuf>)>,
+}
+
+impl ShippedModules {
+    fn place(&mut self, payload: &Path, data: &Path, automatic: bool) -> Result<()> {
+        let source = payload.join(MODULES);
+        if !source.exists() {
+            return Ok(());
+        }
+        let folder = data.join(MODULES);
+        fs::create_dir_all(&folder)?;
+        let mut ids: Vec<String> = fs::read_dir(&source)?
+            .map(|entry| Ok(entry?.file_name().to_string_lossy().into_owned()))
+            .collect::<Result<_>>()?;
+        ids.sort();
+        for id in ids {
+            let shipped = shipped_package(&source.join(&id))?;
+            if services_contracts::package::Package::read(&folder.join(&id))
+                .is_ok_and(|installed| installed.newer_than(&shipped))
+            {
+                continue;
+            }
+            let staged = folder.join(format!(".{id}-install-{}", unique_id()));
+            let prepared = (|| -> Result<()> {
+                copy_tree(&source.join(&id), &staged)?;
+                #[cfg(target_os = "macos")]
+                if automatic {
+                    local_signing::resign(
+                        &staged.join(MODULE_LIBRARY),
+                        &data.join(format!("update-module-{id}-signing.json")),
+                    )?;
+                }
+                #[cfg(not(target_os = "macos"))]
+                let _ = automatic;
+                Ok(())
+            })();
+            if let Err(error) = prepared {
+                let _ = remove_extension_path(&staged);
+                return Err(error.context(format!("Prepare module package {id}")));
+            }
+            let target = folder.join(&id);
+            let previous = match fs::symlink_metadata(&target) {
+                Ok(_) => {
+                    let backup = folder.join(format!(".{id}-backup-{}", unique_id()));
+                    fs::rename(&target, &backup)?;
+                    Some(backup)
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(error) => return Err(error.into()),
+            };
+            self.placed.push((target.clone(), previous));
+            if let Err(error) = fs::rename(&staged, &target) {
+                let _ = remove_extension_path(&staged);
+                return Err(error.into());
+            }
+        }
+        Ok(())
+    }
+
+    fn undo(&mut self) -> Vec<String> {
+        let mut failures = Vec::new();
+        for (target, previous) in self.placed.drain(..).rev() {
+            let restored = remove_extension_path(&target).and_then(|()| match previous {
+                Some(previous) => fs::rename(previous, &target).map_err(Into::into),
+                None => Ok(()),
+            });
+            if let Err(error) = restored {
+                failures.push(format!("Restore module {}: {error:#}", target.display()));
+            }
+        }
+        failures
+    }
+
+    fn commit(&mut self) -> Result<()> {
+        for (_, previous) in self.placed.drain(..) {
+            if let Some(previous) = previous {
+                remove_extension_path(&previous)?;
+            }
+        }
+        Ok(())
+    }
+}
+
 pub fn validate_payload(payload: &Path) -> Result<Value> {
     let metadata = read_json(&payload.join("distribution.json"))?;
     ensure!(
@@ -300,6 +407,18 @@ pub fn validate_payload(payload: &Path) -> Result<Value> {
             "Payload executable is not executable: {}",
             file.display()
         );
+    }
+    let modules = payload.join(MODULES);
+    if modules.exists() {
+        for entry in fs::read_dir(&modules)? {
+            let entry = entry?;
+            ensure!(
+                entry.file_type()?.is_dir(),
+                "Invalid module package: {}",
+                entry.path().display()
+            );
+            shipped_package(&entry.path())?;
+        }
     }
     Ok(metadata)
 }
@@ -656,6 +775,7 @@ fn install_payload(home: &Path, payload: &Path, automatic: bool) -> Result<Locat
         .join(format!(".extension-backup-{}", unique_id()));
     let mut extension_backed_up = false;
     let mut extension_activated = false;
+    let mut modules = ShippedModules::default();
     let managed_files = [
         paths.base.join("uninstall"),
         paths.base.join("dev"),
@@ -689,6 +809,8 @@ fn install_payload(home: &Path, payload: &Path, automatic: bool) -> Result<Locat
                     &paths.data.join("update-installer-signing.json"),
                 )?;
             }
+            // Placed before the health check, so the new host starts with its own modules.
+            modules.place(payload, &paths.data, automatic)?;
             check_host(&staged_host, &paths.data)?;
             if previous_extension != ExtensionPath::Missing {
                 fs::rename(&extension, &extension_backup)?;
@@ -749,6 +871,7 @@ fn install_payload(home: &Path, payload: &Path, automatic: bool) -> Result<Locat
         if extension_backed_up && let Err(error) = fs::rename(&extension_backup, &extension) {
             failures.push(format!("Restore previous extension: {error:#}"));
         }
+        failures.extend(modules.undo());
         result = Err(if failures.is_empty() {
             error
         } else {
@@ -759,6 +882,7 @@ fn install_payload(home: &Path, payload: &Path, automatic: bool) -> Result<Locat
         });
     } else {
         remove_extension_path(&extension_backup)?;
+        modules.commit()?;
     }
     if let Err(cleanup) = remove_extension_path(&staged_extension) {
         return Err(match result {

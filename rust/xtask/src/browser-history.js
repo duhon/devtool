@@ -1,6 +1,6 @@
 (async()=>{
-  const {assert,wait,click,testid,cm,setSource,key,choose,activateSession,visible}=testDriver;
-  await choose('console');
+  const {assert,wait,click,testid,cm,setSource,key,openConsole,activateSession,visible}=testDriver;
+  await openConsole();
   await click(testid('console-service-rest'));
   const editor=cm('console-editor');
   setSource(editor,`#check History acceptance\n#endpoint\nPUT ${fixtureUrl}/history-fixture?value={{env:SERVICES_DEVTOOLS_ENV_PROBE}}\n#headers\nContent-Type: application/json\nAuthorization: Bearer history-secret-token\n#body\n{"text":"first","env":"{{env:SERVICES_DEVTOOLS_ENV_PROBE}}"}`);

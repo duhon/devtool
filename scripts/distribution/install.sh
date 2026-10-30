@@ -3,7 +3,7 @@ set -euo pipefail
 umask 077
 
 REPOSITORY='@REPOSITORY@'
-BRANCH='@BRANCH@'
+VERSION='@VERSION@'
 ARCHIVE=''
 EXPECTED_SHA=''
 ARCHIVE_NAME='services-macos-arm64.tar.gz'
@@ -11,7 +11,7 @@ ARCHIVE_NAME='services-macos-arm64.tar.gz'
 fail() { printf 'Installation failed: %s\n' "$*" >&2; exit 1; }
 usage() {
   printf '%s\n' 'Usage: bash install.sh [--archive /path/services-macos-arm64.tar.gz] [--sha256 HASH]'
-  printf '%s\n' 'Automatically uses the package beside this script, or downloads it from GitHub.'
+  printf '%s\n' 'Automatically uses the package beside this script, or downloads it from its GitHub release.'
 }
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -55,16 +55,10 @@ if [ -n "$ARCHIVE" ]; then
   fi
 else
   [[ "$REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || fail 'Remote source is not configured; build with --repository OWNER/REPO'
-  [[ "$BRANCH" =~ ^[A-Za-z0-9_./-]+$ ]] || fail 'Invalid branch'
-  # Resolve once; the checksum and package must come from the same immutable commit.
-  /usr/bin/curl --fail --silent --show-error --location --proto '=https' \
-    --retry 2 --connect-timeout 15 --max-time 60 --get \
-    --data-urlencode "sha=$BRANCH" --data-urlencode 'per_page=1' \
-    "https://api.github.com/repos/$REPOSITORY/commits" --output "$WORK/commit.json"
-  COMMIT=$(/usr/bin/plutil -extract 0.sha raw -o - "$WORK/commit.json")
-  [[ "$COMMIT" =~ ^[a-f0-9]{40}$ ]] || fail 'GitHub did not return a commit SHA'
-  BASE="https://raw.githubusercontent.com/$REPOSITORY/$COMMIT"
-  printf 'Downloading Services DevTools (%s)...\n' "$COMMIT"
+  [[ "$VERSION" =~ ^[0-9]+[.][0-9]+[.][0-9]+$ ]] || fail 'Invalid release version'
+  # This script is a release asset; the checksum and package come from that same release.
+  BASE="https://github.com/$REPOSITORY/releases/download/devtool-v$VERSION"
+  printf 'Downloading Services DevTools %s...\n' "$VERSION"
   download "$BASE/checksums.txt" "$WORK/checksums.txt"
   download "$BASE/$ARCHIVE_NAME" "$WORK/$ARCHIVE_NAME"
 fi

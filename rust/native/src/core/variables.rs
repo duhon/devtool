@@ -2,6 +2,7 @@ use super::error::{Error, Result, string, text};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
+use services_contracts::ParamConfig;
 use std::{
     collections::HashSet,
     fs::{File, OpenOptions},
@@ -547,19 +548,18 @@ impl VariableStore {
         Self::write_file(&path, &state)?;
         Ok(self.scoped(&self.read()?))
     }
-    pub fn resolve_params(&self, name: &str, params: &Value) -> Result<Value> {
-        self.resolve_for_history(name, params, None)
+    /// Resolves the declared `config` params of a request; undeclared ones are dropped.
+    pub fn resolve_params(&self, config: &[ParamConfig], params: &Value) -> Result<Value> {
+        self.resolve_for_history(config, params, None)
             .map(|value| value.0)
     }
     pub fn resolve_for_history(
         &self,
-        name: &str,
+        config: &[ParamConfig],
         params: &Value,
         source: Option<&str>,
     ) -> Result<HistoryResolution> {
         use std::cell::RefCell;
-        let config = services_contracts::service_config(name)
-            .ok_or_else(|| Error::new(format!("Unknown service \"{name}\"")))?;
         let _file = self.file_lock()?;
         let mut state = self.read()?;
         if let Some(variables) = params.get("__consoleVariables") {
@@ -647,7 +647,7 @@ impl VariableStore {
             .map(Value::String)
         };
         let mut out = Map::new();
-        for p in config.params {
+        for p in config {
             let Some(raw) = params.get(&p.name) else {
                 continue;
             };
@@ -675,7 +675,7 @@ impl VariableStore {
                     )));
                 }
             };
-            out.insert(p.name, v);
+            out.insert(p.name.clone(), v);
         }
         let snapshot = resolve(&json!(source.unwrap_or("")))
             .map(|source| (string(&source), sensitive.into_inner()));

@@ -865,3 +865,131 @@ fn invalid_recorded_path_cannot_be_removed_as_a_registration() {
     assert!(paths.base.join("extension").exists());
     assert!(paths.registration.exists());
 }
+
+#[test]
+fn shipped_modules_replace_only_their_own_ids_and_roll_back_with_the_release() {
+    let (_directory, home, payload, _) = fixture();
+    let ship = |version: &str| {
+        let package = payload.join("modules/rest");
+        fs::create_dir_all(&package).unwrap();
+        fs::write(package.join("module.dylib"), version).unwrap();
+        fs::write(package.join("ui.wasm"), version).unwrap();
+        describe(&package, "rest", &format!("3.0.{version}"));
+    };
+    let paths = locations(&home);
+    let own = paths.data.join("modules/own");
+    fs::create_dir_all(&own).unwrap();
+    fs::write(own.join("module.dylib"), "colleague").unwrap();
+    describe(&own, "own", "0.1.0");
+    ship("1");
+    install(&home, &payload).unwrap();
+    let modules = paths.data.join("modules");
+    let listing = || {
+        let mut names: Vec<String> = fs::read_dir(&modules)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    };
+    let shipped = || fs::read_to_string(modules.join("rest/module.dylib")).unwrap();
+    assert_eq!(listing(), ["own", "rest"]);
+    assert_eq!(shipped(), "1");
+    assert_eq!(
+        fs::read_to_string(modules.join("rest/ui.wasm")).unwrap(),
+        "1"
+    );
+
+    ship("2");
+    let host = payload.join("native/bin/services-devtools");
+    let working = fs::read(&host).unwrap();
+    fs::write(&host, "#!/bin/sh\nexit 1\n").unwrap();
+    assert!(install(&home, &payload).is_err());
+    assert_eq!(
+        listing(),
+        ["own", "rest"],
+        "a failed release restores the folder"
+    );
+    assert_eq!(shipped(), "1");
+
+    fs::write(&host, working).unwrap();
+    install(&home, &payload).unwrap();
+    assert_eq!(listing(), ["own", "rest"]);
+    assert_eq!(shipped(), "2");
+    assert_eq!(
+        fs::read_to_string(own.join("module.dylib")).unwrap(),
+        "colleague"
+    );
+
+    // The same id is the same module: a newer one the user installed stays.
+    fs::write(modules.join("rest/module.dylib"), "colleague's rest").unwrap();
+    describe(&modules.join("rest"), "rest", "3.1.0");
+    install(&home, &payload).unwrap();
+    assert_eq!(shipped(), "colleague's rest");
+    describe(&modules.join("rest"), "rest", "3.0.2");
+    install(&home, &payload).unwrap();
+    assert_eq!(shipped(), "2", "the same version is reinstalled");
+
+    describe(&payload.join("modules/rest"), "graphql", "3.0.2");
+    assert!(
+        validate_payload(&payload).is_err(),
+        "a package folder is named by its id"
+    );
+    describe(&payload.join("modules/rest"), "rest", "3.0");
+    assert!(validate_payload(&payload).is_err(), "versions are X.Y.Z");
+    describe(&payload.join("modules/rest"), "rest", "3.0.2");
+    fs::create_dir_all(payload.join("modules/.hidden")).unwrap();
+    assert!(
+        validate_payload(&payload).is_err(),
+        "package ids are plain names"
+    );
+}
+
+fn describe(package: &std::path::Path, id: &str, version: &str) {
+    fs::write(
+        package.join("package.json"),
+        serde_json::json!({"id": id, "version": version}).to_string(),
+    )
+    .unwrap();
+}
+
+#[test]
+fn an_archive_update_signs_shipped_module_libraries_and_clears_their_quarantine() {
+    let (directory, home, payload, _) = fixture();
+    let paths = install(&home, &payload).unwrap();
+    change_version(&payload, "2.0.0");
+    let package = payload.join("modules/rest");
+    fs::create_dir_all(&package).unwrap();
+    fs::copy(
+        std::env::current_exe().unwrap(),
+        package.join("module.dylib"),
+    )
+    .unwrap();
+    describe(&package, "rest", "2.0.0");
+    let path = directory.path().join("update.tar.gz");
+    let sha = archive(&payload, &path);
+    let marked = std::process::Command::new("/usr/bin/xattr")
+        .args([
+            "-w",
+            "com.apple.quarantine",
+            "0081;6ae242f3;Google Chrome for Testing;",
+        ])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(marked.status.success());
+    services_installer::updates::install_archive(&home, &path, &sha, "2.0.0").unwrap();
+    let signing: Value = serde_json::from_slice(
+        &fs::read(paths.data.join("update-module-rest-signing.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(signing["before"]["quarantine"].is_array());
+    assert_eq!(signing["quarantineAbsent"], true);
+    assert_eq!(signing["phase"], "ready-for-health-check");
+    let verified = std::process::Command::new("/usr/bin/codesign")
+        .args(["--verify"])
+        .arg(paths.data.join("modules/rest/module.dylib"))
+        .output()
+        .unwrap();
+    assert!(verified.status.success());
+}

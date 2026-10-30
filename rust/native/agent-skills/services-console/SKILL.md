@@ -12,7 +12,7 @@ or browser-storage rewrites. Every tool is bound to this browser workspace.
 This overview is mandatory in every created or resumed session. Before answering
 how to use the application, read `console_skill` with the relevant `topic`:
 
-- `interface`: actual Console controls, panels, shortcuts, chat and legacy UI.
+- `interface`: actual Console controls, panels, shortcuts and chat.
 - `discovery`: how schemas are obtained, REST triggers, status and troubleshooting.
 - `services`: supported clients, request syntax and examples.
 - `variables`: Variables vs Dictionary, references, persistence and secrets.

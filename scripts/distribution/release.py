@@ -158,6 +158,8 @@ def metadata(root=ROOT):
         raise ValueError("Packaged application/extension version differs from release notes")
     if distribution["repository"] != repository() or distribution["branch"] != branch:
         raise ValueError("Packaged update source differs from the release repository")
+    if f"REPOSITORY='{repository()}'\nVERSION='{version}'\n" not in (output / "install.sh").read_text():
+        raise ValueError("install.sh does not download this release")
     commit = os.environ["GITHUB_SHA"]
     if not re.fullmatch(r"[0-9a-f]{40}", commit):
         raise ValueError("Invalid GITHUB_SHA")

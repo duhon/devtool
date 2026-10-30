@@ -1,0 +1,64 @@
+// Methods every module serves (`Module/<rpc>` over the module transport).
+// Console requests and results stay JSON (Chrome native messaging is JSON); this file only wraps them.
+syntax = "proto3";
+
+package services.module.v3;
+
+import "host.proto";
+
+service Module {
+  rpc Manifest(services.host.v3.Empty) returns (Manifest);
+  rpc Execute(ExecuteRequest) returns (ExecuteResponse);
+  rpc Discover(DiscoverRequest) returns (DiscoverResponse);
+  // Every message is one event; the trailer frame body is the final `ExecuteResponse`.
+  rpc Stream(ExecuteRequest) returns (stream Event);
+}
+
+message Manifest {
+  string id = 1;
+  string name = 2;
+  string version = 3;
+  bool execute = 4;
+  bool discover = 5;
+  bool stream = 6;
+  // The module's manifest.json: description, params and the console section.
+  string spec_json = 7;
+}
+
+message ExecuteRequest {
+  string params_json = 1;
+  // The host records history and needs `ExecuteResponse.history_text`.
+  bool history = 2;
+}
+
+enum RunStatus {
+  RUN_STATUS_SUCCESS = 0;
+  RUN_STATUS_ERROR = 1;
+  RUN_STATUS_STOPPED = 2;
+}
+
+message ExecuteResponse {
+  string result_json = 1;
+  RunStatus status = 2;
+  // OK | WARNING | ERROR | NOTICE | Stopped
+  string outcome = 3;
+  optional string history_text = 4;
+}
+
+message DiscoverRequest {
+  string params_json = 1;
+}
+
+message DiscoverResponse {
+  string result_json = 1;
+}
+
+message Event {
+  string json = 1;
+}
+
+// `Status.details` of a failed module call.
+message ModuleError {
+  optional string debug_json = 1;
+  optional uint64 duration_ms = 2;
+}

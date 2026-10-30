@@ -1,6 +1,7 @@
 use super::{call, get, js, set};
 use js_sys::Object;
 use serde_json::json;
+use services_contracts::manifest::DiscoveryKind;
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
@@ -47,8 +48,6 @@ pub struct Props {
     pub onerror: Callback<String>,
     #[prop_or_default]
     pub console: bool,
-    #[prop_or_default]
-    pub compact: bool,
     #[prop_or_default]
     pub testid: String,
     #[prop_or_default]
@@ -148,7 +147,7 @@ impl Component for Editor {
     }
     fn view(&self, ctx: &Context<Self>) -> Html {
         let change = ctx.link().callback(|_: InputEvent| Msg::Changed);
-        html! {<textarea ref={self.node.clone()} class={if ctx.props().compact{"tab-url-input tab-endpoint-editor"}else{""}} data-testid={ctx.props().testid.clone()} aria-label={ctx.props().testid.clone()} value={ctx.props().value.clone()} readonly={ctx.props().readonly} placeholder={ctx.props().placeholder.clone()} oninput={change}/>}
+        html! {<textarea ref={self.node.clone()} data-testid={ctx.props().testid.clone()} aria-label={ctx.props().testid.clone()} value={ctx.props().value.clone()} readonly={ctx.props().readonly} placeholder={ctx.props().placeholder.clone()} oninput={change}/>}
     }
     fn rendered(&mut self, ctx: &Context<Self>, first: bool) {
         if !first {
@@ -198,7 +197,7 @@ impl Component for Editor {
         let hints = self.hints.clone();
         let context = self.context.clone();
         let newline = Closure::<dyn FnMut(JsValue)>::new(move |instance| {
-            let commit = context.borrow().0 != "rest"
+            let commit = !crate::services::lazy_discovery(&context.borrow().0)
                 && connection_position(&instance, &context.borrow()).unwrap_or(false);
             if let Err(e) = call(&instance, "execCommand", &["newlineAndIndent".into()])
                 .and_then(|_| show_hints(&instance, &hints.borrow(), &context.borrow(), true))
@@ -235,7 +234,7 @@ impl Component for Editor {
             set(&keys, key, remove.as_ref());
             self.closures.push(remove);
         }
-        if ctx.props().service != "rest" {
+        if !crate::services::lazy_discovery(&ctx.props().service) {
             let link = ctx.link().clone();
             let discover =
                 Closure::<dyn FnMut(JsValue)>::new(move |_| link.send_message(Msg::Discover));
@@ -243,12 +242,9 @@ impl Component for Editor {
             self.closures.push(discover);
         }
         let options = js(
-            &json!({"mode":{"name":mode_name(&ctx.props().mode),"variant":ctx.props().service,"responses":ctx.props().regions,"templateSection":ctx.props().template_section},"servicesResponses":ctx.props().regions,"theme":"dracula","selectionStyle":"text","lineNumbers":!ctx.props().compact,"lineWrapping":false,"readOnly":ctx.props().readonly,"viewportMargin":10,"indentWithTabs":false,"indentUnit":2,"placeholder":ctx.props().placeholder,"gutters":if ctx.props().console{vec!["CodeMirror-linenumbers","console-fold-gutter"]}else{vec!["CodeMirror-linenumbers"]},"foldGutter":if ctx.props().console{json!({"gutter":"console-fold-gutter","indicatorOpen":"console-fold-open","indicatorFolded":"console-fold-folded"})}else{json!(false)},"foldOptions":{"minFoldSize":0}}),
+            &json!({"mode":{"name":mode_name(&ctx.props().mode),"responses":ctx.props().regions,"templateSection":ctx.props().template_section},"servicesResponses":ctx.props().regions,"theme":"dracula","selectionStyle":"text","lineNumbers":true,"lineWrapping":false,"readOnly":ctx.props().readonly,"viewportMargin":10,"indentWithTabs":false,"indentUnit":2,"placeholder":ctx.props().placeholder,"gutters":if ctx.props().console{vec!["CodeMirror-linenumbers","console-fold-gutter"]}else{vec!["CodeMirror-linenumbers"]},"foldGutter":if ctx.props().console{json!({"gutter":"console-fold-gutter","indicatorOpen":"console-fold-open","indicatorFolded":"console-fold-folded"})}else{json!(false)},"foldOptions":{"minFoldSize":0}}),
         );
-        if matches!(
-            ctx.props().mode.as_str(),
-            "console-mysql" | "console-splunk"
-        ) {
+        if Highlight::new(&ctx.props().mode).grid() {
             set(&options, "workTime", &8.into());
             set(&options, "workDelay", &20.into());
         }
@@ -300,13 +296,6 @@ impl Component for Editor {
                             format!("{}-editor", ctx.props().testid).into(),
                         ],
                     );
-                    if ctx.props().compact {
-                        let _ = call(
-                            &get(&wrapper, "classList"),
-                            "add",
-                            &["tab-endpoint-editor".into()],
-                        );
-                    }
                     if ctx.props().console {
                         let _ = call(
                             &get(&wrapper, "classList"),
@@ -464,7 +453,7 @@ impl Component for Editor {
                         if console && let Err(error) = separate_checks(&instance, &change) {
                             link.send_message(Msg::EditError(super::error(error)));
                         }
-                        if context.borrow().0 == "rest"
+                        if crate::services::lazy_discovery(&context.borrow().0)
                             && get(&change, "origin").as_string().as_deref() == Some("paste")
                         {
                             return;
@@ -475,7 +464,7 @@ impl Component for Editor {
                             .ok()
                             .and_then(|v| v.as_string())
                             .unwrap_or_default();
-                        if matches!(context.borrow().0.as_str(), "rest" | "grpc")
+                        if crate::services::path_discovery(&context.borrow().0)
                             && connection_position(&instance, &context.borrow()).unwrap_or(false)
                         {
                             let endpoint = match discovery_endpoint(
@@ -492,7 +481,8 @@ impl Component for Editor {
                             if let Some(endpoint) =
                                 endpoint.filter(|endpoint| endpoint.ends_with('/'))
                             {
-                                let endpoint = (context.borrow().0 == "rest").then_some(endpoint);
+                                let endpoint = crate::services::lazy_discovery(&context.borrow().0)
+                                    .then_some(endpoint);
                                 link.send_message(Msg::AutoDiscover(endpoint));
                             }
                         }
@@ -525,7 +515,7 @@ impl Component for Editor {
                     let hints = self.hints.clone();
                     let context = self.context.clone();
                     let callback = Closure::<dyn FnMut(JsValue)>::new(move |instance: JsValue| {
-                        if context.borrow().0 == "rest"
+                        if crate::services::lazy_discovery(&context.borrow().0)
                             && matches!(event, "servicesAutoDiscover" | "servicesFocusDiscover")
                         {
                             return;
@@ -549,7 +539,8 @@ impl Component for Editor {
                             web_sys::console::error_1(&error);
                         }
                         if discover
-                            && (context.borrow().0 != "rest" || event == "servicesRestBodyDiscover")
+                            && (!crate::services::lazy_discovery(&context.borrow().0)
+                                || event == "servicesRestBodyDiscover")
                             && (!focus
                                 || !connection_position(&instance, &context.borrow())
                                     .unwrap_or(true))
@@ -581,7 +572,7 @@ impl Component for Editor {
                                 .any(|line| line.trim().eq_ignore_ascii_case("#endpoint"))
                         });
                     if committed
-                        && context.borrow().0 != "rest"
+                        && !crate::services::lazy_discovery(&context.borrow().0)
                         && let Err(error) = signal_later(&paste_instance, "servicesAutoDiscover")
                     {
                         web_sys::console::error_1(&error);
@@ -617,7 +608,7 @@ impl Component for Editor {
                     let moved =
                         cursor_generation.replace(generation) == generation && generation.is_some();
                     if !*changing.borrow()
-                        && context.borrow().0 != "rest"
+                        && !crate::services::lazy_discovery(&context.borrow().0)
                         && previous
                         && !current
                         && moved
@@ -673,7 +664,7 @@ impl Component for Editor {
                         if let Err(e) = result {
                             web_sys::console::error_1(&e);
                         }
-                        let signal = if context.borrow().0 == "rest" {
+                        let signal = if crate::services::lazy_discovery(&context.borrow().0) {
                             None
                         } else if highlight {
                             Some("servicesFocusDiscover")
@@ -887,7 +878,8 @@ impl Component for Editor {
             if (old.discovery != ctx.props().discovery
                 || old.hints != ctx.props().hints
                 || old.templates != ctx.props().templates)
-                && (ctx.props().service != "rest" || old.value == ctx.props().value)
+                && (!crate::services::lazy_discovery(&ctx.props().service)
+                    || old.value == ctx.props().value)
                 && get(instance, "__servicesHintsEnabled").as_bool() == Some(true)
                 && call(instance, "hasFocus", &[])
                     .ok()
@@ -1238,17 +1230,22 @@ fn clear_marks(instance: &JsValue, key: &str) -> Result<(), JsValue> {
     Ok(())
 }
 fn highlight_graphql_objects(instance: &JsValue, context: &EditorContext) -> Result<(), JsValue> {
-    if context.0 != "graphql" || !matches!(context.1.as_str(), "" | "query") {
+    if crate::services::discovery(&context.0) != Some(DiscoveryKind::Graphql)
+        || !context.1.is_empty()
+    {
         return clear_marks(instance, "__servicesObjectMarks");
     }
     let source = call(instance, "getValue", &[])?
         .as_string()
         .ok_or_else(|| JsValue::from_str("GraphQL source is not text"))?;
     let source = crate::document::mask_output(&source, &context.3);
-    let mut needed: std::collections::BTreeSet<_> =
-        crate::graphql_completion::object_fields(&source, &context.2, context.1.is_empty())
-            .into_iter()
-            .collect();
+    let mut needed: std::collections::BTreeSet<_> = crate::graphql_completion::object_fields(
+        &source,
+        &context.2,
+        context.1.is_empty().then_some(context.0.as_str()),
+    )
+    .into_iter()
+    .collect();
     let cm = instance.clone();
     let update = Closure::once(move || -> Result<(), JsValue> {
         let next = js_sys::Array::new();
@@ -1524,7 +1521,9 @@ fn discovery_endpoint(
     ))
 }
 fn request_body_discovery(instance: &JsValue, context: &EditorContext) -> Result<(), JsValue> {
-    if context.0 != "rest" || call(instance, "hasFocus", &[])?.as_bool() != Some(true) {
+    if !crate::services::lazy_discovery(&context.0)
+        || call(instance, "hasFocus", &[])?.as_bool() != Some(true)
+    {
         return Ok(());
     }
     let cursor = call(instance, "getCursor", &[])?;
@@ -1587,22 +1586,23 @@ fn show_hints(
         let _ = call(instance, "closeHint", &[]);
         return Ok(());
     }
+    let payload = crate::services::language(&context.0, "");
     let candidates = js_sys::Array::new();
     for c in &completion.candidates {
         let label = if let Some(label) = &c.label {
             label.clone()
-        } else if matches!(context.0.as_str(), "rest" | "grpc") && c.text.contains('\n') {
+        } else if payload == "json" && c.text.contains('\n') {
             c.text
                 .split_whitespace()
                 .collect::<Vec<_>>()
                 .join(" ")
                 .replace("{ }", "{}")
                 .replace("[ ]", "[]")
-        } else if context.0 == "graphql" && c.text.split_whitespace().eq(["{", "}"]) {
+        } else if payload == "graphql" && c.text.split_whitespace().eq(["{", "}"]) {
             "{}".to_owned()
-        } else if context.0 == "graphql" && c.text.split_whitespace().eq(["[", "]"]) {
+        } else if payload == "graphql" && c.text.split_whitespace().eq(["[", "]"]) {
             "[]".to_owned()
-        } else if context.0 == "graphql" && c.text == "... on " {
+        } else if payload == "graphql" && c.text == "... on " {
             "... on".to_owned()
         } else {
             c.text.clone()
@@ -1691,7 +1691,9 @@ fn apply_hint(instance: &JsValue, data: &JsValue, item: &JsValue) -> Result<(), 
         }
     }
     let mut to = get(data, "to");
-    if service == "graphql" && matches!(candidate.as_str(), ")" | "]" | "}") {
+    let graphql = crate::services::language(service, "") == "graphql";
+    let discovery = crate::services::discovery(service);
+    if graphql && matches!(candidate.as_str(), ")" | "]" | "}") {
         let next = js(&json!({
             "line":get(&to,"line").as_f64().unwrap_or(0.0),
             "ch":get(&to,"ch").as_f64().unwrap_or(0.0) + 1.0
@@ -1740,13 +1742,12 @@ fn apply_hint(instance: &JsValue, data: &JsValue, item: &JsValue) -> Result<(), 
     let continuation = get(item, "continueHint").as_bool() == Some(true)
         || text.ends_with([':', '/', ' '])
         || (text.contains('\n') && target.is_some())
-        || (service == "grpc" && text.ends_with("[]"))
-        || (service == "graphql"
-            && (text.ends_with("()") || matches!(text.as_str(), ")" | "]" | "}")))
+        || (discovery == Some(DiscoveryKind::GrpcReflection) && text.ends_with("[]"))
+        || (graphql && (text.ends_with("()") || matches!(text.as_str(), ")" | "]" | "}")))
         || (candidate.starts_with('#') && candidate != "#check");
-    let grpc_endpoint = service == "grpc"
+    let grpc_endpoint = discovery == Some(DiscoveryKind::GrpcReflection)
         && discovery_endpoint(instance, service, saved["field"].as_str().unwrap_or(""))?.is_some();
-    if matches!(service, "rest" | "mysql" | "grpc" | "graphql") {
+    if discovery.is_some() {
         if if grpc_endpoint {
             text.ends_with('/')
         } else {
@@ -1757,7 +1758,7 @@ fn apply_hint(instance: &JsValue, data: &JsValue, item: &JsValue) -> Result<(), 
         }
         signal_later(
             instance,
-            if before_connection && service != "rest" {
+            if before_connection && !discovery.is_some_and(DiscoveryKind::lazy) {
                 "servicesAutoDiscover"
             } else {
                 "servicesRefreshHints"
@@ -1986,28 +1987,118 @@ fn remove_folded_response(instance: &JsValue) -> bool {
         }
     }
 }
+/// What a mode highlights. A console mode reads its service's manifest when CodeMirror
+/// creates it, so tokens never look the registry up.
+struct Highlight {
+    /// The console service; empty for a single-language mode.
+    service: String,
+    /// The language of a single-language mode.
+    base: String,
+    /// `(section, language)` of the console sections.
+    sections: Vec<(String, String)>,
+    payload: String,
+    response: services_contracts::manifest::View,
+}
+
+impl Highlight {
+    fn new(mode: &str) -> Self {
+        let Some(id) = mode.strip_prefix("console-") else {
+            return Self {
+                service: String::new(),
+                base: mode.to_owned(),
+                sections: Vec::new(),
+                payload: String::new(),
+                response: Default::default(),
+            };
+        };
+        let service = crate::services::get(id);
+        Self {
+            service: id.to_owned(),
+            base: String::new(),
+            sections: service
+                .iter()
+                .flat_map(|service| &service.console.sections)
+                .map(|section| (section.name.clone(), section.language.clone()))
+                .collect(),
+            payload: service
+                .as_ref()
+                .map(|service| service.language("").to_owned())
+                .unwrap_or_default(),
+            response: service
+                .map(|service| service.console.response)
+                .unwrap_or_default(),
+        }
+    }
+
+    fn console(&self) -> bool {
+        !self.service.is_empty()
+    }
+
+    /// Responses are tables, tokenized a line at a time.
+    fn grid(&self) -> bool {
+        self.console() && self.response == services_contracts::manifest::View::Grid
+    }
+
+    /// The language of `area` (a section; empty or unknown means the payload) or of a response.
+    fn language(&self, area: &str, response: bool) -> &str {
+        if !self.console() {
+            &self.base
+        } else if response {
+            self.response.language()
+        } else {
+            self.sections
+                .iter()
+                .find(|(name, _)| name == area)
+                .map_or(&self.payload, |(_, language)| language)
+        }
+    }
+}
+
+thread_local! {
+    /// Services whose `services-console-<id>` mode is defined.
+    static CONSOLE_MODES: RefCell<std::collections::BTreeSet<String>> = RefCell::default();
+}
+
 pub fn register_modes() -> Result<(), JsValue> {
     let cm = get(&js_sys::global(), "CodeMirror");
     if cm.is_undefined() {
         return Ok(());
     }
     for name in [
-        "endpoint",
-        "headers",
-        "json",
-        "sql",
-        "graphql",
-        "proto",
-        "spl",
-        "shell",
+        "endpoint", "http", "grpc", "headers", "json", "sql", "graphql", "proto", "spl", "shell",
         "plain",
-        "console-mysql",
-        "console-rest",
-        "console-graphql",
-        "console-grpc",
-        "console-splunk",
-        "console-terminal",
     ] {
+        define_mode(&cm, name)?;
+    }
+    register_console_modes()?;
+    let helper = Closure::<dyn FnMut(JsValue, JsValue) -> JsValue>::new(move |cm, pos| {
+        fold_range(&cm, &pos).unwrap_or(JsValue::UNDEFINED)
+    });
+    call(
+        &cm,
+        "registerHelper",
+        &["fold".into(), "services".into(), helper.as_ref().clone()],
+    )?;
+    helper.forget();
+    Ok(())
+}
+
+/// Defines the console modes of services registered since the last call.
+pub fn register_console_modes() -> Result<(), JsValue> {
+    let cm = get(&js_sys::global(), "CodeMirror");
+    if cm.is_undefined() {
+        return Ok(());
+    }
+    for id in crate::services::ids() {
+        if CONSOLE_MODES.with(|modes| modes.borrow_mut().insert(id.clone())) {
+            define_mode(&cm, &format!("console-{id}"))?;
+        }
+    }
+    Ok(())
+}
+
+fn define_mode(cm: &JsValue, name: &str) -> Result<(), JsValue> {
+    {
         let name_owned = name.to_string();
         let factory = Closure::<dyn FnMut(JsValue, JsValue) -> JsValue>::new(
             move |config: JsValue, parser_config: JsValue| {
@@ -2026,15 +2117,8 @@ pub fn register_modes() -> Result<(), JsValue> {
                 set(&mode, "startState", start.as_ref());
                 start.forget();
                 set(&mode, "fold", &"services".into());
-                let service = name_owned
-                    .strip_prefix("console-")
-                    .map(str::to_owned)
-                    .unwrap_or_else(|| {
-                        get(&parser_config, "variant")
-                            .as_string()
-                            .unwrap_or_default()
-                    });
-                let base = name_owned.clone();
+                let highlight = Highlight::new(&name_owned);
+                let grid = highlight.grid();
                 let cm_global = get(&js_sys::global(), "CodeMirror");
                 let sql = call(
                     &cm_global,
@@ -2098,8 +2182,7 @@ pub fn register_modes() -> Result<(), JsValue> {
                         tokenize(
                             &stream,
                             &state,
-                            &base,
-                            &service,
+                            &highlight,
                             sql.as_ref(),
                             javascript.as_ref(),
                             &responses,
@@ -2110,9 +2193,7 @@ pub fn register_modes() -> Result<(), JsValue> {
                             JsValue::NULL
                         })
                     });
-                let tokenizer = if matches!(name_owned.as_str(), "console-mysql" | "console-splunk")
-                    && get(&cm_global, "servicesTableTokenizer").is_function()
-                {
+                let tokenizer = if grid && get(&cm_global, "servicesTableTokenizer").is_function() {
                     call(
                         &cm_global,
                         "servicesTableTokenizer",
@@ -2143,24 +2224,12 @@ pub fn register_modes() -> Result<(), JsValue> {
             },
         );
         call(
-            &cm,
+            cm,
             "defineMode",
             &[format!("services-{name}").into(), factory.as_ref().clone()],
         )?;
         factory.forget();
     }
-    let helper = Closure::<dyn FnMut(JsValue, JsValue) -> JsValue>::new(move |cm, pos| {
-        fold_range(&cm, &pos).unwrap_or(JsValue::UNDEFINED)
-    });
-    call(
-        &cm,
-        "registerHelper",
-        &["fold".into(), "services".into(), helper.as_ref().clone()],
-    )?;
-    helper.forget();
-    // Every custom mode uses the Rust section/brace range finder.
-    let modes = get(&cm, "modes");
-    let _ = modes;
     Ok(())
 }
 fn prefix_utf16(text: &str, units: usize) -> String {
@@ -2265,14 +2334,13 @@ fn cached_table_token(stream: &JsValue, state: &JsValue, pos: usize) -> Option<J
 fn tokenize(
     stream: &JsValue,
     state: &JsValue,
-    base: &str,
-    service: &str,
+    highlight: &Highlight,
     sql: Option<&JsValue>,
     javascript: Option<&JsValue>,
     responses: &[crate::document::ResponseRegion],
 ) -> Result<JsValue, JsValue> {
     let pos = get(stream, "pos").as_f64().unwrap_or(0.0) as usize;
-    if matches!(base, "console-mysql" | "console-splunk") {
+    if highlight.grid() {
         if pos > 0 {
             if let Some(style) = cached_table_token(stream, state, pos) {
                 return Ok(style);
@@ -2281,23 +2349,13 @@ fn tokenize(
             set(state, "tableLine", &JsValue::UNDEFINED);
         }
     }
-    if pos > 0 && base.starts_with("console-") {
+    if pos > 0 && highlight.console() {
         let response = get(state, "response").as_bool().unwrap_or(false);
         let area = get(state, "area").as_string().unwrap_or_default();
-        let json_area = if response {
-            !["mysql", "splunk", "terminal"].contains(&service)
-        } else {
-            ["variables", "message", "body"].contains(&area.as_str()) && service != "mysql"
-                || ["rest", "grpc"].contains(&service)
-                    && !["endpoint", "headers", "proto"].contains(&area.as_str())
-        };
-        let sql_area = service == "mysql" && !response && area != "endpoint";
-        let child = if json_area {
-            javascript.map(|m| (m, "jsonState"))
-        } else if sql_area {
-            sql.map(|m| (m, "sqlState"))
-        } else {
-            None
+        let child = match highlight.language(&area, response) {
+            "json" => javascript.map(|m| (m, "jsonState")),
+            "sql" => sql.map(|m| (m, "sqlState")),
+            _ => None,
         };
         if let Some((mode, key)) = child {
             let child_state = get(state, key);
@@ -2347,11 +2405,7 @@ fn tokenize(
             return Ok(consume(rest.chars().count(), Some("comment")));
         }
     }
-    if pos == 0
-        && output.is_none()
-        && base.starts_with("console-")
-        && text.trim_start().starts_with('#')
-    {
+    if pos == 0 && output.is_none() && highlight.console() && text.trim_start().starts_with('#') {
         let marker = text
             .split_whitespace()
             .next()
@@ -2361,12 +2415,12 @@ fn tokenize(
         let check = crate::console::is_check(&text);
         if !check
             && !["responce", "response"].contains(&marker.as_str())
-            && !crate::console::markers(service).contains(&marker.as_str())
+            && !highlight.sections.iter().any(|(name, _)| *name == marker)
         {
             let mut lex: crate::syntax::State =
                 serde_json::from_value(super::json(get(state, "lex"))).unwrap_or_default();
             let (n, style) =
-                crate::syntax::token(crate::syntax::Language::Graphql, "", &text, index, &mut lex);
+                crate::syntax::token(crate::syntax::Language::Graphql, &text, index, &mut lex);
             set(state, "lex", &js(&json!(lex)));
             return Ok(consume(n, style));
         }
@@ -2386,39 +2440,7 @@ fn tokenize(
     }
     let area = get(state, "area").as_string().unwrap_or_default();
     let response = get(state, "response").as_bool().unwrap_or(false);
-    let language = if base.starts_with("console-") {
-        if response {
-            if service == "terminal" {
-                "shell"
-            } else if service == "mysql" || service == "splunk" {
-                "table"
-            } else {
-                "json"
-            }
-        } else {
-            match area.as_str() {
-                "endpoint" => {
-                    if service == "terminal" {
-                        "shell"
-                    } else {
-                        "endpoint"
-                    }
-                }
-                "headers" | "env" | "options" => "headers",
-                "variables" | "message" => "json",
-                "proto" => "proto",
-                _ => match service {
-                    "mysql" => "sql",
-                    "graphql" => "graphql",
-                    "grpc" | "rest" => "json",
-                    "splunk" => "spl",
-                    _ => "shell",
-                },
-            }
-        }
-    } else {
-        base
-    };
+    let language = highlight.language(&area, response);
     let child = match language {
         "json" => javascript,
         "sql" => sql,
@@ -2484,7 +2506,7 @@ fn tokenize(
             set(state, "tableTokenIndex", &0.into());
             return Ok(cached_table_token(stream, state, pos).unwrap_or(JsValue::NULL));
         }
-        let (n, style) = crate::syntax::token(language, service, &text, index, &mut lexical);
+        let (n, style) = crate::syntax::token(language, &text, index, &mut lexical);
         set(state, "lex", &js(&json!(lexical)));
         return Ok(consume(n, style));
     }
@@ -2740,7 +2762,8 @@ fn fold_range(cm: &JsValue, pos: &JsValue) -> Result<JsValue, JsValue> {
         .as_deref()
         .map(|mode| mode.strip_prefix("services-").unwrap_or(mode));
     let mut fold_end = count;
-    if matches!(mode, Some("console-mysql" | "console-splunk")) {
+    let highlight = Highlight::new(mode.unwrap_or(""));
+    if highlight.grid() {
         let region = regions.iter().find(|r| line >= r.header && line < r.end);
         if let Some(region) = region {
             if first.starts_with('|')
@@ -2797,7 +2820,7 @@ fn fold_range(cm: &JsValue, pos: &JsValue) -> Result<JsValue, JsValue> {
         .next()
         .unwrap_or("");
     let operation = if !output(line)
-        && matches!(mode, Some("graphql" | "console-graphql"))
+        && highlight.language("", false) == "graphql"
         && matches!(keyword, "query" | "mutation" | "subscription")
     {
         let end = first.len() - first.trim_start().len() + keyword.len();
@@ -2831,11 +2854,11 @@ fn fold_range(cm: &JsValue, pos: &JsValue) -> Result<JsValue, JsValue> {
                 .strip_prefix('#')
                 .and_then(|text| text.split_whitespace().next());
             if output(i)
-                || (mode == Some("console-graphql")
+                || (highlight.console()
                     && (crate::console::is_check(&text)
                         || marker.is_some_and(|marker| {
                             marker.starts_with("respon")
-                                || crate::console::markers("graphql").contains(&marker)
+                                || highlight.sections.iter().any(|(name, _)| name == marker)
                         })))
             {
                 break;

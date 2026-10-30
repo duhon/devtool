@@ -75,25 +75,6 @@ impl From<reqwest::Error> for Error {
         error
     }
 }
-impl From<mysql_async::Error> for Error {
-    fn from(e: mysql_async::Error) -> Self {
-        let mut detail = json!({"name":"Error","message":e.to_string()});
-        let mut message = e.to_string();
-        if let mysql_async::Error::Server(server) = &e {
-            message = server.message.clone();
-            detail["message"] = json!(message);
-            detail["errno"] = json!(server.code);
-            detail["sqlState"] = json!(server.state);
-            detail["sqlMessage"] = json!(server.message);
-        }
-        Self {
-            message,
-            debug: Some(Box::new(json!({"error":detail}))),
-            duration_ms: None,
-            history: None,
-        }
-    }
-}
 pub type Result<T> = std::result::Result<T, Error>;
 pub fn text(v: &Value, key: &str) -> String {
     v.get(key).and_then(Value::as_str).unwrap_or("").to_string()

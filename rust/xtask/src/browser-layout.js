@@ -1,6 +1,6 @@
 (async()=>{
-  const {assert,wait,click,testid,cm,setSource,key,type,input,choose,activateSession,sessionLibrary}=testDriver;
-  await choose('console');
+  const {assert,wait,click,testid,cm,setSource,key,type,input,openConsole,activateSession,sessionLibrary}=testDriver;
+  await openConsole();
   const initialSession=Number(testid('console-session-name').dataset.sessionId);
   await click(testid('console-service-rest'));
   let editor=cm('console-editor');
@@ -92,7 +92,7 @@
     })}`);
   };
   await paint('Focused drag');
-  testid('console-old').focus();
+  testid('console-service-rest').focus();
   await wait(()=>!editor.hasFocus());
   await paint('Unfocused selection');
   editor.focus();
@@ -103,11 +103,20 @@
   setSource(editor,foldedSource);
   await wait(()=>editor.getOption('servicesChecks')?.length===2);
   const folded=editor.markText({line:0,ch:13},{line:20000,ch:7},{collapsed:true});
-  const foldStart=performance.now();
-  editor.setSelection({line:0,ch:0},{line:editor.lastLine(),ch:3});
-  assert(performance.now()-foldStart<200
-    &&editor.getWrapperElement().querySelectorAll('.CodeMirror-selected').length<20,
-    'Selecting across 20,000 folded lines must only paint rendered visual lines');
+  // A single wall-clock sample is noisy on a loaded machine; painting every hidden line is slow on every attempt.
+  const foldSelections=[];
+  for(let attempt=0;attempt<3;attempt++){
+    editor.setCursor({line:0,ch:0});
+    const foldStart=performance.now();
+    editor.setSelection({line:0,ch:0},{line:editor.lastLine(),ch:3});
+    const ms=performance.now()-foldStart;
+    const painted=editor.getWrapperElement().querySelectorAll('.CodeMirror-selected').length;
+    assert(painted<20,`Selecting across 20,000 folded lines must only paint rendered visual lines: ${painted} painted rectangles`);
+    foldSelections.push(ms);
+    if(ms<200) break;
+  }
+  assert(Math.min(...foldSelections)<200,
+    `Selecting across 20,000 folded lines must take under 200ms: ${foldSelections.map(ms=>ms.toFixed(1))}ms`);
   assert(editor.getAllMarks().length===1&&editor.getSelection()===foldedSource,
     'Text-only painting must preserve folds and copy every selected hidden character');
   folded.clear();
@@ -209,15 +218,22 @@
       'The Settings version must match the installed extension version');
   }
   await wait(()=>!testid('settings-update-status').textContent.includes('Checking'));
-  assert(settings.textContent.includes(`Current version: ${fixtureVersion}`)
-    && !settings.querySelector('input,select,textarea,.CodeMirror')
-    && (globalThis.chrome?.runtime?.getManifest
-      ? testid('settings-update-check') : settings.textContent.includes('Chrome extension')),
+  assert(testid('settings-version').closest('.console-settings-version')?.textContent===`Current version${fixtureVersion}`,
+    `Settings must label the current version ${fixtureVersion}: ${settings.textContent}`);
+  const editable=[...settings.querySelectorAll('input,select,textarea,.CodeMirror')]
+    .filter(field=>!field.closest('[data-testid="agent-settings"]'))
+    .filter(field=>!(field.matches('[data-testid="settings-module-file"]')&&field.type==='file'&&field.hidden));
+  assert(!editable.length,
+    `Application Settings must not contain editable fields besides the Agent model picker and the hidden module file picker: ${editable.map(field=>field.outerHTML)}`);
+  const updateCheck=document.querySelector('[data-testid="settings-update-check"]');
+  assert(globalThis.chrome?.runtime?.getManifest ? updateCheck : !updateCheck,
     'Settings must expose authenticated update checks only in the Chrome extension');
+  // Opening Settings loads the Copilot model catalog; its light runs until that finishes.
+  await wait(()=>settingsToggle.querySelector('.console-state-light').dataset.state!=='running','Copilot model catalog load in Settings');
   assert(settingsToggle.classList.contains('active')
     && settingsToggle.querySelector('.console-state-light').dataset.state==='ready'
     && [...document.querySelectorAll('.console-toolbar [aria-pressed="true"]')].length===1,
-    'Settings must exclusively activate its right-hand tool without claiming an available update');
+    ()=>`Settings must exclusively activate its right-hand tool without claiming an available update: light=${settingsToggle.querySelector('.console-state-light')?.dataset.state}, pressed=${[...document.querySelectorAll('.console-toolbar [aria-pressed="true"]')].map(button=>button.dataset.testid)}`);
   assert(testid('settings-title').classList.contains('tab-button')
     && getComputedStyle(testid('settings-title')).backgroundColor
       ===getComputedStyle(document.querySelector('.console-tab-strip > .tab-button.active')).backgroundColor
@@ -225,13 +241,15 @@
     'Settings must use the shared active heading without increasing the top bar height');
   assert(editor.getValue()===beforeSettings,'Opening application Settings must not alter the current check');
   await click(settingsToggle);
-  await wait(()=>!document.querySelector('[data-testid="settings-panel"]'));
+  // Once visited, Settings stays mounted (hidden) so its model catalog is not reloaded.
+  const settingsHidden=()=>document.querySelector('[data-testid="settings-panel"]')?.hidden!==false;
+  await wait(settingsHidden,'Settings panel hidden after toggling it off');
   assert(document.querySelector('.console-right-pane').hidden,
     'Clicking Settings again must close the right pane');
   await open('settings');
   await setWidth(360);
   await open('history');
-  assert(!document.querySelector('[data-testid="settings-panel"]'),
+  assert(settingsHidden(),
     'Another right tool must hide the application Settings panel');
   await setWidth(410);
   const tabs=document.querySelector('.console-tab-strip');

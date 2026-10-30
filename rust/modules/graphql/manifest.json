@@ -1,0 +1,26 @@
+{
+  "id": "graphql",
+  "name": "GraphQL",
+  "description": "Send a GraphQL query or mutation and inspect the response.",
+  "params": [
+    {"name": "url", "flag": "endpoint", "alias": "e", "positional": true, "type": "string", "required": true},
+    {"name": "headers", "flag": "headers", "alias": "H", "type": "json"},
+    {"name": "query", "flag": "query", "alias": "q", "positional": true, "type": "string", "required": true},
+    {"name": "variables", "flag": "variables", "alias": "v", "type": "json"}
+  ],
+  "console": {
+    "order": 3,
+    "sections": [
+      {"name": "endpoint", "shape": "line", "language": "endpoint", "param": "url", "connection": true, "hints": [{"text": "http://"}, {"text": "https://"}]},
+      {"name": "headers", "shape": "pairs", "language": "headers", "param": "headers", "connection": true},
+      {"name": "variables", "shape": "block", "language": "json", "param": "variables"},
+      {"name": "query", "shape": "block", "language": "graphql", "param": "query"}
+    ],
+    "payload": "query",
+    "response": "body-headers",
+    "command": "curl",
+    "discovery": {"kind": "graphql", "schemes": ["http", "https"]},
+    "keywords": ["query", "mutation", "subscription", "fragment", "__typename"],
+    "hints": "#endpoint\nhttp://\nhttps://\n\n#headers\nAccept: */*\nAccept-Encoding: gzip, deflate, br\nAuthorization: ****** application/json\nCookie:\nHost:\nUser-Agent:\nX-Api-Key:\nX-Forwarded-For:\nX-Requested-With: XMLHttpRequest\n"
+  }
+}

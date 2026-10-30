@@ -1,7 +1,7 @@
 # Rust browser application
 
-`services-ui` is a Rust 2024 Yew client. Application logic, native/HTTP/WS
-transports, descriptors, Console parsers/completion/formatting and Variables
+`services-ui` is a Rust 2024 Yew client. Application logic, the native-messaging
+transport, Console parsers/completion/formatting and Variables
 editing are authored in Rust. Only generated wasm-bindgen glue and the vendored
 CodeMirror editor/addons are JavaScript runtime dependencies.
 
@@ -55,16 +55,15 @@ total size (at most 64 MiB), correlation and JSON before delivering the original
 response. Pending-request teardown also drops incomplete fragments. Connection
 failures stay in the affected check, with a compact Retry connection button
 instead of a duplicate top-level error banner.
-Without native messaging the same UI uses original HTTP/WS and Variables routes.
-Extension clipboard Import uses the companion's `clipboardRead` operation.
-The HTTP interface uses navigator.clipboard; Export has a DOM copy fallback.
+Extension clipboard Import uses the companion's `clipboardRead` operation;
+Export has a DOM copy fallback.
 Native host hints use `{service:"hints",op:"get"|"save",serviceName,text}`.
 
 Templates are global, not part of Console session snapshots. The right Templates
 panel edits per-service/section raw definitions (`@name description` plus a literal
 multiline body); drafts persist separately in `servicesConsole.templateDrafts`.
-The native `.console-templates.json` library is shared by native messaging and
-HTTP (`GET/PUT /api/console/templates`). Saves validate definitions, lock across
+The native `.console-templates.json` library is served over native messaging.
+Saves validate definitions, lock across
 processes, compare the previous section text and atomically rename a private file.
 Conflicts preserve drafts instead of overwriting another window's changes.
 Shared parsing/section catalogs live in `services-contracts::templates`. Completion
@@ -92,8 +91,8 @@ remain outside the request text. Editing or renaming a check keeps its identity;
 editor generation snapshots restore it on Undo, and same-workspace cut/paste
 moves retain it. Copies and copied Console sessions receive new identities.
 Temporary session 0 retains identities only for its current in-memory workspace.
-Execution snapshots live in the native embedded SQLite store, shared by native
-messaging and HTTP, not in localStorage or Console session copies. Requests pass
+Execution snapshots live in the native embedded SQLite store, read over native
+messaging, not in localStorage or Console session copies. Requests pass
 the original check context to native execution, which records resolved requests
 with sensitive credentials masked. Response bodies are preserved verbatim,
 including any credentials or application-owned debug fields in the response.
@@ -118,7 +117,7 @@ starts in empty temporary session 0; temporary contents are never persisted.
 The Sessions tool lists numbered workspaces and supports switching, deleting and
 creating a named copy. Creating from 0 always starts empty, not from its edits.
 Copies activate immediately; named sessions autosave all six services' checks,
-responses, legacy tabs, `var`, hints and invalid drafts. Dictionary, actual
+responses, `var`, hints and invalid drafts. Dictionary, actual
 environment variables and Agent chats remain global. The active session name
 is above the right rail. Switching/deleting/copying is blocked while requests,
 Agent turns/approvals or pending configuration saves are active.
@@ -132,11 +131,11 @@ signal shows pending writes; persistence failures remain visible, and closing a
 window with pending/failed saves requests confirmation. IndexedDB still has a
 browser-managed storage quota; failures never replace the last committed data.
 An unavailable companion leaves temporary work usable while import is pending;
-creating saved sessions waits for a successful import. Unknown legacy tab fields survive
-round-trips. Editor documents retain undo, cursor and folds across
+creating saved sessions waits for a successful import. Sessions saved by 2.x
+with legacy-interface tabs still open; those tabs are dropped. Editor documents retain undo, cursor and folds across
 service/request/profile switches, with caches isolated by Console session.
-Request/profile labels rename inline; request tabs, profiles and Console service
-tabs support drag ordering. Console response ownership persists with documents,
+Profile labels rename inline; profiles and Console service tabs support drag
+ordering. Console response ownership persists with documents,
 so literal `#check`/`#responce` lines in Terminal output remain output rather
 than executable request boundaries. Per-service saved/discovered hints use fuzzy
 matching, scoped profile variables, SQL aliases, GraphQL types and nested
@@ -156,26 +155,21 @@ its operations never replace the main check's status or diagnostics.
 Each column owns its Debug height: opening or resizing one does not move or
 shrink the other column. Agent history keeps its reading position when Debug
 changes size, without browser scroll anchoring to reveal the composer or messages.
-The O button to the left of the bottom status strip opens the legacy Terminal
-client. It shares the status row, outside the scrolling check list, including
-when Debug is expanded. The service picker is
-only shown in the legacy interface, where selecting Console returns to the
-preserved Console workspace.
+The Console is the only interface; the 2.x per-service forms were removed in 3.0.
 Service tabs and both side rails dock directly against the central workspace
 frame; the service strip has no separate underline or gap above the editor.
 Right-panel profile tabs and the tab-styled Hints title occupy the same top row
 above their editor. Profile tabs use a Yew portal into a persistent header host;
 the independent Variables component retains its state and owns their callbacks.
 Hints autosave valid text into the active session; invalid drafts persist there
-without replacing the last valid hints. Variable drafts are session-local,
-independent of legacy views' selection, editor state and debounce timer.
+without replacing the last valid hints. Variable drafts are session-local.
 Variables exposes only fixed `var` and read-only `env`; Dictionary exposes the
 remaining named profiles and CRUD/order controls. Both Console tools have
 independent component instances, drafts, queues and selection, and use separate
-native/HTTP services. Session `var` is passed with each call, discovery and
+native services. Session `var` is passed with each call, discovery and
 Terminal stream and combined with global Dictionary/env for backend resolution;
 it never replaces the legacy native variable file. Their replies share a merged
-completion context. Legacy menus expose the same two services separately.
+completion context.
 Console user edits use CodeMirror's exact UTF-16 change ranges, rather than a
 whole-document prefix/suffix guess. Response ownership follows cut/copy/paste
 and undo generations. A check inserted into output splits its owned ranges:
@@ -184,8 +178,7 @@ output. Generation snapshots contain only range metadata, not document copies.
 
 ## Embedded Agent
 
-The Console-only Agent panel uses Copilot through the native companion (or the
-same-origin HTTP WebSocket gateway). Its chat-session tabs occupy the shared
+The Console-only Agent panel uses Copilot through the native companion. Its chat-session tabs occupy the shared
 top header. Sessions, names, transcripts and drafts persist locally; closing
 the panel or changing services does not destroy a chat or cancel a turn.
 Each status ends with a small red S control. The main S cancels only the
@@ -226,11 +219,19 @@ approvals, but keeps the per-chat history and SDK session. Closed IDs persist
 under `servicesConsole.agentClosedSessions` and are excluded when a new panel
 loads. Closing the last tab creates a fresh empty chat.
 
-Shift+Enter sends a chat message; Enter inserts a newline. There is no Send
+Enter sends a chat message; Shift+Enter inserts a newline. There is no Send
 button. Empty drafts and sends during an active turn are ignored. Assistant
 messages render Markdown paragraphs, emphasis, lists, code blocks and tables as
 Yew nodes. Raw HTML stays literal, unsafe link schemes are inert, and images
 never load external resources. User messages remain literal text.
+
+Settings loads the Copilot model catalog through the native SDK once per DevTools
+window; reopen DevTools to pick up catalog changes. The model input
+filters suggestions by name, ID and published capability category; Reasoning
+lists only that model's supported levels. Without saved preferences, new chats
+use Copilot Fusion (the SDK's `auto` router), which manages Reasoning itself.
+Choices persist locally and are captured when a new chat is created. Existing
+chats and resumed SDK sessions retain their original model and reasoning settings.
 
 Each message automatically provides Console request context; the Agent can read
 selected response pages and cached schema without a separate sharing toggle.
@@ -253,11 +254,10 @@ visible approval for the exact request revision and variable snapshot;
 parameters are resolved and frozen locally before dispatch. No SDK shell,
 filesystem, browser or external MCP tools are exposed.
 
-Browser acceptance selectors: `service-select`, `service-rest` (and the other
-service names), `field-url-editor`, `field-endpoint-editor` (Terminal's canonical
-`target` field), `field-command-editor`, `run-request`, `stop-request`,
-`response-output`, `native-status`, `console-editor-editor`,
-`console-service-rest` (and the other Console languages), `tab-rename-input`.
+Browser acceptance selectors: `console-editor-editor`, `console-service-rest`
+(and the other Console languages), `console-variables-toggle`,
+`console-dictionary-toggle`, `console-variables-editor`,
+`console-dictionary-editor`, `console-tool-panel`, `native-status`.
 The editor test ID is on the CodeMirror wrapper; integrations can use its
 CodeMirror instance API or the editor's keyboard input.
 
@@ -265,22 +265,25 @@ CodeMirror instance API or the editor's keyboard input.
 
 `cargo test -p services-ui` runs pure Rust tests and captured reference fixtures
 from the former JavaScript parser/formatter tests. These JSON fixtures do not
-depend on the deleted implementation. WASM builds validate browser code.
+depend on the deleted implementation. Tests live outside the sources: shared
+editor, parsing and storage logic in `tests/core/`, one file per service or
+panel in `tests/modules/`, helpers in `tests/support/`. WASM builds validate
+browser code.
 
 Build the distribution with `cargo run -p xtask -- build`, then run
-`cargo run -p xtask -- test-browser`. The Rust CDP driver tests the archived
-extension and HTTP interface using real Chrome and disposable native-host
-data. Browser-only fixtures exercise all nine views, editor/tab interactions,
-Variables hover/autosave, service-specific hints, SQL aliases, nested GraphQL
+`cargo run -p xtask -- test browser` (`--list` shows the scenarios). The Rust
+CDP driver tests the archived extension using real Chrome and disposable
+native-host data. Fixtures exercise the Console editor and side panels,
+Variables/Dictionary hover and autosave, service-specific hints, SQL aliases, nested GraphQL
 snippets, gRPC discovery, saved-hint persistence and stale replies, and
 clipboard permission failures. It never reads or modifies the OS clipboard.
-No Node.js, npm, Playwright or parallel legacy implementation is needed.
+No Node.js, npm or Playwright is needed.
 
-`cargo run -p xtask -- test-agent` runs the Agent subset against both transports:
+`cargo run -p xtask -- test-agent` runs the Agent subset:
 live edits and Undo, conflicts, execution approval/denial/Stop, captured response
 reads, cross-window session restoration and SDK subprocess cleanup. It uses the
 real Rust SDK with a deterministic local protocol peer, without model requests
-or private application data; the same scenarios also run in `test-browser`.
+or private application data; the same scenarios also run in `test browser`.
 
 Contextual completions remain lexical/schema based rather than language-server
 analysis. CodeMirror SQL/JSON modes remain browser dependencies.

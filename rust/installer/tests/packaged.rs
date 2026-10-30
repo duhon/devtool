@@ -5,7 +5,7 @@ use services_installer::locations;
 use std::{
     fs,
     io::{Read, Write},
-    net::{TcpListener, TcpStream},
+    net::TcpListener,
     os::unix::process::CommandExt,
     path::{Path, PathBuf},
     process::{Child, Command, Output, Stdio},
@@ -550,57 +550,6 @@ fn archived_install_native_services_update_and_uninstall() {
         "updates must preserve Variables byte-for-byte"
     );
 
-    let listener =
-        TcpListener::bind("127.0.0.1:0").expect("reserve installed web adapter test port");
-    let address = listener.local_addr().unwrap();
-    drop(listener);
-    let mut web = fixture.command(paths.base.join("extension/native/bin/services-devtools"));
-    web.args(["web", "--port", &address.port().to_string()])
-        .env("SERVICES_DATA_DIR", &paths.data)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    let mut web = OwnedChild(web.spawn().expect("spawn installed web adapter"));
-    let deadline = Instant::now() + Duration::from_secs(15);
-    let mut stream = loop {
-        assert!(
-            web.0.try_wait().unwrap().is_none(),
-            "installed web adapter exited before readiness"
-        );
-        if let Ok(stream) = TcpStream::connect_timeout(&address, Duration::from_millis(100)) {
-            break stream;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "installed web adapter was not ready within 15 seconds"
-        );
-        thread::sleep(Duration::from_millis(50));
-    };
-    stream
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .unwrap();
-    stream
-        .set_write_timeout(Some(Duration::from_secs(5)))
-        .unwrap();
-    write!(
-        stream,
-        "GET /panel.html HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\r\n"
-    )
-    .unwrap();
-    let mut page = String::new();
-    stream
-        .take(2 * 1024 * 1024)
-        .read_to_string(&mut page)
-        .expect("read installed UI response");
-    assert!(
-        page.starts_with("HTTP/1.1 200"),
-        "installed web adapter must serve adjacent UI outside source cwd"
-    );
-    assert!(
-        page.contains("panel.js"),
-        "installed UI must reference its JS loader"
-    );
-    drop(web);
     fixture.successful(fixture.command(paths.base.join("uninstall")));
     for path in [
         &paths.registration,

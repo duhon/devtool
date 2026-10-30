@@ -16,7 +16,7 @@ fn settle(callback: &Function, value: &JsValue) {
     }
 }
 
-async fn request(request: IdbRequest) -> Result<JsValue, String> {
+pub(super) async fn request(request: IdbRequest) -> Result<JsValue, String> {
     let mut success = None;
     let mut failure = None;
     let promise = Promise::new(&mut |resolve, reject| {

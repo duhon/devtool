@@ -88,6 +88,8 @@ struct Chat {
     title: String,
     draft: String,
     messages: Vec<Message>,
+    #[serde(default)]
+    options: services_contracts::agent::Options,
 }
 struct Turn {
     stream: u32,
@@ -240,6 +242,13 @@ impl AgentPanel {
         }
     }
     fn new_chat(&mut self) {
+        let options = match super::agent_settings::read_options() {
+            Ok(options) => options,
+            Err(error) => {
+                self.error = Some(error);
+                return;
+            }
+        };
         match id() {
             Ok(id) => {
                 self.renaming = None;
@@ -249,6 +258,7 @@ impl AgentPanel {
                     title: format!("Chat {}", self.chats.len() + 1),
                     draft: String::new(),
                     messages: Vec::new(),
+                    options,
                 });
             }
             Err(error) => self.error = Some(error),
@@ -525,7 +535,7 @@ impl Component for AgentPanel {
                 let started = js_sys::Date::now();
                 let owner = ctx.props().owner.clone();
                 let stream=ctx.props().transport.request(json!({"service":"agent","params":{
-                    "workspaceId":self.workspace,"sessionId":session,"prompt":prompt,"service":owner
+                    "workspaceId":self.workspace,"sessionId":session,"prompt":prompt,"service":owner,"options":chat.options
                 }}),true,ctx.link().callback(move|reply|Msg::Reply(target.clone(),reply)));
                 self.statuses.insert(session.clone(), OperationStatus {
                     text: "Connecting to Copilot…".into(),
@@ -865,7 +875,9 @@ impl Component for AgentPanel {
                     if !chat.messages.iter().any(|message| !message.text.trim().is_empty()){<p class="agent-intro">{"Ask about the active check or the inspected web page. Console runs require approval. In DevTools, page reading and interaction require separate permission for each Copilot turn and site."}</p>}
                     {for chat.messages.iter().filter(|message| !message.text.trim().is_empty()).map(|message|html!{
                         <div class={classes!("agent-message",format!("agent-message-{}",message.role))}>
-                            <strong>{match message.role.as_str(){"user"=>"You","assistant"=>"Copilot","error"=>"Error",_=>"Notice"}}</strong>
+                            if message.role!="user" && message.role!="assistant" {
+                                <strong>{if message.role=="error" {"Error"} else {"Notice"}}</strong>
+                            }
                             if message.role=="assistant" {
                                 <div class="agent-markdown">{super::agent_markdown::render(&message.text)}</div>
                             } else {
@@ -876,12 +888,12 @@ impl Component for AgentPanel {
                 </div>
                 if let Some(approval)=self.page.approval(&self.active) {
                     <div class="agent-approval" data-testid="agent-page-approval" role="alertdialog" aria-label="Inspected page access">
-                        <strong>{"Page access · this Copilot turn"}</strong>
+                        <strong>{"Page interaction permission"}</strong>
                         <div>{&approval.origin}</div>
                         <div>{format!("{} · {}",approval.title,approval.url)}</div>
-                        <p>{"Allow reading visible page content and interacting with controls on this site until this turn ends. Actions may be irreversible. Other sites require new approval. Password/file fields, cookies and browser storage are not exposed."}</p>
+                        <p>{"Allow clicks, typing and other control actions on this page? Permission lasts across turns until navigation or reload. Actions may be irreversible."}</p>
                         <p>{"Guide only allows reading, scrolling and visual hints; you click and enter data yourself."}</p>
-                        <button data-testid="agent-approve-page" onclick={ctx.link().callback(|_|Msg::PageApprove(true))}>{"Allow this turn"}</button>
+                        <button data-testid="agent-approve-page" onclick={ctx.link().callback(|_|Msg::PageApprove(true))}>{"Allow on this page"}</button>
                         <button data-testid="agent-approve-guide" onclick={ctx.link().callback(|_|Msg::PageGuide)}>{"Allow guide only"}</button>
                         <button data-testid="agent-deny-page" onclick={ctx.link().callback(|_|Msg::PageApprove(false))}>{"Deny"}</button>
                     </div>
@@ -896,10 +908,10 @@ impl Component for AgentPanel {
                     </div>
                 }
                 if let Some(error)=&self.error{<div class="agent-error" role="alert">{error}</div>}
-                <textarea class="agent-composer" data-testid="agent-composer" aria-label="Message to Copilot" aria-keyshortcuts="Shift+Enter" placeholder="Ask Copilot… · Shift+Enter to send"
+                <textarea class="agent-composer" data-testid="agent-composer" aria-label="Message to Copilot" aria-keyshortcuts="Enter"
                     value={chat.draft.clone()} oninput={ctx.link().callback(|event:InputEvent|Msg::Draft(event.target_unchecked_into::<HtmlTextAreaElement>().value()))}
                     onkeydown={ctx.link().batch_callback(|event:KeyboardEvent|{
-                        if event.key()=="Enter" && event.shift_key() && !event.ctrl_key() && !event.alt_key()
+                        if event.key()=="Enter" && !event.shift_key() && !event.ctrl_key() && !event.alt_key()
                             && !event.meta_key() && !event.is_composing() {
                             event.prevent_default();
                             event.stop_propagation();

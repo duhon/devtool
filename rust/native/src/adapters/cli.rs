@@ -1,6 +1,6 @@
 use crate::{Error, Result, Runtime};
 use serde_json::{Map, Value, json};
-use services_contracts::{ServiceConfig, service_config, service_configs};
+use services_contracts::{ParamConfig, manifest::Manifest};
 use tokio::{io::AsyncWriteExt, sync::mpsc};
 use tokio_util::sync::CancellationToken;
 pub fn service_args(args: &[String]) -> Result<(String, &[String])> {
@@ -17,9 +17,10 @@ pub fn service_args(args: &[String]) -> Result<(String, &[String])> {
         .map(|s| (s.clone(), &args[1..]))
         .ok_or_else(|| Error::new("Missing service name"))
 }
-pub fn parse_params(config: &ServiceConfig, args: &[String]) -> Result<Value> {
+/// CLI arguments as a request with the `declared` params of a service.
+pub fn parse_params(declared: &[ParamConfig], args: &[String]) -> Result<Value> {
     let mut flags: Map<String, Value> = Map::new();
-    let positional: Vec<_> = config.params.iter().filter(|p| p.positional).collect();
+    let positional: Vec<_> = declared.iter().filter(|p| p.positional).collect();
     let mut pos = 0;
     let mut i = 0;
     while i < args.len() {
@@ -36,8 +37,7 @@ pub fn parse_params(config: &ServiceConfig, args: &[String]) -> Result<Value> {
                 .split_once('=')
                 .map(|(a, b)| (a, Some(b)))
                 .unwrap_or((arg.as_str(), None));
-            let p = config
-                .params
+            let p = declared
                 .iter()
                 .find(|p| {
                     p.flag.as_ref().is_some_and(|f| option == format!("--{f}"))
@@ -68,7 +68,7 @@ pub fn parse_params(config: &ServiceConfig, args: &[String]) -> Result<Value> {
         }
     }
     let mut params = Map::new();
-    for param in &config.params {
+    for param in declared {
         let Some(flag) = &param.flag else { continue };
         let Some(raw) = flags.get(flag) else {
             if let Some(v) = &param.default {
@@ -112,14 +112,11 @@ pub fn parse_params(config: &ServiceConfig, args: &[String]) -> Result<Value> {
     }
     Ok(Value::Object(params))
 }
-pub fn usage(config: Option<&ServiceConfig>) -> String {
-    let configs = config
-        .map(|c| vec![c.clone()])
-        .unwrap_or_else(service_configs);
+pub fn usage<'a>(manifests: impl IntoIterator<Item = &'a Manifest>) -> String {
     let mut out = String::from("Usage: ./dev [--service] <service> [options]\n");
-    for config in configs {
-        out.push_str(&format!("\n{} — {}\n", config.service, config.description));
-        for p in config.params {
+    for manifest in manifests {
+        out.push_str(&format!("\n{} — {}\n", manifest.id, manifest.description));
+        for p in manifest.params.iter().cloned() {
             if let Some(flag) = p.flag {
                 out.push_str(&format!(
                     "  {}--{flag} <value>{}{}\n",
@@ -144,18 +141,21 @@ pub fn usage(config: Option<&ServiceConfig>) -> String {
 }
 pub async fn run(runtime: Runtime, args: &[String]) -> Result<i32> {
     if args.is_empty() || args == ["--help"] {
-        eprint!("{}", usage(None));
+        eprint!("{}", usage(runtime.registry.manifests().iter()));
         return Ok(0);
     }
     let (name, args) = service_args(args)?;
-    let config =
-        service_config(&name).ok_or_else(|| Error::new(format!("Unknown service \"{name}\"")))?;
+    let config = runtime
+        .registry
+        .manifest(&name)
+        .cloned()
+        .ok_or_else(|| Error::new(format!("Unknown service \"{name}\"")))?;
     if args.iter().any(|s| s == "--help" || s == "-h") {
-        eprint!("{}", usage(Some(&config)));
+        eprint!("{}", usage([&config]));
         return Ok(0);
     }
-    let params = parse_params(&config, args)?;
-    if name == "terminal" {
+    let params = parse_params(&config.params, args)?;
+    if runtime.registry.is_streaming(&name) {
         let mut stdout = tokio::io::stdout();
         let mut stderr = tokio::io::stderr();
         let cancel = CancellationToken::new();
@@ -192,17 +192,12 @@ pub async fn run(runtime: Runtime, args: &[String]) -> Result<i32> {
             .map(|c| c as i32)
             .unwrap_or(if interrupted { 130 } else { 1 }));
     }
-    let result = tokio::select! {
-        result=runtime.registry.call(&name,&params)=>result?,
+    let params = runtime.registry.resolve(&name, &params)?;
+    let output = tokio::select! {
+        output=runtime.registry.call_raw(&name,params,CancellationToken::new(),false)=>output?,
         _=tokio::signal::ctrl_c()=>return Ok(130),
     };
-    println!("{}", serde_json::to_string_pretty(&result)?);
-    let status = result["status"].as_u64().unwrap_or(0);
-    Ok(
-        if (name == "grpc" && status != 0) || (name != "grpc" && status >= 400) {
-            1
-        } else {
-            0
-        },
-    )
+    println!("{}", serde_json::to_string_pretty(&output.value()?)?);
+    // The module's history status decides: an HTTP error, a non-OK gRPC status, ...
+    Ok(i32::from(output.status == "error"))
 }

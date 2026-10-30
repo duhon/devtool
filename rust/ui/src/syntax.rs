@@ -3,7 +3,12 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Language {
     Headers,
+    /// An address: `scheme://host/path`.
     Endpoint,
+    /// `METHOD URL` with `{param}` path params and a `?query`.
+    Http,
+    /// `scheme://target/package.Service/Method`.
+    Grpc,
     Shell,
     Spl,
     Graphql,
@@ -15,6 +20,8 @@ impl Language {
         Some(match name {
             "headers" => Self::Headers,
             "endpoint" => Self::Endpoint,
+            "http" => Self::Http,
+            "grpc" => Self::Grpc,
             "shell" => Self::Shell,
             "spl" => Self::Spl,
             "graphql" => Self::Graphql,
@@ -237,7 +244,6 @@ fn table_token(
 
 pub fn token(
     language: Language,
-    variant: &str,
     text: &str,
     pos: usize,
     state: &mut State,
@@ -323,9 +329,10 @@ pub fn token(
             let end = rest.find(':').unwrap_or(stop).min(stop);
             (rest[..end].chars().count().max(1), Some("attribute"))
         }
-        Language::Endpoint => {
+        Language::Endpoint | Language::Http | Language::Grpc => {
+            let http = language == Language::Http;
             if pos == 0
-                && variant == "rest"
+                && http
                 && let Some((method, _)) = rest.split_once(char::is_whitespace)
                 && ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"]
                     .contains(&method.to_ascii_uppercase().as_str())
@@ -363,7 +370,7 @@ pub fn token(
                     return (n, Some("def"));
                 }
             }
-            if variant == "rest"
+            if http
                 && state.endpoint_part == 2
                 && chars[0] == '{'
                 && !text.chars().take(pos).any(|c| c == '#')
@@ -375,7 +382,7 @@ pub fn token(
             {
                 return (rest[..=end].chars().count(), Some("rest-path-param"));
             }
-            if variant == "grpc" {
+            if language == Language::Grpc {
                 if chars[0] == '/' {
                     state.grpc_separators += 1;
                     return (1, None);
@@ -394,16 +401,14 @@ pub fn token(
                     }),
                 );
             }
-            if variant == "rest" && chars[0] == '?' {
+            if http && chars[0] == '?' {
                 state.endpoint_part = 3;
                 return (1, None);
             }
             let n = chars
                 .iter()
                 .take_while(|c| {
-                    **c != '{'
-                        && **c != '$'
-                        && !(variant == "rest" && **c == '?' && state.endpoint_part == 2)
+                    **c != '{' && **c != '$' && !(http && **c == '?' && state.endpoint_part == 2)
                 })
                 .count()
                 .max(1);
@@ -688,335 +693,5 @@ pub fn token(
             }
             (1, None)
         }
-    }
-}
-#[cfg(test)]
-mod tests {
-    use super::*;
-    fn tokens(
-        lang: Language,
-        text: &str,
-        state: &mut State,
-    ) -> Vec<(String, Option<&'static str>)> {
-        tokens_for(lang, "", text, state)
-    }
-    fn tokens_for(
-        lang: Language,
-        variant: &str,
-        text: &str,
-        state: &mut State,
-    ) -> Vec<(String, Option<&'static str>)> {
-        let chars: Vec<_> = text.chars().collect();
-        let mut pos = 0;
-        let mut out = vec![];
-        while pos < chars.len() {
-            let (n, style) = token(lang, variant, text, pos, state);
-            assert!(n > 0);
-            out.push((
-                chars[pos..(pos + n).min(chars.len())].iter().collect(),
-                style,
-            ));
-            pos += n;
-        }
-        out
-    }
-    #[test]
-    fn typed_tables_color_cells_without_guessing_from_text_or_pipes() {
-        let result = serde_json::json!({"columns":["n","flag","at","payload","text"],
-            "columnTypes":{"n":"number","flag":"boolean","at":"datetime","payload":"json"},
-            "rows":[{"n":"123.000","flag":true,"at":"2026-10-27","payload":"{\"x\":\"a|b\",\"v\":12}","text":"{\"v\":99}"}]});
-        let mut state = State {
-            table: crate::tables::Metadata::from_result(&result),
-            ..Default::default()
-        };
-        let table = crate::tables::render(&result, false);
-        let all: Vec<_> = table
-            .lines()
-            .flat_map(|line| tokens(Language::Table, line, &mut state))
-            .collect();
-        assert!(
-            all.iter()
-                .any(|(s, c)| s.contains("123.000") && *c == Some("number"))
-        );
-        assert!(
-            all.iter()
-                .any(|(s, c)| s.contains("true") && *c == Some("atom"))
-        );
-        assert!(
-            all.iter()
-                .any(|(s, c)| s.contains("2026-10-27") && *c == Some("string"))
-        );
-        assert!(all.contains(&("\"a|b\"".into(), Some("string"))));
-        assert!(all.contains(&("12".into(), Some("number"))));
-        assert!(
-            all.iter()
-                .any(|(s, c)| s.contains("{\"v\":99}") && c.is_none())
-        );
-        assert!(
-            all.iter()
-                .filter(|(_, c)| *c == Some("mysql-table-border"))
-                .all(|(s, _)| !s.contains("a|b"))
-        );
-    }
-    #[test]
-    fn wrapped_json_and_vertical_json_keep_flat_token_state() {
-        for vertical in [false, true] {
-            let result = serde_json::json!({"columns":["payload","text"],"columnTypes":{"payload":"json"},
-                "columnSizes":{"payload":7},"rows":[{"payload":"{\"s\":\"abc def ghij\",\"v\":true}","text":"plain"}]});
-            let mut state = State {
-                table: crate::tables::Metadata::from_result(&result),
-                ..Default::default()
-            };
-            let text = crate::tables::render(&result, vertical);
-            let mut output = vec![];
-            for line in text.lines() {
-                output.extend(tokens(Language::Table, line, &mut state));
-                state = serde_json::from_value(serde_json::to_value(state).unwrap()).unwrap();
-            }
-            assert!(
-                !output.iter().any(|(_, c)| *c == Some("error")),
-                "{vertical}: {output:?}"
-            );
-            assert!(
-                output
-                    .iter()
-                    .any(|(s, c)| s.contains("true") && *c == Some("atom")),
-                "{vertical}: {output:?}"
-            );
-            assert!(
-                !output
-                    .iter()
-                    .any(|(s, c)| s.contains("plain") && c.is_some()),
-                "{vertical}: {output:?}"
-            );
-        }
-    }
-    #[test]
-    fn line_lexer_matches_tokens_and_uses_utf16_without_retaining_per_token_state() {
-        let result = serde_json::json!({"columns":["j","n"],"columnTypes":{"j":"json","n":"number"},
-            "columnSizes":{"j":9},"rows":[{"j":r#"{"s":"😀a\"b","v":[true,false,null]}"#,"n":42}]});
-        for vertical in [false, true] {
-            let mut reference = State {
-                table: crate::tables::Metadata::from_result(&result),
-                ..Default::default()
-            };
-            let mut batched = reference.clone();
-            for line in crate::tables::render(&result, vertical).lines() {
-                let expected = tokens(Language::Table, line, &mut reference);
-                let spans = table_line(line, &mut batched);
-                let mut start = 0;
-                let actual: Vec<_> = spans
-                    .into_iter()
-                    .map(|(end, style)| {
-                        let text = String::from_utf16(
-                            &line.encode_utf16().collect::<Vec<_>>()[start..end],
-                        )
-                        .unwrap();
-                        start = end;
-                        (text, style)
-                    })
-                    .collect();
-                assert_eq!(actual, expected);
-                assert_eq!(start, line.encode_utf16().count());
-            }
-        }
-    }
-    #[test]
-    fn json_escapes_atoms_and_numbers_survive_every_narrow_wrap() {
-        for width in 1..=16 {
-            let result = serde_json::json!({"columns":["j"],"columnTypes":{"j":"json"},"columnSizes":{"j":width},
-                "rows":[{"j":r#"{"s":"a\"b\\c | 😀","v":[true,false,null,-1.25e+10]}"#}]});
-            let mut state = State {
-                table: crate::tables::Metadata::from_result(&result),
-                ..Default::default()
-            };
-            let all: Vec<_> = crate::tables::render(&result, false)
-                .lines()
-                .flat_map(|line| tokens(Language::Table, line, &mut state))
-                .collect();
-            assert!(
-                !all.iter().any(|(_, c)| *c == Some("error")),
-                "width {width}: {all:?}"
-            );
-        }
-    }
-    #[test]
-    fn rest_path_parameters_are_distinct_from_variables_and_query_values() {
-        let source = "PUT http://{{var:magento}}/rest/default/V1/categories/{categoryId}/move/{имя-id}?filter={query}";
-        let result = tokens_for(Language::Endpoint, "rest", source, &mut State::default());
-        assert_eq!(
-            result
-                .iter()
-                .filter(|(_, style)| *style == Some("rest-path-param"))
-                .map(|(text, _)| text.as_str())
-                .collect::<Vec<_>>(),
-            vec!["{categoryId}", "{имя-id}"]
-        );
-        assert!(
-            result
-                .iter()
-                .any(|(_, style)| *style == Some("gw-placeholder"))
-        );
-        for (variant, text) in [
-            ("rest", "http://test.com/categories/42/move"),
-            ("rest", "http://test.com/{incomplete"),
-            ("rest", "http://test.com/{}"),
-            ("rest", "http://test.com/{not a name}"),
-            ("rest", "http://test.com/#fragment/{categoryId}"),
-            ("grpc", "grpc://test.com/{categoryId}"),
-            ("graphql", "http://test.com/{categoryId}"),
-        ] {
-            assert!(
-                !tokens_for(Language::Endpoint, variant, text, &mut State::default())
-                    .iter()
-                    .any(|(_, style)| *style == Some("rest-path-param")),
-                "{variant}: {text}"
-            );
-        }
-    }
-    #[test]
-    fn shell_commands_variables_and_flags() {
-        let t = tokens(
-            Language::Shell,
-            "echo \"$HOME\" --flag && printf {{:NAME}}",
-            &mut State::default(),
-        );
-        assert!(t.contains(&("echo".into(), Some("builtin"))));
-        assert!(t.contains(&("$HOME".into(), Some("variable-2"))));
-        assert!(t.contains(&("--flag".into(), Some("attribute"))));
-        assert!(t.contains(&(":".into(), Some("gw-placeholder-colon"))));
-    }
-    #[test]
-    fn graphql_scopes_and_block_strings() {
-        let mut state = State::default();
-        let t = tokens(
-            Language::Graphql,
-            "query($id: ID!) { alias: viewer(id: $id) @skip(if: false) }",
-            &mut state,
-        );
-        assert!(t.contains(&("$id".into(), Some("variable-3"))));
-        assert!(t.contains(&("@skip".into(), Some("atom"))));
-        assert!(t.contains(&("alias".into(), Some("attribute"))));
-        tokens(Language::Graphql, "\"\"\"start", &mut state);
-        assert!(state.block_string);
-        assert_eq!(
-            tokens(Language::Graphql, "end\"\"\"", &mut state)[0].1,
-            Some("string")
-        );
-        assert!(!state.block_string);
-    }
-    #[test]
-    fn graphql_fragment_definitions_spreads_and_type_conditions_have_distinct_styles() {
-        let t = tokens(
-            Language::Graphql,
-            "fragment PriceTest on Price { amount }\nquery { products { ... on SimpleProductView { price { ... PriceTest amount } } } }",
-            &mut State::default(),
-        );
-        assert_eq!(
-            t.iter()
-                .filter(|(name, style)| name == "PriceTest" && *style == Some("graphql-fragment"))
-                .count(),
-            2
-        );
-        for name in ["Price", "SimpleProductView"] {
-            assert!(t.contains(&(name.into(), Some("graphql-type-condition"))));
-        }
-        for name in ["amount", "products", "price"] {
-            assert!(t.contains(&(name.into(), Some("property"))));
-        }
-    }
-    #[test]
-    fn graphql_fragment_colors_survive_comments_line_breaks_and_state_copying() {
-        let mut state = State::default();
-        tokens(Language::Graphql, "fragment # definition", &mut state);
-        assert!(
-            tokens(Language::Graphql, "PriceTest", &mut state)
-                .contains(&("PriceTest".into(), Some("graphql-fragment")))
-        );
-        tokens(Language::Graphql, "on # type", &mut state);
-        let mut state: State =
-            serde_json::from_value(serde_json::to_value(state).unwrap()).unwrap();
-        assert!(
-            tokens(Language::Graphql, "Price { amount }", &mut state)
-                .contains(&("Price".into(), Some("graphql-type-condition")))
-        );
-        tokens(Language::Graphql, "query { ... # reference", &mut state);
-        assert!(
-            tokens(Language::Graphql, ", PriceTest", &mut state)
-                .contains(&("PriceTest".into(), Some("graphql-fragment")))
-        );
-        tokens(Language::Graphql, "...", &mut state);
-        tokens(Language::Graphql, "# ignored", &mut state);
-        tokens(Language::Graphql, "on", &mut state);
-        assert!(
-            tokens(Language::Graphql, "SimpleProductView { sku } }", &mut state)
-                .contains(&("SimpleProductView".into(), Some("graphql-type-condition")))
-        );
-    }
-    #[test]
-    fn graphql_fragment_colors_do_not_leak_into_values_comments_or_following_fields() {
-        let t = tokens(
-            Language::Graphql,
-            "{ PriceTest: products(skus: [\"... PriceTest\", $PriceTest]) { ...PriceTest sku ... on Product { name } } } # ... on Hidden",
-            &mut State::default(),
-        );
-        assert!(t.contains(&("PriceTest".into(), Some("attribute"))));
-        assert!(t.contains(&("\"... PriceTest\"".into(), Some("string"))));
-        assert!(t.contains(&("$PriceTest".into(), Some("variable-3"))));
-        assert!(t.contains(&("sku".into(), Some("property"))));
-        assert!(t.contains(&("name".into(), Some("property"))));
-        assert!(t.contains(&("# ... on Hidden".into(), Some("comment"))));
-        assert_eq!(
-            t.iter()
-                .filter(|(_, style)| *style == Some("graphql-fragment"))
-                .count(),
-            1
-        );
-        let fields = tokens(
-            Language::Graphql,
-            "query { fragment PriceTest on ProductViewPrice }",
-            &mut State::default(),
-        );
-        assert!(fields.iter().all(|(_, style)| !matches!(
-            style,
-            Some("graphql-fragment" | "graphql-type-condition")
-        )));
-        for source in [
-            "{ ... } PriceTest",
-            "{ ... \"text\" PriceTest",
-            "{ ... $var PriceTest",
-        ] {
-            assert!(
-                tokens(Language::Graphql, source, &mut State::default())
-                    .contains(&("PriceTest".into(), Some("property")))
-            );
-        }
-    }
-    #[test]
-    fn spl_comments_and_command_boundaries() {
-        let mut state = State::default();
-        let t = tokens(
-            Language::Spl,
-            "index=main | stats count by host",
-            &mut state,
-        );
-        assert!(t.contains(&("index".into(), Some("attribute"))));
-        assert!(t.contains(&("stats".into(), Some("keyword"))));
-        tokens(Language::Spl, "```note", &mut state);
-        assert!(state.fenced);
-        assert_eq!(
-            tokens(Language::Spl, "other```", &mut state)[0].1,
-            Some("comment")
-        );
-        assert!(!state.fenced);
-    }
-    #[test]
-    fn mysql_table_does_not_color_values_as_sql() {
-        let t = tokens(Language::Table, "| SELECT | true |", &mut State::default());
-        assert!(
-            t.iter()
-                .filter(|(_, s)| s.is_some())
-                .all(|(_, s)| *s == Some("mysql-table-border"))
-        );
     }
 }

@@ -1,0 +1,9 @@
+[package]
+name = "services-module-ui"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+description = "SDK for a module's console part (ui.wasm)"
+
+[dependencies]
+serde_json.workspace = true

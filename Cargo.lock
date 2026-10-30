@@ -1403,12 +1403,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "http-range-header"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9171a2ea8a68358193d15dd5d70c1c10a2afc3e7e4c5bc92bc9f025cebd7359c"
-
-[[package]]
 name = "httparse"
 version = "1.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1877,16 +1871,6 @@ name = "mime"
 version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6877bb514081ee2a7ff5ef9de3281f14a4dd4bceac4c09388074a6b5df8a139a"
-
-[[package]]
-name = "mime_guess"
-version = "2.0.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f7c44f8e672c00fe5308fa235f821cb4198414e1c77935c1ab6948d3fd78550e"
-dependencies = [
- "mime",
- "unicase",
-]
 
 [[package]]
 name = "minimal-lexical"
@@ -2700,6 +2684,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6b1e7f9a428571be2dc5bc0505c13fb6bf936822b894ec87abf8a08a4e51742d"
 
 [[package]]
+name = "rustc_version"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cfcb3a22ef46e85b45de6ee7e79d063319ebb6594faafcf1c225ea92ab6e9b92"
+dependencies = [
+ "semver",
+]
+
+[[package]]
 name = "rustix"
 version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2828,6 +2821,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "semver"
+version = "1.0.28"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
+
+[[package]]
 name = "serde"
 version = "1.0.229"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2929,15 +2928,17 @@ dependencies = [
 
 [[package]]
 name = "services-contracts"
-version = "2.5.22"
+version = "3.0.0"
 dependencies = [
+ "flate2",
  "serde",
  "serde_json",
+ "tar",
 ]
 
 [[package]]
 name = "services-installer"
-version = "2.5.22"
+version = "3.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2953,45 +2954,226 @@ dependencies = [
 ]
 
 [[package]]
+name = "services-module-api"
+version = "3.0.0"
+dependencies = [
+ "http 1.5.0",
+ "prost",
+ "prost-reflect",
+ "protox",
+ "serde_json",
+ "stabby",
+ "tokio",
+ "tokio-util",
+ "url",
+]
+
+[[package]]
+name = "services-module-echo"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "services-module-api",
+ "stabby",
+]
+
+[[package]]
+name = "services-module-echo-ui"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "services-module-ui",
+]
+
+[[package]]
+name = "services-module-graphql"
+version = "3.0.0"
+dependencies = [
+ "serde_json",
+ "services-module-api",
+ "stabby",
+]
+
+[[package]]
+name = "services-module-graphql-ui"
+version = "3.0.0"
+dependencies = [
+ "serde_json",
+ "services-module-ui",
+]
+
+[[package]]
+name = "services-module-grpc"
+version = "3.0.0"
+dependencies = [
+ "axum 0.8.9",
+ "base64 0.22.1",
+ "bytes",
+ "futures-util",
+ "http 1.5.0",
+ "prost",
+ "prost-reflect",
+ "prost-types",
+ "protox",
+ "rustls",
+ "serde_json",
+ "services-module-api",
+ "stabby",
+ "tokio",
+ "tonic",
+]
+
+[[package]]
+name = "services-module-grpc-ui"
+version = "3.0.0"
+dependencies = [
+ "serde_json",
+ "services-module-ui",
+]
+
+[[package]]
+name = "services-module-mysql"
+version = "3.0.0"
+dependencies = [
+ "chrono",
+ "chrono-tz",
+ "mysql_async",
+ "rustls",
+ "serde_json",
+ "services-contracts",
+ "services-module-api",
+ "stabby",
+ "tokio",
+ "tokio-util",
+ "url",
+]
+
+[[package]]
+name = "services-module-mysql-ui"
+version = "3.0.0"
+dependencies = [
+ "serde_json",
+ "services-contracts",
+ "services-module-ui",
+]
+
+[[package]]
+name = "services-module-rest"
+version = "3.0.0"
+dependencies = [
+ "futures-util",
+ "serde_json",
+ "services-module-api",
+ "stabby",
+ "url",
+]
+
+[[package]]
+name = "services-module-rest-ui"
+version = "3.0.0"
+dependencies = [
+ "serde_json",
+ "services-module-ui",
+]
+
+[[package]]
+name = "services-module-splunk"
+version = "3.0.0"
+dependencies = [
+ "httpdate",
+ "serde_json",
+ "services-contracts",
+ "services-module-api",
+ "stabby",
+ "tokio",
+ "url",
+]
+
+[[package]]
+name = "services-module-splunk-ui"
+version = "3.0.0"
+dependencies = [
+ "serde_json",
+ "services-contracts",
+ "services-module-ui",
+]
+
+[[package]]
+name = "services-module-terminal"
+version = "3.0.0"
+dependencies = [
+ "libc",
+ "serde_json",
+ "services-module-api",
+ "stabby",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
+name = "services-module-terminal-ui"
+version = "3.0.0"
+dependencies = [
+ "serde_json",
+ "services-module-ui",
+]
+
+[[package]]
+name = "services-module-ui"
+version = "3.0.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "services-native"
-version = "2.5.22"
+version = "3.0.0"
 dependencies = [
  "async-trait",
  "axum 0.8.9",
  "base64 0.22.1",
  "bytes",
- "chrono",
- "chrono-tz",
  "futures-util",
  "github-copilot-sdk",
- "http 1.5.0",
- "httpdate",
+ "http-body",
+ "http-body-util",
  "libc",
- "mysql_async",
- "prost",
- "prost-reflect",
- "prost-types",
- "protox",
+ "libloading",
  "regex",
  "reqwest",
+ "ring",
  "rusqlite",
  "rustls",
  "serde",
  "serde_json",
  "services-contracts",
+ "services-module-api",
+ "services-testkit",
  "sha2",
+ "stabby",
  "tempfile",
  "tokio",
  "tokio-util",
- "tonic",
- "tower-http",
  "url",
 ]
 
 [[package]]
-name = "services-ui"
-version = "2.5.22"
+name = "services-testkit"
+version = "3.0.0"
 dependencies = [
+ "axum 0.8.9",
+ "serde_json",
+ "services-contracts",
+ "services-native",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
+name = "services-ui"
+version = "3.0.0"
+dependencies = [
+ "base64 0.22.1",
  "js-sys",
  "pulldown-cmark",
  "regex",
@@ -2999,6 +3181,13 @@ dependencies = [
  "serde-wasm-bindgen 0.6.5",
  "serde_json",
  "services-contracts",
+ "services-module-graphql-ui",
+ "services-module-grpc-ui",
+ "services-module-mysql-ui",
+ "services-module-rest-ui",
+ "services-module-splunk-ui",
+ "services-module-terminal-ui",
+ "services-module-ui",
  "url",
  "uuid",
  "wasm-bindgen",
@@ -3028,6 +3217,12 @@ dependencies = [
  "cpufeatures 0.2.17",
  "digest",
 ]
+
+[[package]]
+name = "sha2-const-stable"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5f179d4e11094a893b82fff208f74d448a7512f99f5a0acbd5c679b705f83ed9"
 
 [[package]]
 name = "shlex"
@@ -3108,6 +3303,41 @@ dependencies = [
  "js-sys",
  "rsqlite-vfs",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "stabby"
+version = "72.1.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d53d2428934c46277fafd2d41e39357595aa1e47954c75db2b14ed90632f3cc"
+dependencies = [
+ "libloading",
+ "rustversion",
+ "stabby-abi",
+]
+
+[[package]]
+name = "stabby-abi"
+version = "72.1.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f375eae680bb54203ee5e47d4cd2ae7b79c0a79ed90919279f38f500ad53f190"
+dependencies = [
+ "rustc_version",
+ "rustversion",
+ "sha2-const-stable",
+ "stabby-macros",
+]
+
+[[package]]
+name = "stabby-macros"
+version = "72.1.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ea664671a576c5f7e32fee291ac123d82af5e92b0689beb3555347c00c76eef1"
+dependencies = [
+ "proc-macro-crate",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -3447,11 +3677,6 @@ dependencies = [
  "http 1.5.0",
  "http-body",
  "http-body-util",
- "http-range-header",
- "httpdate",
- "mime",
- "mime_guess",
- "percent-encoding",
  "pin-project-lite",
  "tokio",
  "tokio-util",
@@ -3986,12 +4211,13 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "2.5.22"
+version = "3.0.0"
 dependencies = [
  "anyhow",
  "axum 0.8.9",
  "futures-util",
  "serde_json",
+ "services-contracts",
  "services-installer",
  "sha2",
  "tempfile",

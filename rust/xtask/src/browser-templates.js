@@ -1,6 +1,6 @@
 (async () => {
-  const {assert,wait,sleep,visible,click,testid,cm,setSource,key,type,choose,activateSession}=testDriver;
-  await choose('console');
+  const {assert,wait,holds,visible,click,testid,cm,setSource,key,type,openConsole,activateSession}=testDriver;
+  await openConsole();
   await click(testid('console-service-rest'));
   const open=async()=>{
     if(testid('console-templates-toggle').getAttribute('aria-pressed')!=='true')
@@ -89,11 +89,9 @@
   assert(source.getValue()===prefix.trimEnd()+'\n'+body2,'Template insertion must preserve raw content, including trailing JSON commas');
   setSource(source,prefix.trimEnd()+'\n');
   await type('@');
-  await sleep(100);
-  assert(!entries().some(item=>item.displayText?.startsWith('@')),'A standalone @ inside a section must not automatically suggest templates');
+  await holds(()=>!entries().some(item=>item.displayText?.startsWith('@')),'A standalone @ inside a section must not automatically suggest templates',100);
   await key('Control+Space');
-  await sleep(100);
-  assert(!entries().some(item=>item.displayText?.startsWith('@')),'Manual completion inside section content must not suggest templates');
+  await holds(()=>!entries().some(item=>item.displayText?.startsWith('@')),'Manual completion inside section content must not suggest templates',100);
   await select('headers');
   await save('rest','headers','@auth Auth headers\nX-Template: yes\nContent-Type: application/json');
   setSource(source,'#check Headers\n#headers ');

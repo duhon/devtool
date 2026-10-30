@@ -195,36 +195,37 @@ pub(super) fn validate_upgrade(
         );
     }
 
-    #[cfg(test)]
-    mod tests {
-        use super::*;
-
-        #[test]
-        fn failed_native_archive_is_cleaned_by_the_installer() {
-            let directory = tempfile::Builder::new()
-                .prefix("services-download-")
-                .tempdir()
-                .unwrap();
-            let archive = directory.path().join(services_contracts::updates::ARCHIVE);
-            fs::write(&archive, b"not an archive").unwrap();
-            let directory = directory.keep();
-            let home = tempfile::tempdir().unwrap();
-            let sha = format!("{:x}", Sha256::digest(b"not an archive"));
-            assert!(install_downloaded_archive(home.path(), &archive, &sha, "2.6.0").is_err());
-            assert!(!directory.exists());
-        }
-
-        #[test]
-        fn ordinary_archive_directories_are_never_claimed_or_deleted() {
-            let directory = tempfile::tempdir().unwrap();
-            let archive = directory.path().join(services_contracts::updates::ARCHIVE);
-            fs::write(&archive, b"keep").unwrap();
-            assert!(
-                install_downloaded_archive(directory.path(), &archive, &"a".repeat(64), "2.6.0")
-                    .is_err()
-            );
-            assert_eq!(fs::read(&archive).unwrap(), b"keep");
-        }
-    }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn failed_native_archive_is_cleaned_by_the_installer() {
+        let directory = tempfile::Builder::new()
+            .prefix("services-download-")
+            .tempdir()
+            .unwrap();
+        let archive = directory.path().join(services_contracts::updates::ARCHIVE);
+        fs::write(&archive, b"not an archive").unwrap();
+        let directory = directory.keep();
+        let home = tempfile::tempdir().unwrap();
+        let sha = format!("{:x}", Sha256::digest(b"not an archive"));
+        assert!(install_downloaded_archive(home.path(), &archive, &sha, "2.6.0").is_err());
+        assert!(!directory.exists());
+    }
+
+    #[test]
+    fn ordinary_archive_directories_are_never_claimed_or_deleted() {
+        let directory = tempfile::tempdir().unwrap();
+        let archive = directory.path().join(services_contracts::updates::ARCHIVE);
+        fs::write(&archive, b"keep").unwrap();
+        assert!(
+            install_downloaded_archive(directory.path(), &archive, &"a".repeat(64), "2.6.0")
+                .is_err()
+        );
+        assert_eq!(fs::read(&archive).unwrap(), b"keep");
+    }
 }

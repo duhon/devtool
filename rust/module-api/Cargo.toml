@@ -1,0 +1,22 @@
+[package]
+name = "services-module-api"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+description = "ABI, host contract and SDK for Services DevTools modules"
+
+[lib]
+name = "services_module_api"
+
+[dependencies]
+stabby = "72.1"
+prost = "0.13"
+serde_json.workspace = true
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "time"] }
+tokio-util = "0.7"
+url = "2"
+http = "1"
+
+[dev-dependencies]
+protox = "0.7"
+prost-reflect = "0.14"

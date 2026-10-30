@@ -1,13 +1,15 @@
 # CLI
 
-A command-line adapter for the same Rust registry and service clients used
-by the native host and HTTP adapter. Shared parameter metadata lives in
-`rust/contracts`; parsing, dispatch and streaming live in `rust/native`.
+A command-line adapter for the same module registry and modules used by
+the native host. Flags come from each module's manifest (`params`: `flag`,
+`alias`); parsing, dispatch and streaming live in `rust/native`.
 
 ## Run
 
-From the repo root:
+From the repo root, build the module packages once (and after changing a
+module), then run:
 
+    cargo run -p xtask -- modules
     ./dev <service> --flag=value [--flag=value ...]
 
 The source launcher requires Rust/Cargo and incrementally builds the binary.
@@ -51,8 +53,8 @@ services and their flags.
 
 `--headers` and `--variables` (where applicable) take a JSON string, e.g.
 `--headers='{"Authorization":"Bearer x"}'`. `proto` is optional for grpc
-— omit it to discover the service via server reflection, same as the web
-presentation. Splunk's search options (`from`/`to`/`app`/`count`) are all
+— omit it to discover the service via server reflection, same as the
+console. Splunk's search options (`from`/`to`/`app`/`count`) are all
 one repeatable `-o key=value` flag (like curl's `-H` or docker's `-e`)
 instead of a flag per option — pass as many `-o` as you need, e.g.
 `-o from=-24h -o to=now -o app=search -o count=10`.

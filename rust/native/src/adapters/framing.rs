@@ -1,71 +1,173 @@
+use crate::core::text::SharedStr;
 use crate::{Error, Result};
 use serde_json::{Value, json};
 use services_contracts::native_messaging::{
     MAX_HOST_MESSAGE_BYTES, MAX_RESPONSE_BYTES, RESPONSE_CHUNK_BYTES,
 };
+use std::borrow::Cow;
 const MAX_FRAME: usize = 64 * 1024 * 1024;
 pub fn encode(value: &Value) -> Result<Vec<u8>> {
     encode_bytes(&serde_json::to_vec(value)?)
 }
 fn encode_bytes(bytes: &[u8]) -> Result<Vec<u8>> {
-    if bytes.len() > MAX_HOST_MESSAGE_BYTES {
+    encode_parts(&[bytes])
+}
+fn encode_parts(parts: &[&[u8]]) -> Result<Vec<u8>> {
+    let len = parts.iter().map(|part| part.len()).sum::<usize>();
+    if len > MAX_HOST_MESSAGE_BYTES {
         return Err(Error::new(
             "Native host message exceeds Chrome's 1 MiB limit",
         ));
     }
-    let mut frame = Vec::with_capacity(bytes.len() + 4);
-    frame.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
-    frame.extend_from_slice(bytes);
+    let mut frame = Vec::with_capacity(len + 4);
+    frame.extend_from_slice(&(len as u32).to_le_bytes());
+    for part in parts {
+        frame.extend_from_slice(part);
+    }
     Ok(frame)
 }
 
+/// The frames of one reply whose text is the concatenation of `parts`.
 pub struct ResponseFrames {
-    text: String,
+    parts: Vec<SharedStr>,
+    /// Where each part starts in the text.
+    starts: Vec<usize>,
+    len: usize,
     id: Value,
     offset: usize,
     chunked: bool,
 }
 pub fn response_frames(value: &Value, chunked: bool) -> Result<ResponseFrames> {
-    let mut text = serde_json::to_string(value)?;
-    let id = value["id"].clone();
-    let needs_chunks = text.len() > MAX_HOST_MESSAGE_BYTES;
-    if needs_chunks && (!chunked || text.len() > MAX_RESPONSE_BYTES) {
+    response_frames_parts(
+        vec![serde_json::to_string(value)?.into()],
+        value["id"].clone(),
+        chunked,
+    )
+}
+/// `parts` concatenate to a serialized reply; `id` labels its chunks.
+pub fn response_frames_parts(
+    mut parts: Vec<SharedStr>,
+    id: Value,
+    chunked: bool,
+) -> Result<ResponseFrames> {
+    let len = parts.iter().map(|part| part.len()).sum::<usize>();
+    if len > MAX_HOST_MESSAGE_BYTES && (!chunked || len > MAX_RESPONSE_BYTES) {
         let error = if chunked {
             "Native response exceeds the 64 MiB reassembly limit; reduce the result size."
         } else {
             "Native response exceeds Chrome's 1 MiB message limit. Update the extension to enable chunked responses."
         };
-        text = serde_json::to_string(&json!({"id":id,"ok":false,"error":error}))?;
+        parts = vec![serde_json::to_string(&json!({"id":id,"ok":false,"error":error}))?.into()];
     }
+    let starts = parts
+        .iter()
+        .scan(0, |at, part| {
+            let start = *at;
+            *at += part.len();
+            Some(start)
+        })
+        .collect();
+    let len = parts.iter().map(|part| part.len()).sum::<usize>();
     Ok(ResponseFrames {
-        chunked: text.len() > MAX_HOST_MESSAGE_BYTES,
-        text,
+        parts,
+        starts,
+        chunked: len > MAX_HOST_MESSAGE_BYTES,
+        len,
         id,
         offset: 0,
     })
+}
+impl ResponseFrames {
+    fn spans(&self) -> impl Iterator<Item = (&SharedStr, usize)> {
+        self.parts.iter().zip(self.starts.iter().copied())
+    }
+
+    /// `end` moved back to a char boundary; part edges are boundaries.
+    fn boundary(&self, end: usize) -> usize {
+        match self
+            .spans()
+            .find(|(part, start)| end > *start && end < start + part.len())
+        {
+            Some((part, start)) => {
+                let mut local = end - start;
+                while !part.is_char_boundary(local) {
+                    local -= 1;
+                }
+                start + local
+            }
+            None => end,
+        }
+    }
+
+    /// The text in `from..to`, borrowed when it lies within one part.
+    fn text(&self, from: usize, to: usize) -> Cow<'_, str> {
+        let mut slices = self.spans().filter_map(|(part, start)| {
+            let (a, b) = (from.max(start), to.min(start + part.len()));
+            (a < b).then(|| &part[a - start..b - start])
+        });
+        let first = slices.next().unwrap_or("");
+        match slices.next() {
+            None => Cow::Borrowed(first),
+            Some(second) => {
+                let mut text = String::with_capacity(to - from);
+                text.push_str(first);
+                text.push_str(second);
+                slices.for_each(|slice| text.push_str(slice));
+                Cow::Owned(text)
+            }
+        }
+    }
 }
 impl Iterator for ResponseFrames {
     type Item = Result<Vec<u8>>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.offset == self.text.len() {
+        if self.offset == self.len {
             return None;
         }
         if !self.chunked {
-            self.offset = self.text.len();
-            return Some(encode_bytes(self.text.as_bytes()));
+            self.offset = self.len;
+            let parts: Vec<&[u8]> = self.parts.iter().map(|part| part.as_bytes()).collect();
+            return Some(encode_parts(&parts));
         }
-        let mut end = (self.offset + RESPONSE_CHUNK_BYTES).min(self.text.len());
-        while !self.text.is_char_boundary(end) {
-            end -= 1;
-        }
-        let frame = encode(&json!({
-            "type":"nativeChunk","id":self.id,"offsetBytes":self.offset,
-            "totalBytes":self.text.len(),"data":&self.text[self.offset..end],
-        }));
+        let end = self.boundary((self.offset + RESPONSE_CHUNK_BYTES).min(self.len));
+        let frame = chunk_frame(&Chunk {
+            kind: "nativeChunk",
+            id: &self.id,
+            offset_bytes: self.offset,
+            total_bytes: self.len,
+            data: &self.text(self.offset, end),
+        });
         self.offset = end;
         Some(frame)
     }
+}
+
+/// Field order matches `json!({"type","id","offsetBytes","totalBytes","data"})`.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Chunk<'a> {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    id: &'a Value,
+    offset_bytes: usize,
+    total_bytes: usize,
+    data: &'a str,
+}
+
+/// Serializes straight into the frame: no intermediate value or buffer per chunk.
+fn chunk_frame(chunk: &Chunk) -> Result<Vec<u8>> {
+    let mut frame = Vec::with_capacity(4 + chunk.data.len() * 3 / 2 + 128);
+    frame.extend_from_slice(&[0; 4]);
+    serde_json::to_writer(&mut frame, chunk)?;
+    let size = frame.len() - 4;
+    if size > MAX_HOST_MESSAGE_BYTES {
+        return Err(Error::new(
+            "Native host message exceeds Chrome's 1 MiB limit",
+        ));
+    }
+    frame[..4].copy_from_slice(&(size as u32).to_le_bytes());
+    Ok(frame)
 }
 #[derive(Default)]
 pub struct FrameReader {
@@ -167,6 +269,76 @@ mod tests {
                 .unwrap()
                 .unwrap(),
             encode(&small).unwrap()
+        );
+    }
+
+    #[test]
+    fn chunk_frames_match_the_value_encoding() {
+        for id in [json!("req-🦀"), json!(7), Value::Null] {
+            let data = "🦀\\\"\n\0x\u{1f}";
+            let chunk = Chunk {
+                kind: "nativeChunk",
+                id: &id,
+                offset_bytes: 3,
+                total_bytes: 99,
+                data,
+            };
+            let value =
+                json!({"type":"nativeChunk","id":id,"offsetBytes":3,"totalBytes":99,"data":data});
+            assert_eq!(chunk_frame(&chunk).unwrap(), encode(&value).unwrap());
+        }
+    }
+
+    #[test]
+    fn segmented_replies_frame_like_one_text() {
+        let text = format!(
+            "{{\"id\":1,\"result\":\"{}\"}}",
+            "a🦀\\\"é".repeat(MAX_HOST_MESSAGE_BYTES / 4)
+        );
+        let id = json!(1);
+        let whole: Vec<_> = response_frames_parts(vec![text.clone().into()], id.clone(), true)
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        assert!(whole.len() > 3);
+        let cuts = [
+            0,
+            1,
+            RESPONSE_CHUNK_BYTES - 2,
+            RESPONSE_CHUNK_BYTES + 5,
+            2 * RESPONSE_CHUNK_BYTES,
+            2 * RESPONSE_CHUNK_BYTES + 40,
+            text.len() - 1,
+            text.len(),
+        ]
+        .map(|cut| {
+            (0..=cut)
+                .rev()
+                .find(|at| text.is_char_boundary(*at))
+                .unwrap()
+        });
+        for pair in cuts.windows(2) {
+            for third in &cuts {
+                let mut edges = vec![pair[0], pair[1], *third];
+                edges.sort();
+                let parts = [0, edges[0], edges[1], edges[2], text.len()]
+                    .windows(2)
+                    .map(|span| text[span[0]..span[1]].to_string().into())
+                    .collect();
+                let split: Vec<_> = response_frames_parts(parts, id.clone(), true)
+                    .unwrap()
+                    .map(Result::unwrap)
+                    .collect();
+                assert_eq!(split, whole, "{edges:?}");
+            }
+        }
+        let small: Vec<SharedStr> = vec!["{\"id\":".into(), "1".into(), "}".into()];
+        assert_eq!(
+            response_frames_parts(small, id, false)
+                .unwrap()
+                .collect::<Result<Vec<_>>>()
+                .unwrap(),
+            [encode(&json!({"id":1})).unwrap()]
         );
     }
 

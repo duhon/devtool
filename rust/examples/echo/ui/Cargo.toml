@@ -1,0 +1,13 @@
+[package]
+name = "services-module-echo-ui"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+description = "Echo console part (ui.wasm)"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+services-module-ui = { path = "../../../module-ui" }
+serde_json.workspace = true

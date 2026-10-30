@@ -1,0 +1,33 @@
+{
+  "id": "splunk",
+  "name": "Splunk",
+  "description": "Stream Splunk export results; Preview enables provisional snapshots, Offset skips rows locally, Count limits the portion (default 100, 0 = all).",
+  "params": [
+    {"name": "baseUrl", "flag": "endpoint", "alias": "e", "positional": true, "type": "string", "required": true},
+    {"name": "headers", "flag": "headers", "alias": "H", "type": "json"},
+    {"name": "search", "flag": "search", "alias": "q", "positional": true, "type": "string", "required": true},
+    {"name": "options", "flag": "options", "alias": "o", "multi": true, "type": "keyvalue", "keys": {"from": "earliestTime", "to": "latestTime", "app": "app", "count": "count", "preview": "preview", "offset": "offset", "columns-type": "columnsType", "columns-size": "columnsSize"}},
+    {"name": "earliestTime", "type": "string"},
+    {"name": "latestTime", "type": "string"},
+    {"name": "app", "type": "string"},
+    {"name": "count", "type": "string", "resolve": "none"},
+    {"name": "preview", "type": "string", "resolve": "none"},
+    {"name": "offset", "type": "string", "resolve": "none"},
+    {"name": "columnsType", "type": "string", "resolve": "none"},
+    {"name": "columnsSize", "type": "string", "resolve": "none"}
+  ],
+  "console": {
+    "order": 5,
+    "sections": [
+      {"name": "endpoint", "shape": "block", "language": "endpoint", "param": "baseUrl", "hints": [{"text": "http://"}, {"text": "https://"}]},
+      {"name": "headers", "shape": "block", "language": "headers", "param": "headers"},
+      {"name": "options", "shape": "block", "language": "headers", "param": "options", "hints": [{"text": "From: -24h"}, {"text": "To: now"}, {"text": "App: search"}, {"text": "Count: 30"}, {"text": "Preview: false"}, {"text": "Offset: 0"}, {"text": "Columns-Type: ", "detail": "column=json column=datetime column=number column=boolean column=text"}, {"text": "Columns-Size: ", "detail": "column=100 (characters)"}]},
+      {"name": "search", "shape": "block", "language": "spl", "param": "search"}
+    ],
+    "payload": "search",
+    "response": "grid",
+    "keywords": ["search", "index=", "sourcetype=", "stats", "table", "sort", "head", "eval"],
+    "hints": "#endpoint\nhttp://\nhttps://\n\n#headers\nAccept: */*\nAccept-Encoding: gzip, deflate, br\nAuthorization: ****** application/json\nCookie:\nHost:\nUser-Agent:\nX-Api-Key:\nX-Forwarded-For:\nX-Requested-With: XMLHttpRequest\n",
+    "timeout": 605
+  }
+}

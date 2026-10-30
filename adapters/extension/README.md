@@ -1,8 +1,8 @@
 # Services — Rust/WebAssembly DevTools extension
 
 The extension uses Native Messaging to communicate with the Rust executable.
-It needs neither a Node.js runtime nor a local HTTP server. See the
-[main README](../../README.md) for the macOS installer and publishing.
+It needs neither a Node.js runtime nor a local HTTP server. See
+[DEVELOPMENT.md](../../DEVELOPMENT.md) for building, installing and publishing.
 
 ## Build from source
 
@@ -38,8 +38,8 @@ chrome-extension://ckicpgdfkgcmgnclbfbcbkillcpaffnb/panel.html
 
 ## Runtime boundaries
 
-`rust/ui/` owns application state, service views, Console, Variables and
-the browser transport bindings. `src/panel.js` only loads the generated
+`rust/ui/` owns application state, the Console, its Variables/Dictionary
+panels and the browser transport bindings. `src/panel.js` only loads the generated
 WASM module; `devtools.js` registers the Chrome panel. Vendored CodeMirror
 is an editor dependency, not a parallel JavaScript application.
 Styles and editor dependencies live in `rust/ui/assets/`; no legacy web

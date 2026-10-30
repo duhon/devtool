@@ -1,5 +1,7 @@
 (async () => {
-  const {assert, sleep} = testDriver;
+  const {assert, wait} = testDriver;
+  // Console modes come from the module list the host sends; the editor shows once they exist.
+  await wait(() => document.querySelector('.console-editor-host .CodeMirror'), 'Console editor shown');
   assert(typeof CodeMirror.servicesTableTokenizer === 'function',
     'Table token spans must use the native JS fast path');
   assert(typeof CodeMirror.servicesJsonFold === 'function',
@@ -59,7 +61,7 @@
     assert(foldTokenizations===0,'Horizontal table fold checks must never invoke tokenization');
     editor.getTokenAt = getTokenAt;
     editor.scrollTo(0,editor.heightAtLine(9000,'local'));
-    await sleep(50);
+    await wait(()=>editor.getViewport().from>8900,'A large document must scroll to distant rows');
     assert(editor.getViewport().from>8900,'A large document must scroll to distant rows');
     assert(host.querySelectorAll('.CodeMirror-code>div').length<100,
       '10,000 rows must render only a bounded viewport, not every row');

@@ -4,7 +4,6 @@ use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
 };
-const HTTP: &str = "#endpoint\nhttp://\nhttps://\n\n#headers\nAccept: */*\nAccept-Encoding: gzip, deflate, br\nAuthorization: ****** application/json\nCookie:\nHost:\nUser-Agent:\nX-Api-Key:\nX-Forwarded-For:\nX-Requested-With: XMLHttpRequest\n";
 #[derive(Clone)]
 pub struct Hints {
     path: PathBuf,
@@ -35,7 +34,8 @@ impl Hints {
         }
         sections
     }
-    pub fn get(&self, service: &str) -> Value {
+    /// The saved hints of `service`, or `default` (its manifest `console.hints`).
+    pub fn get(&self, service: &str, default: &str) -> Value {
         let value = self
             .sections()
             .into_iter()
@@ -47,11 +47,7 @@ impl Hints {
                     format!("{}\n", v.trim_end_matches('\n'))
                 }
             })
-            .unwrap_or_else(|| match service {
-                "mysql" => "#endpoint\nmysql://\n".into(),
-                "rest" | "grpc" | "graphql" | "splunk" => HTTP.into(),
-                _ => String::new(),
-            });
+            .unwrap_or_else(|| default.to_owned());
         json!({"text":value})
     }
     pub fn save(&self, service: &str, text: &str) -> Result<Value> {

@@ -28,18 +28,15 @@ Keep `.agent/` private and treat its persisted conversations as application data
 services-devtools                    Chrome native messaging on stdin/stdout
 services-devtools native-host        Explicit native-messaging mode
 services-devtools cli <service> ...  Shared-config CLI flags/aliases/positionals
-services-devtools web [--port N]     Loopback HTTP/WebSocket gateway (default 4569)
 services-devtools --version
 ```
 
 `SERVICES_DATA_DIR` selects the directory containing `.variable-profiles.json`,
 `.dictionary-profiles.json` and `.console-hints.txt`. Source builds default to the repository root. Installed
-launchers must set the persistent application-data directory. `SERVICES_UI_DIR`
-selects the compiled browser assets for the web adapter. Installed executables
-at `<release>/native/bin/services-devtools` otherwise use `<release>/extension`.
+launchers must set the persistent application-data directory.
 Source builds discover `adapters/extension/dist` by walking the executable's
 and current working directory's ancestors, without embedding a developer's
-filesystem path. `PORT` sets the default web port.
+filesystem path.
 
 Native replies enforce Chrome's 1 MiB limit on each serialized JSON message
 (excluding its four-byte length prefix). The UI negotiates `chunkedResponses`
@@ -104,7 +101,7 @@ environment once per connection, before constructing service clients. The shell
 comes from `SHELL`, or the user's account when unset; zsh, bash, sh, dash, ksh and
 fish are supported. For zsh, both `.zprofile` and `.zshrc` exports become visible
 in the read-only `env` profile, variable substitutions and child commands,
-including `PATH`. CLI and web modes retain their caller's environment unchanged.
+including `PATH`. CLI mode retains its caller's environment unchanged.
 Exports made only in an already-open terminal cannot be recovered this way.
 
 Shell startup runs in a separate session without a controlling terminal, has no
@@ -112,7 +109,7 @@ terminal input and must finish within five seconds. Output
 is captured separately from Native Messaging, bounded, and never logged; failure
 is reported through the native protocol without silently using Chrome's
 environment instead. Shell configuration is executed, not parsed as a dotenv
-file. Installation-owned `SERVICES_DATA_DIR` and `SERVICES_UI_DIR` settings are
+file. The installation-owned `SERVICES_DATA_DIR` setting is
 preserved. Retrying the connection or reopening the panel reloads shell settings.
 
 ## Architecture and public library
@@ -137,32 +134,10 @@ preserved. Retrying the connection or reopening the panel reloads shell settings
 - `adapters::cli::{service_args,parse_params,usage,run}` uses shared descriptors.
   Terminal outputs raw stdout/stderr and returns its exit code. Ctrl+C cancels
   requests/commands; HTTP 4xx/5xx and non-OK gRPC statuses produce nonzero exits.
-- `adapters::web::{router,run}` supplies the development HTTP/WS adapter.
 
 Native health, Variables CRUD, discovery, unary results and Terminal
 data/exit/stop frames retain their original envelope shapes. Native hints add
 `{id,service:"hints",op:"get"|"save",serviceName,text?}` and return `{text}`.
-
-## HTTP routes
-
-- `POST /api/console`, `POST /api/console/discover`
-- `POST /api/console/history` (Runtime history operations, replies unwrapped)
-- `POST /api/services/{rest|graphql|grpc}/request`
-- `POST /api/services/mysql/query`, `POST /api/services/splunk/search`
-- `WS /api/services/terminal/stream` (first message starts; subsequent
-  `{type:"stop"}` or disconnect cancels; output is stdout/stderr/exit JSON)
-- `WS /api/agent/stream` (requires a matching loopback Host/Origin;
-  first message contains workspace/session IDs, service and prompt;
-  subsequent `agentToolResult` messages answer correlated workspace calls;
-  Stop/disconnect cancels the turn)
-- `GET /vars/api/profiles`
-- `POST /vars/api/profiles/var` (only the fixed `var` profile is writable)
-- `GET /dictionary/api/profiles`
-- `POST|DELETE /dictionary/api/profiles/{name}`
-- `POST /dictionary/api/profiles/{name}/rename`, `POST /dictionary/api/order`
-- `GET|PUT /api/console/hints/{service}`
-- `GET /api/services` (shared config), `GET /api/health`
-- Static files and SPA fallback from `SERVICES_UI_DIR`
 
 ## Console execution history
 
@@ -175,7 +150,7 @@ variable/profile values, then stores an immutable resolved check, effective
 parameters, response/status and terminal stdout/stderr events. Viewing history
 never resolves variables again. Native terminal exit frames expose metadata
 both at `history` and `info.history`; other successful native replies expose it
-at `history` and `result.history`. Errors and HTTP/WS payloads expose `history`.
+at `history` and `result.history`. Errors expose `history`.
 Metadata is `{saved:true,id}` or `{saved:false,error}`. Storage errors never
 retry or fail the actual execution. Unresolvable execution variables cannot
 produce a resolved snapshot and return an explicit history failure.
@@ -194,12 +169,6 @@ Native Runtime requests:
   arguments and offsets past the snapshot are explicit errors. Native framing
   reserves `id` for request correlation: send the entry identity as `entryId`
   in that transport; Runtime/HTTP also accept that alias.
-
-HTTP `/api/console` accepts the complete Runtime envelope. Existing service
-endpoints accept either the envelope or legacy flat parameters with a top-level
-`history`. Terminal WebSocket start messages likewise accept an envelope or flat
-parameters plus `history`. `/api/console/history` supports both history operations
-and uses the usual successful-result unwrapping.
 
 Snapshots live in `.console-history.sqlite3` under `SERVICES_DATA_DIR`, using
 bundled SQLite (no external database), private Unix file permissions, a
@@ -254,7 +223,7 @@ file. An empty Dictionary is valid; `var` cannot be deleted or renamed.
 `cargo test -p services-native` runs local, bounded fixtures for all service
 transports, actual MySQL wire protocol, dynamic gRPC/reflection and four stream
 shapes, Variables persistence/cycles, fragmented/concurrent native messages,
-Terminal stop/EOF cleanup, HTTP routes, and binary CLI/framing behavior.
+Terminal stop/EOF cleanup, and binary CLI/framing behavior.
 Fixtures create and remove data under this crate's `target/test-data`, never
 the user's real profiles. `cargo clippy -p services-native --all-targets --
 -D warnings` checks all targets.
@@ -268,7 +237,7 @@ JSON, matching mysql2's default, including DST gaps/overlaps and millisecond
 truncation. Tests inject explicit timezones or set `TZ` only in isolated CLI
 child processes; they never modify the test runner's global environment. Large integers
 retain exact Rust/JSON integer values rather than JavaScript precision loss.
-The web adapter intentionally listens only on loopback. TLS uses rustls (bundled
+TLS uses rustls (bundled
 WebPKI roots for HTTP and native roots for gRPC); local fixture tests do not
 certify interoperability with every external
 TLS deployment. There are no placeholder service clients.

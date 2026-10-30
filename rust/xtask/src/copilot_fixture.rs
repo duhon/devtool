@@ -10,6 +10,7 @@ struct Peer {
     next: u64,
     sessions: HashMap<String, bool>,
     pending: HashMap<String, (String, String, Value)>,
+    models: HashMap<String, Value>,
 }
 impl Peer {
     fn send(&self, value: Value) -> Result<()> {
@@ -76,7 +77,13 @@ impl Peer {
             .context("Missing context")?;
         let context: Value = serde_json::from_str(source)?;
         let args = json!({"service":context["service"],"checkId":context["activeCheck"],"revision":context["revision"]});
-        if message.contains("agent progress") {
+        if message.contains("agent model configuration") {
+            let options = self
+                .models
+                .get(session)
+                .context("Missing session model options")?;
+            self.finish(session, &format!("Model configuration: {options}"))
+        } else if message.contains("agent progress") {
             for index in 0..3 {
                 self.event(session, "assistant.message", json!({
                     "messageId":format!("empty-{}-{index}",self.next),"content":if index==1 {" \n "} else {""}
@@ -249,6 +256,63 @@ Raw HTML: <img src="https://images.fixture.invalid/raw" onerror="globalThis.agen
     }
     fn tool_result(&mut self, id: &str, result: Value) -> Result<()> {
         let (session, next, context) = self.pending.remove(id).context("Unknown tool response")?;
+        if let Some(step) = next.strip_prefix("page-extended-") {
+            let step: usize = step.parse()?;
+            if step == 11 {
+                ensure!(
+                    result["error"]
+                        .as_str()
+                        .is_some_and(|text| text.contains("timed out")),
+                    "Wait did not explicitly time out: {result}"
+                );
+            } else {
+                ensure!(
+                    result.get("error").is_none(),
+                    "Extended page tool failed at {step}: {result}"
+                );
+                ensure!(
+                    result.to_string().len() <= 6000,
+                    "Page tool exceeded UTF-8 output budget"
+                );
+                match step {
+                    0 => ensure!(
+                        result["text"]
+                            .as_str()
+                            .is_some_and(|text| text.contains("Inspected browser content"))
+                    ),
+                    1 => ensure!(
+                        !result["items"]
+                            .as_array()
+                            .context("Search items")?
+                            .is_empty()
+                    ),
+                    2 => ensure!(result["total"] == 2),
+                    3 => ensure!(result["matchesRequested"] == true),
+                    4 => ensure!(result["focused"] == true),
+                    5 => ensure!(result["trustedInput"] == false),
+                    6 | 10 => ensure!(result["matched"] == true),
+                    7 => ensure!(result["items"].is_array()),
+                    8 => ensure!(result.get("pointer").is_some()),
+                    9 => {
+                        ensure!(result["total"] == 1 && result["items"][0]["status"] == 503);
+                        ensure!(result["items"][0]["url"] == "https://api.example.test/safe");
+                        for secret in [
+                            "password-secret",
+                            "cookie-secret",
+                            "storage-secret",
+                            "field-secret",
+                        ] {
+                            ensure!(
+                                !result.to_string().contains(secret),
+                                "Network disclosed {secret}"
+                            );
+                        }
+                    }
+                    _ => bail!("Unknown extended page step"),
+                }
+            }
+            return self.page_extended(&session, step + 1, context);
+        }
         if next.starts_with("page-probe-") {
             ensure!(
                 result["error"].is_string(),
@@ -290,20 +354,37 @@ Raw HTML: <img src="https://images.fixture.invalid/raw" onerror="globalThis.agen
                 let mut context = context;
                 context["pageId"] = result["pageId"].clone();
                 let mode = context["mode"].as_str().unwrap_or("");
-                if mode.contains("guide permission") {
+                if mode.contains("inspect") {
                     self.tool(
                         &session,
-                        "page_click",
-                        json!({"pageId":context["pageId"],"selector":"#apply"}),
-                        "guide-blocked",
+                        "page_inspect",
+                        json!({"pageId":context["pageId"],"selector":"#password","mode":"node"}),
+                        "page-inspected",
                         context,
                     )
+                } else if mode.contains("extended") {
+                    self.page_extended(&session, 0, context)
+                } else if mode.contains("wait stop") {
+                    self.tool(&session, "page_wait",
+                        json!({"pageId":context["pageId"],"selector":"#never-present","timeoutMs":10000}),
+                        "page-wait-stopped", context)
                 } else if mode.contains("guide") {
                     self.guide(&session, context, 1)
                 } else if mode.contains("actions") {
                     self.tool(&session, "page_fill", json!({"pageId":context["pageId"],"selector":"#name","value":"Agent filled"}), "page-filled", context)
                 } else if mode.contains("constraints") {
                     self.page_probe(&session, 0, context)
+                } else if ["deny", "stop", "navigation", "write"]
+                    .iter()
+                    .any(|name| mode.contains(name))
+                {
+                    self.tool(
+                        &session,
+                        "page_focus",
+                        json!({"pageId":context["pageId"],"selector":"#name"}),
+                        "page-permission",
+                        context,
+                    )
                 } else {
                     ensure!(
                         result["text"]
@@ -313,20 +394,73 @@ Raw HTML: <img src="https://images.fixture.invalid/raw" onerror="globalThis.agen
                     self.finish(&session, "Page snapshot ready")
                 }
             }
+            "page-inspected" => {
+                ensure!(
+                    result.get("error").is_none(),
+                    "DOM inspection failed: {result}"
+                );
+                ensure!(
+                    result["nextOffset"].is_null(),
+                    "Small inspected node should fit one reply"
+                );
+                let node: Value =
+                    serde_json::from_str(result["data"].as_str().context("DOM data")?)?;
+                ensure!(
+                    node["properties"]["value"] == "password-secret",
+                    "DOM value was hidden/redacted: {result}"
+                );
+                self.finish(&session, "DOM values ready")
+            }
+            "page-permission" => {
+                if let Some(error) = result["error"].as_str() {
+                    if context["mode"]
+                        .as_str()
+                        .is_some_and(|mode| mode.contains("deny"))
+                    {
+                        self.tool(
+                            &session,
+                            "page_read",
+                            json!({"pageId":context["pageId"],"selector":"body"}),
+                            "page-read-denied",
+                            context,
+                        )
+                    } else {
+                        self.finish(&session, &format!("Page rejected: {error}"))
+                    }
+                } else {
+                    ensure!(result["focused"] == true, "Approved focus failed: {result}");
+                    self.finish(&session, "Page write complete")
+                }
+            }
+            "page-read-denied" => {
+                ensure!(
+                    result.get("error").is_none(),
+                    "Denying writes blocked reading: {result}"
+                );
+                self.finish(&session, "Page writing denied; reading available")
+            }
             "page-guide" => {
                 if let Some(error) = result["error"].as_str() {
                     return self.finish(&session, &format!("Guide rejected: {error}"));
                 }
                 let action = result["action"].as_str().context("Missing guide action")?;
                 let mode = context["mode"].as_str().unwrap_or("");
-                if action == "next" && mode.contains("mutation") {
-                    return self.tool(
-                        &session,
-                        "page_click",
-                        json!({"pageId":context["pageId"],"selector":"#apply"}),
-                        "guide-blocked",
-                        context,
-                    );
+                if action == "next" && (mode.contains("mutation") || mode.contains("permission")) {
+                    let (tool, args) = if mode.contains("focus") {
+                        ("page_focus", json!({"selector":"#name"}))
+                    } else if mode.contains("checked") {
+                        (
+                            "page_set_checked",
+                            json!({"selector":"#name","checked":true}),
+                        )
+                    } else if mode.contains("key") {
+                        ("page_press_key", json!({"selector":"#name","key":"Enter"}))
+                    } else {
+                        ("page_click", json!({"selector":"#apply"}))
+                    };
+                    let mut args = args;
+                    args["pageId"] = context["pageId"].clone();
+                    return self.tool(&session, tool, args, "guide-blocked", context);
                 }
                 if mode.contains("walkthrough") && matches!(action, "next" | "back") {
                     let step = context["guideStep"]
@@ -420,6 +554,7 @@ Raw HTML: <img src="https://images.fixture.invalid/raw" onerror="globalThis.agen
                 );
                 self.finish(&session, "Page actions complete")
             }
+            "page-wait-stopped" => self.finish(&session, "Wait completed"),
             "edit" | "create" => {
                 ensure!(
                     result.get("error").is_none(),
@@ -534,7 +669,9 @@ Raw HTML: <img src="https://images.fixture.invalid/raw" onerror="globalThis.agen
             "guide-discovery" => {
                 ensure!(
                     result["topic"] == "discovery"
-                        && result["version"] == env!("CARGO_PKG_VERSION")
+                        && result["version"] == env!("CARGO_PKG_VERSION"),
+                    "Unexpected discovery guide result: {}",
+                    result.to_string().chars().take(400).collect::<String>()
                 );
                 let content = result["content"]
                     .as_str()
@@ -560,7 +697,7 @@ Raw HTML: <img src="https://images.fixture.invalid/raw" onerror="globalThis.agen
                 ensure!(
                     result["topic"] == "interface"
                         && content.contains("Shift+Enter")
-                        && content.contains("legacy")
+                        && content.contains("Templates")
                         && content.contains("Dictionary")
                 );
                 self.tool(
@@ -659,6 +796,20 @@ Raw HTML: <img src="https://images.fixture.invalid/raw" onerror="globalThis.agen
             ),
             ("page_scroll", json!({"y":2001})),
             ("page_scroll", json!({"x":false,"y":0})),
+            ("page_read", json!({"selector":"#password"})),
+            ("page_focus", json!({"selector":"#password"})),
+            (
+                "page_press_key",
+                json!({"selector":"#password","key":"Enter"}),
+            ),
+            (
+                "page_set_checked",
+                json!({"selector":"#password","checked":true}),
+            ),
+            (
+                "page_wait",
+                json!({"selector":"#notes","state":"text","text":"textarea-secret","timeoutMs":0}),
+            ),
             ("page_click", json!({"selector":"#same-tab"})),
         ];
         let Some((tool, mut args)) = probes.get(step).cloned() else {
@@ -669,6 +820,39 @@ Raw HTML: <img src="https://images.fixture.invalid/raw" onerror="globalThis.agen
         }
         self.tool(session, tool, args, &format!("page-probe-{step}"), context)
     }
+    fn page_extended(&mut self, session: &str, step: usize, context: Value) -> Result<()> {
+        let probes = [
+            ("page_read", json!({"selector":"body"})),
+            ("page_search", json!({"query":"Inspected browser content"})),
+            ("page_options", json!({"selector":"#choice"})),
+            ("page_select", json!({"selector":"#choice","optionIndex":0})),
+            ("page_focus", json!({"selector":"#name"})),
+            ("page_press_key", json!({"selector":"#name","key":"Enter"})),
+            ("page_wait", json!({"selector":"#apply","state":"enabled"})),
+            ("page_errors", json!({})),
+            ("page_context", json!({})),
+            ("page_network", json!({})),
+            (
+                "page_wait",
+                json!({"selector":"#never-present","state":"hidden"}),
+            ),
+            (
+                "page_wait",
+                json!({"selector":"#apply","state":"hidden","timeoutMs":0}),
+            ),
+        ];
+        let Some((tool, mut args)) = probes.get(step).cloned() else {
+            return self.finish(session, "Extended page tools complete");
+        };
+        args["pageId"] = context["pageId"].clone();
+        self.tool(
+            session,
+            tool,
+            args,
+            &format!("page-extended-{step}"),
+            context,
+        )
+    }
     fn handle(&mut self, request: Value) -> Result<()> {
         let method = request["method"].as_str().context("Missing RPC method")?;
         let params = &request["params"];
@@ -676,15 +860,48 @@ Raw HTML: <img src="https://images.fixture.invalid/raw" onerror="globalThis.agen
         let result = match method {
             "connect" => json!({"ok":true,"protocolVersion":3,"version":"services-sdk-acceptance"}),
             "ping" => json!({"message":params["message"],"timestamp":0,"protocolVersion":3}),
+            "session.model.list" => json!({"auto":{"defaultTier":"standard","tiers":[]},"list":[
+                {"id":"sample-versatile","name":"Sample Versatile","modelPickerCategory":"versatile",
+                 "capabilities":{"supports":{"vision":false,"reasoningEffort":true},"limits":{}},
+                 "supportedReasoningEfforts":["low","medium"],"defaultReasoningEffort":"medium"},
+                {"id":"sample-powerful","name":"Sample Powerful","modelPickerCategory":"powerful",
+                 "capabilities":{"supports":{"vision":false,"reasoningEffort":true},"limits":{}},
+                 "supportedReasoningEfforts":["low","high"],"defaultReasoningEffort":"high"},
+                {"id":"sample-light","name":"Sample Light","modelPickerCategory":"lightweight",
+                 "capabilities":{"supports":{"vision":false},"limits":{}}},
+                {"id":"sample-disabled","name":"Sample Disabled","modelPickerCategory":"powerful",
+                 "policy":{"state":"disabled"},"capabilities":{"supports":{"vision":false},"limits":{}}}
+            ]}),
+            "session.model.getCurrent" => {
+                json!({"modelId":"sample-versatile","reasoningEffort":"medium"})
+            }
+            "session.delete" => json!({"success":true}),
             "session.create" | "session.resume" => {
+                if params["name"] == "Services DevTools model settings" {
+                    ensure!(params["availableTools"] == json!([]));
+                    ensure!(params["requestPermission"] == true);
+                    return self.send(json!({"jsonrpc":"2.0","id":request["id"],
+                        "result":{"sessionId":session,"workspacePath":params["workingDirectory"]}}));
+                }
                 ensure!(params["availableTools"] == json!(["custom:*"]));
                 ensure!(params["requestPermission"] == true);
                 let tools = params["tools"].as_array().context("Missing custom tools")?;
                 ensure!(
-                    tools.len() == 16 && tools.iter().all(|tool| tool["skipPermission"] == true)
+                    tools.len() == 27 && tools.iter().all(|tool| tool["skipPermission"] == true)
                 );
                 for name in [
+                    "page_inspect",
                     "page_snapshot",
+                    "page_read",
+                    "page_search",
+                    "page_options",
+                    "page_context",
+                    "page_errors",
+                    "page_network",
+                    "page_wait",
+                    "page_focus",
+                    "page_set_checked",
+                    "page_press_key",
                     "page_click",
                     "page_fill",
                     "page_select",
@@ -707,6 +924,24 @@ Raw HTML: <img src="https://images.fixture.invalid/raw" onerror="globalThis.agen
                 );
                 self.sessions
                     .insert(session.into(), method == "session.resume");
+                let path = std::path::Path::new(
+                    params["workingDirectory"]
+                        .as_str()
+                        .context("Missing session directory")?,
+                )
+                .join(".fixture-model-options.json");
+                let options = if method == "session.resume" {
+                    ensure!(
+                        params.get("model").is_none() && params.get("reasoningEffort").is_none(),
+                        "Resuming a chat must preserve its existing model and reasoning"
+                    );
+                    serde_json::from_slice(&std::fs::read(path)?)?
+                } else {
+                    let options = json!({"model":params["model"],"reasoningEffort":params["reasoningEffort"]});
+                    std::fs::write(path, serde_json::to_vec(&options)?)?;
+                    options
+                };
+                self.models.insert(session.into(), options);
                 json!({"sessionId":session,"workspacePath":params["workingDirectory"]})
             }
             "session.eventLog.registerInterest" => {

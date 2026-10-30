@@ -244,6 +244,19 @@ fn unrelated_cwd_archive_does_not_change_file_or_piped_remote_route() {
 }
 
 #[test]
+fn configured_remote_route_requires_a_baked_release_version() {
+    let mut fixture = Fixture::new();
+    fixture.source = fixture
+        .source
+        .replace("@REPOSITORY@", "owner/repository")
+        .replace("@VERSION@", "main");
+    fs::write(fixture.package.join("install.sh"), &fixture.source).unwrap();
+    for piped in [false, true] {
+        fixture.failure(fixture.run(piped, &[]), "Invalid release version");
+    }
+}
+
+#[test]
 fn root_launcher_finds_built_bootstrap_and_forwards_arguments() {
     let fixture = Fixture::new();
     fs::write(

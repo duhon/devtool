@@ -1,0 +1,25 @@
+{
+  "id": "grpc",
+  "name": "gRPC",
+  "description": "Make a gRPC call and inspect the response.",
+  "params": [
+    {"name": "endpoint", "flag": "endpoint", "alias": "e", "positional": true, "type": "string", "required": true},
+    {"name": "proto", "flag": "proto", "alias": "p", "type": "string"},
+    {"name": "headers", "flag": "headers", "alias": "H", "type": "json"},
+    {"name": "requestMessage", "flag": "message", "alias": "m", "type": "string"}
+  ],
+  "console": {
+    "order": 4,
+    "sections": [
+      {"name": "endpoint", "shape": "line", "language": "grpc", "param": "endpoint", "connection": true, "hints": [{"text": "grpc://"}, {"text": "grpcs://"}]},
+      {"name": "headers", "shape": "pairs", "language": "headers", "param": "headers", "connection": true},
+      {"name": "proto", "shape": "block", "language": "proto", "param": "proto"},
+      {"name": "message", "shape": "block", "language": "json", "param": "requestMessage"}
+    ],
+    "payload": "message",
+    "response": "body-headers",
+    "command": "grpcurl",
+    "discovery": {"kind": "grpc-reflection", "schemes": ["grpc", "grpcs"]},
+    "hints": "#endpoint\nhttp://\nhttps://\n\n#headers\nAccept: */*\nAccept-Encoding: gzip, deflate, br\nAuthorization: ****** application/json\nCookie:\nHost:\nUser-Agent:\nX-Api-Key:\nX-Forwarded-For:\nX-Requested-With: XMLHttpRequest\n"
+  }
+}

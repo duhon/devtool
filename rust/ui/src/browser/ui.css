@@ -1,9 +1,9 @@
-body:has(.console-root:not([hidden])), body:has(#vars-root) { height: 100dvh; box-sizing: border-box; }
+body:has(.console-root:not([hidden])) { height: 100dvh; box-sizing: border-box; }
 body:has(.console-root:not([hidden])) { padding: 2px; }
-#app:has(.console-root:not([hidden])), #app:has(#vars-root) { height: 100%; }
-#app:has(.console-root:not([hidden])), #app:has(#vars-root),
-#service-views:has(.console-root:not([hidden])), #service-views:has(#vars-root),
-.service-view:has(.console-root:not([hidden])), .service-view:has(#vars-root) {
+#app:has(.console-root:not([hidden])) { height: 100%; }
+#app:has(.console-root:not([hidden])),
+#service-views:has(.console-root:not([hidden])),
+.service-view:has(.console-root:not([hidden])) {
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
@@ -15,4 +15,3 @@ body:has(.console-root:not([hidden])) { padding: 2px; }
 .console-debug-panel { max-height: 35vh; }
 .console-hints-panel { min-height: 0; }
 .console-hints-panel > .CodeMirror { flex: 0 1 320px; min-height: 100px; }
-#vars-root > .CodeMirror { flex: 1 1 auto; min-height: 0; }

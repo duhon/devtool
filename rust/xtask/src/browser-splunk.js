@@ -1,6 +1,6 @@
 (async () => {
-  const { assert, wait, click, testid, cm, choose, setSource, key, visible, sleep } = testDriver;
-  await choose('console');
+  const { assert, wait, click, testid, cm, openConsole, setSource, key, visible, settle } = testDriver;
+  await openConsole();
   await click(testid('console-service-splunk'));
   const editor = cm('console-editor');
   const previous = editor.getValue();
@@ -125,7 +125,7 @@
   const mysql = cm('console-editor'), oldMysql = mysql.getValue();
   const rendered = '#check MySQL rendering fixture\n#endpoint\nmysql://fixture.invalid/db\n#query\nselect fixture\\G\n\n#responce OK\n*************************** 1. row ***************************\n       id: 42\n  enabled: 1\n  created: 2026-10-27T09:00:00Z\nfeed_data: {\n             "n": 12,\n             "ok": true,\n             "nested": {\n               "label": "😀 braces { [ and escaped \\" quote",\n               "items": [\n                 1,\n                 2\n               ]\n             }\n           }\n    plain: {"not":"typed"}\n           untyped {\n             "inner": [1, 2]\n           }';
   setSource(mysql, rendered);
-  await sleep(50);
+  await settle();
   const mysqlRegion = {request:0,header:6,end:mysql.lineCount(),table:{
     columns:['id','enabled','created','feed_data','plain'],
     types:{id:'number',enabled:'boolean',created:'datetime',feed_data:'json',plain:'text'},
@@ -176,7 +176,8 @@
   assert(mysqlTokens.some(t=>!t.type && t.string.includes('{"not":"typed"}')),
     'MySQL text containing JSON must stay plain without an override');
   mysql.scrollIntoView({line:12,ch:0},30);
-  await sleep(50);
+  await wait(()=>mysql.getWrapperElement().querySelector('.cm-number') && mysql.getWrapperElement().querySelector('.cm-property'),
+    'Scrolled MySQL JSON rows must render number and property tokens');
   const number=mysql.getWrapperElement().querySelector('.cm-number');
   const property=mysql.getWrapperElement().querySelector('.cm-property');
   assert(number && property && getComputedStyle(number).color !== getComputedStyle(property).color,

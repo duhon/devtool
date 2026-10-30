@@ -1,5 +1,43 @@
 # Release notes
 
+## 3.0.0
+
+- The Console is the only interface. The per-service forms, service picker and O button are
+  removed; tabs saved by the old interface are not carried over.
+- Removed the standalone HTTP interface (`services-devtools web`); the application runs only
+  as the Chrome extension.
+- Services are modules: REST, MySQL, GraphQL, gRPC, Splunk and Terminal ship as packages in
+  `~/Library/Application Support/ServicesDevTools/data/modules` and load through the same
+  module API as modules written by anyone else. An update replaces only the modules it ships.
+- Settings → Modules lists the installed modules, installs a module from its package file
+  (`.module.tgz`) and removes one. The console of a removed module is kept.
+- Module SDK: `rust/module-api` and `rust/module-ui`, the example module and guide in
+  `rust/examples/echo`, and `cargo run -p xtask -- package` to build package files.
+
+## 2.6.7
+
+- Removed the Refresh models button from Agent settings.
+
+## 2.6.6
+
+- Choose model and reasoning for new Agent chats in Settings; Copilot Fusion by default.
+
+## 2.6.5
+
+- Send with Enter; remove agent hints and author labels.
+
+## 2.6.4
+
+- Add full DOM inspection and per-page write approval.
+
+## 2.6.3
+
+- Unify Settings styling, status and update diagnostics.
+
+## 2.6.2
+
+- Improve agent page reading, search, context and interactions.
+
 ## 2.6.1
 
 - Fix the macOS in-app updater using the signing and quarantine handling personally verified with local 2.5.26.

@@ -1,4 +1,4 @@
-use services_native::{Error, Result, Runtime, adapters};
+use services_native::{Result, Runtime, adapters};
 #[tokio::main]
 async fn main() {
     match run().await {
@@ -38,34 +38,10 @@ async fn run() -> Result<i32> {
             Ok(0)
         }
         Some("cli") => adapters::cli::run(runtime, &args[1..]).await,
-        Some("web") => {
-            let mut port = std::env::var("PORT")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(4569);
-            let mut i = 1;
-            while i < args.len() {
-                if args[i] == "--port" {
-                    i += 1;
-                    port = args
-                        .get(i)
-                        .ok_or_else(|| Error::new("--port requires a value"))?
-                        .parse()
-                        .map_err(|_| Error::new("Invalid port"))?;
-                } else if let Some(value) = args[i].strip_prefix("--port=") {
-                    port = value.parse().map_err(|_| Error::new("Invalid port"))?;
-                } else {
-                    return Err(Error::new(format!("Unknown web argument: {}", args[i])));
-                }
-                i += 1;
-            }
-            adapters::web::run(runtime, port).await?;
-            Ok(0)
-        }
         Some("--help") | Some("-h") => {
             eprintln!(
-                "services-devtools [native-host | cli <service> [options] | web [--port N] | --version]\nNo arguments: Chrome native messaging over stdio.\n{}",
-                adapters::cli::usage(None)
+                "services-devtools [native-host | cli <service> [options] | --version]\nNo arguments: Chrome native messaging over stdio.\n{}",
+                adapters::cli::usage(runtime.registry.manifests().iter())
             );
             Ok(0)
         }

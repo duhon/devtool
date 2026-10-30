@@ -1,8 +1,8 @@
 pub mod adapters;
 pub mod agent;
 pub mod core;
+pub mod host;
 pub mod runtime;
-pub mod services;
 #[cfg(unix)]
 pub mod shell_environment;
 

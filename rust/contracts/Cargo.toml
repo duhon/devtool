@@ -7,3 +7,9 @@ publish.workspace = true
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+flate2 = { version = "1", optional = true }
+tar = { version = "0.4", optional = true }
+
+[features]
+# Package files (`package::archive`): the host, the test kit and xtask; not the browser.
+archive = ["dep:flate2", "dep:tar"]

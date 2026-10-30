@@ -40,15 +40,13 @@ pub async fn launch_native(args: &[String]) -> Result<()> {
         .args(args.iter().skip(1))
         .env_clear()
         .envs(environment);
-    // Shell configuration must not redirect the installation's data or UI.
-    for name in ["SERVICES_DATA_DIR", "SERVICES_UI_DIR"] {
-        match std::env::var_os(name) {
-            Some(value) => {
-                native.env(name, value);
-            }
-            None => {
-                native.env_remove(name);
-            }
+    // Shell configuration must not redirect the installation's data directory.
+    match std::env::var_os("SERVICES_DATA_DIR") {
+        Some(value) => {
+            native.env("SERVICES_DATA_DIR", value);
+        }
+        None => {
+            native.env_remove("SERVICES_DATA_DIR");
         }
     }
     Err(Error::new(format!(

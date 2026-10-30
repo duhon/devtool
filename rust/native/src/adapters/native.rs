@@ -1,4 +1,5 @@
-use super::framing::{FrameReader, encode, response_frames};
+use super::framing::{FrameReader, encode, response_frames, response_frames_parts};
+use crate::runtime::{Reply, error_reply};
 use crate::{Result, Runtime};
 use serde_json::{Value, json};
 use std::{
@@ -42,13 +43,18 @@ pub async fn run(
     input: impl AsyncRead + Unpin,
     output: impl AsyncWrite + Unpin + Send + 'static,
 ) -> Result<()> {
-    let (tx, mut rx) = mpsc::channel::<Value>(256);
+    let (tx, mut rx) = mpsc::channel::<Reply>(256);
     let chunked_responses = Arc::new(AtomicBool::new(false));
     let writer_chunks = chunked_responses.clone();
     let mut writer = tokio::spawn(async move {
         let mut output = output;
-        while let Some(value) = rx.recv().await {
-            for frame in response_frames(&value, writer_chunks.load(Ordering::Relaxed))? {
+        while let Some(reply) = rx.recv().await {
+            let chunked = writer_chunks.load(Ordering::Relaxed);
+            let frames = match reply {
+                Reply::Value(value) => response_frames(&value, chunked)?,
+                Reply::Text { id, parts } => response_frames_parts(parts, id, chunked)?,
+            };
+            for frame in frames {
                 output.write_all(&frame?).await?;
             }
             output.flush().await?;
@@ -119,43 +125,39 @@ pub async fn run(
                                         tokio::select! {
                                             result=&mut run=>break result,
                                             event=event_rx.recv()=>if let Some(event)=event
-                                                && tx.send(json!({"id":id,"type":"data","event":event})).await.is_err(){cleanup.cancel();return;}
+                                                && tx.send(json!({"id":id,"type":"data","event":event}).into()).await.is_err(){cleanup.cancel();return;}
                                         }
                                     }
                                 }
                             };
-                            while let Ok(event)=event_rx.try_recv(){let _=tx.send(json!({"id":id,"type":"data","event":event})).await;}
+                            while let Ok(event)=event_rx.try_recv(){let _=tx.send(json!({"id":id,"type":"data","event":event}).into()).await;}
                             let info=match result {Ok(info)=>info,Err(error)=>error.json()};
-                            let _=tx.send(json!({"id":id,"type":"exit","info":info})).await;
+                            let _=tx.send(json!({"id":id,"type":"exit","info":info}).into()).await;
                             cleanup.cancel();
                         });
                     } else if message["type"]=="clipboardRead" {
                         tasks.spawn(async move {
                             let reply=clipboard_reply(id,read_clipboard().await);
-                            let _=tx.send(reply).await;
+                            let _=tx.send(reply.into()).await;
                         });
-                    }else if message["service"]=="terminal" && message["type"]!="discover" {
+                    }else if message["type"]!="discover" && runtime.registry.is_streaming(message["service"].as_str().unwrap_or_default()) {
                         let token=root_cancel.child_token();
                         let cleanup=token.clone();
                         if let Some(previous)=active.insert(key,token.clone()){previous.cancel();}
                         tasks.spawn(async move {
                             let (event_tx,mut event_rx)=mpsc::channel(128);
-                            let run=runtime.execute(&message,token,Some(event_tx));
+                            let run=runtime.execute_raw(&message,token,Some(event_tx));
                             tokio::pin!(run);
                             let result=loop {
                                 tokio::select! {
-                                    event=event_rx.recv()=>if let Some(event)=event {if tx.send(json!({"id":id,"type":"data","event":event})).await.is_err(){return}}else{break run.await},
+                                    event=event_rx.recv()=>if let Some(event)=event {if tx.send(json!({"id":id,"type":"data","event":event}).into()).await.is_err(){return}}else{break run.await},
                                     result=&mut run=>break result,
                                 }
                             };
-                            while let Ok(event)=event_rx.try_recv(){let _=tx.send(json!({"id":id,"type":"data","event":event})).await;}
+                            while let Ok(event)=event_rx.try_recv(){let _=tx.send(json!({"id":id,"type":"data","event":event}).into()).await;}
                             let reply=match result {
-                                Ok(info)=>{
-                                    let mut reply=json!({"id":id,"type":"exit","info":info});
-                                    if let Some(history)=info.get("history"){reply["history"]=history.clone();}
-                                    reply
-                                },
-                                Err(e)=>{let mut reply=e.json();reply["id"]=id;reply["ok"]=json!(false);reply}
+                                Ok(executed)=>Reply::exit(&id,&executed),
+                                Err(e)=>error_reply(&e,id).into(),
                             };
                             let _=tx.send(reply).await;
                             cleanup.cancel();
@@ -165,7 +167,7 @@ pub async fn run(
                         let cleanup=token.clone();
                         if let Some(previous)=active.insert(key,token.clone()){previous.cancel();}
                         tasks.spawn(async move{
-                            let reply=runtime.dispatch_cancellable(&message,token).await;
+                            let reply=runtime.dispatch_reply(&message,token).await;
                             let _=tx.send(reply).await;
                             cleanup.cancel();
                         });

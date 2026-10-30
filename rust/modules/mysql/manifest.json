@@ -1,0 +1,24 @@
+{
+  "id": "mysql",
+  "name": "MySQL",
+  "description": "Run a SQL query against a MySQL connection.",
+  "params": [
+    {"name": "connectionString", "flag": "connection", "alias": "c", "positional": true, "type": "string", "required": true},
+    {"name": "sql", "flag": "sql", "alias": "q", "positional": true, "type": "string", "required": true},
+    {"name": "options", "flag": "options", "alias": "o", "multi": true, "type": "keyvalue", "keys": {"columns-type": "columnsType"}},
+    {"name": "columnsType", "type": "string", "resolve": "none"}
+  ],
+  "console": {
+    "order": 2,
+    "sections": [
+      {"name": "endpoint", "shape": "line", "language": "endpoint", "param": "connectionString", "connection": true, "hints": [{"text": "mysql://"}]},
+      {"name": "options", "shape": "block", "language": "headers", "param": "options", "hints": [{"text": "Columns-Type: ", "detail": "column=json column=datetime column=number column=boolean column=text"}]},
+      {"name": "query", "shape": "block", "language": "sql", "param": "sql"}
+    ],
+    "payload": "query",
+    "response": "grid",
+    "discovery": {"kind": "sql", "schemes": ["mysql"]},
+    "keywords": ["SELECT", "FROM", "WHERE", "LIMIT", "ORDER BY", "GROUP BY", "JOIN", "AS", "INSERT INTO", "UPDATE", "DELETE FROM", "SHOW TABLES"],
+    "hints": "#endpoint\nmysql://\n"
+  }
+}
