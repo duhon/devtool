@@ -103,7 +103,8 @@ For MySQL, GraphQL and gRPC, Alt+Space requests discovery. REST does not bind it
 These are the application's bindings; do not substitute Command for Control
 when explaining Ctrl+Space on macOS.
 
-Agent edits use the same editor history and can be undone normally. Check IDs
+Agent edits use the same editor history and can be undone normally. The words
+an edit changed briefly flash and fade so the user sees what changed. Check IDs
 and revisions come from console_context, not the left rail's display numbers.
 
 ## Agent panel

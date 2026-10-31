@@ -1,5 +1,15 @@
 # Release notes
 
+## 3.0.5
+
+- Agent edits flash: the words the Agent changes in a service's checks are highlighted and fade
+  out over about a second, so you can see what it did.
+- Terminal outcomes follow the exit code: any non-zero exit code or termination by a signal is
+  now ERROR (before, only exit code 1 was; others such as 127 "command not found" were
+  WARNING). Commands such as `grep` without matches or `diff` with differences are ERROR too.
+- A Terminal command that exits 0 but writes to stderr is WARNING, and its status shows the last
+  stderr line.
+
 ## 3.0.4
 
 - Agent skills from a team folder: Settings → Agent skills takes a local Team skills folder

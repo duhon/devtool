@@ -254,12 +254,14 @@ pub fn status(service: &str, result: &Value) -> String {
     }
     parts.join(" · ")
 }
-/// Characters of a failed command's last stderr line shown in its status.
+/// Characters of a command's last stderr line shown in its status.
 const STATUS_STDERR_CHARS: usize = 160;
-/// A failed command's exit code or signal, then the last line it wrote to stderr.
+/// A failed command's exit code or signal, then the last line the command wrote to stderr
+/// (also after a successful exit, where stderr makes it a warning).
 fn exit_summary(result: &Value) -> Vec<String> {
     let mut parts = match (result["code"].as_i64(), result["signal"].as_str()) {
-        (Some(0), _) | (None, None) => return Vec::new(),
+        (None, None) => return Vec::new(),
+        (Some(0), _) => Vec::new(),
         (Some(code), _) => vec![format!("exit {code}")],
         (None, Some(signal)) => vec![signal.to_owned()],
     };

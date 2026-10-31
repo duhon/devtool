@@ -266,7 +266,9 @@ Environment values are never part of the context API.
 Workspace tools read the live App model rather than scraping the page.
 Check IDs and document revisions reject stale writes. Agent changes use
 CodeMirror `replaceRange`, the same UTF-16 tracking and normal Undo, rather than
-rewriting storage. Omitted connection directives remain local and are preserved;
+rewriting storage. The words an edit changed (or the line it removed text from)
+flash for 1.2 s and fade (`cm-agent-edit`), so the user sees what the Agent did.
+Omitted connection directives remain local and are preserved;
 masked credentials cannot be inserted into a request.
 Check context exposes plain titles, without the directive marker. Agent
 create/edit titles must not contain `#check` or legacy `#request` prefixes.

@@ -128,6 +128,25 @@ button:hover {
   color: #f1fa8c;
 }
 
+/* An Agent edit flashes once and fades so the user sees what the Agent changed. */
+.CodeMirror span.cm-agent-edit,
+.CodeMirror .cm-agent-edit-line {
+  animation: cm-agent-edit 1.2s ease-out forwards;
+}
+
+@keyframes cm-agent-edit {
+  0%, 25% { background-color: rgba(241, 250, 140, 0.35); }
+  100% { background-color: transparent; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .CodeMirror span.cm-agent-edit,
+  .CodeMirror .cm-agent-edit-line {
+    animation: none;
+    background-color: rgba(241, 250, 140, 0.2);
+  }
+}
+
 .cm-s-dracula span.cm-graphql-type-condition {
   color: #3e9c70;
 }

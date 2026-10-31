@@ -972,6 +972,15 @@ impl Component for Editor {
                         );
                     }
                     call(instance, "changeGeneration", &[true.into()]).map_err(super::error)?;
+                    let replaced = call(
+                        instance,
+                        "getRange",
+                        &[js(&json!(command.from)), js(&json!(command.to))],
+                    )
+                    .map_err(super::error)?
+                    .as_string()
+                    .unwrap_or_default();
+                    let length = js_sys::JsString::from(value()).length();
                     call(
                         instance,
                         "replaceRange",
@@ -984,6 +993,14 @@ impl Component for Editor {
                     )
                     .map_err(super::error)?;
                     call(instance, "changeGeneration", &[true.into()]).map_err(super::error)?;
+                    let inserted = (replaced.encode_utf16().count()
+                        + js_sys::JsString::from(value()).length() as usize)
+                        .saturating_sub(length as usize);
+                    if let Err(error) =
+                        flash_agent_edit(instance, &command.from, &replaced, inserted)
+                    {
+                        web_sys::console::error_1(&error);
+                    }
                     Ok(())
                 })();
                 ctx.link()
@@ -1283,6 +1300,85 @@ fn highlight_graphql_objects(instance: &JsValue, context: &EditorContext) -> Res
         Ok(())
     });
     call(instance, "operation", &[update.as_ref().clone()])?;
+    Ok(())
+}
+/// How long an Agent edit stays highlighted; the CSS fade (`cm-agent-edit`) lasts as long.
+const AGENT_EDIT_FLASH_MS: i32 = 1200;
+
+/// Briefly highlights the words an Agent edit changed, or the line it removed text from, so the
+/// user sees what the Agent did. `inserted` is the UTF-16 length of the text now at `from`.
+fn flash_agent_edit(
+    instance: &JsValue,
+    from: &crate::document::Position,
+    replaced: &str,
+    inserted: usize,
+) -> Result<(), JsValue> {
+    let start = call(instance, "indexFromPos", &[js(&json!(from))])?
+        .as_f64()
+        .unwrap_or(0.0) as usize;
+    let position = |offset: usize| call(instance, "posFromIndex", &[(start + offset).into()]);
+    let new: Vec<u16> = call(
+        instance,
+        "getRange",
+        &[js(&json!(from)), position(inserted)?],
+    )?
+    .as_string()
+    .unwrap_or_default()
+    .encode_utf16()
+    .collect();
+    let old: Vec<u16> = replaced.encode_utf16().collect();
+    if old == new {
+        return Ok(());
+    }
+    let prefix = old.iter().zip(&new).take_while(|(a, b)| a == b).count();
+    let suffix = old
+        .iter()
+        .rev()
+        .zip(new.iter().rev())
+        .take(old.len().min(new.len()) - prefix)
+        .take_while(|(a, b)| a == b)
+        .count();
+    let (mut first, mut last) = (prefix, new.len() - suffix);
+    let word = |unit: u16| !matches!(unit, 0x09 | 0x0a | 0x0d | 0x20);
+    let clear: Box<dyn FnOnce()> = if first < last {
+        while first > 0 && word(new[first - 1]) {
+            first -= 1;
+        }
+        while last < new.len() && word(new[last]) {
+            last += 1;
+        }
+        let mark = call(
+            instance,
+            "markText",
+            &[
+                position(first)?,
+                position(last)?,
+                js(&json!({"className":"cm-agent-edit"})),
+            ],
+        )?;
+        Box::new(move || {
+            let _ = call(&mark, "clear", &[]);
+        })
+    } else {
+        let line = get(&position(first)?, "line");
+        let handle = call(
+            instance,
+            "addLineClass",
+            &[line, "background".into(), "cm-agent-edit-line".into()],
+        )?;
+        let cm = instance.clone();
+        Box::new(move || {
+            let _ = call(
+                &cm,
+                "removeLineClass",
+                &[handle, "background".into(), "cm-agent-edit-line".into()],
+            );
+        })
+    };
+    super::window().set_timeout_with_callback_and_timeout_and_arguments_0(
+        Closure::once_into_js(clear).unchecked_ref(),
+        AGENT_EDIT_FLASH_MS,
+    )?;
     Ok(())
 }
 fn highlight_brackets(instance: &JsValue) -> Result<(), JsValue> {

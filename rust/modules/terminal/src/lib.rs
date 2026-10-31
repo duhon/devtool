@@ -46,9 +46,16 @@ impl Service for Terminal {
             return outcome;
         }
         match result["code"].as_i64() {
-            Some(1) => "ERROR",
-            Some(0) if result["outputIncomplete"] != true => "OK",
-            _ => "WARNING",
+            Some(0)
+                if result["outputIncomplete"] == true
+                    || result["stderr"]
+                        .as_str()
+                        .is_some_and(|stderr| !stderr.trim().is_empty()) =>
+            {
+                "WARNING"
+            }
+            Some(0) => "OK",
+            _ => "ERROR",
         }
     }
 }
@@ -326,7 +333,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn incomplete_output_is_a_warning_unless_stopped_or_failed() {
+    fn exit_codes_signals_stderr_and_incomplete_output_set_the_outcome() {
         for (result, expected) in [
             (json!({"code":0,"outputIncomplete":true}), "WARNING"),
             (
@@ -339,7 +346,19 @@ mod tests {
             ),
             (json!({"code":1,"outputIncomplete":true}), "ERROR"),
             (json!({"code":0}), "OK"),
-            (json!({"code":2}), "WARNING"),
+            (json!({"code":0,"stderr":"\n  \n"}), "OK"),
+            (
+                json!({"code":0,"stderr":"warning: deprecated\n"}),
+                "WARNING",
+            ),
+            (json!({"code":1}), "ERROR"),
+            (json!({"code":2}), "ERROR"),
+            (json!({"code":127}), "ERROR"),
+            (json!({"code":null,"signal":"SIGKILL"}), "ERROR"),
+            (
+                json!({"code":null,"signal":"SIGTERM","cancelled":true}),
+                "Stopped",
+            ),
         ] {
             assert_eq!(Terminal.outcome(&result), expected, "{result}");
         }

@@ -171,6 +171,8 @@
   await wait(()=>terminalEditor.getValue().includes(terminalOutput+'warning\n')
     && !testid('console-main-status').classList.contains('is-running'),
     ()=>`Terminal execution did not render plain output: ${terminalEditor.getValue()}`);
+  assert(testid('console-main-status').textContent.includes('WARNING · warning'),
+    `A Terminal command that exits 0 after writing to stderr must be a WARNING showing that line: ${testid('console-main-status').textContent}`);
   await wait(()=>document.querySelector('[data-testid="history-entries"]')?.querySelectorAll('[data-testid="history-entry"]').length===1
     && !testid('history-status').classList.contains('is-running'));
   const terminalSnapshot=await detail(0);
