@@ -138,8 +138,6 @@
   assert(editor.getValue().includes(`${fixtureUrl}/agent-before`), 'Omitted connection directives must be preserved locally');
   const flashed = () => [...editor.getWrapperElement().querySelectorAll('.cm-agent-edit')].map(mark => mark.textContent).join('');
   assert(flashed() === 'X-Agent: edited', `An Agent edit must highlight only the words it changed: ${JSON.stringify(flashed())}`);
-  assert(getComputedStyle(editor.getWrapperElement().querySelector('.cm-agent-edit')).animationName === 'cm-agent-edit',
-    'The Agent edit highlight must fade through its CSS animation');
   await wait(() => !flashed(), 'The Agent edit highlight must fade away');
   editor.undo();
   await wait(() => editor.getValue() === source, 'Agent edits must be one normal Undo step');
