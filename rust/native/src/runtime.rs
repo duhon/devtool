@@ -85,8 +85,9 @@ impl Runtime {
     /// `{"service":"modules"}`: the loaded modules and the packages that failed to load;
     /// `op:"ui"` with a `module` id: the module's console part as base64;
     /// `op:"install"` with a package `file` as base64 and `op:"remove"` with a `module`
-    /// folder change the modules folder. This host keeps the modules it loaded; a new host
-    /// process loads the change.
+    /// folder change the modules folder; `forget:true` also deletes the module's history,
+    /// templates and hints. This host keeps the modules it loaded; a new host process loads
+    /// the change.
     async fn modules(&self, message: &Value) -> Result<Value> {
         use crate::core::{error::Error, install};
         use base64::Engine;
@@ -112,7 +113,32 @@ impl Runtime {
             Some("remove") => {
                 let name = text(message, "module");
                 install::remove(self.registry.dir(), &name).map_err(Error::new)?;
-                return Ok(json!({"removed": name}));
+                let mut reply = json!({"removed": name});
+                if message["forget"] == true {
+                    let (history, templates, hints) = (
+                        self.history.clone(),
+                        self.templates.clone(),
+                        self.hints.clone(),
+                    );
+                    let forgotten = tokio::task::spawn_blocking(move || -> Result<()> {
+                        history.forget(&name)?;
+                        templates.forget(&name)?;
+                        hints.forget(&name)
+                    })
+                    .await
+                    .map_err(|e| Error::new(e.to_string()))
+                    .and_then(|result| result);
+                    match forgotten {
+                        Ok(()) => reply["forgotten"] = json!(true),
+                        Err(e) => {
+                            reply["warning"] = json!(format!(
+                                "The module was removed, but its history, templates or hints were not deleted: {}",
+                                e.message
+                            ))
+                        }
+                    }
+                }
+                return Ok(reply);
             }
             _ => {
                 let mut reply = json!({"modules": self.registry.manifests().as_slice()});

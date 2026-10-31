@@ -22,7 +22,7 @@
   await wait(() => testid('agent-model-input') && !testid('agent-model-input').disabled,
     () => `Model settings did not load: ${text()}`);
   await click(testid('settings-update-check'));
-  await wait(() => text() === 'Up to date');
+  await wait(() => text() === 'Up to date', () => `Update check must finish as Up to date: ${text()}`);
   assert(text() === 'Up to date',
     'Equal release versions must not claim an available update');
   assert(status().classList.contains('console-status')

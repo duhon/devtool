@@ -390,10 +390,33 @@
 
 .module-settings-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
   padding: 2px 0;
+}
+
+.module-settings-confirm {
+  display: flex;
+  flex-basis: 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  padding: 2px 0 6px;
+}
+
+.module-settings-confirm p {
+  flex-basis: 100%;
+  margin: 0;
+  color: #a9adb5;
+}
+
+.module-settings-confirm label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: auto;
 }
 
 .module-settings-name {

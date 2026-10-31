@@ -12,7 +12,7 @@
         inert:document.querySelector('#service-views')?.inert,
         status:document.querySelector('[data-testid="templates-status"]')?.textContent,
         panel:document.querySelector('[data-testid="templates-panel"]')?.textContent.slice(0,1000),
-        storageError:document.querySelector('[data-testid="session-storage-error"]')?.textContent,
+        sessions:document.querySelector('[data-testid="console-sessions-toggle"] [data-state]')?.dataset.state,
         editor:!!document.querySelector('[data-testid="templates-editor"]'),
       })}`);
     assert(!document.querySelector('[data-testid="templates-reload"]'),

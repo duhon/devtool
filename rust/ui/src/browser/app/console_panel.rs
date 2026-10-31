@@ -289,12 +289,13 @@ impl App {
         }
         let value = json!({"version":1,"service":self.console_service,"documents":self.docs,"order":self.console_order,"responses":self.response_regions,
             "workspaceId":self.workspace_id,"checkIdentities":self.checks});
-        if let Err(e) = self.sessions.borrow_mut().update(|s| {
+        let result = self.sessions.borrow_mut().update(|s| {
             let mut value = value;
             crate::storage::keep_unloaded(&s.console, &mut value);
             s.console = value
-        }) {
-            self.notice = Some(e);
+        });
+        if let Err(e) = result {
+            self.session_error("Console save", e);
         }
     }
     pub(super) fn execute(
@@ -306,8 +307,9 @@ impl App {
         line: usize,
     ) {
         if self.runs.get(key).is_some_and(|r| r.running) {
-            self.notice =
-                Some("This request is already running. Stop the current stream first.".into());
+            self.notice = Some(Notice::new(
+                "This request is already running. Stop the current stream first.",
+            ));
             return;
         }
         let vertical = params["vertical"] == true;
@@ -517,7 +519,10 @@ impl App {
                     .unwrap_or(&[]),
                 preserve_after,
             ) {
-                self.notice = Some(error);
+                let run = self.runs.get_mut(key).unwrap();
+                run.status = format!("{} · ERROR · Response display failed: {error}", time());
+                run.debug = json!({"error":format!("Response display failed: {error}"),
+                    "phase":"response-display","result":run.debug.take()});
             }
             self.persist_console();
         }
@@ -703,6 +708,23 @@ impl App {
         testid="console-hints-status" stop_testid="console-hints-stop"
         onstop={self.hints_timers.contains_key(service).then(||ctx.link().callback(|_|Msg::StopHints))}/>}
     }
+    /// Import and Export stay red while their failure is in the banner.
+    pub(super) fn transfer_indicator(
+        &self,
+        service: &str,
+        transfer: Transfer,
+    ) -> crate::activity::Indicator {
+        let failed = self
+            .notice
+            .as_ref()
+            .and_then(|notice| notice.source.as_ref())
+            == Some(&(service.to_owned(), transfer));
+        if failed {
+            crate::activity::Indicator::Error
+        } else {
+            crate::activity::Indicator::Ready
+        }
+    }
     pub(super) fn profile_indicator(&self, dictionary: bool) -> Html {
         let (state, title) = self
             .profile_activity
@@ -841,6 +863,7 @@ impl App {
                                 if self.transport.is_native() {
                                     <crate::browser::module_settings::ModuleSettings transport={self.transport.clone()}
                                         onstatus={ctx.link().callback(Msg::SettingsStatus)}
+                                        onforget={ctx.link().callback(Msg::ForgetModule)}
                                         onchange={ctx.link().callback(|_|Msg::ModulesChanged)}/>
                                 }
                                 <crate::browser::agent_settings::AgentSettings transport={self.transport.clone()}
@@ -857,7 +880,7 @@ impl App {
                             </div>
                         }
                         if self.templates_visited {
-                            <crate::browser::templates::Templates transport={self.transport.clone()} owner={service.clone()}
+                            <crate::browser::templates::Templates key={format!("templates:{}", self.templates_epoch)} transport={self.transport.clone()} owner={service.clone()}
                                 visible={self.console_panel==Some(ConsolePanel::Templates)} foreground={!self.hidden}
                                 header={self.console_panel_header.clone()} footer={self.console_panel_footer.clone()}
                                 onchange={ctx.link().callback(Msg::TemplatesChanged)} onactivity={ctx.link().callback(Msg::TemplatesActivity)}/>
@@ -897,6 +920,7 @@ impl App {
                                 header={self.console_panel_header.clone()}
                                 footer={self.console_panel_footer.clone()}
                                 approval={self.agent_run.as_ref().filter(|run|!run.started).map(|run|run.approval.clone())}
+                                stop_error={self.agent_stop_error.clone()}
                                 onworkspace={ctx.link().callback(Msg::AgentTool)} onfinished={ctx.link().callback(Msg::AgentFinished)}
                                 onapprove={ctx.link().callback(Msg::AgentApprove)}/>
                         }
@@ -918,7 +942,7 @@ impl App {
                             {self.view_hints_status(ctx,service)}
                         }
                         if self.console_panel==Some(ConsolePanel::Sessions) {
-                            <ConsoleStatus testid="console-sessions-status" text={self.session_status.text.clone()} debug={self.session_status.debug.clone()} running={false} started={None} state={self.session_status.indicator()}/>
+                            {{let status=self.sessions_status();html!{<ConsoleStatus testid="console-sessions-status" text={status.text.clone()} debug={status.debug.clone()} running={false} started={None} state={status.indicator()}/>}}}
                         }
                         <div ref={self.console_panel_footer.clone()} hidden={matches!(self.console_panel,Some(ConsolePanel::Hints|ConsolePanel::Sessions|ConsolePanel::Settings))}></div>
                     </div>
@@ -934,7 +958,7 @@ impl App {
                        let (state,title)=crate::activity::summary(self.agent_activity.iter().map(|activity|activity.state));
                        indicator(state,title)
                     }}</button>
-                if supported{<button class="console-import-toggle" onclick={ctx.link().callback(|_|Msg::Export)}>{"Export\u{2026}"}</button><button class="console-import-toggle" onclick={ctx.link().callback(|_|Msg::Import)}>{"Import\u{2026}"}</button>}
+                if supported{<button class="console-import-toggle" data-testid="console-export" onclick={ctx.link().callback(|_|Msg::Export)}>{"Export\u{2026}"}{indicator(self.transfer_indicator(service,Transfer::Export),"Export status".into())}</button><button class="console-import-toggle" data-testid="console-import" onclick={ctx.link().callback(|_|Msg::Import)}>{"Import\u{2026}"}{indicator(self.transfer_indicator(service,Transfer::Import),"Import status".into())}</button>}
                 <button class={classes!("console-hints-toggle",(self.console_panel==Some(ConsolePanel::Templates)).then_some("active"))}
                     data-testid="console-templates-toggle" aria-pressed={(self.console_panel==Some(ConsolePanel::Templates)).to_string()}
                     onclick={ctx.link().callback(|_|Msg::ToggleTemplates)}>{"Templates"}{indicator(self.templates_activity,"Templates status".into())}</button>
@@ -954,7 +978,7 @@ impl App {
             if let Some(command)=&self.export_text{<div class="console-hints-overlay"><div class="console-hints-panel">
                 <div class="console-hints-panel-header">{"Export - copy this command"}</div>
                 <Editor key="export" value={command.clone()} mode="shell" onchange={ctx.link().callback(Msg::ExportText)}/>
-                <div class="console-hints-panel-actions"><button onclick={ctx.link().callback(|_|Msg::ClearNotice)}>{"Close"}</button></div>
+                <div class="console-hints-panel-actions"><button onclick={ctx.link().callback(|_|Msg::CloseExport)}>{"Close"}</button></div>
             </div></div>}
         </div>}
     }

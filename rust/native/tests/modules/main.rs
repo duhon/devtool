@@ -6,6 +6,7 @@ mod graphql;
 mod mysql;
 mod rest;
 mod splunk;
+mod stomp;
 mod templates;
 mod terminal;
 mod variables;

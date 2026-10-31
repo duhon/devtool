@@ -2,7 +2,30 @@
 //! concurrent merges. UI-behaviour tests.
 
 use serde_json::json;
-use services_ui::sessions::{Layout, Library, Snapshot, merge_snapshot};
+use services_ui::sessions::{Layout, Library, Snapshot, forget_service, merge_snapshot};
+
+#[test]
+fn forgetting_a_service_drops_only_its_console_order_and_hints() {
+    let mut snapshot = Snapshot {
+        console: json!({"version":1,"service":"rest",
+            "documents":{"rest":"#check rest","echo":"#check echo"},
+            "responses":{"echo":[{"start":1}]},
+            "order":["echo","rest"]}),
+        ..Snapshot::default()
+    };
+    snapshot.hints.insert("echo".into(), "x: 1".into());
+    snapshot.hints.insert("rest".into(), "y: 2".into());
+    snapshot.hints_drafts.insert("echo".into(), "x: 3".into());
+    forget_service(&mut snapshot, "echo");
+    assert_eq!(
+        snapshot.console,
+        json!({"version":1,"service":"rest","documents":{"rest":"#check rest"},
+            "responses":{},"order":["rest"]}),
+        "a missing key such as checkIdentities must not be added"
+    );
+    assert_eq!(snapshot.hints.keys().collect::<Vec<_>>(), ["rest"]);
+    assert!(snapshot.hints_drafts.is_empty());
+}
 
 #[test]
 fn layout_is_session_scoped_copied_persisted_and_backward_compatible() {

@@ -1,5 +1,5 @@
 (async () => {
-  const {assert,wait,click,testid,cm,setSource,key,activateSession}=testDriver;
+  const {assert,wait,click,testid,cm,setSource,key,activateSession,visible}=testDriver;
   const current=()=>Number(testid('console-session-name').dataset.sessionId);
   const library=testDriver.sessionLibrary;
   const open=async tool=>{
@@ -130,8 +130,14 @@
     largeFrame.contentWindow.__testFailSessionWrites=true;
     setSource(cm('console-editor',largeFrame.contentDocument),
       largeDocument.replace('#check large-persistence','#check failed-write'));
-    await wait(()=>largeFrame.contentDocument.querySelector('[data-testid="session-storage-error"]')
-      ?.textContent.includes('Changes are not saved'),'Asynchronous save failures must be visible');
+    const frameDoc=largeFrame.contentDocument;
+    await wait(()=>frameDoc.querySelector('[data-testid="console-sessions-toggle"] [data-state="error"]'),
+      'Asynchronous save failures must mark the Sessions button');
+    assert(![...frameDoc.querySelectorAll('.banner')].some(visible),'Save failures must not use the top banner');
+    if(testid('console-sessions-toggle',frameDoc).getAttribute('aria-pressed')!=='true')
+      await click(testid('console-sessions-toggle',frameDoc));
+    await wait(()=>testid('console-sessions-status',frameDoc).textContent.includes('Autosave · ERROR · Session save failed: Fixture session storage write failed. Changes are not saved'),
+      ()=>`Asynchronous save failures must be visible in the Sessions status: ${testid('console-sessions-status',frameDoc).textContent}`);
     assert((await library()).sessions.find(s=>s.id===large).snapshot.console.documents.mysql===largeDocument,
       'Failed autosave must leave the previously committed large document intact');
     largeFrame.contentWindow.__testFailSessionWrites=false;

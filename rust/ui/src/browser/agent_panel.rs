@@ -26,6 +26,14 @@ pub struct Activity {
     pub stopping: bool,
     pub state: crate::activity::Indicator,
 }
+/// The Console could not cancel a request started by an Agent session.
+#[derive(Clone, PartialEq)]
+pub struct StopError {
+    pub session: String,
+    pub error: String,
+    pub stream: u32,
+    pub started: f64,
+}
 #[derive(Clone, PartialEq)]
 pub struct Approval {
     pub session: String,
@@ -46,6 +54,8 @@ pub struct Props {
     pub onfinished: Callback<String>,
     pub onapprove: Callback<bool>,
     pub approval: Option<Approval>,
+    #[prop_or_default]
+    pub stop_error: Option<StopError>,
     pub stop_generation: u64,
     pub onactivity: Callback<Vec<Activity>>,
 }
@@ -58,6 +68,7 @@ impl PartialEq for Props {
             && self.header == other.header
             && self.footer == other.footer
             && self.approval == other.approval
+            && self.stop_error == other.stop_error
             && self.stop_generation == other.stop_generation
     }
 }
@@ -453,6 +464,21 @@ impl Component for AgentPanel {
             self.notify_activity(ctx);
         }
         if old.approval != ctx.props().approval {
+            self.notify_activity(ctx);
+        }
+        if old.stop_error != ctx.props().stop_error
+            && let Some(stop) = &ctx.props().stop_error
+        {
+            let mut status = OperationStatus::event(
+                "Agent stop",
+                stop.started,
+                Some(&Reply::Error(json!({
+                    "error":format!("Could not cancel the Agent's Console request: {}",stop.error),
+                    "stream":stop.stream,
+                }))),
+            );
+            status.debug["sessionId"] = json!(stop.session);
+            self.statuses.insert(stop.session.clone(), status);
             self.notify_activity(ctx);
         }
         true

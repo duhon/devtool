@@ -196,6 +196,15 @@ impl History {
             .await
             .map_err(error)?
     }
+    /// Deletes every execution of `service` in all sessions.
+    pub fn forget(&self, service: &str) -> Result<usize> {
+        if !self.path.exists() {
+            return Ok(0);
+        }
+        self.open()?
+            .execute("DELETE FROM history WHERE service=?1", [service])
+            .map_err(error)
+    }
     fn insert(&self, s: Snapshot) -> Result<i64> {
         let bytes = serde_json::to_vec(&json!({
             "checkId":s.check_id,"sessionId":s.session_id,"title":s.title,"service":s.service,

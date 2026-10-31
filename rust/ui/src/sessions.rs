@@ -45,6 +45,24 @@ pub struct Session {
     pub name: String,
     pub snapshot: Snapshot,
 }
+/// Drops everything the snapshot keeps for `service`: its console with checks and
+/// responses, its tab position and its hints. Used when a module is removed with its data.
+pub fn forget_service(snapshot: &mut Snapshot, service: &str) {
+    for key in ["documents", "responses", "checkIdentities"] {
+        if let Some(map) = snapshot.console.get_mut(key).and_then(Value::as_object_mut) {
+            map.remove(service);
+        }
+    }
+    if let Some(order) = snapshot
+        .console
+        .get_mut("order")
+        .and_then(Value::as_array_mut)
+    {
+        order.retain(|id| id != service);
+    }
+    snapshot.hints.remove(service);
+    snapshot.hints_drafts.remove(service);
+}
 pub fn merge_snapshot(
     base: &Snapshot,
     local: &Snapshot,

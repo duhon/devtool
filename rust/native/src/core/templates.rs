@@ -48,18 +48,7 @@ impl Templates {
             return Err(Error::new("Unknown template service or section"));
         }
         templates::parse(text).map_err(Error::new)?;
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let mut options = OpenOptions::new();
-        options.create(true).read(true).write(true).truncate(false);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let lock = options.open(self.path.with_extension("lock"))?;
-        lock.lock()?;
+        let _lock = self.lock()?;
         let mut library = self.read()?;
         let current = library
             .get(service)
@@ -75,7 +64,39 @@ impl Templates {
             .entry(service.into())
             .or_default()
             .insert(section.into(), text.into());
-        let bytes = serde_json::to_vec_pretty(&library)?;
+        self.write(&library)?;
+        Ok(json!({"templates":library}))
+    }
+    /// Deletes the templates of `service`.
+    pub fn forget(&self, service: &str) -> Result<()> {
+        if !self.path.exists() {
+            return Ok(());
+        }
+        let _lock = self.lock()?;
+        let mut library = self.read()?;
+        if library.remove(service).is_some() {
+            self.write(&library)?;
+        }
+        Ok(())
+    }
+    /// Serializes changes of the library file across host processes.
+    fn lock(&self) -> Result<fs::File> {
+        if let Some(parent) = self.path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut options = OpenOptions::new();
+        options.create(true).read(true).write(true).truncate(false);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let lock = options.open(self.path.with_extension("lock"))?;
+        lock.lock()?;
+        Ok(lock)
+    }
+    fn write(&self, library: &Library) -> Result<()> {
+        let bytes = serde_json::to_vec_pretty(library)?;
         if bytes.len() > 512 * 1024 {
             return Err(Error::new("The global template library exceeds 512 KiB."));
         }
@@ -93,6 +114,6 @@ impl Templates {
         file.write_all(&bytes)?;
         file.sync_all()?;
         fs::rename(pending, &self.path)?;
-        Ok(json!({"templates":library}))
+        Ok(())
     }
 }

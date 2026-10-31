@@ -1,7 +1,7 @@
 (async () => {
   const {assert, wait, testid, click, openConsole, input, cm, key, setSource} = testDriver;
   await openConsole();
-  const shipped = ['graphql', 'grpc', 'mysql', 'rest', 'splunk', 'terminal'];
+  const shipped = ['graphql', 'grpc', 'mysql', 'rest', 'splunk', 'stomp', 'terminal'];
   const status = () => document.querySelector('[data-testid="settings-update-status"] .console-status-text')?.textContent ?? '';
   const rows = () => [...document.querySelectorAll('[data-testid="settings-module"]')];
   const listed = () => rows().map(row => row.dataset.module).sort().join();
@@ -23,24 +23,25 @@
     const detail = row(id).querySelector('.module-settings-detail').textContent;
     assert(/^\S+ \d+\.\d+\.\d+$/.test(detail) && detail.startsWith(`${id} `), `${id}: id and version expected, got ${detail}`);
   }
-  const confirm = window.confirm;
-  const asked = [];
-  let answer = false;
-  window.confirm = question => { asked.push(question); return answer; };
-  try {
-    await click(remove('graphql'));
-    assert(asked.length === 1 && asked[0].includes('Remove module "GraphQL"') && asked[0].includes('kept'),
-      `Removal must ask first and say consoles are kept: ${JSON.stringify(asked)}`);
-    await testDriver.sleep(300);
-    assert(row('graphql') && tab('graphql') && !status().includes('Remove'), 'A cancelled removal must change nothing');
-    answer = true;
-    await click(remove('graphql'));
-    await wait(() => status() === 'Removed graphql' && !row('graphql') && !tab('graphql') && !remove('rest').disabled,
-      () => `Removal must restart the host without the module: ${status()}; ${listed()}`);
-    assert(listed() === shipped.filter(id => id !== 'graphql').join() && tab('rest'), 'Other modules must stay');
-  } finally {
-    window.confirm = confirm;
-  }
+  const confirmation = id => row(id)?.querySelector('[data-testid="settings-module-confirm"]');
+  const part = (id, name) => confirmation(id)?.querySelector(`[data-testid="settings-module-${name}"]`);
+  const ask = async id => {
+    await click(remove(id));
+    await wait(() => part(id, 'remove-confirm') && remove(id).disabled, () => `Removal of ${id} must ask first`);
+  };
+  await ask('graphql');
+  const question = confirmation('graphql').querySelector('p').textContent;
+  assert(question.includes('Remove module "GraphQL"') && question.includes('kept') && !part('graphql', 'forget').checked,
+    `Removal must say consoles are kept and keep them by default: ${question}`);
+  await click(part('graphql', 'remove-cancel'));
+  await wait(() => !confirmation('graphql') && !remove('graphql').disabled, 'Cancel must close the confirmation');
+  await testDriver.sleep(300);
+  assert(row('graphql') && tab('graphql') && !status().includes('Remove'), 'A cancelled removal must change nothing');
+  await ask('graphql');
+  await click(part('graphql', 'remove-confirm'));
+  await wait(() => status() === 'Removed graphql' && !row('graphql') && !tab('graphql') && !remove('rest').disabled,
+    () => `Removal must restart the host without the module: ${status()}; ${listed()}`);
+  assert(listed() === shipped.filter(id => id !== 'graphql').join() && tab('rest'), 'Other modules must stay');
   await choose('broken');
   await wait(() => status().startsWith('Install module · ERROR · Invalid package file'),
     () => `An invalid package file must be reported: ${status()}`);
@@ -80,14 +81,35 @@
   await wait(() => echoed().includes('sent through a module'),
     () => `The example module must answer with its text: ${echo.getValue().slice(-500)}`);
   await settings(true);
-  window.confirm = () => true;
-  try {
-    await click(remove('echo'));
-    await wait(() => status() === 'Removed echo' && !row('echo') && !tab('echo'),
-      () => `The example module must be removable: ${status()}; ${listed()}`);
-  } finally {
-    window.confirm = confirm;
-  }
+  const drafts = 'servicesConsole.templateDrafts';
+  const draftKeys = () => Object.keys(JSON.parse(localStorage.getItem(drafts) ?? '{}'));
+  localStorage.setItem(drafts, JSON.stringify({...JSON.parse(localStorage.getItem(drafts) ?? '{}'),
+    'echo/text': {text: 'draft of a removed module', base: ''}}));
+  await ask('echo');
+  await click(part('echo', 'forget'));
+  await wait(() => part('echo', 'forget').checked, 'The data checkbox must toggle');
+  await click(part('echo', 'remove-confirm'));
+  await wait(() => status() === 'Removed echo and its data' && !row('echo') && !tab('echo'),
+    () => `The example module must be removable with its data: ${status()}; ${listed()}`);
+  const leftovers = async () => (await testDriver.sessionLibrary()).sessions.filter(session =>
+    ['documents', 'responses', 'checkIdentities'].some(key => session.snapshot.console?.[key]?.echo !== undefined)
+    || (session.snapshot.console?.order ?? []).includes('echo') || session.snapshot.hints?.echo !== undefined);
+  let left = [];
+  await wait(async () => (left = await leftovers()).length === 0,
+    () => `No session may keep the console of a module removed with its data: ${left.map(s => s.id)}`);
+  assert(!draftKeys().some(key => key.startsWith('echo/')), `Its Templates drafts must be deleted: ${draftKeys()}`);
+  await choose('echo');
+  await wait(() => status() === 'Installed Echo 0.1.0' && row('echo') && tab('echo') && !remove('echo').disabled,
+    () => `The example module must install again: ${status()}; ${listed()}`);
+  await settings(false);
+  await click(tab('echo'));
+  assert(!cm('console-editor').getValue().includes('sent through a module'),
+    `The deleted console must not come back: ${cm('console-editor').getValue().slice(0, 300)}`);
+  await settings(true);
+  await ask('echo');
+  await click(part('echo', 'remove-confirm'));
+  await wait(() => status() === 'Removed echo' && !row('echo') && !tab('echo'),
+    () => `The example module must be removable: ${status()}; ${listed()}`);
   assert(listed() === shipped.join(), `Only the shipped modules must stay: ${listed()}`);
   return true;
 })()

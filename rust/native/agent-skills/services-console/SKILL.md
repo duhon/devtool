@@ -54,6 +54,8 @@ with METHOD URL on the following line, optional `#headers` and `#body`.
 GraphQL uses a URL endpoint plus `#query` and optional `#variables`.
 gRPC uses `#endpoint`, optional `#proto`, and `#message`; inspect the existing
 check/schema for method details. Splunk uses `#search`; Terminal uses `#command`.
+STOMP uses `#endpoint` with SEND URL or SUBSCRIBE URL, optional `#headers`,
+`#options` and a SEND `#body`; SUBSCRIBE consumes (acknowledges) messages.
 Edits preserve omitted connection blocks locally; include the payload marker.
 To create a check while reusing a connection containing masked credentials,
 pass the existing checkId to console_create_check and omit connection blocks.

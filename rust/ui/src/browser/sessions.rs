@@ -225,6 +225,35 @@ impl Store {
         store.library = next;
         Ok(active)
     }
+    /// Removes what every session keeps for `service`, including this window's temporary
+    /// session; the current session keeps its unsaved local state otherwise.
+    pub async fn forget(shared: &Shared, service: String) -> Result<(), String> {
+        use crate::sessions::forget_service;
+        Self::flush(shared).await?;
+        let database = shared.borrow().persistence.database.clone();
+        let active = shared.borrow().library.current;
+        let removed = service.clone();
+        let mut next = database
+            .change(move |previous| {
+                let mut next = previous.ok_or("Session library disappeared")?;
+                for session in &mut next.sessions {
+                    forget_service(&mut session.snapshot, &removed);
+                }
+                Ok(next)
+            })
+            .await?;
+        let mut store = shared.borrow_mut();
+        next.temporary = store.library.temporary.clone();
+        forget_service(&mut next.temporary, &service);
+        if next.select(active).is_ok() {
+            let mut local = store.library.snapshot().clone();
+            forget_service(&mut local, &service);
+            *next.snapshot_mut() = local;
+        }
+        store.persistence.latest.borrow_mut().take();
+        store.library = next;
+        Ok(())
+    }
     pub async fn select(shared: &Shared, id: u64) -> Result<u64, String> {
         let database = shared.borrow().persistence.database.clone();
         if id != 0 {

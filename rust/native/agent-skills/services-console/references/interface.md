@@ -36,6 +36,13 @@ extension over native messaging.
   selected service. Switching checks restores that check's own last operation.
   The right tool panel has an independent status and Debug for its selected
   tool/profile/chat; Agent activity never replaces the main request status.
+- Errors with an owner are local: they show in that owner's status and Debug and
+  light its check, tab or button until seen on screen. Pending Agent approvals
+  and failures to cancel Agent requests show in the Agent panel, module list
+  errors in Settings, failed session saves and layout writes in Sessions.
+- Errors without a status (Import, Export, Stop, Shift+Enter outside a check,
+  startup) are global: a top banner that stays until Dismiss. A failed Import or
+  Export also lights that service's Import or Export button until Dismiss.
 
 Do not invent a Discover, Discovery or Schema button in the REST interface.
 Read the discovery topic for schema acquisition.

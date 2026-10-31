@@ -17,6 +17,30 @@ use wasm_bindgen::{JsCast, closure::Closure};
 use yew::prelude::*;
 
 const DRAFTS: &str = "servicesConsole.templateDrafts";
+/// Deletes the saved Templates drafts of a removed `service`.
+pub fn forget_drafts(service: &str) -> Result<(), String> {
+    let storage = window()
+        .local_storage()
+        .map_err(error)?
+        .ok_or("Local storage unavailable")?;
+    let Some(raw) = storage.get_item(DRAFTS).map_err(error)? else {
+        return Ok(());
+    };
+    let mut drafts: serde_json::Map<String, Value> =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid Templates drafts: {e}"))?;
+    let prefix = format!("{service}/");
+    let before = drafts.len();
+    drafts.retain(|key, _| !key.starts_with(&prefix));
+    if drafts.len() == before {
+        return Ok(());
+    }
+    storage
+        .set_item(
+            DRAFTS,
+            &serde_json::to_string(&drafts).map_err(|e| e.to_string())?,
+        )
+        .map_err(error)
+}
 #[derive(Clone, Serialize, Deserialize)]
 struct Draft {
     text: String,

@@ -139,9 +139,11 @@ The panel then restarts its host: requests it was running fail with “The
 native host was restarted”; other open panels see the module after they
 reconnect.
 
-**Remove** in the same list deletes the folder. Consoles and templates of a
-removed module are kept and come back when it is installed again. A removed
-shipped module comes back with the next application update.
+**Remove** in the same list asks first, then deletes the folder. By default the
+consoles, checks, history, templates and hints of a removed module are kept and
+come back when a module with the same id is installed again; check “Delete them
+too, in every session” to delete them with the module. A removed shipped module
+comes back with the next application update.
 
 A package the host cannot load stays in the list with its error.
 

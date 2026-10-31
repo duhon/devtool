@@ -4,7 +4,7 @@
   await wait(() => document.querySelector('[data-testid="native-status"]')?.hidden,
     'Installed companion must connect');
   await openConsole();
-  const services = ['mysql', 'rest', 'graphql', 'grpc', 'splunk', 'terminal'];
+  const services = ['mysql', 'rest', 'graphql', 'grpc', 'splunk', 'terminal', 'stomp'];
   for (const service of services) {
     await click(testid(`console-service-${service}`));
     await click(testid('console-editor-editor'), 80, 16);
@@ -25,12 +25,13 @@
   const endpoints = {
     mysql: 'mysql://mysql.fixture.invalid', rest: 'https://rest.fixture.invalid',
     graphql: 'https://graphql.fixture.invalid', grpc: 'grpc://grpc.fixture.invalid:9000',
-    splunk: 'https://splunk.fixture.invalid',
+    splunk: 'https://splunk.fixture.invalid', stomp: 'stomp://stomp.fixture.invalid:61613/orders',
   };
+  const methods = {rest: 'GET ', stomp: 'SEND '};
   for (const service of services) {
     await click(testid(`console-service-${service}`));
     const editor = cm('console-editor');
-    setSource(editor, `#check scope\n#endpoint\n${service === 'rest' ? 'GET ' : ''}`);
+    setSource(editor, `#check scope\n#endpoint\n${methods[service] || ''}`);
     await key('Control+Space');
     await wait(() => candidates().some(text => text.includes(endpoints[service] || 'bash -c')),
       () => `${service}: saved endpoint missing from ${JSON.stringify(candidates())}`);
@@ -552,18 +553,24 @@
   assert(win.nativeProbe.clipboardReads === 1, 'Import reads synthetic clipboard exactly once');
   win.nativeProbe.clipboard = { text: 'not a command' };
   await click(button(/^Import/, doc));
-  await wait(() => [...doc.querySelectorAll('[role="alert"]')]
-    .some(el => visible(el) && el.textContent.includes('Import failed:')), 'Invalid clipboard command must show parser error');
-  assert(!find('[role="alert"]', doc).textContent.includes('Grant clipboard access'), 'Explicit parser error');
+  const notice = () => doc.querySelector('[data-testid="app-notice"]');
+  const importLight = () => testid('console-import', doc).querySelector('.console-state-light').dataset.state;
+  await wait(() => notice()?.textContent.includes('Import failed:'), 'Invalid clipboard command must show parser error');
+  assert(!notice().textContent.includes('Grant clipboard access'), 'Explicit parser error');
+  assert(importLight() === 'error', 'A failed Import must light its button');
+  await holds(() => notice() && importLight() === 'error', 'Only Dismiss may acknowledge a banner error', 100);
   await click(button('Dismiss', doc));
+  await wait(() => !notice() && importLight() === 'ready', 'Dismiss must clear the banner and the Import light');
   await click(testid('console-service-grpc', doc));
   win.nativeProbe.clipboard = { text: "grpcurl -plaintext -d '{\"fixture\":\"ok\"}' grpc.fixture.invalid:9000 fixture.Echo/Call" };
   await click(button(/^Import/, doc));
   await wait(() => cm('console-editor', doc).getValue().includes('fixture.Echo/Call'));
   win.nativeProbe.clipboard = { error: 'Fixture clipboard reader failed' };
   await click(button(/^Import/, doc));
-  await wait(() => [...doc.querySelectorAll('[role="alert"]')]
-    .some(el => visible(el) && el.textContent.includes('Fixture clipboard reader failed')), 'Native clipboard reader error must be visible');
+  await wait(() => notice()?.textContent.includes('Fixture clipboard reader failed') && importLight() === 'error',
+    'Native clipboard reader error must be visible and light Import');
+  await click(testid('console-service-rest', doc));
+  assert(importLight() === 'ready', 'Only the service whose Import failed lights its Import button');
   frame.remove();
   return true;
 })()

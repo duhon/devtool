@@ -1,9 +1,9 @@
 [workspace]
-members = ["rust/contracts", "rust/module-api", "rust/module-ui", "rust/modules/rest", "rust/modules/rest/ui", "rust/modules/graphql", "rust/modules/graphql/ui", "rust/modules/grpc", "rust/modules/grpc/ui", "rust/modules/mysql", "rust/modules/mysql/ui", "rust/modules/splunk", "rust/modules/splunk/ui", "rust/modules/terminal", "rust/modules/terminal/ui", "rust/examples/echo", "rust/examples/echo/ui", "rust/native", "rust/ui", "rust/installer", "rust/testkit", "rust/xtask"]
+members = ["rust/contracts", "rust/module-api", "rust/module-ui", "rust/modules/rest", "rust/modules/rest/ui", "rust/modules/graphql", "rust/modules/graphql/ui", "rust/modules/grpc", "rust/modules/grpc/ui", "rust/modules/mysql", "rust/modules/mysql/ui", "rust/modules/splunk", "rust/modules/splunk/ui", "rust/modules/terminal", "rust/modules/terminal/ui", "rust/modules/stomp", "rust/modules/stomp/ui", "rust/examples/echo", "rust/examples/echo/ui", "rust/native", "rust/ui", "rust/installer", "rust/testkit", "rust/xtask"]
 resolver = "3"
 
 [workspace.package]
-version = "3.0.2"
+version = "3.0.3"
 edition = "2024"
 publish = false
 

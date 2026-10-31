@@ -218,6 +218,67 @@ async fn a_module_written_with_the_sdk_installs_from_its_package_file_and_runs()
 }
 
 #[tokio::test]
+async fn removing_a_module_with_its_data_deletes_its_history_templates_and_hints() {
+    const REST: &str = "019a1234-5678-7890-abcd-0123456789a1";
+    const MYSQL: &str = "019a1234-5678-7890-abcd-0123456789a2";
+    let data = DataDir::new();
+    let modules = data.path().join("modules");
+    let host = Host::on(data);
+    for (service, check) in [("rest", REST), ("mysql", MYSQL)] {
+        host.runtime()
+            .history
+            .save(services_native::core::history::Snapshot {
+                check_id: check.into(),
+                session_id: check.into(),
+                title: "#check kept".into(),
+                service: service.into(),
+                started: 1,
+                ended: 2,
+                duration: 1,
+                status: "OK".into(),
+                text: "#check kept".into(),
+            })
+            .await
+            .unwrap();
+    }
+    for (service, section, text) in [
+        ("rest", "body", "@rest\n{}"),
+        ("mysql", "query", "@mysql\nSELECT 1;"),
+    ] {
+        host.send(json!({"service":"templates","op":"save",
+            "serviceName":service,"section":section,"text":text,"base":""}))
+            .await
+            .ok();
+        host.send(json!({"service":"hints","op":"save","serviceName":service,"text":format!("{service} hint\n")}))
+            .await
+            .ok();
+    }
+    let total = |reply: services_testkit::Reply| reply.ok()["total"].clone();
+    let check = |check: &str| json!({"checkId":check});
+
+    let kept = host
+        .send(json!({"service":"modules","op":"remove","module":"mysql"}))
+        .await;
+    assert_eq!(kept.ok(), &json!({"removed":"mysql"}));
+    assert_eq!(total(host.op("history", "list", check(MYSQL)).await), 1);
+
+    let removed = host
+        .send(json!({"service":"modules","op":"remove","module":"rest","forget":true}))
+        .await;
+    assert_eq!(removed.ok(), &json!({"removed":"rest","forgotten":true}));
+    assert!(!modules.join("rest").exists());
+    assert_eq!(total(host.op("history", "list", check(REST)).await), 0);
+    assert_eq!(total(host.op("history", "list", check(MYSQL)).await), 1);
+    let templates = host.op("templates", "get", json!({})).await;
+    assert_eq!(
+        templates.ok()["templates"],
+        json!({"mysql":{"query":"@mysql\nSELECT 1;"}})
+    );
+    let hints = std::fs::read_to_string(host.path().join(".console-hints.txt")).unwrap();
+    assert_eq!(hints, "## mysql\nmysql hint\n");
+}
+
+#[tokio::test]
 async fn an_invalid_package_file_leaves_the_installed_package_alone() {
     let data = DataDir::new();
     let modules = data.path().join("modules");

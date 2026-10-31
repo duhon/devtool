@@ -9,7 +9,9 @@ fn the_built_in_modules_seed_the_tabs_labels_and_order() {
     assert_eq!(*services::all(), services::seed());
     assert_eq!(
         services::ids(),
-        ["rest", "mysql", "graphql", "grpc", "splunk", "terminal"]
+        [
+            "rest", "mysql", "graphql", "grpc", "splunk", "terminal", "stomp"
+        ]
     );
     let labels: Vec<_> = services::ids()
         .iter()
@@ -17,12 +19,16 @@ fn the_built_in_modules_seed_the_tabs_labels_and_order() {
         .collect();
     assert_eq!(
         labels,
-        ["REST", "MySQL", "GraphQL", "gRPC", "Splunk", "Terminal"]
+        [
+            "REST", "MySQL", "GraphQL", "gRPC", "Splunk", "Terminal", "STOMP"
+        ]
     );
     assert_eq!(services::label("unknown"), "unknown");
     assert_eq!(
         services::default_order(),
-        ["rest", "mysql", "graphql", "grpc", "splunk", "terminal"]
+        [
+            "rest", "mysql", "graphql", "grpc", "splunk", "terminal", "stomp"
+        ]
     );
     assert_eq!(services::default_service(), "rest");
     assert_eq!(storage::console_state()["service"], "rest");

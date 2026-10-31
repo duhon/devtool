@@ -25,6 +25,7 @@ services-module-grpc-ui = { path = "../modules/grpc/ui" }
 services-module-mysql-ui = { path = "../modules/mysql/ui" }
 services-module-splunk-ui = { path = "../modules/splunk/ui" }
 services-module-terminal-ui = { path = "../modules/terminal/ui" }
+services-module-stomp-ui = { path = "../modules/stomp/ui" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 base64 = "0.22"

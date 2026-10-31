@@ -5,7 +5,7 @@ pub enum Language {
     Headers,
     /// An address: `scheme://host/path`.
     Endpoint,
-    /// `METHOD URL` with `{param}` path params and a `?query`.
+    /// `METHOD URL` with `{param}` path params and a `?query` (REST; STOMP `SEND`/`SUBSCRIBE`).
     Http,
     /// `scheme://target/package.Service/Method`.
     Grpc,
@@ -334,8 +334,17 @@ pub fn token(
             if pos == 0
                 && http
                 && let Some((method, _)) = rest.split_once(char::is_whitespace)
-                && ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"]
-                    .contains(&method.to_ascii_uppercase().as_str())
+                && [
+                    "GET",
+                    "POST",
+                    "PUT",
+                    "PATCH",
+                    "DELETE",
+                    "HEAD",
+                    "SEND",
+                    "SUBSCRIBE",
+                ]
+                .contains(&method.to_ascii_uppercase().as_str())
             {
                 return (
                     method.chars().count()

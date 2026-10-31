@@ -1,6 +1,6 @@
 # Service clients and request syntax
 
-Console supports mysql, rest, graphql, grpc, splunk and terminal. Each service
+Console supports mysql, rest, graphql, grpc, splunk, terminal and stomp. Each service
 has its own document. A full check starts with `#check Title`; section contents
 start on the following line. Captured response blocks are owned output, not new
 requests, even if the returned text contains directive-shaped lines.
@@ -117,6 +117,45 @@ Do not retry a queued check or start extra checks to accelerate it. Queue waits
 are included in the 10-minute timeout. Debug records stream completion, Count
 termination, messages and rate-limit retries. Stop closes the request; it does
 not roll back remote side effects or guarantee immediate server-side cleanup.
+
+## STOMP
+
+For message brokers such as Apache ActiveMQ Artemis (STOMP 1.0-1.2).
+`#endpoint` is `SEND URL` or `SUBSCRIBE URL`; the URL is
+`stomp://user:password@host:61613/destination` (`stomp+ssl://` for TLS, port
+61613 by default). The path is the destination, without the leading `/`
+(`orders`, `/queue/orders`, `news.#`); a `destination:` header in `#headers`
+overrides it. `#headers` are STOMP frame headers, case-sensitive and sent as
+written. `#body` is the SEND payload; SUBSCRIBE takes no body.
+
+    #check order created
+    #endpoint
+    SEND stomp://app:secret@localhost:61613/orders
+    #headers
+    destination-type: ANYCAST
+    content-type: application/json
+    #body
+    {"id": 1}
+
+On Artemis, add `destination-type: ANYCAST` (queue) or `MULTICAST` (topic) to
+SEND, and `subscription-type: ANYCAST` to SUBSCRIBE from a queue: an address
+that does not exist yet is created by the first frame, as a topic by default,
+and a message sent to a topic without subscribers is dropped. SEND waits for
+the broker's receipt and returns one row with the sent headers.
+
+SUBSCRIBE consumes: every returned message is acknowledged and removed from a
+queue. It is not a browse. By default it subscribes with
+`ack: client-individual` and `consumer-window-size: 0`, so the broker hands out
+one message at a time and messages beyond Count stay on the broker. `#options`
+accepts Count (messages, 1-1000, default 10), Wait (seconds without a new
+message, 1-600, default 5), Client-Id and Host (virtual host for CONNECT,
+default the URL host), plus Columns-Type and Columns-Size for the result
+columns destination, message-id, headers and body (`Columns-Type: body=json`).
+A durable topic subscription needs Client-Id and a
+`durable-subscription-name:` header. A subscription returns after at most 10
+minutes. Stop ends it and returns the messages already acknowledged with a
+Stopped status. Debug lists the frames exchanged (passcodes masked), without
+MESSAGE and ACK frames, plus the subscription summary.
 
 ## Terminal
 

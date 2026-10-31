@@ -66,6 +66,25 @@ struct DiscoveryStatus {
     params: Value,
     signal: crate::activity::Signal,
 }
+/// A failure with no status of its own. It stays in the top banner, and lights the
+/// toolbar action that caused it, until the user dismisses it.
+struct Notice {
+    text: String,
+    source: Option<(String, Transfer)>,
+}
+impl Notice {
+    fn new(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            source: None,
+        }
+    }
+}
+#[derive(Clone, Copy, PartialEq)]
+enum Transfer {
+    Import,
+    Export,
+}
 #[derive(Clone, Copy, PartialEq)]
 enum ConsolePanel {
     Hints,
@@ -147,6 +166,9 @@ pub enum Msg {
     ToggleSettings,
     SettingsStatus(OperationStatus),
     ModulesChanged,
+    /// A module was removed with its data: drop what this window and the sessions keep for it.
+    ForgetModule(String),
+    ModuleForgotten(Result<(), String>),
     CheckUpdates,
     UpdateSource(u64, Reply),
     UpdateChecked(u64, Result<services_contracts::updates::Release, String>),
@@ -201,7 +223,7 @@ pub enum Msg {
     HintsSaved(String, u64, String, f64, Reply),
     Import,
     Imported(String, Result<String, String>),
-    ClipboardError(String),
+    ClipboardError(String, String),
     Export,
     ExportText(String),
     Stop,
@@ -209,6 +231,7 @@ pub enum Msg {
     AgentActivity(Vec<Activity>),
     ProfileActivity(bool, (crate::activity::Indicator, String)),
     ClearNotice,
+    CloseExport,
 }
 pub struct App {
     sessions: super::sessions::Shared,
@@ -234,7 +257,7 @@ pub struct App {
     transport: Rc<Transport>,
     runs: BTreeMap<String, Run>,
     connection: Option<String>,
-    notice: Option<String>,
+    notice: Option<Notice>,
     vars: Value,
     drag: Option<String>,
     discovery: BTreeMap<String, Value>,
@@ -268,11 +291,16 @@ pub struct App {
     check_target: Option<(String, usize, u64)>,
     check_serial: u64,
     panel_status: BTreeMap<String, OperationStatus>,
+    agent_stop_error: Option<crate::browser::agent_panel::StopError>,
     hints_drafts: BTreeMap<String, String>,
     hints_timers: BTreeMap<String, i32>,
     hints_saving: BTreeSet<String>,
     hints_edited: BTreeMap<String, f64>,
     export_text: Option<String>,
+    /// Sessions still being cleared of removed modules.
+    forgetting: usize,
+    /// Remounts Templates after its drafts of a removed module are deleted.
+    templates_epoch: u64,
 }
 impl Component for App {
     type Message = Msg;
@@ -365,11 +393,14 @@ impl Component for App {
             check_target: None,
             check_serial: 0,
             panel_status: BTreeMap::new(),
+            agent_stop_error: None,
             hints_drafts: snapshot.hints_drafts,
             hints_timers: BTreeMap::new(),
             hints_saving: BTreeSet::new(),
             hints_edited: BTreeMap::new(),
             export_text: None,
+            forgetting: 0,
+            templates_epoch: 0,
         };
         if migrated_console
             || saved["workspaceId"].as_str() != Some(&app.workspace_id)
@@ -405,7 +436,7 @@ impl Component for App {
             if let Err(error) =
                 window().add_event_listener_with_callback(event, callback.as_ref().unchecked_ref())
             {
-                app.notice = Some(super::error(error));
+                app.notice = Some(Notice::new(super::error(error)));
             }
             callback.forget();
         }
@@ -424,6 +455,42 @@ impl Component for App {
                     ctx.link().callback(Msg::Modules),
                 );
                 return false;
+            }
+            Msg::ForgetModule(service) => {
+                self.docs.remove(&service);
+                self.response_regions.remove(&service);
+                self.checks.remove(&service);
+                self.viewports.remove(&service);
+                self.hints.remove(&service);
+                self.hints_drafts.remove(&service);
+                self.hints_edited.remove(&service);
+                if let Some(id) = self.hints_timers.remove(&service) {
+                    window().clear_timeout_with_handle(id);
+                }
+                self.templates.remove(&service);
+                self.console_order.retain(|id| *id != service);
+                self.templates_epoch += 1;
+                self.history_revision = self.history_revision.wrapping_add(1);
+                let drafts = super::templates::forget_drafts(&service);
+                self.forgetting += 1;
+                let sessions = self.sessions.clone();
+                let link = ctx.link().clone();
+                wasm_bindgen_futures::spawn_local(async move {
+                    let result = super::sessions::Store::forget(&sessions, service)
+                        .await
+                        .and(drafts);
+                    link.send_message(Msg::ModuleForgotten(result));
+                });
+            }
+            Msg::ModuleForgotten(result) => {
+                self.forgetting -= 1;
+                if let Err(error) = result {
+                    self.settings_status = Some(OperationStatus::event(
+                        "Remove module data",
+                        js_sys::Date::now(),
+                        Some(&Reply::Error(json!({"error":error}))),
+                    ));
+                }
             }
             Msg::CheckUpdates => {
                 if self.updates.busy() {
@@ -610,19 +677,20 @@ impl Component for App {
                 }
             }
             Msg::CheckMenuWidth(width) => {
-                if let Err(error) = self
+                let result = self
                     .sessions
                     .borrow_mut()
-                    .update(|s| s.layout.check_menu_width = width)
-                {
-                    self.notice = Some(error);
+                    .update(|s| s.layout.check_menu_width = width);
+                if let Err(error) = result {
+                    self.session_error("Layout", error);
                 }
             }
             Msg::PanelWidth(panel, width) => {
-                if let Err(error) = self.sessions.borrow_mut().update(|s| {
+                let result = self.sessions.borrow_mut().update(|s| {
                     s.layout.panel_widths.insert(panel, width);
-                }) {
-                    self.notice = Some(error);
+                });
+                if let Err(error) = result {
+                    self.session_error("Layout", error);
                 }
             }
             Msg::ToggleSessions => {
@@ -758,9 +826,9 @@ impl Component for App {
                         Err(e) => self.client_error(&service, e, block.start),
                     },
                     None => {
-                        self.notice = Some(
-                            "Put the cursor inside a #check block, then press Shift+Enter.".into(),
-                        )
+                        self.notice = Some(Notice::new(
+                            "Put the cursor inside a #check block, then press Shift+Enter.",
+                        ))
                     }
                 }
             }
@@ -797,7 +865,16 @@ impl Component for App {
                 Reply::Result(value) => {
                     self.vars = value.get("context").unwrap_or(&value).clone();
                 }
-                Reply::Error(e) => self.notice = Some(err_text(&e)),
+                // Opening Variables reloads the profile and shows the failure in its status.
+                Reply::Error(e) => {
+                    self.profile_activity.insert(
+                        false,
+                        (
+                            Indicator::Error,
+                            format!("Variables load failed: {}", err_text(&e)),
+                        ),
+                    );
+                }
                 _ => {}
             },
             Msg::Discover => {
@@ -894,7 +971,13 @@ impl Component for App {
                         }
                         self.sync_services(ctx);
                     }
-                    Err(error) => self.notice = Some(format!("Modules: {error}")),
+                    Err(error) => {
+                        self.settings_status = Some(OperationStatus::event(
+                            "Modules",
+                            js_sys::Date::now(),
+                            Some(&Reply::Error(json!({"error":error,"reply":value}))),
+                        ));
+                    }
                 }
             }
             Msg::TemplatesLoaded(reply) => {
@@ -917,7 +1000,8 @@ impl Component for App {
                 };
                 match result {
                     Ok(library) => self.templates = library,
-                    Err(error) => self.notice = Some(format!("Templates: {error}")),
+                    // Opening Templates reloads the library and shows the failure in its status.
+                    Err(_) => self.templates_activity = Indicator::Error,
                 }
             }
             Msg::TemplatesChanged(library) => {
@@ -1304,10 +1388,10 @@ impl Component for App {
                         doc.push_str(&block);
                         self.persist_console();
                     }
-                    Err(e) => self.notice = Some(format!("Import failed: {e}")),
+                    Err(e) => self.transfer_failed(service, Transfer::Import, e),
                 }
             }
-            Msg::ClipboardError(e) => self.notice = Some(e),
+            Msg::ClipboardError(service, e) => self.transfer_failed(service, Transfer::Export, e),
             Msg::Export => {
                 let doc = self
                     .docs
@@ -1327,6 +1411,7 @@ impl Component for App {
                 {
                     Ok(command) => {
                         let link = ctx.link().clone();
+                        let service = self.console_service.clone();
                         wasm_bindgen_futures::spawn_local(async move {
                             if clipboard("writeText", &[command.clone().into()])
                                 .await
@@ -1357,12 +1442,15 @@ impl Component for App {
                                     }
                                 })();
                                 if let Err(e) = fallback {
-                                    link.send_message(Msg::ClipboardError(e));
+                                    link.send_message(Msg::ClipboardError(service, e));
                                 }
                             }
                         });
                     }
-                    Err(e) => self.notice = Some(e),
+                    Err(e) => {
+                        let service = self.console_service.clone();
+                        self.transfer_failed(service, Transfer::Export, e);
+                    }
                 }
             }
             Msg::ExportText(text) => self.export_text = Some(text),
@@ -1379,7 +1467,7 @@ impl Component for App {
                         run.debug["state"] = json!("stopping");
                     }
                     if let Err(error) = self.transport.stop(id) {
-                        self.notice = Some(error);
+                        self.notice = Some(Notice::new(format!("Stop failed: {error}")));
                     }
                 }
             }
@@ -1416,14 +1504,12 @@ impl Component for App {
                         run.stopping = true;
                     }
                     if let Err(error) = self.transport.stop_all() {
-                        self.notice = Some(error);
+                        self.notice = Some(Notice::new(format!("Stop failed: {error}")));
                     }
                 }
             }
-            Msg::ClearNotice => {
-                self.notice = None;
-                self.export_text = None;
-            }
+            Msg::ClearNotice => self.notice = None,
+            Msg::CloseExport => self.export_text = None,
         }
         true
     }
@@ -1432,8 +1518,7 @@ impl Component for App {
             <style>{include_str!("../../assets/console.css")}</style>
             <style>{include_str!("ui.css")}</style>
             <div data-testid="native-status" role="status" hidden={self.connection.is_none()}><button title={self.connection.clone().unwrap_or_default()} onclick={ctx.link().callback(|_|Msg::Retry)}>{"Retry connection"}</button></div>
-            if let Some(message)=&self.notice{<div class="banner banner-error" role="alert">{message}<button onclick={ctx.link().callback(|_|Msg::ClearNotice)}>{"Dismiss"}</button></div>}
-            if let Some(error)=self.sessions.borrow().save_error(){<div class="banner banner-error" role="alert" data-testid="session-storage-error">{error}</div>}
+            if let Some(notice)=&self.notice{<div class="banner banner-error" role="alert" data-testid="app-notice">{&notice.text}<button onclick={ctx.link().callback(|_|Msg::ClearNotice)}>{"Dismiss"}</button></div>}
             if self.updates.busy() {
                 <div class="console-update-overlay" role="status" data-testid="update-progress">
                     <strong>{self.updates.text()}</strong><p>{"Your workspace has been saved. Keep this window open until the update finishes."}</p>
@@ -1565,6 +1650,9 @@ impl App {
         if self.sessions.borrow().saving() {
             reasons.push("session saving".into());
         }
+        if self.forgetting > 0 {
+            reasons.push("removing module data".into());
+        }
         if self.transport.busy() {
             reasons.push(self.transport.busy_reason());
         }
@@ -1607,6 +1695,38 @@ impl App {
         }
         reasons
     }
+    fn transfer_failed(&mut self, service: String, transfer: Transfer, error: String) {
+        let action = match transfer {
+            Transfer::Import => "Import",
+            Transfer::Export => "Export",
+        };
+        self.notice = Some(Notice {
+            text: format!("{action} failed: {error}"),
+            source: Some((service, transfer)),
+        });
+    }
+    fn session_error(&mut self, operation: &str, error: String) {
+        self.session_status = OperationStatus::event(
+            operation,
+            js_sys::Date::now(),
+            Some(&Reply::Error(json!({"error":error}))),
+        );
+    }
+    /// Sessions shows a failed autosave until a later save succeeds.
+    pub(super) fn sessions_status(&self) -> OperationStatus {
+        let store = self.sessions.borrow();
+        let Some(error) = store.save_error() else {
+            return self.session_status.clone();
+        };
+        OperationStatus::event(
+            "Autosave",
+            0.0,
+            Some(&Reply::Error(
+                json!({"error":error,"sessionId":store.library.current,
+                "session":store.library.name()}),
+            )),
+        )
+    }
     fn session_result(&mut self, result: &Result<(), String>) {
         let reply = match result {
             Ok(()) => Reply::Result(json!({})),
@@ -1626,7 +1746,12 @@ impl App {
             .collect();
         for id in ids {
             if let Err(error) = self.transport.stop(id) {
-                self.notice = Some(error);
+                self.agent_stop_error = Some(crate::browser::agent_panel::StopError {
+                    session: session.into(),
+                    error,
+                    stream: id,
+                    started: js_sys::Date::now(),
+                });
             }
         }
     }
@@ -1817,8 +1942,6 @@ impl App {
                     approval,
                     started: false,
                 });
-                self.notice =
-                    Some("Agent is waiting for one-time run approval in the Agent panel.".into());
                 return Ok(());
             }
             _ => return Err(format!("Unknown Console tool: {}", request.tool)),

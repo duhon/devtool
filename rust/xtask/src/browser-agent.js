@@ -1,5 +1,5 @@
 (async () => {
-  const { assert, wait, holds, settle, click, doubleClick, testid, cm, openConsole, setSource, key, assertNativeScrollbars } = testDriver;
+  const { assert, wait, holds, settle, click, doubleClick, testid, cm, openConsole, setSource, key, assertNativeScrollbars, visible } = testDriver;
   await openConsole();
   await click(testid('console-service-rest'));
   await click(testid('console-agent-toggle'));
@@ -162,6 +162,10 @@
   await settle();
   await send('agent run denied');
   await wait(() => document.querySelector('[data-testid="agent-run-approval"]'));
+  const banner = [...document.querySelectorAll('.banner')].find(visible);
+  assert(!banner, `A pending Agent approval must not use the top banner: ${banner?.textContent}`);
+  assert(testid('agent-status').textContent.includes('Awaiting approval'),
+    `A pending Agent approval belongs in the Agent panel status: ${testid('agent-status').textContent}`);
   await holds(async () => await count() === initialCount, 'Agent must never execute before approval', 100);
   const sentBeforeBusyShortcut = testid('agent-transcript').querySelectorAll('.agent-message-user').length;
   input('Keep this draft while running');

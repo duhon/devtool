@@ -1,5 +1,20 @@
 # Release notes
 
+## 3.0.3
+
+- New STOMP service for Apache ActiveMQ Artemis (STOMP 1.0–1.2 over TCP or TLS). A check uses
+  `SEND|SUBSCRIBE stomp://host:61613/destination` with frame headers, options (Count, Wait,
+  Client-Id, Host, Columns) and a body for SEND. SEND waits for the broker's receipt.
+  SUBSCRIBE consumes and acknowledges each returned message; messages beyond Count stay in the
+  queue. Stop returns the messages already received; Debug lists the frames with the passcode
+  hidden.
+- Errors with an owner show in its status and Debug and light its check, tab or button until
+  seen: Agent approvals and stop failures in the Agent panel, failed session saves in Sessions.
+  The top banner is kept for errors without a status (Import, Export, Stop) and stays until
+  Dismiss; a failed Import or Export also lights that service's button.
+- Removing a module in Settings can also delete its data in every session (consoles, checks,
+  responses, history, templates, hints and Templates drafts). By default the data is kept.
+
 ## 3.0.2
 
 - Sessions no longer stay blocked as busy after the last native request finishes; the Sessions

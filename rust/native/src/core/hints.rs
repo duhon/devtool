@@ -58,6 +58,21 @@ impl Hints {
         } else {
             sections.push((service.into(), text.into()));
         }
+        self.write(sections)?;
+        Ok(json!({"text":text}))
+    }
+    /// Deletes the saved hints of `service`; it gets its manifest hints again.
+    pub fn forget(&self, service: &str) -> Result<()> {
+        let _lock = self.lock.lock().unwrap();
+        let mut sections = self.sections();
+        let before = sections.len();
+        sections.retain(|(s, _)| s != service);
+        if sections.len() != before {
+            self.write(sections)?;
+        }
+        Ok(())
+    }
+    fn write(&self, sections: Vec<(String, String)>) -> Result<()> {
         let mut output = String::new();
         for (name, text) in sections {
             output.push_str(&format!("## {name}\n{text}"));
@@ -69,6 +84,6 @@ impl Hints {
             std::fs::create_dir_all(parent)?;
         }
         std::fs::write(&self.path, output)?;
-        Ok(json!({"text":text}))
+        Ok(())
     }
 }
