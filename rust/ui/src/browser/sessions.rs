@@ -347,7 +347,7 @@ impl Component for Host {
         }
         let mut this = Self {
             store: None,
-            transport: Transport::new(Callback::noop()),
+            transport: Transport::new(Callback::noop(), Callback::noop()),
             error: None,
             active: 0,
             epoch: 0,

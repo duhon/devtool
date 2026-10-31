@@ -14,7 +14,7 @@
   };
   const sessionPanel=async()=>{
     await open('sessions');
-    await wait(()=>testid('console-sessions').dataset.busy==='false');
+    await testDriver.sessionsIdle();
   };
   const copy=async(id,name)=>{
     await sessionPanel();
@@ -58,13 +58,13 @@
   migrationUrl.searchParams.set('test-session-write-failure','1');
   migrationFrame.src=migrationUrl.href;
   document.body.append(migrationFrame);
-  await wait(()=>migrationFrame.contentDocument?.body.textContent.includes('Fixture session storage write failed'),
+  await wait(()=>migrationFrame.contentDocument?.body?.textContent.includes('Fixture session storage write failed'),
     ()=>`Failed IndexedDB migration must be reported: ${JSON.stringify({
       url:migrationFrame.contentWindow?.location.href,
       ready:migrationFrame.contentDocument?.readyState,
       injected:!!migrationFrame.contentWindow?.testDriver,
       failWrites:migrationFrame.contentWindow?.__testFailSessionWrites,
-      body:migrationFrame.contentDocument?.body.innerText.slice(0,2000),
+      body:migrationFrame.contentDocument?.body?.innerText.slice(0,2000),
       legacyPresent:localStorage.getItem('servicesConsole.sessions.v1')!==null,
     })}`);
   assert(localStorage.getItem('servicesConsole.sessions.v1')===legacyRaw,
@@ -210,7 +210,15 @@
     'Conflicting changes from another window must be reported explicitly');
   assert((await library()).sessions.find(session=>session.id===a).snapshot.hints.rest.includes('other-window.invalid'),
     'Conflicting writes must not overwrite another window’s saved hints');
+  // A reply that changes nothing must still clear the guard: the recreated application's module
+  // list request finishes without other state changes, which left data-busy stale on slow hosts.
+  testDriver.nativeHold.match=message=>message.service==='modules'&&!message.op;
   await activateSession(0);
+  await open('sessions');
+  await wait(()=>/^native in flight 1, background 0 \[modules [\d.]+s\]$/.test(testid('console-sessions').dataset.busyReason),
+    ()=>`Sessions must stay busy only while the recreated application loads its module list: ${testid('console-sessions').dataset.busyReason}`);
+  testDriver.nativeHold.release();
+  await testDriver.sessionsIdle();
   await activateSession(a);
   await open('hints');
   assert(cm('console-hints').getValue().includes('other-window.invalid'),'Explicitly switching back must load the saved winner');
@@ -225,7 +233,7 @@
   assert(current()===b,'Switching must be rejected while any service request is running');
   assert(testid('console-main-status').classList.contains('is-running'),'Rejected switching must not cancel work implicitly');
   await click(testid('console-stop'));
-  await wait(()=>testid('console-sessions').dataset.busy==='false');
+  await testDriver.sessionsIdle();
   await activateSession(a);
   await sessionPanel();
   await click(testid(`session-delete-${b}`));

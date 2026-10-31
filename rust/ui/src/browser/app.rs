@@ -175,6 +175,8 @@ pub enum Msg {
     ConsoleRun(String, usize),
     Reply(String, String, Reply),
     Connection(Option<String>),
+    /// Native requests started or finished; the Sessions guard must be re-rendered.
+    TransportBusy,
     Retry,
     Vars(Reply),
     Discover,
@@ -279,7 +281,10 @@ impl Component for App {
         super::editor::set_workspace(ctx.props().session_id);
         let sessions = ctx.props().sessions.clone();
         let snapshot = sessions.borrow().library.snapshot().clone();
-        let transport = Transport::new(ctx.link().callback(Msg::Connection));
+        let transport = Transport::new(
+            ctx.link().callback(Msg::Connection),
+            ctx.link().callback(|_| Msg::TransportBusy),
+        );
         transport.bind_session(sessions.clone());
         let saved = snapshot.console;
         let console_service = saved["service"]
@@ -779,6 +784,7 @@ impl Component for App {
                 }
             }
             Msg::Connection(message) => self.connection = message,
+            Msg::TransportBusy => {}
             Msg::Retry => {
                 if self.transport.is_native() {
                     self.transport.connect();
@@ -1540,29 +1546,66 @@ impl App {
     }
 
     fn session_guard(&self) -> Result<(), String> {
-        if self.session_loading
-            || self.updates.busy()
-            || self.sessions.borrow().saving()
-            || self.transport.busy()
-            || self.runs.values().any(|r| r.running)
-            || !self.discovering.is_empty()
-            || self.agent_run.is_some()
-            || self.agent_edit.is_some()
-            || self
-                .agent_activity
-                .iter()
-                .any(|a| a.state == crate::activity::Indicator::Running)
-            || self
-                .profile_activity
-                .values()
-                .any(|(state, _)| *state == crate::activity::Indicator::Running)
-            || !self.hints_timers.is_empty()
-            || !self.hints_saving.is_empty()
-        {
-            Err("Stop active requests and wait for the Agent and pending saves to finish".into())
-        } else {
+        if self.busy_reasons().is_empty() {
             Ok(())
+        } else {
+            Err("Stop active requests and wait for the Agent and pending saves to finish".into())
         }
+    }
+    /// What keeps sessions busy; shown on the Sessions panel for diagnostics.
+    fn busy_reasons(&self) -> Vec<String> {
+        let running = Indicator::Running;
+        let mut reasons = Vec::new();
+        if self.session_loading {
+            reasons.push("session loading".into());
+        }
+        if self.updates.busy() {
+            reasons.push("update in progress".into());
+        }
+        if self.sessions.borrow().saving() {
+            reasons.push("session saving".into());
+        }
+        if self.transport.busy() {
+            reasons.push(self.transport.busy_reason());
+        }
+        for (service, run) in &self.runs {
+            if run.running {
+                reasons.push(format!("run {service}"));
+            }
+        }
+        if !self.discovering.is_empty() {
+            reasons.push(format!("discovering {:?}", self.discovering));
+        }
+        if self.agent_run.is_some() {
+            reasons.push("agent run".into());
+        }
+        if self.agent_edit.is_some() {
+            reasons.push("agent edit".into());
+        }
+        for activity in &self.agent_activity {
+            if activity.state == running {
+                reasons.push(format!("agent {}", activity.session));
+            }
+        }
+        for (dictionary, (state, _)) in &self.profile_activity {
+            if *state == running {
+                reasons.push(
+                    if *dictionary {
+                        "dictionary"
+                    } else {
+                        "variables"
+                    }
+                    .into(),
+                );
+            }
+        }
+        if !self.hints_timers.is_empty() {
+            reasons.push(format!("hints pending {:?}", self.hints_timers.keys()));
+        }
+        if !self.hints_saving.is_empty() {
+            reasons.push(format!("hints saving {:?}", self.hints_saving));
+        }
+        reasons
     }
     fn session_result(&mut self, result: &Result<(), String>) {
         let reply = match result {
@@ -1862,7 +1905,8 @@ impl App {
         let library = &store.library;
         let rows = std::iter::once((0, "Temporary"))
             .chain(library.sessions.iter().map(|s| (s.id, s.name.as_str())));
-        html! {<section class="console-sessions" data-testid="console-sessions" data-busy={self.session_guard().is_err().to_string()}>
+        let reasons = self.busy_reasons();
+        html! {<section class="console-sessions" data-testid="console-sessions" data-busy={(!reasons.is_empty()).to_string()} data-busy-reason={reasons.join("; ")}>
              <p role="status" data-testid="session-storage-status">{if store.saving(){"Saving…"}else if store.save_error().is_some(){"Not saved"}else{"Saved"}}</p>
             if let Some(error)=&store.error {<p role="alert">{format!("Original workspace import is pending: {error}")}<button onclick={ctx.link().callback(|_|Msg::Retry)}>{"Retry import"}</button></p>}
             <label>{"New session name"}<input data-testid="session-new-name" value={self.session_name.clone()}

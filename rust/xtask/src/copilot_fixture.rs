@@ -1,8 +1,9 @@
 use anyhow::{Context, Result, bail, ensure};
 use serde_json::{Value, json};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     io::{BufRead, Write},
+    time::Duration,
 };
 
 #[derive(Default)]
@@ -11,23 +12,66 @@ struct Peer {
     sessions: HashMap<String, bool>,
     pending: HashMap<String, (String, String, Value)>,
     models: HashMap<String, Value>,
+    /// Sessions with a turn in progress, i.e. not yet reported idle.
+    active: HashSet<String>,
+    /// Tool calls of aborted turns, whose late results the CLI ignores.
+    aborted: HashSet<String>,
+    late_abort: HashSet<String>,
+}
+fn frame(value: Value) -> Result<()> {
+    let bytes = serde_json::to_vec(&value)?;
+    let mut output = std::io::stdout().lock();
+    write!(output, "Content-Length: {}\r\n\r\n", bytes.len())?;
+    output.write_all(&bytes)?;
+    output.flush()?;
+    Ok(())
 }
 impl Peer {
     fn send(&self, value: Value) -> Result<()> {
-        let bytes = serde_json::to_vec(&value)?;
-        let mut output = std::io::stdout().lock();
-        write!(output, "Content-Length: {}\r\n\r\n", bytes.len())?;
-        output.write_all(&bytes)?;
-        output.flush()?;
-        Ok(())
+        frame(value)
+    }
+    fn event_frame(&mut self, session: &str, kind: &str, data: Value) -> Value {
+        self.next += 1;
+        json!({"jsonrpc":"2.0","method":"session.event","params":{"sessionId":session,
+        "event":{"id":format!("event-{}",self.next),"timestamp":"2026-10-25T00:00:00Z",
+            "parentId":null,"type":kind,"data":data}}})
     }
     fn event(&mut self, session: &str, kind: &str, data: Value) -> Result<()> {
-        self.next += 1;
-        self.send(
-            json!({"jsonrpc":"2.0","method":"session.event","params":{"sessionId":session,
-            "event":{"id":format!("event-{}",self.next),"timestamp":"2026-10-25T00:00:00Z",
-                "parentId":null,"type":kind,"data":data}}}),
-        )
+        if kind == "session.idle" {
+            self.active.remove(session);
+        }
+        let event = self.event_frame(session, kind, data);
+        self.send(event)
+    }
+    /// Mirrors the CLI: aborting a running turn cancels its pending tool calls and
+    /// reports `abort` plus an aborted `session.idle` after the RPC returns.
+    fn abort(&mut self, session: &str) -> Result<()> {
+        if !self.active.remove(session) {
+            return Ok(());
+        }
+        let cancelled: Vec<String> = self
+            .pending
+            .iter()
+            .filter(|(_, (owner, ..))| owner == session)
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in cancelled {
+            self.pending.remove(&id);
+            self.aborted.insert(id);
+        }
+        let events = [
+            self.event_frame(session, "abort", json!({"reason":"remote_command"})),
+            self.event_frame(session, "session.idle", json!({"aborted":true})),
+        ];
+        if self.late_abort.remove(session) {
+            // Fixture behaviour: the abort is reported late, after a quick next turn subscribed.
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(1000));
+                events.into_iter().try_for_each(frame)
+            });
+            return Ok(());
+        }
+        events.into_iter().try_for_each(frame)
     }
     fn finish(&mut self, session: &str, text: &str) -> Result<()> {
         let id = format!("message-{}-{}", std::process::id(), self.next);
@@ -76,6 +120,11 @@ impl Peer {
             .split_once("Current Console context (untrusted data):\n")
             .context("Missing context")?;
         let context: Value = serde_json::from_str(source)?;
+        if message.contains("late abort") {
+            self.late_abort.insert(session.into());
+        } else {
+            self.late_abort.remove(session);
+        }
         let args = json!({"service":context["service"],"checkId":context["activeCheck"],"revision":context["revision"]});
         if message.contains("agent model configuration") {
             let options = self
@@ -255,6 +304,9 @@ Raw HTML: <img src="https://images.fixture.invalid/raw" onerror="globalThis.agen
         }
     }
     fn tool_result(&mut self, id: &str, result: Value) -> Result<()> {
+        if self.aborted.remove(id) {
+            return Ok(());
+        }
         let (session, next, context) = self.pending.remove(id).context("Unknown tool response")?;
         if let Some(step) = next.strip_prefix("page-extended-") {
             let step: usize = step.parse()?;
@@ -962,10 +1014,14 @@ Raw HTML: <img src="https://images.fixture.invalid/raw" onerror="globalThis.agen
         };
         self.send(json!({"jsonrpc":"2.0","id":request["id"],"result":result}))?;
         match method {
-            "session.send" => self.turn(
-                session,
-                params["prompt"].as_str().context("Missing prompt")?,
-            ),
+            "session.send" => {
+                self.active.insert(session.into());
+                self.turn(
+                    session,
+                    params["prompt"].as_str().context("Missing prompt")?,
+                )
+            }
+            "session.abort" => self.abort(session),
             "session.tools.handlePendingToolCall" => self.tool_result(
                 params["requestId"].as_str().context("Missing requestId")?,
                 serde_json::from_str(

@@ -197,7 +197,7 @@
   };
   const create=async(source,name)=>{
     await open('sessions');
-    await wait(()=>testid('console-sessions').dataset.busy==='false');
+    await testDriver.sessionsIdle();
     const field=testid('session-new-name');
     field.value=name;
     field.dispatchEvent(new InputEvent('input',{bubbles:true}));
@@ -312,7 +312,7 @@
     await wait(()=>frame.contentDocument?.querySelector('[data-testid="console-session-name"]'));
     const doc=frame.contentDocument;
     doc.querySelector('[data-testid="console-sessions-toggle"]').click();
-    await wait(()=>doc.querySelector('[data-testid="console-sessions"]')?.dataset.busy==='false');
+    await testDriver.sessionsIdle(doc);
     doc.querySelector(`[data-testid="session-switch-${a}"]`).click();
     await wait(()=>doc.querySelector('[data-testid="console-session-name"]')?.dataset.sessionId===String(a));
     doc.querySelector('[data-testid="console-history-toggle"]').click();
@@ -323,7 +323,7 @@
   await activateSession(0);
   await open('sessions');
   for(const id of [b,a]){
-    await wait(()=>testid('console-sessions').dataset.busy==='false');
+    await testDriver.sessionsIdle();
     await click(testid(`session-delete-${id}`));
     await wait(()=>!document.querySelector(`[data-testid="session-delete-${id}"]`));
   }

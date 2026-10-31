@@ -1,7 +1,7 @@
 // Shared Console checks reused by several scenarios; loaded after browser-driver.js on every page.
 (() => {
   const { assert, sleep, wait, waitFor, settle, visible, find, testid, cm, key, move, input, click, button,
-    openConsole, activateSession, setSource, assertNativeScrollbars, nativeTrackPaint, sessionLibrary } = testDriver;
+    openConsole, activateSession, setSource, assertNativeScrollbars, nativeTrackPaint, sessionLibrary, nativeHold, holds } = testDriver;
   // Waits for Chrome's overlay scrollbar to fade on its own instead of sleeping past the fade delay.
   const trackFaded = async (element, axes, message) => {
     let last = {};
@@ -558,6 +558,14 @@
     const toolStatus = () => [...document.querySelectorAll('.console-right-status .console-status')].find(visible);
     const mainStatusText = () => testid('console-main-status').textContent;
     const profileToolLight = tool => testid(`console-${tool}-toggle`).querySelector('.console-state-light')?.dataset.state;
+    // Diagnostic snapshot of the profile tools for timeouts on slow hosts.
+    const profileState = () => JSON.stringify({
+      lights: {variables: profileToolLight('variables'), dictionary: profileToolLight('dictionary')},
+      status: toolStatus()?.textContent,
+      tab: document.querySelector('.console-panel-tabs [role="tab"].active .tab-label')?.textContent,
+      editors: document.querySelectorAll('[data-testid="console-dictionary-editor"]').length,
+      text: document.querySelector('[data-testid="console-dictionary"]') && cm('console-dictionary').getValue().slice(-160),
+    });
     await wait(() => Math.abs(panel.closest('.console-right-pane').getBoundingClientRect().width
       - workspace.clientWidth / 2) < 1);
     assert(JSON.stringify(assertStatusBounds()) === JSON.stringify(closedStatusBounds),
@@ -668,6 +676,8 @@
     await wait(() => toolStatus().textContent.includes('Variables save · OK')
       && profileToolLight('variables') === 'ready',
       'Fixing var must clear its aggregate error without leaving a stale error on env');
+    // Showing Dictionary reloads its profiles; that reply must not bypass the autosave debounce.
+    nativeHold.match = message => message.service === 'dictionary' && message.op === 'list';
     await click(testid('console-dictionary-toggle'));
     await wait(() => visible(document.querySelector('[data-testid="console-dictionary-editor"]')));
     assertStatusBounds();
@@ -679,7 +689,10 @@
     assertSignalGeometry();
     cm('console-dictionary').setValue(`${originalDictionary}\nDICTIONARY_PANEL_FIXTURE: shared`);
     await wait(() => profileToolLight('dictionary') === 'running',
-      'Dictionary must expose its pending autosave independently of Variables');
+      () => `Dictionary must expose its pending autosave independently of Variables: ${profileState()}`);
+    nativeHold.release();
+    await holds(() => profileToolLight('dictionary') === 'running',
+      () => `A Dictionary load reply must not save the edited draft before its debounce: ${profileState()}`, 300);
     await wait(() => toolStatus().textContent.includes('Dictionary save · OK')
       && profileToolLight('dictionary') === 'ready');
     await click(testid('console-dictionary-toggle'));
@@ -693,7 +706,8 @@
     await click(button(/^var$/, find('.console-panel-tabs')));
     assert(cm('console-variables').getValue() === originalVars,
       'Dictionary edits and drafts must not alter var');
-    await wait(() => profileToolLight('dictionary') === 'error');
+    await wait(() => profileToolLight('dictionary') === 'error',
+      () => `A hidden invalid Dictionary draft must light its tool as error: ${profileState()}`);
     assert(profileToolLight('dictionary') === 'error' && profileToolLight('variables') === 'ready',
       'A hidden Dictionary error must remain visible without contaminating the Variables indicator');
     await click(testid('console-dictionary-toggle'));

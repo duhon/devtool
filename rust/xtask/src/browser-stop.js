@@ -388,6 +388,18 @@
     `Resizing either Debug must keep the other column and Agent reading position unchanged: ${JSON.stringify({bothOpen,leftResized,rightResized})}`);
   assert(near(bottomOpen.rightScroll,bottomClosed.rightScroll)&&near(bottomOpen.pageScroll,bottomClosed.pageScroll),
     `Opening Debug must not automatically scroll even when Agent history was at the bottom: ${JSON.stringify({bottomClosed,bottomOpen})}`);
+  // Copilot confirms an abort asynchronously (the fixture delays it by 1 s here). Stop must consume
+  // that idle, or it would end the next turn of the same chat.
+  await send('agent hold late abort');
+  await wait(() => agentDebugText().includes('Fixture is holding'));
+  await click(testid('agent-stop'));
+  await wait(() => testid('agent-stop').disabled);
+  await send('agent hold after late abort');
+  await wait(() => !testid('agent-stop').disabled);
+  await holds(() => !testid('agent-stop').disabled,
+    'A late idle from the stopped turn ended the next turn of the same chat', 1500);
+  await click(testid('agent-stop'));
+  await wait(() => testid('agent-stop').disabled);
   await send('agent hold hidden first');
   await wait(() => agentStatus().classList.contains('is-running'));
   await click(testid('agent-new-session'));

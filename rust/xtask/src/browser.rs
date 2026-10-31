@@ -585,7 +585,7 @@ async fn installed_reload(
         || document.querySelector('[data-testid="console-editor"]')?.nextElementSibling?.CodeMirror);
       cm('console-editor').setValue('#check update persistence\n');
       if(testid('console-sessions-toggle').getAttribute('aria-pressed')!=='true') await click(testid('console-sessions-toggle'));
-      await wait(()=>testid('console-sessions').dataset.busy==='false');
+      await testDriver.sessionsIdle();
       await click(testid('console-settings-toggle'));
       await wait(()=>!testid('settings-update-status').textContent.includes('Checking'));
       await click(testid('settings-update-check'));

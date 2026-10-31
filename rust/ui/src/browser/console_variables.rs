@@ -302,6 +302,7 @@ impl Component for ConsoleVariables {
                 let Some(operation) = self.active.take() else {
                     return false;
                 };
+                let debounced = self.timer.is_some().then(|| self.profile.clone());
                 if let Reply::Result(value) = &reply {
                     self.vars = value.clone();
                     match operation.request["op"].as_str() {
@@ -363,6 +364,10 @@ impl Component for ConsoleVariables {
                         .emit(value.get("context").unwrap_or(value).clone());
                     if operation.request["op"] == "list" {
                         for (name, text) in self.drafts.clone() {
+                            // The autosave timer saves the draft being edited after its debounce.
+                            if debounced.as_deref() == Some(name.as_str()) && name == self.profile {
+                                continue;
+                            }
                             if let Ok(variables) = profiles::parse_checked(&text) {
                                 self.enqueue(
                                     ctx,

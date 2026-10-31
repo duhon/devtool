@@ -2,8 +2,11 @@ use crate::{Error, Result};
 use async_trait::async_trait;
 use github_copilot_sdk::{
     CliProgram, Client, ClientMode, ClientOptions, MessageOptions, ResumeSessionConfig,
-    SessionConfig, SessionId, SystemMessageConfig, Tool, ToolResult, ToolSet, session::Session,
-    tool::ToolHandler, types::ToolInvocation,
+    SessionConfig, SessionId, SystemMessageConfig, Tool, ToolResult, ToolSet,
+    session::Session,
+    subscription::{EventSubscription, RecvErrorKind},
+    tool::ToolHandler,
+    types::ToolInvocation,
 };
 use regex::Regex;
 use serde_json::{Value, json};
@@ -294,7 +297,8 @@ impl Agent {
         };
         *entry.bridge.lock().await = Some(bridge.clone());
         let mut _lease = None;
-        let result = {
+        let mut turn_events = None;
+        let mut result = {
             let work = async {
                 let client = self.client().await?;
                 let directory = self.root.join("sessions").join(session_id);
@@ -373,7 +377,6 @@ impl Agent {
                     entry.session = Some(session);
                 }
                 let session = entry.session.as_ref().expect("created session");
-                let mut subscription = session.subscribe();
                 let initial = bridge.call(
                     "initial-context",
                     "console_context",
@@ -397,6 +400,7 @@ impl Agent {
                     bridge.redactor.text(prompt),
                     context
                 );
+                let subscription = turn_events.insert(session.subscribe());
                 session
                     .send(MessageOptions::new(text))
                     .await
@@ -457,6 +461,15 @@ impl Agent {
                     error.message
                 )));
             }
+            if !self.cancel.is_cancelled()
+                && let Some(events) = turn_events.as_mut()
+                && !settle(events).await
+                && let Ok(value) = result.as_mut()
+            {
+                value["warning"] = json!(
+                    "Copilot did not confirm the stop within 2 s; a late reply may still reach the next turn of this chat."
+                );
+            }
         }
         if let Some(session) = entry.session.take() {
             let detached = tokio::time::timeout(Duration::from_secs(2), session.disconnect())
@@ -473,6 +486,24 @@ impl Agent {
         }
         result
     }
+}
+
+/// Consumes the aborted turn's remaining events up to its `session.idle`. Copilot
+/// reports the abort asynchronously; left unread, a late idle would end the next
+/// turn of the same session as soon as it subscribes.
+async fn settle(events: &mut EventSubscription) -> bool {
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            match events.recv().await {
+                Ok(event) if event.event_type == "session.idle" => return true,
+                Ok(_) => {}
+                Err(error) if matches!(error.kind(), RecvErrorKind::Lagged(_)) => {}
+                Err(_) => return false,
+            }
+        }
+    })
+    .await
+    .unwrap_or(false)
 }
 
 fn session_instructions() -> String {

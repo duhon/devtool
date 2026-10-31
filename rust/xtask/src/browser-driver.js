@@ -13,19 +13,32 @@
   const assert = (value, message) => { if (!value) throw new Error(typeof message === 'function' ? message() : message); };
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
   globalThis.updateFixture = {release:null,error:null,requests:[],installs:[],branch:'devtool'};
+  // Holds native replies to requests matching `match` until `release()`, e.g. to keep a request in flight.
+  const nativeHold = {match:null, ports:new Set(),
+    release() { this.match = null; this.ports.forEach(release => release()); }};
   const connectNative = globalThis.chrome?.runtime?.connectNative?.bind(chrome.runtime);
   if (connectNative) chrome.runtime.connectNative = (...args) => {
     const port = connectNative(...args);
     const listeners = new Set();
+    const wrapped = new Map();
+    const held = new Set();
+    const queue = [];
+    nativeHold.ports.add(() => {
+      held.clear();
+      queue.splice(0).forEach(([listener, message]) => listener(message));
+    });
     const addListener = port.onMessage.addListener.bind(port.onMessage);
     const removeListener = port.onMessage.removeListener.bind(port.onMessage);
     port.onMessage.addListener = listener => {
       listeners.add(listener);
-      addListener(listener);
+      const hold = message => held.has(message?.id) ? queue.push([listener, message]) : listener(message);
+      wrapped.set(listener, hold);
+      addListener(hold);
     };
     port.onMessage.removeListener = listener => {
       listeners.delete(listener);
-      removeListener(listener);
+      removeListener(wrapped.get(listener) ?? listener);
+      wrapped.delete(listener);
     };
     port.onMessage.addListener(message => {
       if (message.ok && message.result?.currentVersion && message.result?.branch)
@@ -47,6 +60,7 @@
         if (updateFixture.archive)
           message = {...message, archivePath:updateFixture.archive};
       }
+      if (nativeHold.match?.(message)) held.add(message.id);
       return send(message);
     };
     return port;
@@ -248,13 +262,26 @@
     assert(element, `Button not found: ${text}`);
     return element;
   };
+  // Waits until the Sessions panel allows switching. On timeout it reports what kept it busy and
+  // what remains after a forced App render, which tells a stale attribute from a real busy state.
+  const sessionsIdle = async (root = document) => {
+    const panel = () => root.querySelector('[data-testid="console-sessions"]')?.dataset ?? {};
+    try {
+      await wait(() => panel().busy === 'false',
+        () => `Sessions must become idle; busy because: ${panel().busyReason}`);
+    } catch (error) {
+      root.querySelector('[data-testid="session-new-name"]')?.dispatchEvent(new Event('input', { bubbles: true }));
+      await settle();
+      throw new Error(`${error.message}; after a forced render busy=${panel().busy}: ${panel().busyReason}`);
+    }
+  };
   const activateSession = async (id, root = document) => {
     await wait(() => visible(root.querySelector('[data-testid="console-session-name"]')),
       'Console session controls must finish asynchronous startup');
     if (testid('console-session-name',root).dataset.sessionId === String(id)) return;
     const toggle=testid('console-sessions-toggle',root);
     if(toggle.getAttribute('aria-pressed')!=='true') await click(toggle);
-    await wait(()=>testid('console-sessions',root).dataset.busy==='false');
+    await sessionsIdle(root);
     await click(testid(`session-switch-${id}`,root));
     await wait(()=>testid('console-session-name',root).dataset.sessionId===String(id));
   };
@@ -309,8 +336,8 @@
     assert(editor.lineCount() === lines + 1, `${expected}: Enter must insert a line`);
   };
   globalThis.testDriver = { assert, sleep, wait, waitFor, during, holds, settle, stable, frames, visible, find, testid, cm, key, type, move, input,
-    click, doubleClick, button, openConsole, activateSession, setSource, commitRestUrl, candidates, suggest, pick, pickThenEnter,
-    assertNativeScrollbars, nativeTrackPaint, sessionLibrary, clearSessions: () => sessionRecord('delete') };
+    click, doubleClick, button, openConsole, activateSession, sessionsIdle, setSource, commitRestUrl, candidates, suggest, pick, pickThenEnter,
+    assertNativeScrollbars, nativeTrackPaint, sessionLibrary, nativeHold, clearSessions: () => sessionRecord('delete') };
   globalThis.testNativeHealth = () => new Promise(resolve => {
     const port = chrome.runtime.connectNative('com.chrome_extentions.host');
     const timer = setTimeout(() => { port.disconnect(); resolve({ ok: false, error: 'timeout' }); }, 10000);

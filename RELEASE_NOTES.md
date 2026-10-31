@@ -1,5 +1,16 @@
 # Release notes
 
+## 3.0.2
+
+- Sessions no longer stay blocked as busy after the last native request finishes; the Sessions
+  panel re-renders as soon as the transport becomes idle.
+- Stopping an Agent turn waits for Copilot to confirm the stop, so a late reply of the stopped
+  turn can no longer end the next turn of the same chat. If the confirmation does not arrive
+  within 2 seconds, the result carries a warning.
+- Dictionary and Variables always save an edit 600 ms after the last keystroke. Reopening the
+  panel no longer saves the draft being typed as soon as the profiles reload, so a validation
+  error that arrives after you switch away lights the tool button.
+
 ## 3.0.1
 
 - Settings no longer hides an unseen warning or error, such as a failed background update

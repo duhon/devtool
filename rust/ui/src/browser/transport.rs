@@ -22,6 +22,8 @@ struct Pending {
     trace: Vec<Value>,
     stream: bool,
     chunks: ResponseAssembler,
+    label: String,
+    started: f64,
 }
 pub struct Transport {
     session: RefCell<Option<super::sessions::Shared>>,
@@ -32,6 +34,7 @@ pub struct Transport {
     pending: RefCell<BTreeMap<u32, Pending>>,
     disconnected: RefCell<Option<String>>,
     status: Callback<Option<String>>,
+    onbusy: Callback<bool>,
     native: bool,
     generation: Cell<u32>,
 }
@@ -43,6 +46,29 @@ impl Transport {
         // Background reads such as the Copilot model catalog are triggered by opening UI chrome,
         // not by user work, and must not block session changes or updates.
         self.in_flight.get() > self.background.get()
+    }
+    /// Reports a `busy()` change: replies to other components' requests do not re-render the owner.
+    fn notify_busy(&self, was_busy: bool) {
+        let busy = self.busy();
+        if busy != was_busy {
+            self.onbusy.emit(busy);
+        }
+    }
+    /// Why `busy()` holds: the request counters and the native requests still waiting.
+    pub fn busy_reason(&self) -> String {
+        let now = js_sys::Date::now();
+        let waiting = self
+            .pending
+            .borrow()
+            .values()
+            .map(|p| format!("{} {:.1}s", p.label, (now - p.started) / 1000.0))
+            .collect::<Vec<_>>();
+        format!(
+            "native in flight {}, background {} [{}]",
+            self.in_flight.get(),
+            self.background.get(),
+            waiting.join(", ")
+        )
     }
     pub fn variable_drafts(&self) -> BTreeMap<String, String> {
         self.session
@@ -64,7 +90,7 @@ impl Transport {
     pub fn is_native(&self) -> bool {
         self.native
     }
-    pub fn new(status: Callback<Option<String>>) -> Rc<Self> {
+    pub fn new(status: Callback<Option<String>>, onbusy: Callback<bool>) -> Rc<Self> {
         let chrome = get(&js_sys::global(), "chrome");
         let runtime = get(&chrome, "runtime");
         let native = get(&runtime, "connectNative").is_function();
@@ -77,6 +103,7 @@ impl Transport {
             pending: RefCell::new(BTreeMap::new()),
             disconnected: RefCell::new(None),
             status,
+            onbusy,
             native,
             generation: Cell::new(0),
         });
@@ -303,21 +330,25 @@ impl Transport {
                 message["params"]["__consoleVariables"] = variables;
             }
         }
+        let was_busy = self.busy();
         self.in_flight.set(self.in_flight.get() + 1);
         let is_background = message["service"] == "agent_models";
         if is_background {
             self.background.set(self.background.get() + 1);
         }
+        self.notify_busy(was_busy);
         let weak = Rc::downgrade(self);
         let save_variables = message["service"] == "vars" && message["op"] == "save";
         let completed = Cell::new(false);
         let callback = Callback::from(move |mut reply: Reply| {
             if let Some(this) = weak.upgrade() {
                 if !matches!(reply, Reply::Data(_)) && !completed.replace(true) {
+                    let was_busy = this.busy();
                     this.in_flight.set(this.in_flight.get().saturating_sub(1));
                     if is_background {
                         this.background.set(this.background.get().saturating_sub(1));
                     }
+                    this.notify_busy(was_busy);
                 }
                 if save_variables
                     && let Reply::Result(value) = &reply
@@ -357,6 +388,12 @@ impl Transport {
                     ]},
                     stream,
                     chunks: ResponseAssembler::default(),
+                    label: [&message["service"], &message["op"], &message["module"]]
+                        .iter()
+                        .filter_map(|part| part.as_str())
+                        .collect::<Vec<_>>()
+                        .join("/"),
+                    started: js_sys::Date::now(),
                 },
             );
             let result = self
