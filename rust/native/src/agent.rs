@@ -140,7 +140,17 @@ impl Bridge {
                 reply = tokio::time::timeout(Duration::from_secs(600), rx) => {
                     let value = reply.map_err(|_| Error::new("Console tool timed out"))?
                         .map_err(|_| Error::new("Console tool connection closed"))?;
-                    Ok(if tool == "page_inspect" { value } else { self.redactor.value(value) })
+                    Ok(match tool {
+                        "page_inspect" => value,
+                        "console_read_debug" => {
+                            let mut value = self.redactor.value(value);
+                            if let Some(debug) = value.get_mut("debug") {
+                                *debug = clip_debug(debug.take());
+                            }
+                            value
+                        }
+                        _ => self.redactor.value(value),
+                    })
                 }
             }
         }
@@ -636,6 +646,7 @@ fn workspace_tools(bridge: Arc<Mutex<Option<Bridge>>>) -> Vec<Tool> {
         ("console_context", "Read fresh service, active check, check IDs/revisions and available variables."),
         ("console_read_check", "Read a request page. Requires service and checkId; optional offset/limit."),
         ("console_read_response", "Read a bounded response page. Requires service, checkId; optional offset and limit."),
+        ("console_read_debug", "Read a check's current status and Debug: the error, exit code, stderr, timing and request/connection details the user sees. Requires service, checkId. Long values are clipped; read output with console_read_response."),
         ("console_schema", "Read a bounded page of the cached discovery schema. Requires service; optional offset and limit."),
         ("console_edit_check", "Edit a check's title, request, or both through editor/Undo. Requires service, checkId, revision and at least one of title/request. Omit request for rename-only. title is a plain name without #check or #request."),
         ("console_create_check", "Append a check through the editor/Undo. Requires service, revision, title, request; title is a plain name without #check or #request because the app adds the marker. Optional checkId reuses its connection locally."),
@@ -1088,6 +1099,67 @@ impl Redactor {
     }
 }
 
+/// Successive (characters per string, items per array/object) limits for a check's Debug.
+const DEBUG_LIMITS: [(usize, usize); 3] = [(4096, 20), (1000, 10), (200, 5)];
+/// Serialized size a Debug must fit after clipping.
+const DEBUG_BUDGET: usize = 32_000;
+
+/// Bounds a redacted Debug value, tightening the limits until it fits the budget. It must
+/// run after redaction: clipping first could cut a known secret so that its remaining
+/// prefix no longer matches.
+fn clip_debug(value: Value) -> Value {
+    for (text, items) in DEBUG_LIMITS {
+        let clipped = clip_value(&value, text, items);
+        if clipped.to_string().len() <= DEBUG_BUDGET {
+            return clipped;
+        }
+    }
+    let (text, items) = DEBUG_LIMITS[DEBUG_LIMITS.len() - 1];
+    let json = clip_value(&value, text, items).to_string();
+    json!({"note":"Debug is too large; this is the start of its clipped JSON",
+        "json":json.chars().take(DEBUG_BUDGET).collect::<String>()})
+}
+fn clip_value(value: &Value, text: usize, items: usize) -> Value {
+    match value {
+        Value::String(value) if value.chars().count() > text => {
+            let hidden = value.chars().count() - text;
+            let mut value: String = value.chars().take(text).collect();
+            value.push_str(&format!("… [{hidden} more characters clipped]"));
+            json!(value)
+        }
+        Value::Array(values) => {
+            let mut clipped: Vec<_> = values
+                .iter()
+                .take(items)
+                .map(|value| clip_value(value, text, items))
+                .collect();
+            if values.len() > items {
+                clipped.push(json!(format!(
+                    "… [{} more items clipped]",
+                    values.len() - items
+                )));
+            }
+            Value::Array(clipped)
+        }
+        Value::Object(values) => {
+            let keys = items * 2;
+            let mut clipped: serde_json::Map<_, _> = values
+                .iter()
+                .take(keys)
+                .map(|(key, value)| (key.clone(), clip_value(value, text, items)))
+                .collect();
+            if values.len() > keys {
+                clipped.insert(
+                    "…".into(),
+                    json!(format!("[{} more keys clipped]", values.len() - keys)),
+                );
+            }
+            Value::Object(clipped)
+        }
+        value => value.clone(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1188,6 +1260,32 @@ mod tests {
         assert_eq!(context["request"], "select [redacted], '{{var:TOKEN}}'");
     }
     #[test]
+    fn clips_large_debug_to_the_budget() {
+        let small = json!({"stderr":"boom","code":2});
+        assert_eq!(clip_debug(small.clone()), small);
+        let wide: serde_json::Map<_, _> = (0..100)
+            .map(|key| (format!("key{key:03}"), json!("v".repeat(5000))))
+            .collect();
+        let tightened = clip_debug(json!({"schema":wide}));
+        assert!(tightened.to_string().len() <= DEBUG_BUDGET);
+        assert_eq!(
+            tightened["schema"]["key000"]
+                .as_str()
+                .unwrap()
+                .chars()
+                .count(),
+            1000 + "… [4000 more characters clipped]".chars().count()
+        );
+        assert_eq!(tightened["schema"]["…"], "[80 more keys clipped]");
+        let mut deep = json!("x".repeat(300));
+        for _ in 0..4 {
+            deep = json!((0..6).map(|_| deep.clone()).collect::<Vec<_>>());
+        }
+        let fallback = clip_debug(deep);
+        assert!(fallback["json"].as_str().unwrap().chars().count() <= DEBUG_BUDGET);
+        assert!(fallback["note"].as_str().unwrap().contains("too large"));
+    }
+    #[test]
     fn rejects_path_and_empty_identifiers() {
         for id in ["", "../other", "/tmp/id", "a_b"] {
             assert!(identifier(&json!({"workspaceId":id}), "workspaceId").is_err());
@@ -1239,6 +1337,32 @@ mod tests {
         };
         let (result, ()) = tokio::join!(inspection, reply);
         assert_eq!(result.unwrap()["password"], "private-value");
+        let debug = bridge.call("debug", "console_read_debug", json!({}));
+        let reply = async {
+            assert_eq!(incoming.recv().await.unwrap()["tool"], "console_read_debug");
+            let stderr = format!("{}private-value", "x".repeat(DEBUG_LIMITS[0].0 - 5));
+            bridge
+                .reply(json!({"callId":"debug","result":{"debug":{
+                    "stderr":stderr,"frames":(0..25).collect::<Vec<_>>(),
+                    "request":{"headers":{"X-Token":"other"}}
+                }}}))
+                .await
+                .unwrap();
+        };
+        let (result, ()) = tokio::join!(debug, reply);
+        let debug = &result.unwrap()["debug"];
+        let stderr = debug["stderr"].as_str().unwrap();
+        assert!(
+            stderr.ends_with("x[reda… [5 more characters clipped]"),
+            "{stderr}"
+        );
+        assert!(
+            !stderr.contains("priv"),
+            "Clipping must not expose a secret prefix"
+        );
+        assert_eq!(debug["frames"].as_array().unwrap().len(), 21);
+        assert_eq!(debug["frames"][20], "… [5 more items clipped]");
+        assert_eq!(debug["request"]["headers"]["X-Token"], "[redacted]");
         let guide = bridge
             .call("knowledge", "console_skill", json!({"topic":"discovery"}))
             .await

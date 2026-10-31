@@ -13,7 +13,6 @@ mod mysql;
 mod rest;
 mod sessions;
 mod splunk;
-mod stomp;
 mod templates;
 mod terminal;
 mod variables;

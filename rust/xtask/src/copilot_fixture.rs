@@ -290,6 +290,14 @@ impl Peer {
                 "title":"Created by agent","request":format!("#endpoint\nGET http://{origin}/agent-created")}),"create",context)
         } else if message.contains("agent run") || message.contains("agent stop") {
             self.tool(session, "console_run_check", args, "run", context)
+        } else if message.contains("agent debug") {
+            self.tool(
+                session,
+                "console_read_debug",
+                args,
+                "debug-missing",
+                context,
+            )
         } else if message.contains("agent switch") {
             self.tool(
                 session,
@@ -728,15 +736,63 @@ Raw HTML: <img src="https://images.fixture.invalid/raw" onerror="globalThis.agen
                     },
                 )
             }
-            "response" => self.finish(
-                &session,
-                &format!(
-                    "Read response: {}",
+            "response" => {
+                let mut context = context;
+                context["responseText"] = json!(
                     result["text"]
                         .as_str()
                         .context("Missing captured response")?
-                ),
-            ),
+                );
+                self.tool(
+                    &session,
+                    "console_read_debug",
+                    json!({"service":context["service"],"checkId":context["activeCheck"]}),
+                    "debug",
+                    context,
+                )
+            }
+            "debug" => {
+                ensure!(
+                    result["source"] == "request" && result["running"] == false,
+                    "Debug must belong to the finished request: {result}"
+                );
+                ensure!(
+                    !result.to_string().contains("resolved-fixture")
+                        && result["debug"]["debug"]["request"]["headers"]["X-Token"]
+                            == "[redacted]",
+                    "Debug must mask resolved credentials: {result}"
+                );
+                ensure!(
+                    result["debug"]["body"]
+                        .as_str()
+                        .is_some_and(|body| body.contains("console_read_response"))
+                        && !result.to_string().contains("agent-approved-response"),
+                    "Debug must point to the response instead of repeating it: {result}"
+                );
+                ensure!(
+                    !result.to_string().contains("materialized-sku")
+                        && result
+                            .to_string()
+                            .contains("Session variable values omitted"),
+                    "Debug must not disclose session variable values: {result}"
+                );
+                self.finish(
+                    &session,
+                    &format!(
+                        "Read response: {}; Debug status: {}; HTTP {}",
+                        context["responseText"].as_str().unwrap_or_default(),
+                        result["status"].as_str().unwrap_or_default(),
+                        result["debug"]["status"]
+                    ),
+                )
+            }
+            "debug-missing" => {
+                ensure!(
+                    result["source"].is_null() && result["debug"].is_null(),
+                    "An unexecuted check must not report Debug: {result}"
+                );
+                self.finish(&session, "No Debug yet")
+            }
             "switch" => self.tool(&session, "console_context", json!({}), "switched", context),
             "switched" => {
                 ensure!(result["service"] == "mysql");
@@ -1004,9 +1060,10 @@ Raw HTML: <img src="https://images.fixture.invalid/raw" onerror="globalThis.agen
                 ensure!(params["requestPermission"] == true);
                 let tools = params["tools"].as_array().context("Missing custom tools")?;
                 ensure!(
-                    tools.len() == 27 && tools.iter().all(|tool| tool["skipPermission"] == true)
+                    tools.len() == 28 && tools.iter().all(|tool| tool["skipPermission"] == true)
                 );
                 for name in [
+                    "console_read_debug",
                     "page_inspect",
                     "page_snapshot",
                     "page_read",
@@ -1028,7 +1085,7 @@ Raw HTML: <img src="https://images.fixture.invalid/raw" onerror="globalThis.agen
                 ] {
                     ensure!(
                         tools.iter().any(|tool| tool["name"] == name),
-                        "Missing page tool {name}"
+                        "Missing tool {name}"
                     );
                 }
                 ensure!(

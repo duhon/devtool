@@ -1,7 +1,7 @@
 (async () => {
   const {assert, wait, testid, click, openConsole, input, cm, key, setSource} = testDriver;
   await openConsole();
-  const shipped = ['graphql', 'grpc', 'mysql', 'rest', 'splunk', 'stomp', 'terminal'];
+  const shipped = ['artemis', 'graphql', 'grpc', 'mysql', 'rest', 'splunk', 'terminal'];
   const status = () => document.querySelector('[data-testid="settings-update-status"] .console-status-text')?.textContent ?? '';
   const rows = () => [...document.querySelectorAll('[data-testid="settings-module"]')];
   const listed = () => rows().map(row => row.dataset.module).sort().join();

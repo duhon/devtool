@@ -36,6 +36,10 @@ extension over native messaging.
   selected service. Switching checks restores that check's own last operation.
   The right tool panel has an independent status and Debug for its selected
   tool/profile/chat; Agent activity never replaces the main request status.
+  console_read_debug reads the same status and Debug for any check by ID
+  (credentials masked, long values clipped, the response payload left to
+  console_read_response). Status and Debug are kept in memory only: after the
+  Console is reopened or reloaded, a check has none until it runs again.
 - Errors with an owner are local: they show in that owner's status and Debug and
   light its check, tab or button until seen on screen. Pending Agent approvals
   and failures to cancel Agent requests show in the Agent panel, module list

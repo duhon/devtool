@@ -194,11 +194,14 @@
   await completed('Agent stopped');
   assert(!document.querySelector('[data-testid="agent-run-approval"]'), 'Stop must revoke pending approval');
   assert(await count() === initialCount, 'Stop must not approve execution');
+  await send('agent debug');
+  await completed('No Debug yet');
   await send('agent run approved');
   await wait(() => document.querySelector('[data-testid="agent-run-approval"]'));
   await click(testid('agent-approve-run'));
   await completed('Read response:');
   assert(transcript().includes('agent-approved-response'), `Agent must read the actual captured response: ${transcript()}`);
+  assert(/Debug status: [^;]*OK; HTTP 200/.test(transcript()), `Agent must read the check's own status and Debug: ${transcript()}`);
   assert(await count() === initialCount + 1, 'Approval must execute exactly once');
   const beforeRename = editor.getValue();
   const renamed = beforeRename.replace(/^#check[^\n]*/, '#check products overview');

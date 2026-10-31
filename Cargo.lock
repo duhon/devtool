@@ -2928,7 +2928,7 @@ dependencies = [
 
 [[package]]
 name = "services-contracts"
-version = "3.0.5"
+version = "3.1.0"
 dependencies = [
  "flate2",
  "serde",
@@ -2938,7 +2938,7 @@ dependencies = [
 
 [[package]]
 name = "services-installer"
-version = "3.0.5"
+version = "3.1.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2955,7 +2955,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-api"
-version = "3.0.5"
+version = "3.1.0"
 dependencies = [
  "http 1.5.0",
  "prost",
@@ -2966,6 +2966,28 @@ dependencies = [
  "tokio",
  "tokio-util",
  "url",
+]
+
+[[package]]
+name = "services-module-artemis"
+version = "3.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "percent-encoding",
+ "serde_json",
+ "services-contracts",
+ "services-module-api",
+ "stabby",
+ "url",
+]
+
+[[package]]
+name = "services-module-artemis-ui"
+version = "3.1.0"
+dependencies = [
+ "serde_json",
+ "services-contracts",
+ "services-module-ui",
 ]
 
 [[package]]
@@ -2987,7 +3009,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-graphql"
-version = "3.0.5"
+version = "3.1.0"
 dependencies = [
  "serde_json",
  "services-module-api",
@@ -2996,7 +3018,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-graphql-ui"
-version = "3.0.5"
+version = "3.1.0"
 dependencies = [
  "serde_json",
  "services-module-ui",
@@ -3004,7 +3026,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-grpc"
-version = "3.0.5"
+version = "3.1.0"
 dependencies = [
  "axum 0.8.9",
  "base64 0.22.1",
@@ -3025,7 +3047,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-grpc-ui"
-version = "3.0.5"
+version = "3.1.0"
 dependencies = [
  "serde_json",
  "services-module-ui",
@@ -3033,7 +3055,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-mysql"
-version = "3.0.5"
+version = "3.1.0"
 dependencies = [
  "chrono",
  "chrono-tz",
@@ -3050,7 +3072,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-mysql-ui"
-version = "3.0.5"
+version = "3.1.0"
 dependencies = [
  "serde_json",
  "services-contracts",
@@ -3059,7 +3081,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-rest"
-version = "3.0.5"
+version = "3.1.0"
 dependencies = [
  "futures-util",
  "serde_json",
@@ -3070,7 +3092,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-rest-ui"
-version = "3.0.5"
+version = "3.1.0"
 dependencies = [
  "serde_json",
  "services-module-ui",
@@ -3078,7 +3100,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-splunk"
-version = "3.0.5"
+version = "3.1.0"
 dependencies = [
  "httpdate",
  "serde_json",
@@ -3091,34 +3113,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-splunk-ui"
-version = "3.0.5"
-dependencies = [
- "serde_json",
- "services-contracts",
- "services-module-ui",
-]
-
-[[package]]
-name = "services-module-stomp"
-version = "3.0.5"
-dependencies = [
- "percent-encoding",
- "rustls",
- "rustls-native-certs",
- "serde_json",
- "services-contracts",
- "services-module-api",
- "stabby",
- "tokio",
- "tokio-rustls",
- "tokio-util",
- "url",
- "webpki-roots 1.0.9",
-]
-
-[[package]]
-name = "services-module-stomp-ui"
-version = "3.0.5"
+version = "3.1.0"
 dependencies = [
  "serde_json",
  "services-contracts",
@@ -3127,7 +3122,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-terminal"
-version = "3.0.5"
+version = "3.1.0"
 dependencies = [
  "libc",
  "serde_json",
@@ -3139,7 +3134,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-terminal-ui"
-version = "3.0.5"
+version = "3.1.0"
 dependencies = [
  "serde_json",
  "services-module-ui",
@@ -3147,14 +3142,14 @@ dependencies = [
 
 [[package]]
 name = "services-module-ui"
-version = "3.0.5"
+version = "3.1.0"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
 name = "services-native"
-version = "3.0.5"
+version = "3.1.0"
 dependencies = [
  "async-trait",
  "axum 0.8.9",
@@ -3186,7 +3181,7 @@ dependencies = [
 
 [[package]]
 name = "services-testkit"
-version = "3.0.5"
+version = "3.1.0"
 dependencies = [
  "axum 0.8.9",
  "serde_json",
@@ -3198,7 +3193,7 @@ dependencies = [
 
 [[package]]
 name = "services-ui"
-version = "3.0.5"
+version = "3.1.0"
 dependencies = [
  "base64 0.22.1",
  "js-sys",
@@ -3208,12 +3203,12 @@ dependencies = [
  "serde-wasm-bindgen 0.6.5",
  "serde_json",
  "services-contracts",
+ "services-module-artemis-ui",
  "services-module-graphql-ui",
  "services-module-grpc-ui",
  "services-module-mysql-ui",
  "services-module-rest-ui",
  "services-module-splunk-ui",
- "services-module-stomp-ui",
  "services-module-terminal-ui",
  "services-module-ui",
  "url",
@@ -4239,7 +4234,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "3.0.5"
+version = "3.1.0"
 dependencies = [
  "anyhow",
  "axum 0.8.9",

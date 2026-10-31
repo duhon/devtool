@@ -399,7 +399,7 @@ pub fn suggest(
             0
         };
         let value = before[value_start..].trim_start();
-        // An `http` endpoint starts with one of the service's keywords (REST methods, STOMP commands).
+        // An `http` endpoint starts with one of the service's keywords (REST methods, Artemis commands).
         if http && field.is_empty() && value_start == 0 {
             return finish(
                 0,

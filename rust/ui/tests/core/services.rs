@@ -10,7 +10,7 @@ fn the_built_in_modules_seed_the_tabs_labels_and_order() {
     assert_eq!(
         services::ids(),
         [
-            "rest", "mysql", "graphql", "grpc", "splunk", "terminal", "stomp"
+            "rest", "mysql", "graphql", "grpc", "splunk", "terminal", "artemis"
         ]
     );
     let labels: Vec<_> = services::ids()
@@ -20,14 +20,14 @@ fn the_built_in_modules_seed_the_tabs_labels_and_order() {
     assert_eq!(
         labels,
         [
-            "REST", "MySQL", "GraphQL", "gRPC", "Splunk", "Terminal", "STOMP"
+            "REST", "MySQL", "GraphQL", "gRPC", "Splunk", "Terminal", "Artemis"
         ]
     );
     assert_eq!(services::label("unknown"), "unknown");
     assert_eq!(
         services::default_order(),
         [
-            "rest", "mysql", "graphql", "grpc", "splunk", "terminal", "stomp"
+            "rest", "mysql", "graphql", "grpc", "splunk", "terminal", "artemis"
         ]
     );
     assert_eq!(services::default_service(), "rest");

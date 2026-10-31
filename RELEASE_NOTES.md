@@ -1,5 +1,20 @@
 # Release notes
 
+## 3.1.0
+
+- New Artemis service for looking into Apache ActiveMQ Artemis through the broker's web console
+  (Jolokia), with the login in the URL: `http://user:password@host:8161/<queue>`. QUEUES lists
+  queues with their message, consumer and delivery counters; BROWSE shows messages with their
+  properties without consuming them, optionally by a JMS selector; SEND puts a text message on
+  a queue; RECEIVE removes messages from a queue and returns them. Bodies the broker cuts over
+  management are flagged, and RECEIVE leaves such messages in the queue.
+- The STOMP service is removed: as a client protocol it could not browse queues or show what a
+  broker holds. Saved STOMP checks no longer run; use Artemis instead.
+- The Agent can read a check's Debug: the new `console_read_debug` tool returns the check's
+  status and the same Debug you see (from its last run or schema discovery), with secrets masked
+  and long values cut. When a check fails or warns, the Agent reads its Debug to find out why.
+  Debug lives only in the open panel, so it is gone after a reload.
+
 ## 3.0.5
 
 - Agent edits flash: the words the Agent changes in a service's checks are highlighted and fade

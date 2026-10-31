@@ -1,6 +1,6 @@
 # Service clients and request syntax
 
-Console supports mysql, rest, graphql, grpc, splunk, terminal and stomp. Each service
+Console supports mysql, rest, graphql, grpc, splunk, terminal and artemis. Each service
 has its own document. A full check starts with `#check Title`; section contents
 start on the following line. Captured response blocks are owned output, not new
 requests, even if the returned text contains directive-shaped lines.
@@ -118,44 +118,45 @@ are included in the 10-minute timeout. Debug records stream completion, Count
 termination, messages and rate-limit retries. Stop closes the request; it does
 not roll back remote side effects or guarantee immediate server-side cleanup.
 
-## STOMP
+## Artemis
 
-For message brokers such as Apache ActiveMQ Artemis (STOMP 1.0-1.2).
-`#endpoint` is `SEND URL` or `SUBSCRIBE URL`; the URL is
-`stomp://user:password@host:61613/destination` (`stomp+ssl://` for TLS, port
-61613 by default). The path is the destination, without the leading `/`
-(`orders`, `/queue/orders`, `news.#`); a `destination:` header in `#headers`
-overrides it. `#headers` are STOMP frame headers, case-sensitive and sent as
-written. `#body` is the SEND payload; SUBSCRIBE takes no body.
+Apache ActiveMQ Artemis through its Jolokia management API, the broker's web
+console (port 8161), not a messaging protocol. `#endpoint` is a command and
+the console URL with the login: `http://user:password@host:8161/<queue>`
+(`https://` if the console uses TLS). The path is one queue name,
+percent-encoded where needed; QUEUES takes no path. The login goes out as
+Basic auth and needs a management role; Jolokia is at `/console/jolokia`
+unless `Jolokia-Path` in `#options` says otherwise.
 
-    #check order created
-    #endpoint
-    SEND stomp://app:secret@localhost:61613/orders
-    #headers
-    destination-type: ANYCAST
-    content-type: application/json
-    #body
-    {"id": 1}
+- QUEUES lists queues with their counters: queue, address, routing-type,
+  messages, delivering, scheduled, consumers, added, acked, killed, expired,
+  durable, paused. `Filter:` keeps queue names containing the text; Count
+  defaults to 100.
+- BROWSE shows messages without consuming them: message-id, timestamp, body,
+  properties and headers (the broker's message fields: priority, durable,
+  redelivered, expiration, …). `Selector:` is a JMS selector
+  (`tenant = 't1'`); Count defaults to 10. Messages out with consumers are not
+  browsable. A DLQ or ExpiryQueue message shows where it came from in its
+  `_AMQ_ORIG_*` properties.
+- SEND puts a text message with `#body` on the queue; `#headers` become string
+  properties, `Durable: false` makes it non-persistent. Returns the message ID.
+- RECEIVE removes messages from the queue and returns them (Count default 1,
+  optional Selector). Management has no consumer: it browses, then removes the
+  messages it could show; one that another consumer got first is skipped.
 
-On Artemis, add `destination-type: ANYCAST` (queue) or `MULTICAST` (topic) to
-SEND, and `subscription-type: ANYCAST` to SUBSCRIBE from a queue: an address
-that does not exist yet is created by the first frame, as a topic by default,
-and a message sent to a topic without subscribers is dropped. SEND waits for
-the broker's receipt and returns one row with the sent headers.
+      #check failed orders
+      #endpoint
+      BROWSE http://admin:admin@localhost:8161/DLQ
+      #options
+      Count: 20
+      Selector: _AMQ_ORIG_ADDRESS = 'orders'
 
-SUBSCRIBE consumes: every returned message is acknowledged and removed from a
-queue. It is not a browse. By default it subscribes with
-`ack: client-individual` and `consumer-window-size: 0`, so the broker hands out
-one message at a time and messages beyond Count stay on the broker. `#options`
-accepts Count (messages, 1-1000, default 10), Wait (seconds without a new
-message, 1-600, default 5), Client-Id and Host (virtual host for CONNECT,
-default the URL host), plus Columns-Type and Columns-Size for the result
-columns destination, message-id, headers and body (`Columns-Type: body=json`).
-A durable topic subscription needs Client-Id and a
-`durable-subscription-name:` header. A subscription returns after at most 10
-minutes. Stop ends it and returns the messages already acknowledged with a
-Stopped status. Debug lists the frames exchanged (passcodes masked), without
-MESSAGE and ACK frames, plus the subscription summary.
+The broker returns at most `management-message-attribute-size-limit`
+characters of a body (256 by default, set in broker.xml): BROWSE warns about
+cut bodies, and RECEIVE leaves such messages in the queue rather than lose the
+rest. Bytes bodies are shown as UTF-8 text or hex. Count is 1-1000; the result
+warns when the queue holds more. Columns-Type and Columns-Size work on the
+result columns. Debug lists the Jolokia operations (passwords masked).
 
 ## Terminal
 

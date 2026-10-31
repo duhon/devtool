@@ -858,7 +858,8 @@ impl Component for App {
                     pending.request.reply.emit(if run.result["cancelled"] == true {
                         json!({"error":"Request cancelled by the user","cancelled":true,"status":run.status})
                     } else if run.result.get("error").is_some() {
-                        json!({"error":err_text(&run.result),"status":run.status})
+                        json!({"error":err_text(&run.result),"status":run.status,
+                            "details":"Read console_read_debug for this check's full Debug"})
                     } else {
                         json!({"complete":true,"service":service,"checkId":pending.check_id,"status":run.status})
                     });
@@ -1863,6 +1864,27 @@ impl App {
                 self.agent_workspace
                     .response(&service, string(args, "checkId")?, offset, limit)?
             }
+            "console_read_debug" => {
+                let check_id = string(args, "checkId")?;
+                let line = self.agent_workspace.check_line(&service, check_id)?;
+                match self.check_status(&service, Some(line)) {
+                    (_, Some(discovery)) => json!({
+                        "service":service,"checkId":check_id,"source":"discovery",
+                        "status":discovery.text,"running":discovery.request.is_some(),
+                        "debug":agent_debug(&discovery.debug, false)
+                    }),
+                    (Some(run), None) => json!({
+                        "service":service,"checkId":check_id,"source":"request",
+                        "status":if run.stopping && run.running { "Stopping…" } else { run.status.as_str() },
+                        "running":run.running,"debug":agent_debug(&run.debug, true)
+                    }),
+                    (None, None) => json!({
+                        "service":service,"checkId":check_id,"source":null,"status":"",
+                        "running":false,"debug":null,
+                        "note":"No status or Debug for this check yet. Debug exists only after the check runs in this Console and is not kept after a reload."
+                    }),
+                }
+            }
             "console_schema" => {
                 let schema = self
                     .schema(&service)
@@ -2115,6 +2137,54 @@ fn snapshot_status(error: &Option<String>) -> OperationStatus {
             )
         })
         .unwrap_or_default()
+}
+/// A check's Debug for the Agent. The response payload is readable page by page through
+/// console_read_response, and each transport trace repeats the module result, so both are
+/// replaced by pointers. Session variable values never reach the Agent; it sees only names.
+fn agent_debug(debug: &Value, response: bool) -> Value {
+    fn scrub(value: &mut Value, response: bool) {
+        match value {
+            Value::Object(map) => {
+                if response {
+                    if let Some(body) = map.get_mut("body").filter(|body| !body.is_null()) {
+                        *body =
+                            json!("Response body omitted here; read it with console_read_response");
+                    }
+                    if let Some(rows) = map.get_mut("rows").filter(|rows| rows.is_array()) {
+                        *rows = json!(format!(
+                            "{} rows omitted here; read them with console_read_response",
+                            rows.as_array().map_or(0, Vec::len)
+                        ));
+                    }
+                }
+                for (key, child) in map.iter_mut() {
+                    match key.as_str() {
+                        "__consoleVariables" => *child = json!("Session variable values omitted"),
+                        "transportDebug" => {
+                            for entry in child.as_array_mut().into_iter().flatten() {
+                                if let Some(reply) = entry
+                                    .get_mut("message")
+                                    .and_then(|message| message.get_mut("result"))
+                                    .filter(|reply| !reply.is_null())
+                                {
+                                    *reply =
+                                        json!("Native reply omitted: it is this Debug's result");
+                                }
+                            }
+                            scrub(child, false);
+                        }
+                        "result" | "previousOperation" if response => scrub(child, true),
+                        _ => scrub(child, false),
+                    }
+                }
+            }
+            Value::Array(items) => items.iter_mut().for_each(|item| scrub(item, false)),
+            _ => {}
+        }
+    }
+    let mut debug = debug.clone();
+    scrub(&mut debug, response);
+    debug
 }
 fn resolve_agent_params(value: Value, hints: &[(String, String)]) -> Result<Value, String> {
     match value {

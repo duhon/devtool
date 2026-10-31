@@ -1,9 +1,9 @@
 [package]
-name = "services-module-stomp-ui"
+name = "services-module-artemis-ui"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
-description = "STOMP console part (ui.wasm)"
+description = "Apache ActiveMQ Artemis console part (ui.wasm)"
 
 [lib]
 crate-type = ["cdylib", "rlib"]

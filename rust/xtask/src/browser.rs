@@ -1156,7 +1156,7 @@ fn seed_data(data: &Path, fixture_port: u16) -> Result<Vec<(PathBuf, String)>> {
                 ("graphql", "https://graphql.fixture.invalid"),
                 ("grpc", "grpc://grpc.fixture.invalid:9000"),
                 ("splunk", "https://splunk.fixture.invalid"),
-                ("stomp", "stomp://stomp.fixture.invalid:61613/orders"),
+                ("artemis", "http://artemis.fixture.invalid:8161/orders"),
             ]
             .into_iter()
             .map(|(service, url)| format!("## {service}\n#endpoint\n{url}\n"))

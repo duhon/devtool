@@ -51,8 +51,8 @@ fn linked() -> [(&'static str, &'static dyn ServiceUi); 7] {
             &services_module_terminal_ui::Terminal,
         ),
         (
-            services_module_stomp_ui::MANIFEST,
-            &services_module_stomp_ui::Stomp,
+            services_module_artemis_ui::MANIFEST,
+            &services_module_artemis_ui::Artemis,
         ),
     ]
 }

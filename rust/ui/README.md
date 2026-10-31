@@ -274,6 +274,11 @@ Check context exposes plain titles, without the directive marker. Agent
 create/edit titles must not contain `#check` or legacy `#request` prefixes.
 `console_edit_check` accepts title, request or both; title-only edits preserve
 the request and its captured output and remain a single Undo step.
+`console_read_debug` returns a check's status and Debug, the same the user sees,
+or a note when the check has not run since the Console opened (Debug is kept in
+memory only). The response body/rows are replaced by a pointer to
+`console_read_response`; after masking, the companion clips strings to 4096
+characters and arrays to 20 items. A failed Agent run reply points to it.
 Reads use bounded Unicode-character pages. Executing requires a separate
 visible approval for the exact request revision and variable snapshot;
 parameters are resolved and frozen locally before dispatch. No SDK shell,

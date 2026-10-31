@@ -1,0 +1,33 @@
+{
+  "id": "artemis",
+  "name": "Artemis",
+  "description": "Apache ActiveMQ Artemis over its Jolokia management API (the web console, port 8161). QUEUES lists queues with their counters, BROWSE shows messages without consuming them, SEND puts a text message on a queue, RECEIVE removes messages from a queue and returns them.",
+  "params": [
+    {"name": "command", "flag": "command", "alias": "m", "positional": true, "type": "string", "required": true, "default": "QUEUES"},
+    {"name": "url", "flag": "endpoint", "alias": "e", "positional": true, "type": "string", "required": true},
+    {"name": "headers", "flag": "headers", "alias": "H", "type": "json"},
+    {"name": "body", "flag": "body", "alias": "b", "type": "string"},
+    {"name": "options", "flag": "options", "alias": "o", "multi": true, "type": "keyvalue", "keys": {"count": "count", "filter": "filter", "selector": "selector", "durable": "durable", "jolokia-path": "jolokiaPath", "columns-type": "columnsType", "columns-size": "columnsSize"}},
+    {"name": "count", "type": "string", "resolve": "none"},
+    {"name": "filter", "type": "string"},
+    {"name": "selector", "type": "string"},
+    {"name": "durable", "type": "string", "resolve": "none"},
+    {"name": "jolokiaPath", "type": "string"},
+    {"name": "columnsType", "type": "string", "resolve": "none"},
+    {"name": "columnsSize", "type": "string", "resolve": "none"}
+  ],
+  "console": {
+    "order": 7,
+    "sections": [
+      {"name": "endpoint", "shape": "line", "language": "http", "param": "url", "hints": [{"text": "http://localhost:8161/"}, {"text": "https://"}]},
+      {"name": "headers", "shape": "pairs", "language": "headers", "param": "headers"},
+      {"name": "options", "shape": "block", "language": "headers", "param": "options", "hints": [{"text": "Count: ", "detail": "QUEUES: 100, BROWSE: 10, RECEIVE: 1 by default; up to 1000"}, {"text": "Filter: ", "detail": "QUEUES: queue names containing this text"}, {"text": "Selector: ", "detail": "BROWSE, RECEIVE: a JMS selector, e.g. priority > 4"}, {"text": "Durable: false", "detail": "SEND: a non-persistent message"}, {"text": "Jolokia-Path: /console/jolokia", "detail": "Where the broker serves Jolokia"}, {"text": "Columns-Type: ", "detail": "column=json column=datetime column=number column=boolean column=text"}, {"text": "Columns-Size: ", "detail": "column=100 (characters)"}]},
+      {"name": "body", "shape": "block", "language": "json", "param": "body"}
+    ],
+    "payload": "body",
+    "response": "grid",
+    "keywords": ["QUEUES", "BROWSE", "SEND", "RECEIVE"],
+    "hints": "#endpoint\nhttp://localhost:8161/\n",
+    "timeout": 120
+  }
+}
