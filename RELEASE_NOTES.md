@@ -1,5 +1,26 @@
 # Release notes
 
+## 3.0.4
+
+- Agent skills from a team folder: Settings → Agent skills takes a local Team skills folder
+  (for example a team repository checkout or a synced drive) with one `<name>/SKILL.md` folder
+  per skill. Settings lists the skills found and explains the ones it skipped; a rejected path
+  marks the field red. Every following Agent reply can use these skills; used skills show as
+  `Skill: name` activity and in the Agent status Debug. The Agent reads only the `SKILL.md`
+  text, not other files of a skill.
+- Closed Agent chats: the Closed (N) tab lists closed chats, newest first. Restore reopens a
+  chat with its history; Delete and Delete all remove it together with its Copilot state.
+  Chats still running in this or another DevTools window are kept and reported.
+- Terminal: a failed command shows `exit N` (or the signal) and the last stderr line in its
+  status; Debug keeps the last 4 KiB of stderr.
+- Dictionary no longer silently overwrites a profile saved meanwhile in another DevTools window
+  or by hand: the save reports a conflict and keeps the draft, and Discard draft loads the
+  saved version. Dictionary rereads its profiles when you return to the panel or the window.
+- An error counts as seen only after it has been on screen for half a second, so switching
+  away right as a reply arrives keeps the panel's button lit.
+- Templates drafts of a removed module no longer make Templates discard every draft; they are
+  kept and work again once the module is reinstalled.
+
 ## 3.0.3
 
 - New STOMP service for Apache ActiveMQ Artemis (STOMP 1.0–1.2 over TCP or TLS). A check uses

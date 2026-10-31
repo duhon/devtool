@@ -24,7 +24,10 @@ There is currently no Agent tool to create or change profiles. Direct the user
 to Variables or Dictionary instead of claiming a profile was saved.
 
 Valid edits autosave through their own service. Invalid drafts are retained and
-reported without replacing valid stored values. Connection/authentication
+reported without replacing valid stored values. Dictionary profiles are shared by
+all DevTools windows: a CONFLICT status means another window saved the profile
+after the draft started; the draft is kept until the user discards it to load
+the saved version. Connection/authentication
 references must resolve before a request or discovery can use them.
 Known credentials are masked in model context; arbitrary business data is not
 guaranteed anonymous. The embedded Agent receives Console context automatically.

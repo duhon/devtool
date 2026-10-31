@@ -2,13 +2,13 @@ use super::{
     editor::Editor,
     error,
     transport::{Reply, Transport},
-    views::{ConsoleStatus, OperationStatus, indicator},
+    views::{ConsoleStatus, OperationStatus, SeenTimer, indicator},
     window,
 };
 use crate::profiles;
 use serde_json::{Value, json};
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     rc::Rc,
 };
 use wasm_bindgen::{JsCast, closure::Closure};
@@ -73,12 +73,20 @@ pub enum Msg {
     Drop(String),
     EditorError(String),
     Stop,
+    Seen,
+    Discard,
+    Refresh,
 }
 pub struct ConsoleVariables {
     dictionary: bool,
     vars: Value,
     profile: String,
     drafts: BTreeMap<String, String>,
+    /// Dictionary: the saved profile each draft started from, so a save cannot overwrite
+    /// another window's edit.
+    bases: BTreeMap<String, Value>,
+    conflicts: BTreeSet<String>,
+    focus: Option<Closure<dyn FnMut()>>,
     texts: BTreeMap<String, String>,
     timer: Option<i32>,
     edited: f64,
@@ -89,9 +97,11 @@ pub struct ConsoleVariables {
     rename_input: NodeRef,
     focus_rename: bool,
     statuses: BTreeMap<String, OperationStatus>,
+    seen: SeenTimer,
 }
 const VARIABLE_DRAFTS: &str = "servicesConsole.variableDraftsV2";
 const DICTIONARY_DRAFTS: &str = "servicesConsole.dictionaryDrafts";
+const DICTIONARY_BASES: &str = "servicesConsole.dictionaryDraftBases";
 impl Component for ConsoleVariables {
     type Message = Msg;
     type Properties = Props;
@@ -106,6 +116,9 @@ impl Component for ConsoleVariables {
             }
             .into(),
             drafts: BTreeMap::new(),
+            bases: BTreeMap::new(),
+            conflicts: BTreeSet::new(),
+            focus: None,
             texts: BTreeMap::new(),
             timer: None,
             edited: 0.0,
@@ -116,6 +129,7 @@ impl Component for ConsoleVariables {
             rename_input: NodeRef::default(),
             focus_rename: false,
             statuses: BTreeMap::new(),
+            seen: SeenTimer::default(),
         };
         let load = (|| -> Result<(), String> {
             let storage = window()
@@ -160,6 +174,10 @@ impl Component for ConsoleVariables {
             {
                 this.drafts = serde_json::from_str(&raw)
                     .map_err(|e| format!("Invalid variables draft: {e}"))?;
+                if let Some(raw) = storage.get_item(DICTIONARY_BASES).map_err(error)? {
+                    this.bases = serde_json::from_str(&raw)
+                        .map_err(|e| format!("Invalid dictionary draft bases: {e}"))?;
+                }
             }
             Ok(())
         })();
@@ -170,6 +188,21 @@ impl Component for ConsoleVariables {
                 js_sys::Date::now(),
                 Reply::Error(json!({"error":e})),
             );
+        }
+        if ctx.props().dictionary {
+            // Returning to this window re-reads profiles another window may have saved.
+            let link = ctx.link().clone();
+            let focus = Closure::<dyn FnMut()>::new(move || link.send_message(Msg::Refresh));
+            match window().add_event_listener_with_callback("focus", focus.as_ref().unchecked_ref())
+            {
+                Ok(()) => this.focus = Some(focus),
+                Err(e) => this.report(
+                    ctx,
+                    "Variables load",
+                    js_sys::Date::now(),
+                    Reply::Error(json!({"error":error(e)})),
+                ),
+            }
         }
         if ctx.props().visible {
             this.enqueue(
@@ -192,7 +225,8 @@ impl Component for ConsoleVariables {
                 });
             }
         }
-        if ctx.props().visible && !old.visible {
+        let returned = self.dictionary && ctx.props().foreground && !old.foreground;
+        if ctx.props().visible && (!old.visible || returned) {
             self.enqueue(
                 ctx,
                 json!({"op":"list"}),
@@ -213,6 +247,13 @@ impl Component for ConsoleVariables {
                     return false;
                 }
                 self.edited = js_sys::Date::now();
+                if self.dictionary && !self.drafts.contains_key(&self.profile) {
+                    self.bases.insert(
+                        self.profile.clone(),
+                        self.vars["profiles"][&self.profile].clone(),
+                    );
+                }
+                self.conflicts.remove(&self.profile);
                 self.drafts.insert(self.profile.clone(), text.clone());
                 self.texts.insert(self.profile.clone(), text.clone());
                 self.cancel_timer();
@@ -264,6 +305,49 @@ impl Component for ConsoleVariables {
                 }
             }
             Msg::Save => self.save(ctx),
+            Msg::Seen => {}
+            Msg::Refresh => {
+                let listing = self
+                    .active
+                    .iter()
+                    .chain(&self.queue)
+                    .any(|operation| operation.request["op"] == "list");
+                if !ctx.props().visible || !ctx.props().foreground || listing {
+                    return false;
+                }
+                self.enqueue(
+                    ctx,
+                    json!({"op":"list"}),
+                    "Variables load",
+                    js_sys::Date::now(),
+                );
+            }
+            Msg::Discard => {
+                let name = self.profile.clone();
+                self.cancel_timer();
+                self.queue.retain(|operation| {
+                    operation.profile != name || operation.request["op"] != "save"
+                });
+                self.drafts.remove(&name);
+                self.texts.remove(&name);
+                self.bases.remove(&name);
+                self.conflicts.remove(&name);
+                self.statuses.remove(&name);
+                if let Err(e) = self.persist(ctx) {
+                    self.report(
+                        ctx,
+                        "Variables draft",
+                        js_sys::Date::now(),
+                        Reply::Error(json!({"error":e})),
+                    );
+                }
+                self.enqueue(
+                    ctx,
+                    json!({"op":"list"}),
+                    "Variables load",
+                    js_sys::Date::now(),
+                );
+            }
             Msg::Stop => {
                 if self.timer.is_some() {
                     self.cancel_timer();
@@ -303,6 +387,22 @@ impl Component for ConsoleVariables {
                     return false;
                 };
                 let debounced = self.timer.is_some().then(|| self.profile.clone());
+                if let Reply::Error(failure) = &reply
+                    && operation.request["op"] == "save"
+                    && failure["error"]
+                        .as_str()
+                        .is_some_and(|e| e.starts_with("CONFLICT"))
+                {
+                    // Keep the draft and stop retrying it until the user edits or discards it;
+                    // the list shows what the other window saved.
+                    self.conflicts.insert(operation.profile.clone());
+                    self.enqueue(
+                        ctx,
+                        json!({"op":"list"}),
+                        "Variables load",
+                        js_sys::Date::now(),
+                    );
+                }
                 if let Reply::Result(value) = &reply {
                     self.vars = value.clone();
                     match operation.request["op"].as_str() {
@@ -313,6 +413,13 @@ impl Component for ConsoleVariables {
                                     == Some(&operation.request["variables"])
                             }) {
                                 self.drafts.remove(name);
+                            }
+                            if self.drafts.contains_key(name) {
+                                // Edits typed during this save now start from what it saved.
+                                self.bases
+                                    .insert(name.into(), operation.request["variables"].clone());
+                            } else {
+                                self.bases.remove(name);
                             }
                             if operation.event.operation.ends_with(" create") {
                                 self.profile = name.into();
@@ -325,6 +432,12 @@ impl Component for ConsoleVariables {
                             if let Some(text) = self.drafts.remove(old) {
                                 self.drafts.insert(new.into(), text);
                             }
+                            if let Some(base) = self.bases.remove(old) {
+                                self.bases.insert(new.into(), base);
+                            }
+                            if self.conflicts.remove(old) {
+                                self.conflicts.insert(new.into());
+                            }
                             if let Some(text) = self.texts.remove(old) {
                                 self.texts.insert(new.into(), text);
                             }
@@ -336,6 +449,8 @@ impl Component for ConsoleVariables {
                             let name = operation.request["name"].as_str().unwrap_or("");
                             self.statuses.remove(name);
                             self.drafts.remove(name);
+                            self.bases.remove(name);
+                            self.conflicts.remove(name);
                             self.texts.remove(name);
                         }
                         Some("list") => {
@@ -365,18 +480,29 @@ impl Component for ConsoleVariables {
                     if operation.request["op"] == "list" {
                         for (name, text) in self.drafts.clone() {
                             // The autosave timer saves the draft being edited after its debounce.
-                            if debounced.as_deref() == Some(name.as_str()) && name == self.profile {
+                            if debounced.as_deref() == Some(name.as_str()) && name == self.profile
+                                || self.conflicts.contains(&name)
+                            {
                                 continue;
                             }
                             if let Ok(variables) = profiles::parse_checked(&text) {
-                                self.enqueue(
-                                    ctx,
-                                    json!({"op":"save","name":name,"variables":variables}),
-                                    "Variables save",
-                                    js_sys::Date::now(),
-                                );
+                                let request = self.save_request(&name, variables);
+                                self.enqueue(ctx, request, "Variables save", js_sys::Date::now());
                             } else if name == self.profile {
-                                self.report(ctx, "Variables validation", js_sys::Date::now(), Reply::Error(json!({"error":profiles::parse_checked(&text).unwrap_err(),"phase":"validation"})));
+                                let error = profiles::parse_checked(&text).unwrap_err();
+                                // A reload finds the same invalid draft; keep its status so a viewed error stays seen.
+                                let reported = self.statuses.get(&name).is_some_and(|status| {
+                                    !status.running
+                                        && status.debug["result"]["error"] == error.as_str()
+                                });
+                                if !reported {
+                                    self.report(
+                                        ctx,
+                                        "Variables validation",
+                                        js_sys::Date::now(),
+                                        Reply::Error(json!({"error":error,"phase":"validation"})),
+                                    );
+                                }
                             }
                         }
                     }
@@ -472,7 +598,7 @@ impl Component for ConsoleVariables {
                         self.save(ctx);
                         self.enqueue(
                             ctx,
-                            json!({"op":"save","name":name,"variables":{}}),
+                            json!({"op":"save","name":name,"variables":{},"base":null}),
                             "Variables create",
                             js_sys::Date::now(),
                         );
@@ -565,7 +691,7 @@ impl Component for ConsoleVariables {
             .chain((!ctx.props().dictionary).then_some("env"))
             .collect();
         let can_delete = ctx.props().dictionary;
-        let tabs = html! {
+        let tabs = html! {<>
             <div class="console-panel-tabs" role="tablist" aria-label={if ctx.props().dictionary {"Dictionary profiles"} else {"Variable profiles"}}>
                 {for order.into_iter().map(|name| {
                     let select=name.to_owned(); let rename=select.clone(); let delete=select.clone(); let drag=select.clone(); let drop=select.clone();
@@ -597,7 +723,11 @@ impl Component for ConsoleVariables {
                     <button type="button" class="tab-button vars-tab-add" data-testid="console-profile-add" onclick={ctx.link().callback(|_|Msg::New)}>{"+"}</button>
                 }
             </div>
-        };
+            if self.conflicts.contains(&self.profile) && self.drafts.contains_key(&self.profile) {
+                <button type="button" class="tab-button" data-testid="console-dictionary-discard" title="Discard draft and load the saved profile"
+                    onclick={ctx.link().callback(|_|Msg::Discard)}>{"Discard draft"}</button>
+            }
+        </>};
         let heading = if ctx.props().visible {
             ctx.props()
                 .header
@@ -649,12 +779,18 @@ impl Component for ConsoleVariables {
         </div></>}
     }
     fn rendered(&mut self, ctx: &Context<Self>, _: bool) {
-        if ctx.props().visible
-            && ctx.props().foreground
-            && let Some(status) = self.statuses.get_mut(&self.profile)
-        {
-            status.observe();
+        let shown = ctx.props().visible && ctx.props().foreground;
+        let now = js_sys::Date::now();
+        let mut wait = None;
+        for (profile, status) in &mut self.statuses {
+            if shown && *profile == self.profile {
+                wait = status.observe(now);
+            } else {
+                status.hide();
+            }
         }
+        self.seen
+            .schedule(wait, ctx.link().callback(|()| Msg::Seen));
         ctx.props().onactivity.emit(crate::activity::summary(
             self.statuses
                 .values()
@@ -677,6 +813,12 @@ impl Component for ConsoleVariables {
         }
     }
     fn destroy(&mut self, ctx: &Context<Self>) {
+        if let Some(focus) = self.focus.take()
+            && let Err(e) = window()
+                .remove_event_listener_with_callback("focus", focus.as_ref().unchecked_ref())
+        {
+            web_sys::console::error_1(&e);
+        }
         self.save(ctx);
     }
 }
@@ -695,19 +837,34 @@ impl ConsoleVariables {
         if !self.dictionary {
             return ctx.props().transport.save_variable_drafts(&self.drafts);
         }
-        window()
+        let storage = window()
             .local_storage()
             .map_err(error)?
-            .ok_or("localStorage is unavailable")?
+            .ok_or("localStorage is unavailable")?;
+        storage
             .set_item(
-                if self.dictionary {
-                    DICTIONARY_DRAFTS
-                } else {
-                    VARIABLE_DRAFTS
-                },
+                DICTIONARY_DRAFTS,
                 &serde_json::to_string(&self.drafts).map_err(|e| e.to_string())?,
             )
+            .map_err(error)?;
+        let bases: BTreeMap<_, _> = self
+            .bases
+            .iter()
+            .filter(|(name, _)| self.drafts.contains_key(*name))
+            .collect();
+        storage
+            .set_item(
+                DICTIONARY_BASES,
+                &serde_json::to_string(&bases).map_err(|e| e.to_string())?,
+            )
             .map_err(error)
+    }
+    fn save_request(&self, name: &str, variables: Value) -> Value {
+        let mut request = json!({"op":"save","name":name,"variables":variables});
+        if let Some(base) = self.bases.get(name).filter(|_| self.dictionary) {
+            request["base"] = base.clone();
+        }
+        request
     }
     fn cancel_timer(&mut self) {
         if let Some(id) = self.timer.take() {
@@ -722,12 +879,8 @@ impl ConsoleVariables {
         if let Some(text) = self.drafts.get(&self.profile)
             && let Ok(variables) = profiles::parse_checked(text)
         {
-            self.enqueue(
-                ctx,
-                json!({"op":"save","name":self.profile,"variables":variables}),
-                "Variables save",
-                self.edited,
-            );
+            let request = self.save_request(&self.profile, variables);
+            self.enqueue(ctx, request, "Variables save", self.edited);
         }
     }
     fn valid_name(&mut self, ctx: &Context<Self>, name: &str) -> bool {

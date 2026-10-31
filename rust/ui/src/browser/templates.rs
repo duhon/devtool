@@ -2,7 +2,7 @@ use super::{
     editor::Editor,
     error,
     transport::{Reply, Transport},
-    views::{ConsoleStatus, OperationStatus},
+    views::{ConsoleStatus, OperationStatus, SeenTimer},
     window,
 };
 use crate::activity::Indicator;
@@ -40,6 +40,11 @@ pub fn forget_drafts(service: &str) -> Result<(), String> {
             &serde_json::to_string(&drafts).map_err(|e| e.to_string())?,
         )
         .map_err(error)
+}
+/// Drafts of a module or section that is not loaded stay stored untouched until it is again.
+fn loaded(key: &str) -> bool {
+    key.split_once('/')
+        .is_some_and(|(service, section)| crate::services::has_template_section(service, section))
 }
 #[derive(Clone, Serialize, Deserialize)]
 struct Draft {
@@ -81,12 +86,14 @@ pub enum Msg {
     Reload,
     Discard,
     Error(String),
+    Seen,
 }
 pub struct Templates {
     library: Library,
     drafts: BTreeMap<String, Draft>,
     selected: BTreeMap<String, String>,
     statuses: BTreeMap<String, OperationStatus>,
+    seen: SeenTimer,
     blocked: BTreeSet<String>,
     saving: Option<Save>,
     timer: Option<i32>,
@@ -157,6 +164,7 @@ impl Component for Templates {
             drafts: BTreeMap::new(),
             selected: BTreeMap::new(),
             statuses: BTreeMap::new(),
+            seen: SeenTimer::default(),
             blocked: BTreeSet::new(),
             saving: None,
             timer: None,
@@ -175,12 +183,8 @@ impl Component for Templates {
             };
             let drafts: BTreeMap<String, Draft> =
                 serde_json::from_str(&raw).map_err(|e| format!("Invalid Templates drafts: {e}"))?;
-            for key in drafts.keys() {
-                let (service, section) =
-                    key.split_once('/').ok_or("Invalid Templates draft key")?;
-                if !crate::services::has_template_section(service, section) {
-                    return Err("Invalid Templates draft section".into());
-                }
+            if !drafts.keys().all(|key| key.contains('/')) {
+                return Err("Invalid Templates draft key".into());
             }
             Ok(drafts)
         })();
@@ -267,7 +271,9 @@ impl Component for Templates {
                     .drafts
                     .iter()
                     .find(|(key, draft)| {
-                        !self.blocked.contains(*key) && templates::parse(&draft.text).is_ok()
+                        loaded(key)
+                            && !self.blocked.contains(*key)
+                            && templates::parse(&draft.text).is_ok()
                     })
                     .map(|(key, draft)| (key.clone(), draft.clone()));
                 if let Some((key, draft)) = next {
@@ -300,7 +306,7 @@ impl Component for Templates {
                     Reply::Result(value) => match self.accept(value, ctx) {
                         Ok(()) => {
                             self.load_error = None;
-                            for (key, draft) in &self.drafts {
+                            for (key, draft) in self.drafts.iter().filter(|(key, _)| loaded(key)) {
                                 if let Err(error) = templates::parse(&draft.text) {
                                     let reply = Reply::Error(json!({"error":error}));
                                     self.statuses.insert(
@@ -400,18 +406,24 @@ impl Component for Templates {
                 ctx.link().send_message(Msg::Reload);
             }
             Msg::Error(error) => self.error = Some(error),
+            Msg::Seen => {}
         }
         true
     }
     fn rendered(&mut self, ctx: &Context<Self>, _first: bool) {
         let key = self.key(ctx);
-        if ctx.props().visible
-            && ctx.props().foreground
-            && let Some(status) = self.statuses.get_mut(&key)
-        {
-            let state = status.indicator();
-            status.signal.observe(state);
+        let shown = ctx.props().visible && ctx.props().foreground;
+        let now = js_sys::Date::now();
+        let mut wait = None;
+        for (owner, status) in &mut self.statuses {
+            if shown && *owner == key {
+                wait = status.observe(now);
+            } else {
+                status.hide();
+            }
         }
+        self.seen
+            .schedule(wait, ctx.link().callback(|()| Msg::Seen));
         let (state, _) = crate::activity::summary(self.statuses.iter().map(|(owner, status)| {
             status.notification(owner == &key && ctx.props().visible && ctx.props().foreground)
         }));

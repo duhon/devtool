@@ -166,7 +166,10 @@ without replacing the last valid hints. Variable drafts are session-local.
 Variables exposes only fixed `var` and read-only `env`; Dictionary exposes the
 remaining named profiles and CRUD/order controls. Both Console tools have
 independent component instances, drafts, queues and selection, and use separate
-native services. Session `var` is passed with each call, discovery and
+native services. Dictionary saves carry the profile the draft started from (`base`); if
+another window saved that profile meanwhile, the save fails with CONFLICT, the draft is
+kept and **Discard draft** loads the saved version. Dictionary re-reads its profiles when
+its panel is shown again or the window regains focus. Session `var` is passed with each call, discovery and
 Terminal stream and combined with global Dictionary/env for backend resolution;
 it never replaces the legacy native variable file. Their replies share a merged
 completion context.
@@ -193,8 +196,9 @@ Check/service/chat/profile tabs and tool buttons show a centered 12px signal
 on their outer edge: left on the check rail, right on the tool rail, top on
 horizontal tabs. The signal is always present, black when ready or viewed,
 blinking green while running, green for success, red for errors, and yellow
-for stopped/warning/approval. Opening the matching check, profile or chat
-acknowledges its non-running signal without clearing its status or Debug.
+for stopped/warning/approval. Keeping the matching check, profile or chat on
+screen for 0.5 s (`SEEN_AFTER_MS`) acknowledges its non-running signal without
+clearing its status or Debug; switching away sooner leaves it lit.
 Running signals keep blinking even while viewed. A new background outcome
 lights the signal again. Service and tool signals aggregate only unviewed
 outcomes plus running work, prioritizing running, error, yellow, then success;
@@ -217,7 +221,12 @@ inline (Enter/blur saves, Escape cancels); there is no separate name field.
 Each tab has a close control. Closing stops its turn and revokes pending
 approvals, but keeps the per-chat history and SDK session. Closed IDs persist
 under `servicesConsole.agentClosedSessions` and are excluded when a new panel
-loads. Closing the last tab creates a fresh empty chat.
+loads. Closing the last tab creates a fresh empty chat. The **Closed (N)** tab
+lists closed chats, newest first: Restore reopens one with its history and SDK
+session; Delete and Delete all (confirmed) ask the native `agent_sessions`
+service to remove `<data>/.agent/sessions/<id>/`, then drop the browser records.
+Chats running in another connection, or a request with an invalid ID, are not
+deleted and stay listed; errors appear in the list's status.
 
 Enter sends a chat message; Shift+Enter inserts a newline. There is no Send
 button. Empty drafts and sends during an active turn are ignored. Assistant
@@ -232,6 +241,20 @@ lists only that model's supported levels. Without saved preferences, new chats
 use Copilot Fusion (the SDK's `auto` router), which manages Reasoning itself.
 Choices persist locally and are captured when a new chat is created. Existing
 chats and resumed SDK sessions retain their original model and reasoning settings.
+
+Settings → Agent skills sets a **Team skills folder**: an absolute local path
+(`~/` allowed), such as a team repository checkout or a synced drive, with one
+`<name>/SKILL.md` folder per skill. The native host (`agent_skills`
+`get`/`save`) stores it in `<data>/.agent/skills.json`, rejects relative or
+missing paths (red input plus a Settings status error) and lists the skills it
+found and the ones it could not read (frontmatter needs `name` and
+`description`). Every following Agent reply, in new and existing chats, hands
+the folder to the SDK as a skill directory with the built-in `skill` tool; no
+other skills (personal `~/.copilot/skills` or bundled ones) are loaded. A skill
+only supplies its `SKILL.md` instructions: the Agent has no file tools, so files
+beside it are not readable. A folder that later disappears doesn't stop the
+reply; it ends with a warning. Skills Copilot used appear as `Skill: name`
+activity and in the Agent status debug (`skills`).
 
 Each message automatically provides Console request context; the Agent can read
 selected response pages and cached schema without a separate sharing toggle.

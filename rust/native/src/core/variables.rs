@@ -476,6 +476,20 @@ impl VariableStore {
                 if !vars.is_object() {
                     return Err(Error::new("variables must be an object"));
                 }
+                // `base` is the profile the draft started from (null for a new one); without it
+                // the save overwrites, as the CLI and Agent expect.
+                if let Some(base) = message.get("base") {
+                    let current = state.profiles.get(&name).unwrap_or(&Value::Null);
+                    if current != base && *current != vars {
+                        return Err(Error::new(if base.is_null() {
+                            format!("CONFLICT: profile {name} was created in another window.")
+                        } else {
+                            format!(
+                                "CONFLICT: profile {name} changed in another window. Your draft is preserved; discard it to load the saved version."
+                            )
+                        }));
+                    }
+                }
                 state.profiles.insert(name.clone(), vars);
                 if !state.order.contains(&name) {
                     state.order.push(name);

@@ -1,5 +1,5 @@
 (async () => {
-  const {assert, wait, testid, click, openConsole, activateSession} = testDriver;
+  const {assert, seen, wait, testid, click, openConsole, activateSession} = testDriver;
   // A fresh panel: wait for the restored Console session before using its toolbar.
   await openConsole();
   const status = () => testid('settings-update-status');
@@ -91,6 +91,7 @@
   assert(testid('settings-update-version').textContent === version
     && testid('settings-update-install').textContent === 'Update',
     'Settings must show the exact approved major version and an installation action');
+  await seen();
   await click(testid('console-settings-toggle'));
   assert(testid('console-settings-toggle').querySelector('.console-state-light').dataset.state === 'ready',
     'Viewing the update must acknowledge the traffic-light notification');
@@ -157,6 +158,7 @@
       () => `Model settings did not load: ${text()}`);
     assert(text().includes('HTTP 404') && light('settings-title') === 'error',
       `A newer successful Settings operation must not hide an unseen update error: ${text()}`);
+    await seen();
     await click(testid('console-settings-toggle'));
     assert(light('console-settings-toggle') === 'ready',
       'Viewing the update error must acknowledge the traffic-light notification');

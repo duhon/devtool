@@ -1,5 +1,5 @@
 (async () => {
-  const { assert, wait, holds, stable, click, testid, cm, openConsole, setSource, key, assertSignalGeometry } = testDriver;
+  const { assert, seen, wait, holds, stable, click, testid, cm, openConsole, setSource, key, assertSignalGeometry } = testDriver;
   const editor = () => cm('console-editor');
   const source = () => editor().getValue();
   const status = () => document.querySelector('.console-status');
@@ -122,6 +122,7 @@
   assert(light(checks()[0]) === 'ready' && light(checks()[1]) === 'running'
     && light(testid('console-service-terminal')) === 'running',
   'A viewed stop must go dark without suppressing another running check or its service signal');
+  await seen();
   const secondTicks = ticks('second');
   await wait(() => ticks('second') > secondTicks,
     'Stopping check 1 must leave the second Terminal process running');
@@ -151,12 +152,22 @@
   const remaining = 1 - restored;
   const unseenState = remaining === 0 ? 'success' : 'error';
   await wait(() => checks()[restored].classList.contains('active') && light(checks()[restored]) === 'ready');
+  const shownAt = performance.now();
   assert(light(checks()[remaining]) === unseenState
     && light(testid('console-service-terminal')) === unseenState,
     'Restoring the cursor must acknowledge only its displayed check, preserving the other unseen outcome');
   await select(remaining);
+  // Only a switch well under the 0.5 s threshold proves that a glance leaves the outcome unseen.
+  if (performance.now() - shownAt < 300) {
+    assert(light(checks()[restored]) === (restored === 0 ? 'success' : 'error'),
+      'An outcome on screen for less than half a second must stay unseen');
+  }
+  await select(restored);
+  await seen();
+  await select(remaining);
   assert(checks().every(check => light(check) === 'ready') && light(testid('console-service-terminal')) === 'ready',
     'Opening the remaining check must acknowledge the service without clearing either status');
+  await seen();
   await select(1);
   assert(status().classList.contains('is-error') && checks().every(check => light(check) === 'ready')
     && light(testid('console-service-terminal')) === 'ready',
@@ -166,6 +177,7 @@
   assert(testid('console-main-status-debug').textContent.includes('"code": 1'),
     'Acknowledging a failure must preserve its actual Debug diagnostics');
   await click(status());
+  await seen();
   await select(0);
   assert(status().textContent.includes('OK') && checks().every(check => light(check) === 'ready')
     && light(testid('console-service-terminal')) === 'ready',
@@ -195,6 +207,7 @@
   await wait(() => stopped('ordinary') && testid('console-stop').disabled);
   assert(source().includes('remote server may still finish'),
     'HTTP cancellation must explain the remote-processing limitation rather than claim rollback');
+  await seen();
   await click(testid('console-service-terminal'));
   const backgroundTicks = ticks('background');
   await wait(() => ticks('background') > backgroundTicks,
@@ -210,11 +223,13 @@
   await wait(() => status().textContent.includes('OK'));
   const successfulStatus = status().textContent;
   assert(light(checks()[2]) === 'ready', 'A completed successful check that is already visible must have a black signal');
+  await seen();
   await select(3);
   await run();
   await wait(() => status().classList.contains('is-error'));
   assert(light(checks()[3]) === 'ready' && light(testid('console-service-rest')) === 'ready',
     'A visible validation failure must keep its error status but acknowledge both check and service signals');
+  await seen();
   await select(2);
   assert(status().textContent === successfulStatus && light(checks()[2]) === 'ready',
     'Selecting a completed check must restore its own status while its acknowledged signal stays black');
@@ -313,6 +328,7 @@
   assert(light(chatTab(firstChat)) === 'running' && light(chatTab(secondChat)) === 'ready'
     && light(testid('console-agent-toggle')) === 'running',
   'Stopping the selected chat must preserve another running chat and its aggregate tool indicator');
+  await seen();
   await click(chatTab(firstChat));
   await wait(() => !testid('agent-stop').disabled && agentStatus().classList.contains('is-running'));
   await click(testid('agent-stop'));
@@ -417,6 +433,7 @@
   await wait(() => light(chatTab(hiddenChat)) === 'ready' && light(chatTab(firstChat)) === 'warning');
   assert(light(testid('console-agent-toggle')) === 'warning',
     'Showing the selected stopped chat must not acknowledge another chat that completed while hidden');
+  await seen();
   await click(chatTab(firstChat));
   await wait(() => agentStatus().textContent.includes('Stopped')
     && light(testid('console-agent-toggle')) === 'ready');

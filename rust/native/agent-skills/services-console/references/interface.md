@@ -230,6 +230,8 @@ Changing services or closing the panel preserves the chat and does not stop it.
 The tab's x closes that tab and stops its running Agent turn, revoking pending
 run approvals. It preserves stored chat history and the SDK session; closed
 tabs do not reopen automatically. Closing the last tab creates an empty chat.
+The Closed (N) tab lists closed chats: Restore reopens one with its history;
+Delete or Delete all removes its messages and Copilot history from this computer.
 Each status ends with a small red S button. The main S stops only the operation
 shown for the highlighted check, including discovery if that is what the strip
 shows. The Agent S stops only the selected chat and requests it started in any
@@ -239,8 +241,9 @@ Check, service, chat and profile tabs and tool buttons have centered 12px edge
 signals: left on the check rail, right on the tool rail, top on horizontal tabs.
 Black means ready or viewed, blinking green means running, green means success,
 red means error, and yellow means stopped, warning or awaiting approval.
-Viewing the matching check/profile/chat acknowledges its non-running signal,
-not its status or Debug; running signals never go dark while work continues.
+Viewing the matching check/profile/chat for at least 0.5 s acknowledges its
+non-running signal, not its status or Debug; a shorter glance leaves it lit.
+Running signals never go dark while work continues.
 New background outcomes light the signal again. Service and tool signals
 aggregate running work and unviewed outcomes, prioritizing running over error,
 yellow and success. Opening a service does not acknowledge its other checks.
@@ -269,6 +272,13 @@ defaults apply only to newly created Agent chats; existing chats retain their
 model and Reasoning, including after reload.
 Without saved preferences, new chats use Copilot Fusion, which manages Reasoning
 automatically. Fusion is a router, not an individual model.
+Settings → Agent skills has a Team skills folder field: an absolute local path
+(or one starting with `~/`) to a folder with one subfolder per skill, each with
+a SKILL.md whose frontmatter has `name` and `description`. Save lists the skills
+found and explains skipped ones; Clear removes the folder. Team skills apply from
+the next reply in every chat and are used through the `skill` tool. Only the
+SKILL.md text is available: you cannot read other files of a skill. URLs are not
+supported; a team keeps the folder current with git or a synced drive.
 Assistant responses render Markdown; user messages remain literal text.
 Running a check through the Agent always requires a separate Approve run action;
 Deny rejects it. Approval applies only to the displayed check/revision and

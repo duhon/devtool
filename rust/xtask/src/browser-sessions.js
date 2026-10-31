@@ -216,6 +216,41 @@
     'Conflicting changes from another window must be reported explicitly');
   assert((await library()).sessions.find(session=>session.id===a).snapshot.hints.rest.includes('other-window.invalid'),
     'Conflicting writes must not overwrite another window’s saved hints');
+  // Dictionary profiles are shared by all windows. An invalid draft is not autosaved, so this
+  // window's draft deterministically starts before the other window saves.
+  const otherDictionary=async text=>{
+    const profile=document.querySelector('.console-panel-tabs .tab-button.active .tab-label').textContent;
+    const frame=document.createElement('iframe');
+    frame.src=location.href;
+    frame.style.cssText='position:fixed;inset:0;width:100vw;height:100vh;z-index:9999';
+    document.body.append(frame);
+    try {
+      const doc=await wait(()=>frame.contentDocument?.querySelector('[data-testid="console-dictionary-toggle"]')&&frame.contentDocument);
+      await click(testid('console-dictionary-toggle',doc));
+      await wait(()=>doc.querySelector('[data-testid="console-dictionary-editor"]'));
+      assert(doc.querySelector('.console-panel-tabs .tab-button.active .tab-label').textContent===profile,
+        'Both windows must edit the same Dictionary profile');
+      cm('console-dictionary',doc).setValue(text);
+      await wait(()=>testid('console-dictionary-status',doc).textContent.includes('Dictionary save · OK'));
+    } finally { frame.remove(); }
+  };
+  await open('dictionary');
+  await wait(()=>cm('console-dictionary').getValue()===dictionary);
+  cm('console-dictionary').setValue(`${dictionary}\nmissing delimiter`);
+  await wait(()=>testid('console-dictionary-status').textContent.includes('ERROR'));
+  await otherDictionary(`${dictionary}\nOTHER_WINDOW: saved`);
+  cm('console-dictionary').setValue(`${dictionary}\nSTALE_WINDOW: draft`);
+  await wait(()=>testid('console-dictionary-status').textContent.includes('changed in another window'),
+    'A Dictionary draft started before another window saved must conflict instead of overwriting it');
+  assert(cm('console-dictionary').getValue().includes('STALE_WINDOW: draft'),'A conflicting Dictionary draft must be preserved');
+  await click(testid('console-dictionary-discard'));
+  await wait(()=>cm('console-dictionary').getValue().includes('OTHER_WINDOW: saved')
+    &&!document.querySelector('[data-testid="console-dictionary-discard"]'),
+    'Discarding a conflicting Dictionary draft must load the other window’s save');
+  await otherDictionary(dictionary);
+  window.dispatchEvent(new Event('focus'));
+  await wait(()=>cm('console-dictionary').getValue()===dictionary,
+    'Returning to a window must re-read Dictionary profiles another window saved');
   // A reply that changes nothing must still clear the guard: the recreated application's module
   // list request finishes without other state changes, which left data-busy stale on slow hosts.
   testDriver.nativeHold.match=message=>message.service==='modules'&&!message.op;

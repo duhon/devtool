@@ -241,6 +241,9 @@ pub fn status(service: &str, result: &Value) -> String {
         parts.push(duration(ms));
     }
     parts.push(outcome(result).into());
+    if crate::services::view(service) == View::Stream {
+        parts.extend(exit_summary(result));
+    }
     if crate::services::view(service) == View::Grid {
         let n = result["resultCount"]
             .as_u64()
@@ -250,4 +253,27 @@ pub fn status(service: &str, result: &Value) -> String {
         }
     }
     parts.join(" · ")
+}
+/// Characters of a failed command's last stderr line shown in its status.
+const STATUS_STDERR_CHARS: usize = 160;
+/// A failed command's exit code or signal, then the last line it wrote to stderr.
+fn exit_summary(result: &Value) -> Vec<String> {
+    let mut parts = match (result["code"].as_i64(), result["signal"].as_str()) {
+        (Some(0), _) | (None, None) => return Vec::new(),
+        (Some(code), _) => vec![format!("exit {code}")],
+        (None, Some(signal)) => vec![signal.to_owned()],
+    };
+    let last = result["stderr"]
+        .as_str()
+        .and_then(|stderr| stderr.lines().map(str::trim).rfind(|line| !line.is_empty()));
+    if let Some(line) = last {
+        parts.push(if line.chars().count() > STATUS_STDERR_CHARS {
+            let mut short: String = line.chars().take(STATUS_STDERR_CHARS - 1).collect();
+            short.push('…');
+            short
+        } else {
+            line.to_owned()
+        });
+    }
+    parts
 }

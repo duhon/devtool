@@ -164,3 +164,6 @@ command text and optional `#env` for Name: value entries. This is an application
 service, not general shell permission for the Agent. Running a Terminal check
 still requires the user's explicit request and the separate one-time approval.
 Never use it to read credentials, browser storage or application data files.
+The response shows stdout then stderr. A non-zero exit adds `exit N` (or the
+signal) and the last stderr line to the status; the result keeps the last
+4 KiB of stderr in `stderr`, shown in Debug.

@@ -360,6 +360,10 @@ impl Runtime {
             crate::core::updates::dispatch(message).await
         } else if service == "agent_models" {
             self.agent.catalog().await
+        } else if service == "agent_sessions" {
+            self.agent.sessions(message).await
+        } else if service == "agent_skills" {
+            self.agent.skills(message)
         } else if service == "history" {
             self.history.dispatch(message).await
         } else if service == "sessions" {

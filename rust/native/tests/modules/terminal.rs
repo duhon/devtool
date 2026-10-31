@@ -56,6 +56,25 @@ async fn stop_reaps_the_whole_process_group() {
     );
 }
 
+#[tokio::test]
+async fn a_failed_command_keeps_its_exit_code_and_stderr_tail() {
+    let (tx, mut rx) = mpsc::channel(128);
+    let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
+    let params = json!({"endpoint":"sh -c","command":"printf out; printf 'first\\nls: x: No such file\\n' >&2; exit 3"});
+    let result = run(params, CancellationToken::new(), tx).await.unwrap();
+    drain.await.unwrap();
+    assert_eq!(result["code"], 3, "{result}");
+    assert_eq!(result["stderr"], "first\nls: x: No such file\n", "{result}");
+
+    let (tx, mut rx) = mpsc::channel(128);
+    let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
+    let params = json!({"endpoint":"sh -c","command":"printf out"});
+    let result = run(params, CancellationToken::new(), tx).await.unwrap();
+    drain.await.unwrap();
+    assert_eq!(result["code"], 0, "{result}");
+    assert!(result.get("stderr").is_none(), "{result}");
+}
+
 #[cfg(unix)]
 #[test]
 #[ignore = "subprocess fixture for detached Terminal output tests"]

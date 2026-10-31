@@ -98,6 +98,8 @@ pub const MODULES: &[ModuleSpec] = &[
         external: true,
         ..panel("agent_models", "Agent models", &[])
     },
+    panel("agent_sessions", "Agent sessions", &[("list", "{}")]),
+    panel("agent_skills", "Agent skills", &[("get", "{}")]),
     ModuleSpec {
         external: true,
         ..panel("updates", "Updates", &[])

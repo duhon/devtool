@@ -1,7 +1,7 @@
 use super::{
     call, error, get,
     transport::{Reply, Transport},
-    views::{ConsoleStatus, OperationStatus, indicator},
+    views::{ConsoleStatus, OperationStatus, SeenTimer, indicator},
     window,
 };
 use serde::{Deserialize, Serialize};
@@ -101,6 +101,28 @@ struct Chat {
     messages: Vec<Message>,
     #[serde(default)]
     options: services_contracts::agent::Options,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    closed: Option<f64>,
+}
+/// Status key of the closed-chats list; chat ids are UUIDs, so it cannot collide.
+const CLOSED: &str = "closed-chats";
+const CLOSED_SESSIONS: &str = "servicesConsole.agentClosedSessions";
+fn record_key(session: &str) -> String {
+    format!("servicesConsole.agentSession.{session}")
+}
+fn local_storage() -> Result<web_sys::Storage, String> {
+    window()
+        .local_storage()
+        .map_err(error)?
+        .ok_or_else(|| "Local storage is unavailable".into())
+}
+fn save_closed(storage: &web_sys::Storage, closed: &BTreeSet<String>) -> Result<(), String> {
+    storage
+        .set_item(
+            CLOSED_SESSIONS,
+            &serde_json::to_string(closed).map_err(|error| error.to_string())?,
+        )
+        .map_err(error)
 }
 struct Turn {
     stream: u32,
@@ -111,6 +133,8 @@ struct Turn {
     issue: Option<(bool, String)>,
     messages: Vec<Message>,
     final_message: Option<String>,
+    /// Team skills Copilot used in this turn.
+    skills: Vec<String>,
 }
 pub enum Msg {
     New,
@@ -127,6 +151,11 @@ pub enum Msg {
     PageChanged,
     PageApprove(bool),
     PageGuide,
+    Seen,
+    ToggleClosed,
+    Restore(String),
+    Delete(Vec<String>),
+    Deleted(f64, Reply),
 }
 pub struct AgentPanel {
     page: super::page_agent::Controller,
@@ -136,12 +165,15 @@ pub struct AgentPanel {
     active: String,
     turns: BTreeMap<String, Turn>,
     statuses: BTreeMap<String, OperationStatus>,
+    seen: SeenTimer,
     error: Option<String>,
     transcript: NodeRef,
     scroll: bool,
     renaming: Option<(String, String)>,
     rename_input: NodeRef,
     focus_rename: bool,
+    closed: Vec<Chat>,
+    closed_open: bool,
 }
 pub(super) fn id() -> Result<String, String> {
     call(&get(window().as_ref(), "crypto"), "randomUUID", &[])
@@ -168,7 +200,7 @@ fn workspace_id() -> Result<String, String> {
 }
 fn closed_sessions(storage: &web_sys::Storage) -> Result<BTreeSet<String>, String> {
     storage
-        .get_item("servicesConsole.agentClosedSessions")
+        .get_item(CLOSED_SESSIONS)
         .map_err(error)?
         .map(|raw| {
             serde_json::from_str(&raw)
@@ -184,6 +216,7 @@ impl AgentPanel {
             .iter()
             .map(|chat| &chat.id)
             .chain(self.turns.keys())
+            .chain(self.statuses.keys().filter(|key| *key == CLOSED))
             .collect();
         ctx.props().onactivity.emit(
             sessions
@@ -223,8 +256,83 @@ impl AgentPanel {
             .unwrap_or_default()
             .indicator(
                 self.chat_indicator(ctx, session),
-                ctx.props().visible && ctx.props().foreground && self.active == session,
+                ctx.props().visible && ctx.props().foreground && self.shown_key() == session,
             )
+    }
+    fn shown_key(&self) -> &str {
+        if self.closed_open {
+            CLOSED
+        } else {
+            &self.active
+        }
+    }
+    /// Reloads closed chats, newest first; another window may have closed or deleted some.
+    fn load_closed(&mut self) -> Result<(), String> {
+        let storage = local_storage()?;
+        let mut chats = Vec::new();
+        for id in closed_sessions(&storage)? {
+            if self.chats.iter().any(|chat| chat.id == id) {
+                continue;
+            }
+            chats.push(match storage.get_item(&record_key(&id)).map_err(error)? {
+                Some(raw) => serde_json::from_str(&raw)
+                    .map_err(|error| format!("Invalid Agent session data: {error}"))?,
+                None => Chat {
+                    id,
+                    title: "Closed chat".into(),
+                    draft: String::new(),
+                    messages: Vec::new(),
+                    options: Default::default(),
+                    closed: None,
+                },
+            });
+        }
+        chats.sort_by(|left, right| {
+            right
+                .closed
+                .unwrap_or(f64::NEG_INFINITY)
+                .total_cmp(&left.closed.unwrap_or(f64::NEG_INFINITY))
+        });
+        self.closed = chats;
+        Ok(())
+    }
+    fn closed_status(&mut self, operation: &str, started: f64, reply: Reply) {
+        self.statuses.insert(
+            CLOSED.into(),
+            OperationStatus::event(operation, started, Some(&reply)),
+        );
+    }
+    fn restore(&mut self, session: &str) -> Result<(), String> {
+        let index = self
+            .closed
+            .iter()
+            .position(|chat| chat.id == session)
+            .ok_or("Chat is no longer closed")?;
+        let storage = local_storage()?;
+        let mut closed = closed_sessions(&storage)?;
+        closed.remove(session);
+        save_closed(&storage, &closed)?;
+        let mut chat = self.closed.remove(index);
+        chat.closed = None;
+        self.saved.remove(&chat.id);
+        self.active = chat.id.clone();
+        self.chats.push(chat);
+        self.closed_open = false;
+        self.renaming = None;
+        self.scroll = true;
+        Ok(())
+    }
+    /// Forgets chats whose Copilot state the native host deleted; failures stay closed for retry.
+    fn forget(&mut self, result: &Value) -> Result<(), String> {
+        let storage = local_storage()?;
+        let mut closed = closed_sessions(&storage)?;
+        for id in result["deleted"].as_array().into_iter().flatten() {
+            if let Some(id) = id.as_str() {
+                storage.remove_item(&record_key(id)).map_err(error)?;
+                closed.remove(id);
+            }
+        }
+        save_closed(&storage, &closed)
     }
     fn persist(&mut self) {
         let result = (|| {
@@ -270,6 +378,7 @@ impl AgentPanel {
                     draft: String::new(),
                     messages: Vec::new(),
                     options,
+                    closed: None,
                 });
             }
             Err(error) => self.error = Some(error),
@@ -281,18 +390,17 @@ impl AgentPanel {
             .iter()
             .position(|chat| chat.id == session)
             .ok_or("Chat is no longer open")?;
-        let storage = window()
-            .local_storage()
-            .map_err(error)?
-            .ok_or("Local storage is unavailable")?;
+        let storage = local_storage()?;
+        let chat = &mut self.chats[index];
+        chat.closed = Some(js_sys::Date::now());
+        let record = serde_json::to_string(chat).map_err(|error| error.to_string());
+        chat.closed = None;
+        storage
+            .set_item(&record_key(session), &record?)
+            .map_err(error)?;
         let mut closed = closed_sessions(&storage)?;
         closed.insert(session.to_owned());
-        storage
-            .set_item(
-                "servicesConsole.agentClosedSessions",
-                &serde_json::to_string(&closed).map_err(|error| error.to_string())?,
-            )
-            .map_err(error)?;
+        save_closed(&storage, &closed)?;
         if let Some(turn) = self.turns.get_mut(session) {
             turn.stopping = true;
             self.page.revoke(turn.stream);
@@ -376,6 +484,9 @@ impl AgentPanel {
                     .map(|message| &message.text)
                     .collect::<Vec<_>>()
             );
+            if !turn.skills.is_empty() {
+                status.debug["skills"] = json!(turn.skills);
+            }
             self.statuses.insert(session.into(), status);
             ctx.props().onfinished.emit(session.into());
         }
@@ -393,12 +504,15 @@ impl Component for AgentPanel {
             active: String::new(),
             turns: BTreeMap::new(),
             statuses: BTreeMap::new(),
+            seen: SeenTimer::default(),
             error: None,
             transcript: NodeRef::default(),
             scroll: true,
             renaming: None,
             rename_input: NodeRef::default(),
             focus_rename: false,
+            closed: Vec::new(),
+            closed_open: false,
         };
         match workspace_id() {
             Ok(workspace) => {
@@ -416,11 +530,13 @@ impl Component for AgentPanel {
                         if key.starts_with("servicesConsole.agentSession.")
                             && let Some(raw) = storage.get_item(&key).map_err(error)?
                         {
-                            let chat: Chat = serde_json::from_str(&raw)
+                            let mut chat: Chat = serde_json::from_str(&raw)
                                 .map_err(|error| format!("Invalid Agent session data: {error}"))?;
                             if closed.contains(&chat.id) {
                                 continue;
                             }
+                            // A close that failed to update the closed set leaves its time behind.
+                            chat.closed = None;
                             this.saved.insert(chat.id.clone(), raw);
                             this.chats.push(chat);
                         }
@@ -436,6 +552,9 @@ impl Component for AgentPanel {
                 }
                 if this.chats.is_empty() {
                     this.new_chat();
+                }
+                if let Err(error) = this.load_closed() {
+                    this.error = Some(error);
                 }
                 if !this.chats.iter().any(|chat| chat.id == this.active)
                     && let Some(chat) = this.chats.first()
@@ -485,8 +604,12 @@ impl Component for AgentPanel {
     }
     fn update(&mut self, ctx: &Context<Self>, msg: Msg) -> bool {
         match msg {
-            Msg::New => self.new_chat(),
+            Msg::New => {
+                self.closed_open = false;
+                self.new_chat();
+            }
             Msg::Select(id) => {
+                self.closed_open = false;
                 self.active = id;
                 self.renaming = None;
                 self.scroll = true;
@@ -494,6 +617,109 @@ impl Component for AgentPanel {
             Msg::Close(session) => {
                 if let Err(error) = self.close_chat(ctx, &session) {
                     self.error = Some(format!("Could not close chat: {error}"));
+                } else if let Err(error) = self.load_closed() {
+                    self.closed_status(
+                        "Closed chats",
+                        js_sys::Date::now(),
+                        Reply::Error(json!({"error":error})),
+                    );
+                }
+            }
+            Msg::ToggleClosed => {
+                self.closed_open = !self.closed_open;
+                self.renaming = None;
+                self.scroll = !self.closed_open;
+                if self.closed_open
+                    && let Err(error) = self.load_closed()
+                {
+                    self.closed_status(
+                        "Closed chats",
+                        js_sys::Date::now(),
+                        Reply::Error(json!({"error":error})),
+                    );
+                }
+            }
+            Msg::Restore(session) => {
+                let started = js_sys::Date::now();
+                if let Err(error) = self.restore(&session) {
+                    self.closed_status(
+                        "Restore chat",
+                        started,
+                        Reply::Error(json!({"error":error,"sessionId":session})),
+                    );
+                }
+            }
+            Msg::Delete(sessions) => {
+                if sessions.is_empty()
+                    || self
+                        .statuses
+                        .get(CLOSED)
+                        .is_some_and(|status| status.running)
+                {
+                    return false;
+                }
+                let question = if sessions.len() == 1 {
+                    "Delete this closed chat? Its messages and Copilot history are removed from this computer.".to_owned()
+                } else {
+                    format!(
+                        "Delete {} closed chats? Their messages and Copilot history are removed from this computer.",
+                        sessions.len()
+                    )
+                };
+                let started = js_sys::Date::now();
+                match window().confirm_with_message(&question) {
+                    Ok(true) => {}
+                    Ok(false) => return false,
+                    Err(failure) => {
+                        self.closed_status(
+                            "Delete closed chats",
+                            started,
+                            Reply::Error(json!({"error":error(failure)})),
+                        );
+                        self.notify_activity(ctx);
+                        return true;
+                    }
+                }
+                let mut status = OperationStatus::event("Delete closed chats", started, None);
+                status.debug["sessionIds"] = json!(sessions);
+                self.statuses.insert(CLOSED.into(), status);
+                ctx.props().transport.request(
+                    json!({"service":"agent_sessions","op":"delete","sessionIds":sessions}),
+                    false,
+                    ctx.link()
+                        .callback(move |reply| Msg::Deleted(started, reply)),
+                );
+            }
+            Msg::Deleted(started, reply) => {
+                let reply = match reply {
+                    Reply::Result(mut result) => {
+                        if let Err(error) = self.forget(&result) {
+                            result["error"] = json!(format!(
+                                "Copilot history was deleted, but the chats could not be removed from this browser: {error}"
+                            ));
+                        } else if let Some((id, failure)) = result["failed"]
+                            .as_object()
+                            .and_then(|failed| failed.iter().next())
+                        {
+                            result["error"] = json!(format!(
+                                "{} chat(s) were not deleted; {id}: {}",
+                                result["failed"]
+                                    .as_object()
+                                    .map_or(0, |failed| failed.len()),
+                                failure.as_str().unwrap_or("failed")
+                            ));
+                        }
+                        Reply::Result(result)
+                    }
+                    reply => reply,
+                };
+                self.closed_status("Delete closed chats", started, reply);
+                if let Err(error) = self.load_closed() {
+                    self.closed_status(
+                        "Closed chats",
+                        js_sys::Date::now(),
+                        Reply::Error(json!({"error":error})),
+                    );
                 }
             }
             Msg::Rename(session) => {
@@ -581,6 +807,7 @@ impl Component for AgentPanel {
                         issue: None,
                         messages: Vec::new(),
                         final_message: None,
+                        skills: Vec::new(),
                     },
                 );
                 self.page.start(stream);
@@ -618,6 +845,7 @@ impl Component for AgentPanel {
                     ctx.link().callback(|_| Msg::PageChanged),
                 );
             }
+            Msg::Seen => return true,
             Msg::ToolResult(session, stream, call_id, result) => {
                 if self
                     .turns
@@ -746,6 +974,16 @@ impl Component for AgentPanel {
                                 );
                             }
                         }
+                        "skill.invoked" => {
+                            if let Some(turn) = self.turns.get_mut(&session) {
+                                let name = data["name"].as_str().unwrap_or("team skill").to_owned();
+                                turn.activity = format!("Skill: {name}");
+                                turn.skills.push(name);
+                                if let Some(status) = self.statuses.get_mut(&session) {
+                                    status.debug["skills"] = json!(turn.skills);
+                                }
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -777,12 +1015,19 @@ impl Component for AgentPanel {
         true
     }
     fn rendered(&mut self, ctx: &Context<Self>, _first: bool) {
-        if ctx.props().visible && ctx.props().foreground {
-            let state = self.chat_indicator(ctx, &self.active);
-            if let Some(status) = self.statuses.get_mut(&self.active) {
-                status.signal.observe(state);
+        let key = self.shown_key().to_owned();
+        let shown =
+            (ctx.props().visible && ctx.props().foreground).then(|| self.chat_indicator(ctx, &key));
+        let now = js_sys::Date::now();
+        let mut wait = None;
+        for (session, status) in &mut self.statuses {
+            match shown {
+                Some(state) if *session == key => wait = status.signal.observe(state, now),
+                _ => status.hide(),
             }
         }
+        self.seen
+            .schedule(wait, ctx.link().callback(|()| Msg::Seen));
         self.notify_activity(ctx);
         if self.focus_rename {
             self.focus_rename = false;
@@ -821,7 +1066,7 @@ impl Component for AgentPanel {
                     let id=chat.id.clone();
                     let rename=id.clone(); let close=id.clone(); let close_key=id.clone();
                     let renaming=self.renaming.as_ref().is_some_and(|(id,_)|id==&chat.id);
-                    html!{<button type="button" role="tab" aria-selected={(chat.id==self.active).to_string()} key={chat.id.clone()} data-session-id={chat.id.clone()} class={classes!("tab-button",(chat.id==self.active).then_some("active"))}
+                    html!{<button type="button" role="tab" aria-selected={(!self.closed_open && chat.id==self.active).to_string()} key={chat.id.clone()} data-session-id={chat.id.clone()} class={classes!("tab-button",(!self.closed_open && chat.id==self.active).then_some("active"))}
                         onclick={ctx.link().callback(move|_|Msg::Select(id.clone()))}
                         ondblclick={ctx.link().callback(move|_|Msg::Rename(rename.clone()))}>
                         if renaming {
@@ -855,6 +1100,16 @@ impl Component for AgentPanel {
                 })}
                 <button class="tab-button" title="New chat session" data-testid="agent-new-session"
                     onclick={ctx.link().callback(|_|Msg::New)}>{"+"}</button>
+                if !self.closed.is_empty() || self.closed_open || self.statuses.contains_key(CLOSED) {
+                    <button type="button" class={classes!("tab-button","agent-closed-toggle",self.closed_open.then_some("active"))}
+                        title="Closed chats: restore or delete" data-testid="agent-closed-chats" aria-pressed={self.closed_open.to_string()}
+                        onclick={ctx.link().callback(|_|Msg::ToggleClosed)}>
+                        <span class="tab-label">{format!("Closed ({})",self.closed.len())}</span>
+                        if self.statuses.contains_key(CLOSED) {
+                            {indicator(self.chat_notification(ctx,CLOSED),format!("Closed chats · {}",self.chat_indicator(ctx,CLOSED).name()))}
+                        }
+                    </button>
+                }
             </div>};
             ctx.props()
                 .header
@@ -882,7 +1137,19 @@ impl Component for AgentPanel {
                 .approval
                 .as_ref()
                 .is_some_and(|approval| approval.session == self.active);
-        let footer = if ctx.props().visible {
+        let footer = if !ctx.props().visible {
+            Html::default()
+        } else if self.closed_open {
+            let status = self.statuses.get(CLOSED).cloned().unwrap_or_default();
+            let mut debug = status.debug.clone();
+            debug["closedChats"] = json!(self.closed.len());
+            ctx.props().footer.cast::<web_sys::Element>().map(|host| yew::create_portal(html! {
+                <ConsoleStatus key={CLOSED} text={if status.text.is_empty() {String::new()} else {format!("Agent · Closed chats · {}",status.text)}}
+                    {debug}
+                    running={status.running} started={(status.started>0.0).then_some(status.started)}
+                    state={Some(self.chat_indicator(ctx,CLOSED))} testid="agent-status" stop_testid="agent-stop"/>
+            },host)).unwrap_or_default()
+        } else {
             ctx.props().footer.cast::<web_sys::Element>().map(|host| yew::create_portal(html! {
                 <ConsoleStatus key={self.active.clone()} text={if waiting {"Agent · Awaiting approval".into()} else if status.text.is_empty() {String::new()} else {format!("Agent · {} · {}",chat.title,status.text)}}
                     {debug}
@@ -890,9 +1157,45 @@ impl Component for AgentPanel {
                     state={Some(self.chat_indicator(ctx,&self.active))}
                     testid="agent-status" stop_testid="agent-stop" onstop={ctx.link().callback(|_|Msg::Stop)}/>
             },host)).unwrap_or_default()
-        } else {
-            Html::default()
         };
+        if self.closed_open {
+            let busy = self
+                .statuses
+                .get(CLOSED)
+                .is_some_and(|status| status.running);
+            let all: Vec<String> = self.closed.iter().map(|chat| chat.id.clone()).collect();
+            return html! {<>
+                {heading}
+                {footer}
+                <div class="console-agent" data-testid="console-agent" hidden={!ctx.props().visible}>
+                    <div class="agent-closed" data-testid="agent-closed-list" role="list" aria-label="Closed chats">
+                        if self.closed.is_empty() {
+                            <p class="agent-intro">{"No closed chats."}</p>
+                        } else {
+                            <div class="agent-closed-actions">
+                                <span>{"Restore a chat to continue it, or delete it to remove its messages and Copilot history from this computer."}</span>
+                                <button type="button" data-testid="agent-closed-delete-all" disabled={busy}
+                                    onclick={ctx.link().callback(move|_|Msg::Delete(all.clone()))}>{"Delete all"}</button>
+                            </div>
+                        }
+                        {for self.closed.iter().map(|chat|{
+                            let restore=chat.id.clone(); let delete=chat.id.clone();
+                            let messages=chat.messages.iter().filter(|message|!message.text.trim().is_empty()).count();
+                            let closed=chat.closed.map(|time|format!(" · closed {}",js_sys::Date::new(&time.into()).to_locale_string("default",&wasm_bindgen::JsValue::UNDEFINED))).unwrap_or_default();
+                            html!{<div class="agent-closed-item" role="listitem" key={chat.id.clone()} data-session-id={chat.id.clone()}>
+                                <span class="agent-closed-title">{&chat.title}</span>
+                                <span class="agent-closed-meta">{format!("{messages} message{}{closed}",if messages==1 {""} else {"s"})}</span>
+                                <button type="button" data-testid="agent-closed-restore" disabled={busy}
+                                    onclick={ctx.link().callback(move|_|Msg::Restore(restore.clone()))}>{"Restore"}</button>
+                                <button type="button" data-testid="agent-closed-delete" disabled={busy}
+                                    onclick={ctx.link().callback(move|_|Msg::Delete(vec![delete.clone()]))}>{"Delete"}</button>
+                            </div>}
+                        })}
+                    </div>
+                    if let Some(error)=&self.error{<div class="agent-error" role="alert">{error}</div>}
+                </div>
+            </>};
+        }
         html! {<>
             {heading}
             {footer}

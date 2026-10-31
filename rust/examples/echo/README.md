@@ -38,8 +38,8 @@ rust/examples/echo/
 ### `manifest.json`
 
 - `id` — a lowercase letter, then lowercase letters, digits, `-` or `_`. Not one
-  the host answers itself: `agent`, `agent_models`, `dictionary`, `hints`,
-  `history`, `modules`, `sessions`, `templates`, `updates`, `vars`.
+  the host answers itself: `agent`, `agent_models`, `agent_sessions`, `agent_skills`,
+  `dictionary`, `hints`, `history`, `modules`, `sessions`, `templates`, `updates`, `vars`.
 - `name`, `description` — shown in the tab and in Settings → Modules.
 - `params` — the request params (`name`, `type`, `required`, and `flag`,
   `alias`, `positional` for command lines).

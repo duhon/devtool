@@ -1,5 +1,6 @@
 use crate::format::display;
 use serde_json::Value;
+use std::{cell::Cell, rc::Rc};
 use wasm_bindgen::{JsCast, closure::Closure};
 use yew::prelude::*;
 
@@ -60,8 +61,49 @@ impl OperationStatus {
         self.signal.indicator(self.indicator(), visible)
     }
 
-    pub fn observe(&mut self) {
-        self.signal.observe(self.indicator());
+    pub fn observe(&mut self, now: f64) -> Option<f64> {
+        self.signal.observe(self.indicator(), now)
+    }
+
+    pub fn hide(&mut self) {
+        self.signal.hide();
+    }
+}
+
+/// Re-renders a panel once a status on screen has stayed there long enough to count as seen.
+#[derive(Default)]
+pub struct SeenTimer(Rc<Cell<Option<i32>>>);
+
+impl SeenTimer {
+    /// Calls `rerender` after `wait` milliseconds unless an earlier call is already pending;
+    /// that one re-renders first and the panel schedules again.
+    pub fn schedule(&self, wait: Option<f64>, rerender: Callback<()>) {
+        let Some(wait) = wait else {
+            return;
+        };
+        if self.0.get().is_some() {
+            return;
+        }
+        let pending = self.0.clone();
+        let fire = Closure::once_into_js(move || {
+            pending.set(None);
+            rerender.emit(());
+        });
+        match super::window().set_timeout_with_callback_and_timeout_and_arguments_0(
+            fire.unchecked_ref(),
+            wait.ceil() as i32,
+        ) {
+            Ok(id) => self.0.set(Some(id)),
+            Err(error) => web_sys::console::error_1(&error),
+        }
+    }
+}
+
+impl Drop for SeenTimer {
+    fn drop(&mut self) {
+        if let Some(id) = self.0.take() {
+            super::window().clear_timeout_with_handle(id);
+        }
     }
 }
 

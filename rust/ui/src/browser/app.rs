@@ -5,7 +5,7 @@ use super::{
     error,
     transport::{Reply, Transport},
     updates::{self, Phase as UpdatePhase},
-    views::{ConsoleStatus, OperationStatus, indicator},
+    views::{ConsoleStatus, OperationStatus, SeenTimer, indicator},
     window,
 };
 use crate::activity::Indicator;
@@ -160,6 +160,8 @@ impl DiscoveryStatus {
     }
 }
 pub enum Msg {
+    /// A status on screen may now count as seen.
+    Seen,
     CheckMenuWidth(u32),
     PanelWidth(String, u32),
     ToggleHistory,
@@ -251,6 +253,10 @@ pub struct App {
     settings_status: Option<OperationStatus>,
     /// Start of the Settings warning or error last shown, and when it was first shown.
     settings_seen: Option<(f64, f64)>,
+    /// The Settings warning or error on screen and when it appeared, until it counts as seen.
+    settings_shown: Option<(f64, f64)>,
+    /// Re-renders once a status on screen has stayed long enough to count as seen.
+    seen: SeenTimer,
     settings_visited: bool,
     console_service: String,
     console_order: Vec<String>,
@@ -353,6 +359,8 @@ impl Component for App {
             updates: updates::State::default(),
             settings_status: None,
             settings_seen: None,
+            settings_shown: None,
+            seen: SeenTimer::default(),
             settings_visited: false,
             console_service,
             console_order,
@@ -445,6 +453,11 @@ impl Component for App {
     }
     fn update(&mut self, ctx: &Context<Self>, msg: Msg) -> bool {
         match msg {
+            Msg::Seen => {
+                // Marks the dwelled status before `view`, so the lights drawn now reflect it.
+                self.observe_statuses();
+                return true;
+            }
             Msg::SettingsStatus(status) => {
                 self.settings_status = Some(status);
             }
@@ -1533,25 +1546,10 @@ impl Component for App {
             </div>
         </>}
     }
-    fn rendered(&mut self, _: &Context<Self>, _: bool) {
-        self.observe_console_status();
-        if self.console_panel == Some(ConsolePanel::Settings) && !self.hidden {
-            let shown = self
-                .settings_operation()
-                .map(|status| (status.started, status.indicator()));
-            let operation = shown.is_some();
-            let (started, state) =
-                shown.unwrap_or((self.updates.status.started, self.updates.indicator()));
-            if matches!(state, Indicator::Warning | Indicator::Error)
-                && !self.settings_seen.is_some_and(|(seen, _)| seen == started)
-            {
-                self.settings_seen = Some((started, js_sys::Date::now()));
-            }
-            match self.settings_status.as_mut().filter(|_| operation) {
-                Some(status) => status.observe(),
-                None => self.updates.signal.observe(self.updates.indicator()),
-            }
-        }
+    fn rendered(&mut self, ctx: &Context<Self>, _: bool) {
+        let wait = self.observe_statuses();
+        self.seen
+            .schedule(wait, ctx.link().callback(|()| Msg::Seen));
     }
     fn destroy(&mut self, _: &Context<Self>) {
         for (_, id) in std::mem::take(&mut self.hints_timers) {
@@ -1560,6 +1558,44 @@ impl Component for App {
     }
 }
 impl App {
+    /// Counts on-screen time of every visible status and returns the wait until the nearest
+    /// one counts as seen.
+    fn observe_statuses(&mut self) -> Option<f64> {
+        let mut wait = self.observe_console_status();
+        if self.console_panel == Some(ConsolePanel::Settings) && !self.hidden {
+            let now = js_sys::Date::now();
+            let shown = self
+                .settings_operation()
+                .map(|status| (status.started, status.indicator()));
+            let operation = shown.is_some();
+            let (started, state) =
+                shown.unwrap_or((self.updates.status.started, self.updates.indicator()));
+            let settings = match self.settings_status.as_mut().filter(|_| operation) {
+                Some(status) => status.observe(now),
+                None => self.updates.signal.observe(self.updates.indicator(), now),
+            };
+            if matches!(state, Indicator::Warning | Indicator::Error)
+                && !self.settings_seen.is_some_and(|(seen, _)| seen == started)
+            {
+                let shown = match self.settings_shown {
+                    Some(shown) if shown.0 == started => shown,
+                    _ => (started, now),
+                };
+                self.settings_shown = Some(shown);
+                if settings.is_none() {
+                    self.settings_seen = Some(shown);
+                }
+            }
+            wait = crate::activity::sooner(wait, settings);
+        } else {
+            if let Some(status) = &mut self.settings_status {
+                status.hide();
+            }
+            self.updates.signal.hide();
+            self.settings_shown = None;
+        }
+        wait
+    }
     fn load_hints(&self, ctx: &Context<Self>, service: String) {
         let started = js_sys::Date::now();
         self.transport.request(

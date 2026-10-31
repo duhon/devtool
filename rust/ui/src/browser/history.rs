@@ -1,7 +1,7 @@
 use super::{
     editor::Editor,
     transport::{Reply, Transport},
-    views::{ConsoleStatus, OperationStatus},
+    views::{ConsoleStatus, OperationStatus, SeenTimer},
 };
 use crate::activity::Indicator;
 use serde::Deserialize;
@@ -59,6 +59,7 @@ pub enum Msg {
     Select(u64),
     Chunk(u64, u64, Reply),
     Error(String),
+    Seen,
 }
 pub struct History {
     entries: Vec<Entry>,
@@ -73,6 +74,7 @@ pub struct History {
     bytes: u64,
     epoch: u64,
     status: OperationStatus,
+    seen: SeenTimer,
 }
 impl History {
     fn list(&mut self, ctx: &Context<Self>, append: bool) {
@@ -173,6 +175,7 @@ impl Component for History {
             bytes: 0,
             epoch: 0,
             status: Default::default(),
+            seen: SeenTimer::default(),
         };
         if ctx.props().visible {
             this.list(ctx, false);
@@ -313,6 +316,7 @@ impl Component for History {
                 }
             }
             Msg::Error(error) => self.fail(error),
+            Msg::Seen => {}
         }
         true
     }
@@ -328,8 +332,11 @@ impl Component for History {
             )));
         }
         if visible {
-            let state = self.status.indicator();
-            self.status.signal.observe(state);
+            let wait = self.status.observe(js_sys::Date::now());
+            self.seen
+                .schedule(wait, ctx.link().callback(|()| Msg::Seen));
+        } else {
+            self.status.hide();
         }
         ctx.props()
             .onactivity

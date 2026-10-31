@@ -89,48 +89,67 @@ impl App {
             .unwrap_or_default();
         signal.indicator(state, visible)
     }
-    pub(super) fn observe_console_status(&mut self) {
-        if self.hidden {
-            return;
-        }
+    /// Counts how long each status on screen has been there and returns how much longer the
+    /// nearest one must stay to count as seen; statuses off screen start a new count.
+    pub(super) fn observe_console_status(&mut self) -> Option<f64> {
+        use crate::activity::sooner;
+        let now = js_sys::Date::now();
         let service = self.console_service.clone();
-        let line = self.active_console_line(&service);
-        let (run, discovery) = self.selected_status(&service);
-        let run_key = run
-            .and_then(|_| self.console_run_entry(&service, line))
-            .map(|(key, _)| key.to_owned());
-        let discovery_started = discovery.map(|status| status.started);
-        if let Some(run) = run_key.and_then(|key| self.runs.get_mut(&key)) {
-            run.signal
-                .observe(crate::activity::Indicator::status(&run.status, run.running));
-        }
-        if let Some(started) = discovery_started {
-            for status in self
-                .discovery_status
-                .get_mut(&service)
-                .into_iter()
-                .chain(
-                    self.discovery_history
-                        .get_mut(&service)
-                        .into_iter()
-                        .flatten(),
-                )
-                .filter(|status| status.started == started && status.check_line(&service) == line)
-            {
-                status.signal.observe(crate::activity::Indicator::status(
-                    &status.text,
-                    status.request.is_some(),
-                ));
+        let (run_key, discovery) = if self.hidden {
+            (None, None)
+        } else {
+            let line = self.active_console_line(&service);
+            let (run, discovery) = self.selected_status(&service);
+            let run_key = run
+                .and_then(|_| self.console_run_entry(&service, line))
+                .map(|(key, _)| key.to_owned());
+            (run_key, discovery.map(|status| (status.started, line)))
+        };
+        let mut wait = None;
+        for (key, run) in &mut self.runs {
+            if run_key.as_ref() == Some(key) {
+                let state = Indicator::status(&run.status, run.running);
+                wait = sooner(wait, run.signal.observe(state, now));
+            } else {
+                run.signal.hide();
             }
         }
-        if self.console_panel == Some(ConsolePanel::Hints)
-            && let Some(status) = self.panel_status.get_mut(&service)
-        {
-            status.observe();
+        let discoveries =
+            self.discovery_status
+                .iter_mut()
+                .chain(
+                    self.discovery_history
+                        .iter_mut()
+                        .flat_map(|(owner, statuses)| {
+                            statuses.iter_mut().map(move |status| (owner, status))
+                        }),
+                );
+        for (owner, status) in discoveries {
+            if *owner == service
+                && discovery.is_some_and(|(started, line)| {
+                    status.started == started && status.check_line(&service) == line
+                })
+            {
+                let state = Indicator::status(&status.text, status.request.is_some());
+                wait = sooner(wait, status.signal.observe(state, now));
+            } else {
+                status.signal.hide();
+            }
         }
-        if self.console_panel == Some(ConsolePanel::Sessions) {
-            self.session_status.observe();
+        let hints = !self.hidden && self.console_panel == Some(ConsolePanel::Hints);
+        for (owner, status) in &mut self.panel_status {
+            if hints && *owner == service {
+                wait = sooner(wait, status.observe(now));
+            } else {
+                status.hide();
+            }
         }
+        if !self.hidden && self.console_panel == Some(ConsolePanel::Sessions) {
+            wait = sooner(wait, self.session_status.observe(now));
+        } else {
+            self.session_status.hide();
+        }
+        wait
     }
     pub(super) fn hints_indicator(&self, service: &str) -> crate::activity::Indicator {
         self.panel_status
@@ -868,6 +887,10 @@ impl App {
                                 }
                                 <crate::browser::agent_settings::AgentSettings transport={self.transport.clone()}
                                     onstatus={ctx.link().callback(Msg::SettingsStatus)}/>
+                                if self.transport.is_native() {
+                                    <crate::browser::agent_skills::AgentSkills transport={self.transport.clone()}
+                                        onstatus={ctx.link().callback(Msg::SettingsStatus)}/>
+                                }
                             </section>
                         }
                         if self.console_panel==Some(ConsolePanel::Sessions) {

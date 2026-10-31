@@ -17,6 +17,8 @@ struct Peer {
     /// Tool calls of aborted turns, whose late results the CLI ignores.
     aborted: HashSet<String>,
     late_abort: HashSet<String>,
+    /// The team skill folders each session was created or resumed with.
+    skills: HashMap<String, Vec<String>>,
 }
 fn frame(value: Value) -> Result<()> {
     let bytes = serde_json::to_vec(&value)?;
@@ -126,7 +128,52 @@ impl Peer {
             self.late_abort.remove(session);
         }
         let args = json!({"service":context["service"],"checkId":context["activeCheck"],"revision":context["revision"]});
-        if message.contains("agent model configuration") {
+        if message.contains("agent skills") {
+            let folders = self.skills.get(session).cloned().unwrap_or_default();
+            let mut names = Vec::new();
+            for folder in &folders {
+                let mut skills: Vec<_> = std::fs::read_dir(folder)?
+                    .filter_map(|entry| entry.ok().map(|entry| entry.path().join("SKILL.md")))
+                    .filter(|file| file.is_file())
+                    .collect();
+                skills.sort();
+                for file in skills {
+                    let text = std::fs::read_to_string(&file)?;
+                    if !text.contains("\ndescription:") {
+                        continue;
+                    }
+                    let name = text
+                        .lines()
+                        .find_map(|line| line.strip_prefix("name:"))
+                        .context("Fixture skill has no name")?
+                        .trim()
+                        .to_owned();
+                    self.event(
+                        session,
+                        "skill.invoked",
+                        json!({"name":name,"source":"project","path":file,
+                            "content":text,"description":"fixture"}),
+                    )?;
+                    names.push(name);
+                }
+            }
+            self.finish(
+                session,
+                &format!(
+                    "Skill directories: {}; skills: {}",
+                    if folders.is_empty() {
+                        "none".into()
+                    } else {
+                        folders.join(", ")
+                    },
+                    if names.is_empty() {
+                        "none".into()
+                    } else {
+                        names.join(", ")
+                    }
+                ),
+            )
+        } else if message.contains("agent model configuration") {
             let options = self
                 .models
                 .get(session)
@@ -935,7 +982,25 @@ Raw HTML: <img src="https://images.fixture.invalid/raw" onerror="globalThis.agen
                     return self.send(json!({"jsonrpc":"2.0","id":request["id"],
                         "result":{"sessionId":session,"workspacePath":params["workingDirectory"]}}));
                 }
-                ensure!(params["availableTools"] == json!(["custom:*"]));
+                let folders: Vec<String> = match params.get("skillDirectories") {
+                    None => Vec::new(),
+                    Some(value) => serde_json::from_value(value.clone())
+                        .context("skillDirectories must list paths")?,
+                };
+                if folders.is_empty() {
+                    ensure!(params["availableTools"] == json!(["custom:*"]));
+                    ensure!(
+                        params["enableSkills"] != true,
+                        "Skills are enabled without a team folder"
+                    );
+                } else {
+                    ensure!(params["availableTools"] == json!(["custom:*", "builtin:skill"]));
+                    ensure!(
+                        params["enableSkills"] == true,
+                        "A team folder needs enableSkills"
+                    );
+                }
+                self.skills.insert(session.into(), folders);
                 ensure!(params["requestPermission"] == true);
                 let tools = params["tools"].as_array().context("Missing custom tools")?;
                 ensure!(

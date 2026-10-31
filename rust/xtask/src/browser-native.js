@@ -83,6 +83,17 @@
     '#check env\n#endpoint\n/bin/sh -c\n#command\nprintf rust-ui-terminal; printf "$SERVICES_DEVTOOLS_INTERACTIVE_PROBE"',
     output => output.includes('rust-ui-terminal') && output.includes('interactive-fixture-only'),
     'Terminal commands must run with the interactive shell environment');
+  await runConsole('terminal',
+    "#check failure\n#endpoint\n/bin/sh -c\n#command\nprintf partial; printf 'first\\nfixture-failure: boom\\n' >&2; exit 3",
+    output => output.includes('fixture-failure: boom'),
+    'A failed Terminal command must show its stderr');
+  const failedStatus = testid('console-main-status').textContent;
+  assert(failedStatus.includes('exit 3 · fixture-failure: boom'),
+    `A failed Terminal command must show its exit code and last stderr line in the status: ${failedStatus}`);
+  await click(testid('console-main-status'));
+  assert(testid('console-main-status-debug').textContent.includes('fixture-failure: boom'),
+    'Terminal Debug must keep the stderr of a failed command');
+  await click(testid('console-main-status'));
   await click(testid('console-service-rest'));
   const bookEditor = cm('console-editor');
   const pasteRest = text => {

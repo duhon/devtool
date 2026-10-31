@@ -454,6 +454,54 @@
   font: inherit;
 }
 
+.agent-skills-folder {
+  display: flex;
+  gap: 6px;
+}
+
+.agent-skills-folder input {
+  flex: 1;
+}
+
+.agent-settings input.invalid {
+  border-color: #ff8980;
+}
+
+.agent-skills-hint,
+.agent-skills-description {
+  color: #a9adb5;
+}
+
+.agent-skills-list,
+.agent-skills-problems {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.agent-skills-list li {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+
+.agent-skills-name {
+  flex: none;
+}
+
+.agent-skills-description {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-skills-problems {
+  color: #e5c07b;
+}
+
 .agent-model-picker {
   position: relative;
 }
@@ -797,6 +845,52 @@
   max-height: 120px;
   overflow: auto;
   margin-bottom: 6px;
+}
+
+.agent-closed {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 6px;
+}
+
+.agent-closed-actions,
+.agent-closed-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+}
+
+.agent-closed-actions {
+  color: #a9adb5;
+  margin-bottom: 4px;
+}
+
+.agent-closed-actions span,
+.agent-closed-meta {
+  flex: 1;
+  min-width: 0;
+}
+
+.agent-closed-item {
+  border-left: 2px solid #43454a;
+  margin-bottom: 4px;
+  background: #2b2d30;
+}
+
+.agent-closed-title {
+  max-width: 40%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.agent-closed-meta {
+  color: #a9adb5;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .console-hints-editor,

@@ -211,3 +211,32 @@ fn cycles_display_tolerantly_and_fall_back_to_globals() {
         "ok"
     );
 }
+
+#[test]
+fn dictionary_save_with_a_stale_base_keeps_another_windows_edit() {
+    let data = DataDir::new();
+    let dictionary = data.runtime().dictionary_store.clone();
+    let save = |request: Value| dictionary.dispatch(&request);
+    save(json!({"op":"save","name":"shared","variables":{"A":"1"},"base":null})).unwrap();
+    assert!(
+        save(json!({"op":"save","name":"shared","variables":{"A":"x"},"base":null}))
+            .unwrap_err()
+            .message
+            .starts_with("CONFLICT: profile shared was created"),
+        "Creating a profile that another window created must conflict"
+    );
+    save(json!({"op":"save","name":"shared","variables":{"A":"2"},"base":{"A":"1"}})).unwrap();
+    let stale = save(json!({"op":"save","name":"shared","variables":{"A":"3"},"base":{"A":"1"}}));
+    assert!(
+        stale
+            .unwrap_err()
+            .message
+            .contains("changed in another window")
+    );
+    assert_eq!(dictionary.list().unwrap()["profiles"]["shared"]["A"], "2");
+    save(json!({"op":"save","name":"shared","variables":{"A":"2"},"base":{"A":"1"}}))
+        .expect("A draft that already matches the saved profile is not a conflict");
+    save(json!({"op":"save","name":"shared","variables":{"A":"4"}}))
+        .expect("Saves without a base overwrite, as the CLI and Agent expect");
+    assert_eq!(dictionary.list().unwrap()["profiles"]["shared"]["A"], "4");
+}

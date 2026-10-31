@@ -1,14 +1,15 @@
 //! Activity indicator: how running, new and viewed outcomes are summarized
 //! on tabs. UI-behaviour tests.
 
-use services_ui::activity::{Indicator, Signal, summary};
+use services_ui::activity::{Indicator, SEEN_AFTER_MS, Signal, sooner, summary};
 
 #[test]
 fn viewed_outcomes_go_dark_without_suppressing_running_or_new_outcomes() {
     let mut signal = Signal::default();
     assert_eq!(signal.indicator(Indicator::Error, false), Indicator::Error);
     assert_eq!(signal.indicator(Indicator::Error, true), Indicator::Ready);
-    signal.observe(Indicator::Error);
+    assert_eq!(signal.observe(Indicator::Error, 0.0), Some(SEEN_AFTER_MS));
+    assert_eq!(signal.observe(Indicator::Error, SEEN_AFTER_MS), None);
     assert_eq!(signal.indicator(Indicator::Error, false), Indicator::Ready);
     assert_eq!(
         signal.indicator(Indicator::Success, false),
@@ -18,7 +19,7 @@ fn viewed_outcomes_go_dark_without_suppressing_running_or_new_outcomes() {
         signal.indicator(Indicator::Running, true),
         Indicator::Running
     );
-    signal.observe(Indicator::Running);
+    assert_eq!(signal.observe(Indicator::Running, 0.0), None);
     assert_eq!(
         signal.indicator(Indicator::Running, false),
         Indicator::Running
@@ -28,6 +29,43 @@ fn viewed_outcomes_go_dark_without_suppressing_running_or_new_outcomes() {
         Signal::default().indicator(Indicator::Error, false),
         Indicator::Error
     );
+}
+
+#[test]
+fn an_outcome_counts_as_seen_only_after_staying_on_screen() {
+    let mut signal = Signal::default();
+    assert_eq!(
+        signal.observe(Indicator::Error, 1000.0),
+        Some(SEEN_AFTER_MS)
+    );
+    assert_eq!(
+        signal.observe(Indicator::Error, 1100.0),
+        Some(SEEN_AFTER_MS - 100.0)
+    );
+    signal.hide();
+    assert_eq!(
+        signal.indicator(Indicator::Error, false),
+        Indicator::Error,
+        "An error that flashed by while the user switched away must stay lit"
+    );
+    assert_eq!(
+        signal.observe(Indicator::Error, 1600.0),
+        Some(SEEN_AFTER_MS),
+        "Showing it again starts a new count"
+    );
+    assert_eq!(
+        signal.observe(Indicator::Warning, 1700.0),
+        Some(SEEN_AFTER_MS)
+    );
+    assert_eq!(signal.observe(Indicator::Warning, 2200.0), None);
+    assert_eq!(
+        signal.indicator(Indicator::Warning, false),
+        Indicator::Ready
+    );
+    assert_eq!(signal.observe(Indicator::Ready, 2300.0), None);
+    assert_eq!(sooner(Some(300.0), Some(200.0)), Some(200.0));
+    assert_eq!(sooner(None, Some(200.0)), Some(200.0));
+    assert_eq!(sooner(None, None), None);
 }
 
 #[test]

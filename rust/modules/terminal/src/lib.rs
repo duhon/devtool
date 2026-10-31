@@ -9,6 +9,7 @@ use services_module_api::sdk::{self, Call, Events, Manifest, Service, Threads};
 use services_module_api::transport::{EndpointArc, EndpointBox, Status};
 use std::{
     process::Stdio,
+    sync::Mutex,
     time::{Duration, Instant},
 };
 use tokio::{
@@ -16,6 +17,10 @@ use tokio::{
     sync::mpsc,
 };
 use tokio_util::sync::CancellationToken;
+
+/// The end of stderr kept in the result, so status and Debug can show why a command failed.
+pub const STDERR_TAIL_BYTES: usize = 4096;
+
 pub struct Terminal;
 
 impl Service for Terminal {
@@ -165,11 +170,12 @@ pub async fn run(
     let group = ChildGroup(pid);
     let stdout = child.stdout.take().unwrap();
     let stderr = child.stderr.take().unwrap();
+    let stderr_tail = Mutex::new(String::new());
     let (status, cancelled, output_incomplete) = {
         let output = async {
             tokio::try_join!(
-                read_output(stdout, "stdout", events.clone()),
-                read_output(stderr, "stderr", events),
+                read_output(stdout, "stdout", events.clone(), None),
+                read_output(stderr, "stderr", events, Some(&stderr_tail)),
             )?;
             Ok::<_, std::io::Error>(())
         };
@@ -246,6 +252,10 @@ pub async fn run(
         {"event":"exit","atMs":elapsed,"data":{"code":code,"signal":signal}},
         {"event":"close","atMs":elapsed,"data":{"code":code,"signal":signal}}
     ]}}});
+    let stderr_tail = stderr_tail.into_inner().unwrap_or_else(|e| e.into_inner());
+    if !stderr_tail.is_empty() {
+        result["stderr"] = json!(stderr_tail);
+    }
     if output_incomplete {
         result["outputIncomplete"] = json!(true);
         result["warning"] = json!(
@@ -254,11 +264,29 @@ pub async fn run(
     }
     Ok(result)
 }
+/// Keeps the last `STDERR_TAIL_BYTES` of `tail`, cut at a character boundary.
+pub fn keep_tail(tail: &mut String, data: &str) {
+    tail.push_str(data);
+    if tail.len() > STDERR_TAIL_BYTES {
+        let mut start = tail.len() - STDERR_TAIL_BYTES;
+        while !tail.is_char_boundary(start) {
+            start += 1;
+        }
+        tail.drain(..start);
+    }
+}
 async fn read_output(
     mut reader: impl AsyncRead + Unpin,
     kind: &str,
     events: mpsc::Sender<Value>,
+    tail: Option<&Mutex<String>>,
 ) -> std::io::Result<()> {
+    let send = |data: String| {
+        if let Some(tail) = tail {
+            keep_tail(&mut tail.lock().unwrap_or_else(|e| e.into_inner()), &data);
+        }
+        events.send(json!({"type":kind,"data":data}))
+    };
     let mut buf = [0u8; 8192];
     let mut pending = Vec::new();
     loop {
@@ -280,7 +308,7 @@ async fn read_output(
                 if valid > 0 {
                     let data = String::from_utf8_lossy(&pending[..valid]).to_string();
                     pending.drain(..valid);
-                    if events.send(json!({"type":kind,"data":data})).await.is_err() {
+                    if send(data).await.is_err() {
                         break;
                     }
                 }
@@ -288,9 +316,7 @@ async fn read_output(
         }
     }
     if !pending.is_empty() {
-        let _ = events
-            .send(json!({"type":kind,"data":String::from_utf8_lossy(&pending)}))
-            .await;
+        let _ = send(String::from_utf8_lossy(&pending).into_owned()).await;
     }
     Ok(())
 }
@@ -317,6 +343,19 @@ mod tests {
         ] {
             assert_eq!(Terminal.outcome(&result), expected, "{result}");
         }
+    }
+
+    #[test]
+    fn stderr_tail_keeps_the_last_bytes_on_a_char_boundary() {
+        let mut tail = String::new();
+        keep_tail(&mut tail, "first\n");
+        keep_tail(&mut tail, "second\n");
+        assert_eq!(tail, "first\nsecond\n");
+        keep_tail(&mut tail, &"é".repeat(STDERR_TAIL_BYTES));
+        keep_tail(&mut tail, "fail: boom\n");
+        assert!(tail.len() <= STDERR_TAIL_BYTES, "{}", tail.len());
+        assert!(tail.len() > STDERR_TAIL_BYTES - 2);
+        assert!(tail.starts_with('é') && tail.ends_with("é\u{e9}fail: boom\n"));
     }
 
     #[test]

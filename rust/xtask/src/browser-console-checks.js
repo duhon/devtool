@@ -1,6 +1,6 @@
 // Shared Console checks reused by several scenarios; loaded after browser-driver.js on every page.
 (() => {
-  const { assert, sleep, wait, waitFor, settle, visible, find, testid, cm, key, move, input, click, button,
+  const { assert, sleep, seen, wait, waitFor, settle, visible, find, testid, cm, key, move, input, click, button,
     openConsole, activateSession, setSource, assertNativeScrollbars, nativeTrackPaint, sessionLibrary, nativeHold, holds } = testDriver;
   // Waits for Chrome's overlay scrollbar to fade on its own instead of sleeping past the fade delay.
   const trackFaded = async (element, axes, message) => {
@@ -625,6 +625,7 @@
     cm('console-variables').setValue('missing delimiter');
     await wait(() => toolStatus().textContent.includes('ERROR')
       && toolStatus().textContent.includes('NAME: value') && profileToolLight('variables') === 'ready');
+    await seen();
     const varsError = toolStatus().textContent;
     const varsMainStatus = mainStatusText();
     await click(testid('console-variables-toggle'));
@@ -659,10 +660,12 @@
       && !toolStatus().classList.contains('is-running'));
     assert(profileToolLight('variables') === 'error' && !toolStatus().classList.contains('is-error'),
       'Backend validation of var must keep its aggregate error without incorrectly assigning that error to env');
+    await seen();
     await click(button(/^var$/, find('.console-panel-tabs')));
     await wait(() => cm('console-variables').getOption('readOnly') !== true
       && toolStatus().textContent.includes('unknown_fixture') && profileToolLight('variables') === 'ready',
-      'Opening the failed profile must acknowledge its signal while retaining its error status');
+      () => `Opening the failed profile must acknowledge its signal while retaining its error status: ${profileState()}`);
+    await seen();
     await click(button(/^env /, find('.console-panel-tabs')));
     await click(testid('console-variables-toggle'));
     await click(testid('console-variables-toggle'));

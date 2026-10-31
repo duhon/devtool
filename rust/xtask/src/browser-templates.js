@@ -43,7 +43,13 @@
   const body='{\n  "id": 123,\n  "title": "Example Book Title",\n  "token": "{{var:TOKEN}}"\n}';
   const body2='{\n  "id": 1,\n  "title": "Example Book Title",\n}';
   const definitions=`@my_create_book bla bla comment\n${body}\n@my_create_book2 another comment\n${body2}`;
+  // A module removed with its data kept leaves its draft behind; it must neither block nor lose the others.
+  const unloaded={text:'@kept\nGET /kept',base:''};
+  localStorage.setItem('servicesConsole.templateDrafts',JSON.stringify({'removed-module/check':unloaded}));
   await open();
+  assert(!testid('templates-panel').textContent.includes('Invalid Templates draft')
+    &&!testid('templates-status').classList.contains('is-error'),
+    'A draft of an unloaded module must not break Templates');
   assert(!testid('templates-panel').querySelector('.agent-intro'),'Templates must not show an introductory heading above the editor');
   assert(testid('templates-status').textContent.includes('@@ = @'),'The short escaping hint must live in the status strip');
   assert([...testid('templates-sections').querySelectorAll('[role="tab"]')].map(tab=>tab.textContent).join(',')==='check,endpoint,headers,body',
@@ -52,6 +58,8 @@
   if(location.protocol==='http:') assert(cm('templates-editor').getValue().includes('@my_create_book'),
     'HTTP must load global templates previously saved through native messaging');
   await save('rest','body',definitions);
+  assert(JSON.stringify(drafts()['removed-module/check'])===JSON.stringify(unloaded),
+    'Saving another draft must keep the draft of an unloaded module until it is installed again');
   const tokens=(editor,line)=>editor.getLineTokens(line,true).map(token=>[token.string,token.type]);
   assert(cm('templates-editor').getOption('mode').name==='services-console-rest',
     'REST templates must use the same syntax mode as the main REST Console');

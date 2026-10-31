@@ -44,6 +44,17 @@
     const message = [...testid('agent-transcript').querySelectorAll('.agent-message-assistant')].at(-1).textContent;
     return JSON.parse(message.match(/Model configuration: (\{[^\n]+\})/)?.[1] || '{}');
   };
+  const ask = async prompt => {
+    const field = testid('agent-composer');
+    const before = testid('agent-transcript').querySelectorAll('.agent-message-assistant').length;
+    input(field, prompt);
+    field.focus();
+    await key('Enter');
+    await wait(() => testid('agent-stop').disabled
+      && testid('agent-transcript').querySelectorAll('.agent-message-assistant').length > before,
+      () => `Turn "${prompt}" did not finish: ${testid('agent-transcript').textContent}; ${document.querySelector('.agent-error')?.textContent}`);
+    return [...testid('agent-transcript').querySelectorAll('.agent-message-assistant')].at(-1).textContent;
+  };
   const newChat = async () => {
     await click(testid('agent-new-session'));
     const id = testid('agent-sessions').querySelector('[aria-selected="true"]').dataset.sessionId;
@@ -102,6 +113,48 @@
     const light = await configuration();
     assert(light.model === 'sample-light' && light.reasoningEffort === null,
       'New chats must capture the latest model without unsupported Reasoning');
+
+    await settings();
+    const folder = testid('agent-team-skills-input');
+    await wait(() => !folder.disabled, 'The team skills setting did not load');
+    assert(folder.value === '' && !document.querySelector('[data-testid="agent-team-skills-clear"]'),
+      'No team skills folder is configured initially');
+    input(folder, 'relative/skills');
+    await click(testid('agent-team-skills-save'));
+    await wait(() => folder.getAttribute('aria-invalid') === 'true',
+      () => `A rejected folder must mark the input: ${testid('settings-update-status').textContent}`);
+    assert(testid('settings-update-status').textContent.includes('absolute path')
+      && testid('settings-update-status').classList.contains('is-error'),
+      `A rejected folder must explain itself in the Settings status: ${testid('settings-update-status').textContent}`);
+    input(folder, fixtureSkills);
+    await wait(() => folder.getAttribute('aria-invalid') === 'false', 'Editing the folder must clear the rejected mark');
+    await click(testid('agent-team-skills-save'));
+    await wait(() => document.querySelector('[data-testid="agent-team-skills-list"]'),
+      () => `The team skills were not listed: ${testid('settings-update-status').textContent}`);
+    assert(testid('agent-team-skills-list').textContent.includes('shop-deploy')
+      && testid('agent-team-skills-list').textContent.includes('Deploys the fixture shop'),
+      `The valid skill must be listed: ${testid('agent-team-skills-list').textContent}`);
+    assert(testid('agent-team-skills-problems').textContent.includes('broken: SKILL.md frontmatter has no description'),
+      `An invalid skill must be explained: ${testid('agent-team-skills-problems').textContent}`);
+    assert(testid('settings-update-status').textContent.includes('Team skills folder saved · 1 skill')
+      && testid('settings-update-status').classList.contains('is-warning'),
+      `Saving must report the skills and their problem: ${testid('settings-update-status').textContent}`);
+    await agent();
+    await newChat();
+    const used = await ask('agent skills');
+    assert(used.includes(`Skill directories: ${fixtureSkills}; skills: shop-deploy`),
+      `The next turn must hand the team folder to Copilot: ${used}`);
+    assert(document.querySelector('[data-testid="agent-status-debug"]').textContent.includes('shop-deploy'),
+      'The Agent status debug must list the skills Copilot used');
+    await settings();
+    await click(testid('agent-team-skills-clear'));
+    await wait(() => folder.value === '' && !document.querySelector('[data-testid="agent-team-skills-list"]'),
+      'Clear must remove the team skills folder');
+    assert(testid('settings-update-status').textContent.includes('Team skills folder cleared'),
+      `Clearing must be reported: ${testid('settings-update-status').textContent}`);
+    await agent();
+    const cleared = await ask('agent skills');
+    assert(cleared.includes('Skill directories: none'), `A cleared folder must stop reaching Copilot: ${cleared}`);
   } finally {
     if (originalOptions === null) localStorage.removeItem('servicesConsole.agentOptions');
     else localStorage.setItem('servicesConsole.agentOptions', originalOptions);
@@ -111,6 +164,6 @@
     await click(testid('agent-sessions').querySelector(`[data-session-id="${originalChat}"]`));
     input(testid('agent-composer'), originalDraft);
   }
-  globalThis.agentSettingsReceipt = {categories:3,reasoning:['low','high'],newChats:created.length,existingChatPreserved:true};
+  globalThis.agentSettingsReceipt = {categories:3,reasoning:['low','high'],newChats:created.length,existingChatPreserved:true,teamSkills:['shop-deploy']};
   return true;
 })()

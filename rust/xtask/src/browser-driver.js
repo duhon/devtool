@@ -12,6 +12,8 @@
   });
   const assert = (value, message) => { if (!value) throw new Error(typeof message === 'function' ? message() : message); };
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+  // Keeps the status on screen long enough to count as seen (`SEEN_AFTER_MS` in activity.rs).
+  const seen = () => sleep(600);
   globalThis.updateFixture = {release:null,error:null,requests:[],installs:[],branch:'devtool'};
   // Holds native replies to requests matching `match` until `release()`, e.g. to keep a request in flight.
   const nativeHold = {match:null, ports:new Set(),
@@ -335,7 +337,7 @@
     await key('Enter');
     assert(editor.lineCount() === lines + 1, `${expected}: Enter must insert a line`);
   };
-  globalThis.testDriver = { assert, sleep, wait, waitFor, during, holds, settle, stable, frames, visible, find, testid, cm, key, type, move, input,
+  globalThis.testDriver = { assert, sleep, seen, wait, waitFor, during, holds, settle, stable, frames, visible, find, testid, cm, key, type, move, input,
     click, doubleClick, button, openConsole, activateSession, sessionsIdle, setSource, commitRestUrl, candidates, suggest, pick, pickThenEnter,
     assertNativeScrollbars, nativeTrackPaint, sessionLibrary, nativeHold, clearSessions: () => sessionRecord('delete') };
   globalThis.testNativeHealth = () => new Promise(resolve => {

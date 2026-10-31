@@ -27,6 +27,8 @@ pub fn archive_name(package: &Package) -> String {
 pub const RESERVED_IDS: &[&str] = &[
     "agent",
     "agent_models",
+    "agent_sessions",
+    "agent_skills",
     "dictionary",
     "hints",
     "history",

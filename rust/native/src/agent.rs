@@ -15,6 +15,8 @@ use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
+mod skills;
+
 const SKILL: &str = include_str!("../agent-skills/services-console/SKILL.md");
 const KNOWLEDGE: [(&str, &str); 5] = [
     ("overview", SKILL),
@@ -249,6 +251,86 @@ impl Agent {
         let current = Options::for_new_chat();
         Ok(serde_json::to_value(Catalog { models, current })?)
     }
+    /// `list` names the chats with stored Copilot state; `delete` removes the state of closed
+    /// chats, keeping any chat that is running in this or another connection.
+    pub async fn sessions(&self, message: &Value) -> Result<Value> {
+        let directory = self.root.join("sessions");
+        match message["op"].as_str() {
+            Some("list") => {
+                let mut sessions = Vec::new();
+                if directory.exists() {
+                    for entry in std::fs::read_dir(&directory)? {
+                        let entry = entry?;
+                        if entry.file_type()?.is_dir() {
+                            sessions.push(entry.file_name().to_string_lossy().into_owned());
+                        }
+                    }
+                }
+                sessions.sort();
+                Ok(json!({"sessions":sessions}))
+            }
+            Some("delete") => {
+                let values = message["sessionIds"]
+                    .as_array()
+                    .ok_or_else(|| Error::new("Invalid Agent sessionIds"))?
+                    .iter()
+                    .map(|value| json!({ "sessionId": value }))
+                    .collect::<Vec<_>>();
+                // Validate every id before deleting anything, so an error reply has no effects.
+                let ids = values
+                    .iter()
+                    .map(|value| identifier(value, "sessionId"))
+                    .collect::<Result<Vec<_>>>()?;
+                let mut deleted = Vec::new();
+                let mut failed = serde_json::Map::new();
+                let mut removed = 0;
+                let mut running = self.sessions.lock().await;
+                for id in ids {
+                    let result = (|| {
+                        if running
+                            .get(id)
+                            .is_some_and(|entry| entry.try_lock().is_err())
+                        {
+                            return Err(Error::new("This Agent session is running"));
+                        }
+                        running.remove(id);
+                        let session = directory.join(id);
+                        if !session.exists() {
+                            return Ok(false);
+                        }
+                        let lease = std::fs::OpenOptions::new()
+                            .read(true)
+                            .write(true)
+                            .create(true)
+                            .truncate(false)
+                            .open(session.join(format!("{id}.lock")))?;
+                        lease.try_lock().map_err(|error| {
+                            Error::new(format!(
+                                "This Copilot session is busy in another connection: {error}"
+                            ))
+                        })?;
+                        std::fs::remove_dir_all(&session)?;
+                        Ok(true)
+                    })();
+                    match result {
+                        Ok(directory) => {
+                            removed += usize::from(directory);
+                            deleted.push(id.to_owned());
+                        }
+                        Err(error) => {
+                            failed.insert(id.to_owned(), json!(error.message));
+                        }
+                    }
+                }
+                Ok(json!({"deleted":deleted,"removed":removed,"failed":failed}))
+            }
+            _ => Err(Error::new("Agent sessions support only list and delete")),
+        }
+    }
+    /// The team skills folder handed to every following Agent turn (`get`/`save`).
+    pub fn skills(&self, message: &Value) -> Result<Value> {
+        skills::dispatch(&self.root, message)
+    }
     pub async fn run(
         &self,
         params: &Value,
@@ -298,6 +380,7 @@ impl Agent {
         *entry.bridge.lock().await = Some(bridge.clone());
         let mut _lease = None;
         let mut turn_events = None;
+        let (skill_directories, skill_warning) = skills::directories(&self.root);
         let mut result = {
             let work = async {
                 let client = self.client().await?;
@@ -317,7 +400,11 @@ impl Agent {
                 _lease = Some(lease);
                 if entry.session.is_none() {
                     let tools = workspace_tools(entry.bridge.clone());
-                    let allowed = ToolSet::new().add_custom("*").map_err(sdk_error)?.to_vec();
+                    let mut allowed = ToolSet::new().add_custom("*").map_err(sdk_error)?;
+                    if !skill_directories.is_empty() {
+                        allowed = allowed.add_builtin("skill").map_err(sdk_error)?;
+                    }
+                    let allowed = allowed.to_vec();
                     let system = SystemMessageConfig::new().with_content(session_instructions());
                     let id = SessionId::from(key.clone());
                     let marker = directory.join(format!("{session_id}.session"));
@@ -328,6 +415,8 @@ impl Agent {
                                     .with_streaming(true)
                                     .with_tools(tools)
                                     .with_available_tools(allowed)
+                                    .with_enable_skills(!skill_directories.is_empty())
+                                    .with_skill_directories(skill_directories.clone())
                                     .with_system_message(system)
                                     .with_working_directory(&directory)
                                     .with_config_directory(&directory)
@@ -360,6 +449,8 @@ impl Agent {
                             .with_streaming(true)
                             .with_tools(tools)
                             .with_available_tools(allowed)
+                            .with_enable_skills(!skill_directories.is_empty())
+                            .with_skill_directories(skill_directories.clone())
                             .with_system_message(system)
                             .with_working_directory(&directory)
                             .with_config_directory(&directory)
@@ -415,11 +506,12 @@ impl Agent {
                                     return Err(Error::new(bridge.redactor.text(event.data["message"].as_str().unwrap_or("Copilot session failed"))));
                                 }
                                 "assistant.message_delta" | "assistant.message" | "tool.execution_start"
-                                | "tool.execution_complete" | "session.error" | "session.warning" => {
+                                | "tool.execution_complete" | "session.error" | "session.warning" | "skill.invoked" => {
                                     let fields=match event.event_type.as_str() {
                                         "assistant.message_delta"=>&["messageId","deltaContent"][..],
                                         "assistant.message"=>&["messageId","content"][..],
                                         "tool.execution_start"|"tool.execution_complete"=>&["toolName","toolCallId","success"][..],
+                                        "skill.invoked"=>&["name","source"][..],
                                         _=>&["message","errorType"][..],
                                     };
                                     let data:serde_json::Map<String,Value>=fields.iter().filter_map(|field|
@@ -483,6 +575,11 @@ impl Agent {
                     error.message
                 )));
             }
+        }
+        if let (Some(warning), Ok(value)) = (skill_warning, result.as_mut())
+            && value.get("warning").is_none()
+        {
+            value["warning"] = json!(warning);
         }
         result
     }
@@ -1262,5 +1359,111 @@ mod tests {
         agent.shutdown().await;
         std::fs::remove_dir_all(root).unwrap();
         result.unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "starts the installed Copilot CLI; lists session skills without prompts"]
+    async fn installed_copilot_loads_team_skills() {
+        let root = tempfile::tempdir().unwrap();
+        let team = root.path().join("team-skills");
+        std::fs::create_dir_all(team.join("shop-deploy")).unwrap();
+        std::fs::write(
+            team.join("shop-deploy/SKILL.md"),
+            "---\nname: shop-deploy\ndescription: Deploys the shop to staging\n---\nRun the deploy.\n",
+        )
+        .unwrap();
+        let agent = Agent::new(root.path().join(".agent"));
+        agent
+            .skills(&json!({"op":"save","teamFolder":team}))
+            .unwrap();
+        let (directories, warning) = skills::directories(&agent.root);
+        assert_eq!((directories.clone(), warning), (vec![team.clone()], None));
+        let result = async {
+            let client = agent.client().await?;
+            let session = client
+                .create_session(
+                    SessionConfig::default()
+                        .with_session_id(SessionId::from(format!("skills-{}", std::process::id())))
+                        .with_name("Services DevTools skills check")
+                        .with_available_tools(
+                            ToolSet::new()
+                                .add_custom("*")
+                                .and_then(|tools| tools.add_builtin("skill"))
+                                .map_err(sdk_error)?
+                                .to_vec(),
+                        )
+                        .with_enable_skills(true)
+                        .with_skill_directories(directories)
+                        .with_tools(workspace_tools(Arc::default()))
+                        .with_working_directory(root.path())
+                        .with_config_directory(root.path().join(".agent"))
+                        .with_permission_handler(github_copilot_sdk::permission::deny_all()),
+                )
+                .await
+                .map_err(sdk_error)?;
+            let list = session.rpc().skills().list().await.map_err(sdk_error);
+            session.disconnect().await.map_err(sdk_error)?;
+            list
+        }
+        .await;
+        agent.shutdown().await;
+        let skills = result.unwrap().skills;
+        let names: Vec<_> = skills.iter().map(|skill| skill.name.as_str()).collect();
+        assert_eq!(
+            names,
+            ["shop-deploy"],
+            "only the team folder supplies skills"
+        );
+        assert!(skills[0].enabled);
+        assert_eq!(skills[0].description, "Deploys the shop to staging");
+    }
+
+    #[tokio::test]
+    async fn closed_chat_state_is_deleted_unless_another_connection_uses_it() {
+        let root = tempfile::tempdir().unwrap();
+        let agent = Agent::new(root.path().join(".agent"));
+        let sessions = root.path().join(".agent/sessions");
+        for id in ["closed-a", "busy-b"] {
+            std::fs::create_dir_all(sessions.join(id).join("session-state")).unwrap();
+            std::fs::write(sessions.join(id).join(format!("{id}.session")), b"1\n").unwrap();
+        }
+        let lease = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(sessions.join("busy-b/busy-b.lock"))
+            .unwrap();
+        lease.try_lock().unwrap();
+        let list = agent.sessions(&json!({"op":"list"})).await.unwrap();
+        assert_eq!(list["sessions"], json!(["busy-b", "closed-a"]));
+        let result = agent
+            .sessions(&json!({"op":"delete","sessionIds":["closed-a","busy-b","never-ran"]}))
+            .await
+            .unwrap();
+        assert_eq!(result["deleted"], json!(["closed-a", "never-ran"]));
+        assert_eq!(result["removed"], 1);
+        assert!(
+            result["failed"]["busy-b"]
+                .as_str()
+                .unwrap()
+                .contains("busy in another connection")
+        );
+        assert!(!sessions.join("closed-a").exists() && sessions.join("busy-b").exists());
+        assert!(
+            agent
+                .sessions(&json!({"op":"delete","sessionIds":["busy-b","../escape"]}))
+                .await
+                .is_err()
+        );
+        drop(lease);
+        assert!(
+            agent
+                .sessions(&json!({"op":"delete","sessionIds":["busy-b","../escape"]}))
+                .await
+                .is_err()
+                && sessions.join("busy-b").exists(),
+            "an invalid id must reject the whole request before deleting anything"
+        );
     }
 }

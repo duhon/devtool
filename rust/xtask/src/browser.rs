@@ -895,7 +895,7 @@ fn scenarios() -> Vec<Scenario> {
             "agent-settings",
             Agent,
             60,
-            "Agent model and reasoning settings",
+            "Agent model and reasoning settings, team skills folder",
             script(include_str!("browser-agent-settings.js")),
         ),
         scenario(
@@ -1615,6 +1615,12 @@ impl Harness {
         for (path, contents) in &self.seeds {
             fs::write(path, contents)?;
         }
+        match fs::remove_file(self.data.join(".agent/skills.json")) {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                return Err(error).context("Removing the Agent team skills setting");
+            }
+            _ => {}
+        }
         // A failed `modules` scenario may leave a shipped module removed or another installed.
         // A payload without packages (an older release in an A/B run) has nothing to restore.
         let shipped = self.payload.join(services_installer::MODULES);
@@ -1657,10 +1663,21 @@ impl Harness {
         let url = self.panel_url();
         let page = self.cdp.page(&url, INIT).await?;
         self.pages.push(page.clone());
+        let skills = self.temporary.path().join("team skills");
+        if !skills.exists() {
+            fs::create_dir_all(skills.join("shop-deploy"))?;
+            fs::write(
+                skills.join("shop-deploy/SKILL.md"),
+                "---\nname: shop-deploy\ndescription: Deploys the fixture shop\n---\nCheck the shop.\n",
+            )?;
+            fs::create_dir_all(skills.join("broken"))?;
+            fs::write(skills.join("broken/SKILL.md"), "---\nname: broken\n---\n")?;
+        }
         let globals = format!(
-            "globalThis.fixtureUrl = {}; globalThis.fixtureVersion = {};",
+            "globalThis.fixtureUrl = {}; globalThis.fixtureVersion = {}; globalThis.fixtureSkills = {};",
             json!(self.fixture_url),
-            json!(env!("CARGO_PKG_VERSION"))
+            json!(env!("CARGO_PKG_VERSION")),
+            json!(skills)
         );
         self.cdp.evaluate(&page, &globals).await?;
         Ok(page)

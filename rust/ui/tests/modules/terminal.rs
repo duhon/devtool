@@ -3,7 +3,7 @@
 
 use crate::support::tokens;
 use serde_json::json;
-use services_ui::format::{check_response, history_snapshot};
+use services_ui::format::{check_response, history_snapshot, status};
 use services_ui::syntax::{Language, State};
 
 #[test]
@@ -82,5 +82,43 @@ fn terminal_history_matches_joined_console_output_without_event_or_exit_metadata
         history_snapshot("terminal", &failed, "6:00:14 PM", true)
             .unwrap()
             .ends_with("could not start")
+    );
+}
+
+#[test]
+fn a_failed_command_status_shows_its_exit_code_and_last_stderr_line() {
+    let failed = json!({"code":1,"signal":null,"durationMs":35,"outcome":"ERROR",
+        "stderr":"first\nls: /x: No such file or directory\n\n"});
+    assert_eq!(
+        status("terminal", &failed),
+        "35ms · ERROR · exit 1 · ls: /x: No such file or directory"
+    );
+    let silent = json!({"code":1,"signal":null,"durationMs":35,"outcome":"ERROR"});
+    assert_eq!(status("terminal", &silent), "35ms · ERROR · exit 1");
+    let killed = json!({"code":null,"signal":"SIGKILL","durationMs":35,"outcome":"WARNING","stderr":"bye\n"});
+    assert_eq!(
+        status("terminal", &killed),
+        "35ms · WARNING · SIGKILL · bye"
+    );
+    let ok = json!({"code":0,"signal":null,"durationMs":35,"outcome":"OK","stderr":"warning: x\n"});
+    assert_eq!(status("terminal", &ok), "35ms · OK");
+    let long = json!({"code":2,"outcome":"WARNING","stderr":"é".repeat(200)});
+    let shown = status("terminal", &long);
+    assert!(shown.starts_with("WARNING · exit 2 · é"), "{shown}");
+    assert!(
+        shown.ends_with("é…")
+            && shown.chars().count() == "WARNING · exit 2 · ".chars().count() + 160,
+        "{shown}"
+    );
+    assert_eq!(
+        check_response(
+            "terminal",
+            &failed,
+            false,
+            "",
+            "ls: /x: No such file or directory\n"
+        ),
+        "ls: /x: No such file or directory\n",
+        "The stderr tail must not repeat in the response body"
     );
 }
