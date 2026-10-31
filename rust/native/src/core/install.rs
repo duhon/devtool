@@ -30,6 +30,7 @@ pub fn install(
     archive::unpack(file, &staged.0)?;
     prepare(&staged.0)?;
     let manifest = check(&staged.0)?;
+    super::skills::prepare_package(&staged.0, &manifest.id)?;
     let target = modules.join(&manifest.id);
     let replaced = Package::read(&target).ok().map(|package| package.version);
     let previous = Hidden::new(modules, "removed");
@@ -86,14 +87,24 @@ fn prepare(_: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Clears the quarantine of the package folder and its files.
+/// Clears the quarantine of the package folder and everything in it.
 #[cfg(target_os = "macos")]
 fn clear_quarantine(package: &Path) -> Result<(), String> {
     use std::{ffi::CString, os::unix::ffi::OsStrExt};
-    let entries = fs::read_dir(package).map_err(|e| format!("{}: {e}", package.display()))?;
     let mut paths = vec![package.to_path_buf()];
-    for entry in entries {
-        paths.push(entry.map_err(|e| e.to_string())?.path());
+    let mut next = 0;
+    while next < paths.len() {
+        let path = paths[next].clone();
+        next += 1;
+        let is_dir = fs::symlink_metadata(&path)
+            .map(|metadata| metadata.is_dir())
+            .unwrap_or_default();
+        if is_dir {
+            let entries = fs::read_dir(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            for entry in entries {
+                paths.push(entry.map_err(|e| e.to_string())?.path());
+            }
+        }
     }
     for path in paths {
         let name = CString::new(path.as_os_str().as_bytes()).map_err(|e| e.to_string())?;
@@ -169,7 +180,9 @@ mod tests {
     #[test]
     fn a_package_written_under_quarantine_is_cleared_for_loading() {
         let package = tempfile::tempdir().unwrap();
-        let files = ["package.json", "module.dylib"].map(|name| package.path().join(name));
+        std::fs::create_dir_all(package.path().join("skills/module-x")).unwrap();
+        let files = ["package.json", "module.dylib", "skills/module-x/SKILL.md"]
+            .map(|name| package.path().join(name));
         for path in files
             .iter()
             .map(|path| path.as_path())

@@ -31,7 +31,7 @@ async fn a_broken_misnamed_or_misdescribed_package_is_reported_and_skipped() {
     }
     describe(
         "second-rest",
-        json!({"id":"rest","version":env!("CARGO_PKG_VERSION")}),
+        json!({"id":"rest","version":packages::version("rest")}),
     );
     describe("graphql", json!({"id":"graphql","version":"0.0.1"}));
     let host = Host::on(data);
@@ -66,7 +66,7 @@ async fn a_broken_misnamed_or_misdescribed_package_is_reported_and_skipped() {
             "graphql".into(),
             format!(
                 "package.json describes graphql 0.0.1 but the module is graphql {}",
-                env!("CARGO_PKG_VERSION")
+                packages::version("graphql")
             )
         )
     );
@@ -114,7 +114,7 @@ async fn a_package_file_installs_replaces_and_is_removed_for_the_next_host() {
     let modules = data.path().join("modules");
     std::fs::remove_dir_all(modules.join("graphql")).unwrap();
     let host = Host::on(data);
-    let version = env!("CARGO_PKG_VERSION");
+    let version = packages::version("graphql");
     let file = packages::file("graphql", version);
 
     let installed = host.send(install(&file)).await;
@@ -292,7 +292,7 @@ async fn an_invalid_package_file_leaves_the_installed_package_alone() {
         misdescribed.error(),
         format!(
             "package.json describes graphql 0.0.1 but the module is graphql {}",
-            env!("CARGO_PKG_VERSION")
+            packages::version("graphql")
         )
     );
     let not_base64 = host

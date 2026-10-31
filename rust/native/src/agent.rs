@@ -337,7 +337,7 @@ impl Agent {
             _ => Err(Error::new("Agent sessions support only list and delete")),
         }
     }
-    /// The team skills folder handed to every following Agent turn (`get`/`save`).
+    /// The module and source skills every following Agent turn gets (`get`).
     pub fn skills(&self, message: &Value) -> Result<Value> {
         skills::dispatch(&self.root, message)
     }
@@ -390,7 +390,7 @@ impl Agent {
         *entry.bridge.lock().await = Some(bridge.clone());
         let mut _lease = None;
         let mut turn_events = None;
-        let (skill_directories, skill_warning) = skills::directories(&self.root);
+        let skill_directories = skills::directories(&self.root);
         let mut result = {
             let work = async {
                 let client = self.client().await?;
@@ -585,11 +585,6 @@ impl Agent {
                     error.message
                 )));
             }
-        }
-        if let (Some(warning), Ok(value)) = (skill_warning, result.as_mut())
-            && value.get("warning").is_none()
-        {
-            value["warning"] = json!(warning);
         }
         result
     }
@@ -1487,21 +1482,30 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "starts the installed Copilot CLI; lists session skills without prompts"]
-    async fn installed_copilot_loads_team_skills() {
+    async fn installed_copilot_loads_module_and_source_skills() {
         let root = tempfile::tempdir().unwrap();
-        let team = root.path().join("team-skills");
-        std::fs::create_dir_all(team.join("shop-deploy")).unwrap();
+        let module = root.path().join("modules/rest/skills/module-rest");
+        std::fs::create_dir_all(&module).unwrap();
         std::fs::write(
-            team.join("shop-deploy/SKILL.md"),
+            module.join("SKILL.md"),
+            "---\nname: module-rest\ndescription: Sends REST requests\n---\nUse the rest tab.\n",
+        )
+        .unwrap();
+        let team = root.path().join("team");
+        std::fs::create_dir_all(team.join("skills/shop-deploy")).unwrap();
+        std::fs::write(
+            team.join("skills/shop-deploy/SKILL.md"),
             "---\nname: shop-deploy\ndescription: Deploys the shop to staging\n---\nRun the deploy.\n",
         )
         .unwrap();
-        let agent = Agent::new(root.path().join(".agent"));
-        agent
-            .skills(&json!({"op":"save","teamFolder":team}))
+        let sources = crate::core::sources::Sources::new(root.path());
+        sources
+            .save(&json!({"sources":[{"name":"Team","kind":"folder","path":team}]}))
             .unwrap();
-        let (directories, warning) = skills::directories(&agent.root);
-        assert_eq!((directories.clone(), warning), (vec![team.clone()], None));
+        sources.apply("team").await.unwrap();
+        let agent = Agent::new(root.path().join(".agent"));
+        let directories = skills::directories(&agent.root);
+        assert_eq!(directories.len(), 2);
         let result = async {
             let client = agent.client().await?;
             let session = client
@@ -1532,14 +1536,14 @@ mod tests {
         .await;
         agent.shutdown().await;
         let skills = result.unwrap().skills;
-        let names: Vec<_> = skills.iter().map(|skill| skill.name.as_str()).collect();
+        let mut names: Vec<_> = skills.iter().map(|skill| skill.name.as_str()).collect();
+        names.sort();
         assert_eq!(
             names,
-            ["shop-deploy"],
-            "only the team folder supplies skills"
+            ["module-rest", "team-shop-deploy"],
+            "only modules and sources supply skills"
         );
-        assert!(skills[0].enabled);
-        assert_eq!(skills[0].description, "Deploys the shop to staging");
+        assert!(skills.iter().all(|skill| skill.enabled));
     }
 
     #[tokio::test]

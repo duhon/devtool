@@ -242,19 +242,32 @@ use Copilot Fusion (the SDK's `auto` router), which manages Reasoning itself.
 Choices persist locally and are captured when a new chat is created. Existing
 chats and resumed SDK sessions retain their original model and reasoning settings.
 
-Settings → Agent skills sets a **Team skills folder**: an absolute local path
-(`~/` allowed), such as a team repository checkout or a synced drive, with one
-`<name>/SKILL.md` folder per skill. The native host (`agent_skills`
-`get`/`save`) stores it in `<data>/.agent/skills.json`, rejects relative or
-missing paths (red input plus a Settings status error) and lists the skills it
-found and the ones it could not read (frontmatter needs `name` and
-`description`). Every following Agent reply, in new and existing chats, hands
-the folder to the SDK as a skill directory with the built-in `skill` tool; no
-other skills (personal `~/.copilot/skills` or bundled ones) are loaded. A skill
-only supplies its `SKILL.md` instructions: the Agent has no file tools, so files
-beside it are not readable. A folder that later disappears doesn't stop the
-reply; it ends with a warning. Skills Copilot used appear as `Skill: name`
-activity and in the Agent status debug (`skills`).
+Settings → Agent skills lists, read-only (`agent_skills` `get`), the skills every
+following Agent reply gets, in new and existing chats: each installed module's
+`skills/module-<id>/` and each applied source's `skills/<slug>-<name>/`, with
+their origin and the ones that could not be read (frontmatter needs `name` and
+`description`). The host hands their folders to the SDK as skill directories
+with the built-in `skill` tool; no other skills (personal `~/.copilot/skills` or
+bundled ones) are loaded. The root `services-console` skill is compiled in and
+can't be replaced. A skill only supplies its `SKILL.md` instructions: the Agent
+has no file tools, so files beside it are not readable. Skills Copilot used
+appear as `Skill: name` activity and in the Agent status debug (`skills`).
+
+Settings → Sources (`sources` `get`/`save`/`check`/`apply`/`token`) keeps an
+ordered list of named sources: GitHub repositories (`owner/repo`, optional branch
+and folder) and local folders. Standard (`duhon/devtool`) is preconfigured. The
+panel checks them when it opens, when Settings opens and on Check now; a check
+older than the host's limit is repeated. Each source shows what applying it
+changes (Dictionary variables, templates, hints, skills, with the ones the user
+overrides) and Apply copies it to `<data>/sources/<slug>/`. Configuration is
+layered: later sources override earlier ones, the user's own changes override
+them all, and an update never merges. The Dictionary, Templates and Hints show
+the source of a source's profile, section or hints; Reset drops the user's own
+change. Settings → Modules lists the module versions the sources offer
+(GitHub releases `module-<id>-v<version>`, `modules/*.module.tgz` in a folder),
+with release notes; Install or Update downloads one (a GitHub asset is checked
+against its published sha256) and installs it, replacing a module with the same id from any source. Private repositories
+use the token saved in Settings, else `gh auth token`.
 
 Each message automatically provides Console request context; the Agent can read
 selected response pages and cached schema without a separate sharing toggle.

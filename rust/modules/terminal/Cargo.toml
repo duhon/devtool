@@ -1,6 +1,6 @@
 [package]
 name = "services-module-terminal"
-version.workspace = true
+version = "3.2.0"
 edition.workspace = true
 publish.workspace = true
 description = "Terminal service module"
@@ -18,3 +18,7 @@ tokio = { version = "1", features = ["full"] }
 
 [lib]
 crate-type = ["rlib", "cdylib"]
+
+[package.metadata.services]
+# The oldest Services DevTools version this module works with.
+min-core = "3.2.0"

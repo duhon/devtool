@@ -1,10 +1,13 @@
-use super::error::{Error, Result, string, text};
+use super::{
+    error::{Error, Result, string, text},
+    sources,
+};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use services_contracts::ParamConfig;
 use std::{
-    collections::HashSet,
+    collections::{BTreeMap, BTreeSet, HashSet},
     fs::{File, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
@@ -24,6 +27,20 @@ struct State {
     version: u32,
     order: Vec<String>,
     profiles: Map<String, Value>,
+}
+/// The Dictionary of the applied sources; later sources win per variable.
+#[derive(Default)]
+struct Base {
+    order: Vec<String>,
+    profiles: Map<String, Value>,
+    /// The source of each variable: profile → variable → source name.
+    origins: BTreeMap<String, BTreeMap<String, String>>,
+}
+impl Base {
+    /// The highest-priority source that has `profile`.
+    fn source(&self, profile: &str) -> Option<&String> {
+        self.origins.get(profile)?.values().last()
+    }
 }
 fn refs() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
@@ -59,7 +76,8 @@ impl VariableStore {
         file.lock()?;
         Ok(file)
     }
-    fn read_file(path: &Path) -> Result<Option<State>> {
+    /// Reads a profile store; `order` keeps the names of its profiles and the `known` ones.
+    fn read_file(path: &Path, known: &dyn Fn(&str) -> bool) -> Result<Option<State>> {
         let content = match std::fs::read_to_string(path) {
             Ok(content) => content,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -94,7 +112,9 @@ impl VariableStore {
             order.push(active.to_string());
         }
         let mut seen = HashSet::new();
-        order.retain(|s| profiles.contains_key(s) && s != "env" && seen.insert(s.clone()));
+        order.retain(|s| {
+            (profiles.contains_key(s) || known(s)) && s != "env" && seen.insert(s.clone())
+        });
         for name in profiles.keys() {
             if name != "env" && !order.contains(name) {
                 order.push(name.clone());
@@ -127,10 +147,146 @@ impl VariableStore {
         std::fs::rename(&pending, path)?;
         Ok(())
     }
+    /// The Dictionary of the applied sources.
+    fn base(&self) -> Result<Base> {
+        let data = self.path.parent().unwrap_or(Path::new("."));
+        let mut base = Base::default();
+        for (layer, value) in sources::layer_files(data, sources::DICTIONARY)? {
+            let Some(profiles) = value["profiles"].as_object() else {
+                continue;
+            };
+            let mut names: Vec<&String> = value["order"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .filter_map(|name| profiles.get_key_value(name).map(|(name, _)| name))
+                .collect();
+            for name in profiles.keys() {
+                if !names.contains(&name) {
+                    names.push(name);
+                }
+            }
+            for name in names {
+                let Some(variables) = profiles[name].as_object() else {
+                    continue;
+                };
+                if name == "var" || name == "env" {
+                    continue;
+                }
+                if !base.profiles.contains_key(name) {
+                    base.order.push(name.clone());
+                }
+                let profile = base
+                    .profiles
+                    .entry(name.clone())
+                    .or_insert_with(|| json!({}));
+                let origins = base.origins.entry(name.clone()).or_default();
+                for (variable, value) in variables {
+                    profile[variable] = value.clone();
+                    origins.insert(variable.clone(), layer.name.clone());
+                }
+            }
+        }
+        Ok(base)
+    }
+    /// The Dictionary of the sources with the local layer over it.
+    fn layered(base: &Base, local: State) -> State {
+        let mut profiles = base.profiles.clone();
+        for (name, variables) in local.profiles {
+            let profile = profiles.entry(name).or_insert_with(|| json!({}));
+            if let (Some(profile), Some(variables)) =
+                (profile.as_object_mut(), variables.as_object())
+            {
+                for (variable, value) in variables {
+                    profile.insert(variable.clone(), value.clone());
+                }
+            }
+        }
+        let mut order: Vec<String> = local
+            .order
+            .into_iter()
+            .filter(|name| profiles.contains_key(name))
+            .collect();
+        for name in &base.order {
+            if !order.contains(name) {
+                order.push(name.clone());
+            }
+        }
+        State {
+            version: 2,
+            order,
+            profiles,
+        }
+    }
+    /// The local layer of an edited Dictionary: its own profiles and the variables that
+    /// differ from the sources.
+    fn local_layer(base: &Base, state: State) -> Result<State> {
+        for name in base.profiles.keys() {
+            if !state.profiles.contains_key(name) {
+                return Err(Error::new(format!(
+                    "Profile {name} comes from source {}; it can't be deleted or renamed",
+                    base.source(name).map(String::as_str).unwrap_or_default()
+                )));
+            }
+        }
+        let mut profiles = Map::new();
+        for (name, variables) in state.profiles {
+            let Some(source) = base.profiles.get(&name).and_then(Value::as_object) else {
+                profiles.insert(name, variables);
+                continue;
+            };
+            let variables = variables.as_object().cloned().unwrap_or_default();
+            if let Some(missing) = source.keys().find(|key| !variables.contains_key(*key)) {
+                return Err(Error::new(format!(
+                    "{name}:{missing} comes from source {}; reset it instead of deleting it",
+                    base.origins[&name][missing]
+                )));
+            }
+            let overrides: Map<String, Value> = variables
+                .into_iter()
+                .filter(|(key, value)| source.get(key) != Some(value))
+                .collect();
+            if !overrides.is_empty() {
+                profiles.insert(name, Value::Object(overrides));
+            }
+        }
+        Ok(State {
+            version: 2,
+            order: state.order,
+            profiles,
+        })
+    }
+    /// The Dictionary variables with a local value: the local profiles and the overrides of
+    /// source profiles.
+    pub fn local(&self) -> Result<BTreeSet<(String, String)>> {
+        let _guard = self
+            .lock
+            .lock()
+            .map_err(|_| Error::new("Profile store lock poisoned"))?;
+        let _file = self.file_lock()?;
+        let local = Self::read_file(&self.dictionary_path(), &|_| false)?;
+        Ok(local
+            .into_iter()
+            .flat_map(|state| state.profiles)
+            .flat_map(|(name, variables)| {
+                variables
+                    .as_object()
+                    .into_iter()
+                    .flat_map(|variables| variables.keys().cloned())
+                    .map(|variable| (name.clone(), variable))
+                    .collect::<Vec<_>>()
+            })
+            .collect())
+    }
     fn read(&self) -> Result<State> {
-        let variables = Self::read_file(&self.path)?;
+        self.read_with(&self.base()?)
+    }
+    fn read_with(&self, base: &Base) -> Result<State> {
+        let variables = Self::read_file(&self.path, &|_| false)?;
         let dictionary_path = self.dictionary_path();
-        let mut dictionary = Self::read_file(&dictionary_path)?.unwrap_or(State {
+        let known = |name: &str| base.profiles.contains_key(name);
+        let mut dictionary = Self::read_file(&dictionary_path, &known)?.unwrap_or(State {
             version: 2,
             order: vec![],
             profiles: Map::new(),
@@ -221,6 +377,7 @@ impl VariableStore {
                 state
             }
         };
+        let dictionary = Self::layered(base, dictionary);
         let mut merged = variables;
         merged.order.extend(dictionary.order);
         merged.profiles.extend(dictionary.profiles);
@@ -356,7 +513,36 @@ impl VariableStore {
         resolved.insert("env".into(), json!(env));
         json!({"order":state.order,"profiles":profiles,"resolvedProfiles":resolved,"validation":Self::validation(state)})
     }
-    fn scoped(&self, state: &State) -> Value {
+    /// Where the Dictionary profiles of the sources come from:
+    /// `{profile: {source, variables: {VARIABLE: {origin: "source"|"local", source?}}}}`.
+    fn origins(state: &State, base: &Base) -> Value {
+        let mut out = Map::new();
+        for (name, source) in &base.profiles {
+            let source = source.as_object().cloned().unwrap_or_default();
+            let mut variables = Map::new();
+            if let Some(effective) = state.profiles.get(name).and_then(Value::as_object) {
+                for (variable, value) in effective {
+                    let origin = base.origins[name].get(variable);
+                    variables.insert(
+                        variable.clone(),
+                        match origin {
+                            Some(origin) if source.get(variable) == Some(value) => {
+                                json!({"origin": "source", "source": origin})
+                            }
+                            Some(origin) => json!({"origin": "local", "source": origin}),
+                            None => json!({"origin": "local"}),
+                        },
+                    );
+                }
+            }
+            out.insert(
+                name.clone(),
+                json!({"source": base.source(name), "variables": variables}),
+            );
+        }
+        Value::Object(out)
+    }
+    fn scoped(&self, state: &State, base: &Base) -> Value {
         let context = self.view(state);
         let belongs = |name: &str| {
             if self.dictionary {
@@ -380,6 +566,9 @@ impl VariableStore {
                 .collect::<Vec<_>>()
         );
         value["context"] = context;
+        if self.dictionary {
+            value["origins"] = Self::origins(state, base);
+        }
         value
     }
     pub fn list(&self) -> Result<Value> {
@@ -388,7 +577,8 @@ impl VariableStore {
             .lock()
             .map_err(|_| Error::new("Profile store lock poisoned"))?;
         let _file = self.file_lock()?;
-        Ok(self.scoped(&self.read()?))
+        let base = self.base()?;
+        Ok(self.scoped(&self.read_with(&base)?, &base))
     }
     pub fn session_dispatch(&self, message: &Value, variables: &Value) -> Result<Value> {
         if !variables.is_object() {
@@ -417,9 +607,10 @@ impl VariableStore {
             .lock()
             .map_err(|_| Error::new("Variable store lock poisoned"))?;
         let _file = self.file_lock()?;
-        let mut state = self.read()?;
+        let base = self.base()?;
+        let mut state = self.read_with(&base)?;
         state.profiles.insert("var".into(), variables.clone());
-        Ok(self.scoped(&state))
+        Ok(self.scoped(&state, &base))
     }
     pub fn dispatch(&self, message: &Value) -> Result<Value> {
         let _guard = self
@@ -428,10 +619,11 @@ impl VariableStore {
             .map_err(|_| Error::new("Variable store lock poisoned"))?;
         let _file = self.file_lock()?;
         let op = text(message, "op");
+        let base = self.base()?;
         if op == "list" {
-            return Ok(self.scoped(&self.read()?));
+            return Ok(self.scoped(&self.read_with(&base)?, &base));
         }
-        let mut state = self.read()?;
+        let mut state = self.read_with(&base)?;
         let name = text(message, "name");
         if !self.dictionary && (op != "save" || name != "var") {
             return Err(Error::new(
@@ -495,6 +687,34 @@ impl VariableStore {
                     state.order.push(name);
                 }
             }
+            "delete" | "rename" if base.profiles.contains_key(&name) => {
+                return Err(Error::new(format!(
+                    "Profile {name} comes from source {}; it can't be deleted or renamed",
+                    base.source(&name).map(String::as_str).unwrap_or_default()
+                )));
+            }
+            "reset" => {
+                let Some(source) = base.profiles.get(&name).and_then(Value::as_object) else {
+                    return Err(Error::new(format!(
+                        "Profile {name} doesn't come from a source"
+                    )));
+                };
+                let profile = state
+                    .profiles
+                    .entry(name.clone())
+                    .or_insert_with(|| json!({}));
+                match message["variable"].as_str() {
+                    Some(variable) => match source.get(variable) {
+                        Some(value) => profile[variable] = value.clone(),
+                        None => {
+                            if let Some(profile) = profile.as_object_mut() {
+                                profile.remove(variable);
+                            }
+                        }
+                    },
+                    None => *profile = Value::Object(source.clone()),
+                }
+            }
             "delete" => {
                 if !state.profiles.contains_key(&name) {
                     return Err(Error::new(format!("Unknown profile: {name}")));
@@ -554,13 +774,13 @@ impl VariableStore {
             }
             _ => return Err(Error::new(format!("Unknown vars op: {op}"))),
         }
-        let path = if self.dictionary {
-            self.dictionary_path()
+        let (path, state) = if self.dictionary {
+            (self.dictionary_path(), Self::local_layer(&base, state)?)
         } else {
-            self.path.clone()
+            (self.path.clone(), state)
         };
         Self::write_file(&path, &state)?;
-        Ok(self.scoped(&self.read()?))
+        Ok(self.scoped(&self.read_with(&base)?, &base))
     }
     /// Resolves the declared `config` params of a request; undeclared ones are dropped.
     pub fn resolve_params(&self, config: &[ParamConfig], params: &Value) -> Result<Value> {

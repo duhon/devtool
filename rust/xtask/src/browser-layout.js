@@ -221,10 +221,10 @@
   assert(testid('settings-version').closest('.console-settings-version')?.textContent===`Current version${fixtureVersion}`,
     `Settings must label the current version ${fixtureVersion}: ${settings.textContent}`);
   const editable=[...settings.querySelectorAll('input,select,textarea,.CodeMirror')]
-    .filter(field=>!field.closest('[data-testid="agent-settings"],[data-testid="agent-skills"]'))
+    .filter(field=>!field.closest('[data-testid="agent-settings"],[data-testid="source-settings"],[data-testid="settings-module-offers"]'))
     .filter(field=>!(field.matches('[data-testid="settings-module-file"]')&&field.type==='file'&&field.hidden));
   assert(!editable.length,
-    `Application Settings must not contain editable fields besides the Agent settings, the Team skills folder and the hidden module file picker: ${editable.map(field=>field.outerHTML)}`);
+    `Application Settings must not contain editable fields besides the Agent settings, the Sources, the module versions offered by them and the hidden module file picker: ${editable.map(field=>field.outerHTML)}`);
   const updateCheck=document.querySelector('[data-testid="settings-update-check"]');
   assert(globalThis.chrome?.runtime?.getManifest ? updateCheck : !updateCheck,
     'Settings must expose authenticated update checks only in the Chrome extension');

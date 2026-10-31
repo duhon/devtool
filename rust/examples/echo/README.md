@@ -4,7 +4,7 @@ A module adds a console service — one tab — to Services DevTools. Echo, in t
 folder, is the smallest one: it answers each check with its text. Copy it to
 start your own.
 
-The six shipped services (`rust/modules/*`) are modules of the same kind: the
+The standard services (`rust/modules/*`) are modules of the same kind: the
 host and the panel make no difference between them and yours.
 
 ## What a module is
@@ -13,11 +13,14 @@ A module is a **package**, a folder named by the module id with:
 
 | File | Part | Runs in |
 | --- | --- | --- |
-| `package.json` | `{"id": "echo", "version": "0.1.0"}`, read before any module code runs | — |
+| `package.json` | `{"id": "echo", "version": "0.1.0"}`, read before any module code runs; optional `minCore`, the oldest application version it works with, and `platform` (`macos-arm64`) | — |
 | `module.dylib` | Native part: executes requests (`services_module_api`) | the native host, `services-devtools` |
 | `ui.wasm` | Console part: turns the sections of a `#check` into request params (`services_module_ui`) | the DevTools panel |
+| `RELEASE_NOTES.md` | Optional: `## X.Y.Z` sections, newest first, shown in Settings → Modules | — |
+| `skills/module-<id>/SKILL.md` | Optional: the module's Agent skill, its request syntax and options | the Agent |
 
 Without `ui.wasm` the module is listed, but the console cannot send its checks.
+A module whose `minCore` is newer than the application is not loaded.
 
 Every package is in the modules folder,
 `~/Library/Application Support/ServicesDevTools/data/modules/<id>/`. A host
@@ -106,14 +109,18 @@ panel calls (`services_ui_abi`, `services_ui_alloc`, `services_ui_call`,
 In this repository:
 
 ```sh
-cargo run -p xtask -- package rust/examples/echo    # target/packages/echo-0.1.0.module.tgz
+cargo run -p xtask -- package rust/examples/echo    # target/packages/echo-0.1.0-macos-arm64.module.tgz
 cargo run -p xtask -- package graphql --out /tmp    # a shipped module, by id
 ```
 
 `package` builds both parts for release and writes one **package file** per
-module, `<id>-<version>.module.tgz`. It is a gzip'd tar with `package.json`,
-`module.dylib` and `ui.wasm` at its root and nothing else (regular files, at
-most 512 MiB unpacked). The panel sends a chosen file to the host in one
+module, `<id>-<version>-<platform>.module.tgz`. It is a gzip'd tar with
+`package.json`, `module.dylib`, `ui.wasm` and, when the module has them,
+`RELEASE_NOTES.md` and `skills/module-<id>/` at its root and nothing else
+(regular files, at most 512 MiB unpacked). In a module's folder the skill is
+`skill/SKILL.md` and the version and `minCore` are in `Cargo.toml`
+(`[package.metadata.services] min-core`); `package` names the skill and checks
+that the notes start with the version. The panel sends a chosen file to the host in one
 message, so it must stay under about 48 MiB.
 
 Outside this repository, depend on `services-module-api` and
@@ -124,8 +131,8 @@ cargo build --release --lib -p my-module
 cargo build --release --lib -p my-module-ui --target wasm32-unknown-unknown
 mkdir pkg && cp target/release/libmy_module.dylib pkg/module.dylib \
   && cp target/wasm32-unknown-unknown/release/my_module_ui.wasm pkg/ui.wasm \
-  && echo '{"id":"my-module","version":"0.1.0"}' > pkg/package.json
-tar -czf my-module-0.1.0.module.tgz -C pkg package.json module.dylib ui.wasm
+  && echo '{"id":"my-module","version":"0.1.0","platform":"macos-arm64"}' > pkg/package.json
+tar -czf my-module-0.1.0-macos-arm64.module.tgz -C pkg package.json module.dylib ui.wasm
 ```
 
 ## Install and remove
@@ -142,13 +149,19 @@ reconnect.
 **Remove** in the same list asks first, then deletes the folder. By default the
 consoles, checks, history, templates and hints of a removed module are kept and
 come back when a module with the same id is installed again; check “Delete them
-too, in every session” to delete them with the module. A removed shipped module
-comes back with the next application update.
+too, in every session” to delete them with the module. A removed standard module
+can be installed again from Settings → Modules.
+
+To share a module, put its package file in a source: `modules/` of a folder, or
+a GitHub release tagged `module-<id>-v<version>` with the package file as an
+asset. Settings → Modules then offers its versions, with their release notes, to
+everyone who added the source; installing one replaces a module with the same
+id, whatever its source.
 
 A package the host cannot load stays in the list with its error.
 
 For development, `cargo run -p xtask -- modules` links the debug builds of the
-shipped modules into the development data folder.
+standard modules into the development data folder.
 
 A module runs in the host process with your permissions: install only modules
 you trust.

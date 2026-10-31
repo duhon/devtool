@@ -114,9 +114,12 @@ async fn load(
     let module: WebAssembly::Module = get(&source, "module").dyn_into().map_err(error)?;
     let exports = get(&get(&source, "instance"), "exports");
     let abi = call(&exports, "services_ui_abi", &[]).map_err(error)?;
-    if abi.as_f64() != Some(f64::from(services_module_ui::ABI_VERSION)) {
+    let supported =
+        f64::from(services_module_ui::MIN_ABI_VERSION)..=f64::from(services_module_ui::ABI_VERSION);
+    if !abi.as_f64().is_some_and(|abi| supported.contains(&abi)) {
         return Err(format!(
-            "it was built for console ABI {abi:?}, the panel needs {}",
+            "it was built for console ABI {abi:?}, the panel supports {} to {}",
+            services_module_ui::MIN_ABI_VERSION,
             services_module_ui::ABI_VERSION
         ));
     }

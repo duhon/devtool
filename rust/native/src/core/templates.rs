@@ -1,16 +1,22 @@
-use super::error::{Error, Result};
+use super::{
+    error::{Error, Result},
+    sources,
+};
 use serde_json::{Value, json};
 use services_contracts::{
     manifest::Manifest,
     templates::{self, Library},
 };
 use std::{
+    collections::BTreeSet,
     fs::{self, OpenOptions},
     io::{ErrorKind, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::Arc,
 };
 
+/// Template sections per module. A section is its local text, else the text of the
+/// highest-priority applied source that has it.
 #[derive(Clone)]
 pub struct Templates {
     path: PathBuf,
@@ -31,9 +37,70 @@ impl Templates {
         templates::validate(&library).map_err(Error::new)?;
         Ok(library)
     }
-    pub fn get(&self) -> Result<Value> {
-        Ok(json!({"templates":self.read()?}))
+    /// The sections of the applied sources and the source each comes from.
+    fn base(&self) -> Result<(Library, Library)> {
+        let mut library = Library::new();
+        let mut origins = Library::new();
+        let data = self.path.parent().unwrap_or(Path::new("."));
+        for (layer, value) in sources::layer_files(data, sources::TEMPLATES)? {
+            let layer_library: Library = serde_json::from_value(value).map_err(|e| {
+                Error::new(format!(
+                    "{}: {e}",
+                    layer.dir.join(sources::TEMPLATES).display()
+                ))
+            })?;
+            for (service, sections) in layer_library {
+                for (section, text) in sections {
+                    origins
+                        .entry(service.clone())
+                        .or_default()
+                        .insert(section.clone(), layer.name.clone());
+                    library
+                        .entry(service.clone())
+                        .or_default()
+                        .insert(section, text);
+                }
+            }
+        }
+        Ok((library, origins))
     }
+    /// `{templates, origins}`: every section and where it comes from,
+    /// `{origin: "local"|"source", source?}` with the source under a local section.
+    pub fn get(&self) -> Result<Value> {
+        let (mut library, sources) = self.base()?;
+        let mut origins = serde_json::Map::new();
+        for (service, sections) in &sources {
+            for (section, source) in sections {
+                origins.entry(service.clone()).or_insert_with(|| json!({}))[section] =
+                    json!({"origin": "source", "source": source});
+            }
+        }
+        for (service, sections) in self.read()? {
+            for (section, text) in sections {
+                let origin = origins.entry(service.clone()).or_insert_with(|| json!({}));
+                origin[&section]["origin"] = json!("local");
+                library
+                    .entry(service.clone())
+                    .or_default()
+                    .insert(section, text);
+            }
+        }
+        Ok(json!({"templates": library, "origins": origins}))
+    }
+    /// The sections with local text.
+    pub fn local(&self) -> Result<BTreeSet<(String, String)>> {
+        Ok(self
+            .read()?
+            .into_iter()
+            .flat_map(|(service, sections)| {
+                sections
+                    .into_keys()
+                    .map(move |section| (service.clone(), section))
+            })
+            .collect())
+    }
+    /// Saves a section locally when `base` is still its text; text equal to the source's
+    /// drops the local section instead.
     pub fn save(&self, message: &Value) -> Result<Value> {
         let required = |key| {
             message[key]
@@ -50,24 +117,58 @@ impl Templates {
         templates::parse(text).map_err(Error::new)?;
         let _lock = self.lock()?;
         let mut library = self.read()?;
+        let (sources, _) = self.base()?;
+        let source = sources
+            .get(service)
+            .and_then(|sections| sections.get(section))
+            .map(String::as_str);
         let current = library
             .get(service)
             .and_then(|sections| sections.get(section))
             .map(String::as_str)
+            .or(source)
             .unwrap_or("");
         if current != base && current != text {
             return Err(Error::new(
                 "CONFLICT: templates changed in another window. Your draft is preserved; discard it and reload to use the saved version.",
             ));
         }
-        library
-            .entry(service.into())
-            .or_default()
-            .insert(section.into(), text.into());
+        if source.unwrap_or("") == text {
+            Self::remove(&mut library, service, section);
+        } else {
+            library
+                .entry(service.into())
+                .or_default()
+                .insert(section.into(), text.into());
+        }
         self.write(&library)?;
-        Ok(json!({"templates":library}))
+        drop(_lock);
+        self.get()
     }
-    /// Deletes the templates of `service`.
+    /// Drops the local text of a section; it gets the text of its source again.
+    pub fn reset(&self, message: &Value) -> Result<Value> {
+        let service = super::error::text(message, "serviceName");
+        let section = super::error::text(message, "section");
+        if self.path.exists() {
+            let _lock = self.lock()?;
+            let mut library = self.read()?;
+            if Self::remove(&mut library, &service, &section) {
+                self.write(&library)?;
+            }
+        }
+        self.get()
+    }
+    fn remove(library: &mut Library, service: &str, section: &str) -> bool {
+        let Some(sections) = library.get_mut(service) else {
+            return false;
+        };
+        let removed = sections.remove(section).is_some();
+        if sections.is_empty() {
+            library.remove(service);
+        }
+        removed
+    }
+    /// Deletes the local templates of `service`.
     pub fn forget(&self, service: &str) -> Result<()> {
         if !self.path.exists() {
             return Ok(());
@@ -115,5 +216,63 @@ impl Templates {
         file.sync_all()?;
         fs::rename(pending, &self.path)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_sections_cover_source_sections_until_reset() {
+        let data = tempfile::tempdir().unwrap();
+        let team = tempfile::tempdir().unwrap();
+        fs::write(
+            team.path().join(sources::TEMPLATES),
+            r#"{"rest":{"check":"@team\nGET /\n"}}"#,
+        )
+        .unwrap();
+        let sources = sources::Sources::new(data.path());
+        sources
+            .save(&json!({"sources": [{"name": "Team", "kind": "folder", "path": team.path()}]}))
+            .unwrap();
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(sources.apply("team"))
+            .unwrap();
+        let manifest: Manifest =
+            serde_json::from_value(json!({"id": "rest", "name": "REST"})).unwrap();
+        let templates = Templates::new(
+            data.path().join(".console-templates.json"),
+            Arc::new(vec![manifest]),
+        );
+        let team_text = "@team\nGET /\n";
+        let got = templates.get().unwrap();
+        assert_eq!(got["templates"]["rest"]["check"], team_text);
+        assert_eq!(
+            got["origins"]["rest"]["check"],
+            json!({"origin": "source", "source": "Team"})
+        );
+        let save = |text: &str, base: &str| {
+            templates.save(
+                &json!({"serviceName": "rest", "section": "check", "text": text, "base": base}),
+            )
+        };
+        let got = save("@mine\nPOST /\n", team_text).unwrap();
+        assert_eq!(got["templates"]["rest"]["check"], "@mine\nPOST /\n");
+        assert_eq!(
+            got["origins"]["rest"]["check"],
+            json!({"origin": "local", "source": "Team"})
+        );
+        assert!(save("@other\nPUT /\n", team_text).is_err());
+        let got = templates
+            .reset(&json!({"serviceName": "rest", "section": "check"}))
+            .unwrap();
+        assert_eq!(got["templates"]["rest"]["check"], team_text);
+        save("@mine\nPOST /\n", team_text).unwrap();
+        save(team_text, "@mine\nPOST /\n").unwrap();
+        assert!(templates.local().unwrap().is_empty());
     }
 }

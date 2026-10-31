@@ -131,7 +131,8 @@ impl Fixture {
              chrome://extensions -> Developer mode -> Load unpacked\n\
              Cmd+Shift+G, paste:\n\
              {}\n\
-             Enter -> Select\n",
+             Enter -> Select\n\
+             Then add modules: Settings -> Modules\n",
             env!("CARGO_PKG_VERSION"),
             locations(&self.home).base.join("extension").display()
         )
@@ -400,8 +401,8 @@ fn archived_install_native_services_update_and_uninstall() {
     fixture.assert_single_copy();
     assert_eq!(
         expected.lines().count(),
-        5,
-        "installation output must include completion followed by four Chrome instruction lines"
+        6,
+        "installation output must include completion, four Chrome instruction lines and the modules hint"
     );
     let registration = read_json(&paths.registration);
     assert_eq!(
@@ -429,6 +430,24 @@ fn archived_install_native_services_update_and_uninstall() {
     let (health, _) = host.request(json!({"id":1,"type":"health"}));
     assert_eq!(health["ok"], true, "installed host health must succeed");
     assert_eq!(health["result"]["protocolVersion"], 1);
+    // The release installs no modules: the user adds the released packages in Settings.
+    let mut modules: Vec<PathBuf> = fs::read_dir(repository().join("dist/modules"))
+        .expect("missing dist/modules; run cargo run -p xtask -- build first")
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    modules.sort();
+    assert!(!modules.is_empty(), "the build must write module packages");
+    for (index, file) in modules.iter().enumerate() {
+        use base64::Engine;
+        let (installed, _) = host
+            .request(json!({"id":100 + index,"service":"modules","op":"install",
+            "file":base64::engine::general_purpose::STANDARD.encode(fs::read(file).unwrap())}));
+        assert_eq!(installed["ok"], true, "{}: {installed}", file.display());
+    }
+    host.close();
+    drop(host);
+    // A new host process loads the installed modules.
+    let mut host = Host::new(&fixture, &paths.base.join("extension/native/host"));
     let (response, _) = host.request(json!({"id":2,"service":"rest","params":{
         "method":"GET","url":format!("http://{}/smoke?env={{{{env:SERVICES_DEVTOOLS_INSTALL_ENV}}}}", server.address)}}));
     assert_eq!(

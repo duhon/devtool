@@ -20,8 +20,13 @@ curl -fsSL https://github.com/duhon/devtool/releases/latest/download/install.sh 
 Then follow the installer's instructions to add the extension to Chrome once,
 and open DevTools → **Services**.
 
+The installer installs the application only. Add the services you need in
+**Settings** → **Modules**: the standard ones come from this repository's
+releases.
+
 Updates are installed from inside the application: **Settings** →
-**Check for updates** → **Update**.
+**Check for updates** → **Update**; module updates are in **Settings** →
+**Modules**.
 
 Uninstall, then remove the extension in Chrome (your data is kept):
 
@@ -34,6 +39,22 @@ Uninstall, then remove the extension in Chrome (your data is kept):
 Every service in the panel is a module, and you can write your own. Install it
 in **Settings** → **Modules** → **Install from file…**. How to write and package
 a module: [rust/examples/echo/README.md](rust/examples/echo/README.md).
+
+A team can share modules and settings through **Settings** → **Sources**: add a
+GitHub repository or a local folder, then install its modules and apply its
+Dictionary profiles, templates, hints and Agent skills. A source is laid out as
+
+```text
+dictionary.json          {"profiles": {"<profile>": {"<VAR>": "value"}}}
+templates.json           {"<module>": {"<section>": "<templates text>"}}
+hints/<module>.md        a module's hints
+skills/<name>/SKILL.md   Agent skills
+modules/*.module.tgz     module packages (a GitHub repository publishes them as
+                         releases tagged module-<id>-v<version>)
+```
+
+Your own changes stay on top of a source's and survive its updates; **Reset**
+returns to the source's.
 
 ---
 

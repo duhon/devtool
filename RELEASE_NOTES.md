@@ -1,5 +1,28 @@
 # Release notes
 
+## 3.2.0
+
+- Modules are released apart from the application. The installer now installs the
+  application only; add the services you need in Settings → Modules, which lists the module
+  versions available with their release notes and offers Install and Update. An application
+  update no longer reinstalls modules, and a module can be updated without one. Modules
+  installed before stay as they are; update them there to give the Agent their skills.
+- Sources: Settings → Sources keeps an ordered list of named sources, GitHub repositories
+  (private ones use a token saved in Settings or `gh auth token`) and local folders, that
+  supply modules and shared Dictionary profiles, templates, hints and Agent skills. Standard,
+  this repository, is there from the start. Sources are checked automatically; Settings shows
+  what applying one would change, including what you've changed yourself, and you apply it by
+  button.
+- Your changes stay on top: later sources override earlier ones and your own changes override
+  them all, also after a source updates. A Dictionary profile, template section or service
+  hints from a source show their source, and Reset puts your change back to the source's; in
+  the Dictionary you can reset one variable or the whole profile.
+- Agent skills come from modules and sources: each module brings its own skill
+  (`module-<id>`), each source its skills (`<source>-<name>`). Settings → Agent skills lists
+  them with where they come from. The Team skills folder setting is gone: a folder named
+  `skills` becomes the "Team" source automatically; otherwise Settings → Sources explains how
+  to add it.
+
 ## 3.1.0
 
 - New Artemis service for looking into Apache ActiveMQ Artemis through the broker's web console

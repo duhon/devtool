@@ -6,7 +6,7 @@ extension over native messaging.
 
 ## Layout and controls
 
-- The top service tabs select MySQL, REST, GraphQL, gRPC, Splunk or Terminal.
+- The top service tabs select a service; each installed module adds one.
 - The middle is the editable document for the selected service. It contains
   `#check` requests and their owned captured responses.
 - The left rail numbers checks in document order and navigates to them.
@@ -277,13 +277,18 @@ defaults apply only to newly created Agent chats; existing chats retain their
 model and Reasoning, including after reload.
 Without saved preferences, new chats use Copilot Fusion, which manages Reasoning
 automatically. Fusion is a router, not an individual model.
-Settings → Agent skills has a Team skills folder field: an absolute local path
-(or one starting with `~/`) to a folder with one subfolder per skill, each with
-a SKILL.md whose frontmatter has `name` and `description`. Save lists the skills
-found and explains skipped ones; Clear removes the folder. Team skills apply from
-the next reply in every chat and are used through the `skill` tool. Only the
-SKILL.md text is available: you cannot read other files of a skill. URLs are not
-supported; a team keeps the folder current with git or a synced drive.
+Settings → Agent skills lists, read-only, the skills every reply gets: the
+skill of each installed module (`module-<id>`) and the skills of the applied
+sources (`<source>-<name>`), each with where it comes from. They apply from the
+next reply in every chat and are used through the `skill` tool. Only the
+SKILL.md text is available: you cannot read other files of a skill.
+Settings → Sources lists named sources, GitHub repositories or local folders,
+that supply modules and shared Dictionary profiles, templates, hints and skills.
+The application checks them automatically; the user applies a source's changes
+and installs its modules by button. Later sources override earlier ones and the
+user's own changes override them all: a Dictionary variable, a template section
+or a module's hints changed by the user shows the source it overrides, and
+Reset returns it to the source's. A source's profile can't be renamed or deleted.
 Assistant responses render Markdown; user messages remain literal text.
 Running a check through the Agent always requires a separate Approve run action;
 Deny rejects it. Approval applies only to the displayed check/revision and

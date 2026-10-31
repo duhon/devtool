@@ -16,6 +16,10 @@ VERSION = re.compile(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)")
 PREFIX = "devtool-v"
 ARCHIVE = "services-macos-arm64.tar.gz"
 ASSETS = (ARCHIVE, "checksums.txt", "install.sh", "version.json")
+# Modules are released apart from the application: one release per module version, never
+# the latest release (the application's update check reads the latest one).
+MODULE_PREFIX = "module-"
+MODULE_SUFFIX = ".module.tgz"
 
 
 def sha256(path):
@@ -34,7 +38,10 @@ def version_tuple(version):
 
 
 def release_notes(root=ROOT):
-    text = (root / "RELEASE_NOTES.md").read_text()
+    return newest_notes((root / "RELEASE_NOTES.md").read_text())
+
+
+def newest_notes(text):
     headings = list(re.finditer(r"^## (.+)$", text, re.MULTILINE))
     if not headings:
         raise ValueError("RELEASE_NOTES.md has no '## X.Y.Z' release")
@@ -91,19 +98,43 @@ def api(method, path, body=None, missing_ok=False):
         raise
 
 
-def should_publish(version, releases):
+def should_publish(version, releases, prefix=PREFIX):
     current = version_tuple(version)
     published = []
     for release in releases:
-        if release["draft"] or not release["tag_name"].startswith(PREFIX):
+        if release["draft"] or not release["tag_name"].startswith(prefix):
             continue
-        candidate = version_tuple(release["tag_name"][len(PREFIX):])
+        candidate = release["tag_name"][len(prefix):]
+        if not VERSION.fullmatch(candidate):
+            continue
+        candidate = version_tuple(candidate)
         if candidate == current:
             return False
         published.append(candidate)
     if published and current <= max(published):
-        raise ValueError("The release-notes version is older than a published release")
+        raise ValueError(f"The {prefix}{version} release is older than a published release")
     return True
+
+
+def module_tag(module):
+    return f"{MODULE_PREFIX}{module}-v"
+
+
+def modules(root=ROOT):
+    """`{id: version}` of the module crates in rust/modules (the version in each Cargo.toml)."""
+    found = {}
+    for cargo in sorted((root / "rust/modules").glob("*/Cargo.toml")):
+        crate = tomllib.loads(cargo.read_text())
+        manifest = cargo.parent / "manifest.json"
+        if "cdylib" not in crate.get("lib", {}).get("crate-type", []) or not manifest.is_file():
+            continue
+        module = json.loads(manifest.read_text())["id"]
+        version = crate["package"]["version"]
+        if not isinstance(version, str):
+            raise ValueError(f"Module {module} needs its own version in {cargo}")
+        version_tuple(version)
+        found[module] = version
+    return found
 
 
 def plan():
@@ -116,12 +147,20 @@ def plan():
         if len(batch) < 100:
             break
         page += 1
-    publish = should_publish(version, releases)
+    application = should_publish(version, releases)
+    new_modules = [
+        f"{module_tag(module)}{module_version}"
+        for module, module_version in modules().items()
+        if should_publish(module_version, releases, module_tag(module))
+    ]
+    publish = application or bool(new_modules)
     outputs = {"version": version, "tag": PREFIX + version, "publish": str(publish).lower()}
     with open(os.environ["GITHUB_OUTPUT"], "a") as output:
         for key, value in outputs.items():
             output.write(f"{key}={value}\n")
-    print(f"{'Build' if publish else 'Already published; skip'}: {PREFIX}{version}")
+    print(f"{'Build' if application else 'Already published; skip'}: {PREFIX}{version}")
+    for tag in new_modules:
+        print(f"Build: {tag}")
 
 
 def prepare(root=ROOT):
@@ -185,16 +224,16 @@ def metadata(root=ROOT):
     (output / "release-notes.txt").write_text(notes + "\n")
 
 
-def upload_assets(release_id, output):
+def upload_assets(release_id, output, names=ASSETS):
     endpoint = f"releases/{release_id}/assets?per_page=100"
     for asset in api("GET", endpoint):
-        if asset["name"] in ASSETS:
+        if asset["name"] in names:
             subprocess.run(
                 ["gh", "api", "--method", "DELETE",
                  f"repos/{repository()}/releases/assets/{asset['id']}", "--silent"],
                 check=True,
             )
-    for name in ASSETS:
+    for name in names:
         subprocess.run(
             ["gh", "api", "--method", "POST",
              f"https://uploads.github.com/repos/{repository()}/releases/{release_id}/assets?name={name}",
@@ -203,7 +242,7 @@ def upload_assets(release_id, output):
             check=True,
         )
     uploaded = api("GET", endpoint)
-    if len(uploaded) != len(ASSETS) or {asset["name"] for asset in uploaded} != set(ASSETS):
+    if len(uploaded) != len(names) or {asset["name"] for asset in uploaded} != set(names):
         raise ValueError("Draft release is missing the complete expected asset set")
     for asset in uploaded:
         path = output / asset["name"]
@@ -215,19 +254,10 @@ def upload_assets(release_id, output):
             raise ValueError(f"Draft release asset does not match the verified file: {asset['name']}")
 
 
-def publish(root=ROOT):
-    version, notes = release_notes(root)
-    output = root / "dist/distribution"
-    document = json.loads((output / "version.json").read_text())
+def release_once(tag, name, notes, output, names, latest):
+    """Publishes release `tag` of this commit with the files `names` from `output`; a published
+    release stays unchanged, an unfinished draft of this commit is completed."""
     commit = os.environ["GITHUB_SHA"]
-    tag = PREFIX + version
-    if (document["version"], document["commit"], document["repository"]) != (
-        version, commit, repository()
-    ):
-        raise ValueError("Release artifact does not belong to this version, commit and repository")
-    digest = sha256(output / ARCHIVE)
-    if document["sha256"] != digest or (output / "checksums.txt").read_text() != f"{digest}  {ARCHIVE}\n":
-        raise ValueError("Release artifact checksum mismatch")
     release = api("GET", f"releases/tags/{tag}", missing_ok=True)
     if release is not None and not release["draft"]:
         print(f"Already published; leave immutable release {tag} unchanged")
@@ -240,15 +270,54 @@ def publish(root=ROOT):
     if release is None:
         release = api("POST", "releases", {
             "tag_name": tag, "target_commitish": commit,
-            "name": f"Services DevTools {version}", "body": notes, "draft": True,
+            "name": name, "body": notes, "draft": True,
         })
     elif release["target_commitish"] != commit:
         raise ValueError("An unfinished release belongs to another commit; use a new version")
-    upload_assets(release["id"], output)
+    upload_assets(release["id"], output, names)
     published = api("PATCH", f"releases/{release['id']}", {
-        "body": notes, "draft": False, "prerelease": False, "make_latest": "true",
+        "body": notes, "draft": False, "prerelease": False,
+        "make_latest": "true" if latest else "false",
     })
     print(f"Published {published['html_url']}")
+
+
+def module_release(archive):
+    """`(id, version, notes)` of a module package file; the notes of its version."""
+    with tarfile.open(archive) as package:
+        described = json.load(package.extractfile("package.json"))
+        try:
+            text = package.extractfile("RELEASE_NOTES.md").read().decode()
+        except KeyError:
+            raise ValueError(f"{archive.name} has no RELEASE_NOTES.md") from None
+    module, version = described["id"], described["version"]
+    noted, notes = newest_notes(text)
+    if noted != version:
+        raise ValueError(f"{archive.name}: the newest module notes are for {noted}, not {version}")
+    if archive.name != f"{module}-{version}-{described['platform']}{MODULE_SUFFIX}":
+        raise ValueError(f"{archive.name} is not named by its package")
+    return module, version, notes
+
+
+def publish(root=ROOT):
+    version, notes = release_notes(root)
+    output = root / "dist/distribution"
+    document = json.loads((output / "version.json").read_text())
+    commit = os.environ["GITHUB_SHA"]
+    if (document["version"], document["commit"], document["repository"]) != (
+        version, commit, repository()
+    ):
+        raise ValueError("Release artifact does not belong to this version, commit and repository")
+    digest = sha256(output / ARCHIVE)
+    if document["sha256"] != digest or (output / "checksums.txt").read_text() != f"{digest}  {ARCHIVE}\n":
+        raise ValueError("Release artifact checksum mismatch")
+    release_once(PREFIX + version, f"Services DevTools {version}", notes, output, ASSETS, True)
+    for archive in sorted((root / "dist/modules").glob(f"*{MODULE_SUFFIX}")):
+        module, module_version, module_notes = module_release(archive)
+        release_once(
+            f"{module_tag(module)}{module_version}", f"{module} module {module_version}",
+            module_notes, archive.parent, (archive.name,), False,
+        )
 
 
 if __name__ == "__main__":

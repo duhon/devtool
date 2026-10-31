@@ -76,6 +76,8 @@ pub enum Msg {
     Seen,
     Discard,
     Refresh,
+    /// Dictionary: puts a variable, or the whole profile, back to its source's.
+    Reset(Option<String>),
 }
 pub struct ConsoleVariables {
     dictionary: bool,
@@ -345,6 +347,31 @@ impl Component for ConsoleVariables {
                     ctx,
                     json!({"op":"list"}),
                     "Variables load",
+                    js_sys::Date::now(),
+                );
+            }
+            Msg::Reset(variable) => {
+                let name = self.profile.clone();
+                self.cancel_timer();
+                self.queue.retain(|operation| {
+                    operation.profile != name || operation.request["op"] != "save"
+                });
+                self.drafts.remove(&name);
+                self.texts.remove(&name);
+                self.bases.remove(&name);
+                self.conflicts.remove(&name);
+                if let Err(e) = self.persist(ctx) {
+                    self.report(
+                        ctx,
+                        "Variables draft",
+                        js_sys::Date::now(),
+                        Reply::Error(json!({"error":e})),
+                    );
+                }
+                self.enqueue(
+                    ctx,
+                    json!({"op":"reset","name":name,"variable":variable}),
+                    "Variables reset",
                     js_sys::Date::now(),
                 );
             }
@@ -634,7 +661,11 @@ impl Component for ConsoleVariables {
                 }
             }
             Msg::Rename(name) => {
-                if ctx.props().dictionary && name != "env" {
+                // A source's profile can't be renamed.
+                if ctx.props().dictionary
+                    && name != "env"
+                    && !self.vars["origins"][&name].is_object()
+                {
                     self.renaming = Some((name.clone(), name));
                     self.focus_rename = true;
                 }
@@ -714,7 +745,7 @@ impl Component for ConsoleVariables {
                             <span class="tab-label">{if name=="env" {"env (read-only)"} else {name}}</span>
                         }
                         {indicator(self.profile_indicator(ctx,name),format!("{name} · status"))}
-                        if name!="env" && !renaming && can_delete {
+                        if name!="env" && !renaming && can_delete && !self.vars["origins"][name].is_object() {
                             <span class="tab-close" onclick={ctx.link().callback(move |e:MouseEvent|{e.stop_propagation();Msg::Delete(delete.clone())})}>{"×"}</span>
                         }
                     </button>}
@@ -727,6 +758,7 @@ impl Component for ConsoleVariables {
                 <button type="button" class="tab-button" data-testid="console-dictionary-discard" title="Discard draft and load the saved profile"
                     onclick={ctx.link().callback(|_|Msg::Discard)}>{"Discard draft"}</button>
             }
+            {self.view_origin(ctx)}
         </>};
         let heading = if ctx.props().visible {
             ctx.props()
@@ -823,6 +855,43 @@ impl Component for ConsoleVariables {
     }
 }
 impl ConsoleVariables {
+    /// Dictionary: the source of the shown profile and the user's own variables in it, each
+    /// of which can go back to the source's value.
+    fn view_origin(&self, ctx: &Context<Self>) -> Html {
+        let origin = &self.vars["origins"][&self.profile];
+        let Some(source) = origin["source"].as_str().filter(|_| self.dictionary) else {
+            return Html::default();
+        };
+        let own: Vec<(String, bool)> = origin["variables"]
+            .as_object()
+            .into_iter()
+            .flatten()
+            .filter(|(_, origin)| origin["origin"] == "local")
+            .map(|(name, origin)| (name.clone(), origin.get("source").is_some()))
+            .collect();
+        html! {
+            <span class="console-panel-origin" data-testid="dictionary-origin">
+                <span class="settings-origin" data-testid="dictionary-origin-label">{format!("From source {source}")}</span>
+                if !own.is_empty() {
+                    <span class="module-settings-detail">{"Yours:"}</span>
+                    {for own.into_iter().map(|(name, overridden)| {
+                        let title = if overridden {
+                            format!("Reset {name} to the value of {source}")
+                        } else {
+                            format!("Remove {name}; {source} doesn't have it")
+                        };
+                        let variable = name.clone();
+                        html! {
+                            <button type="button" class="tab-button" data-testid="dictionary-reset-variable" data-variable={name.clone()} {title}
+                                onclick={ctx.link().callback(move |_| Msg::Reset(Some(variable.clone())))}>{format!("{name} ↺")}</button>
+                        }
+                    })}
+                    <button type="button" class="tab-button" data-testid="dictionary-reset"
+                        onclick={ctx.link().callback(|_| Msg::Reset(None))}>{format!("Reset all to {source}")}</button>
+                }
+            </span>
+        }
+    }
     fn profile_indicator(&self, ctx: &Context<Self>, profile: &str) -> crate::activity::Indicator {
         self.statuses
             .get(profile)

@@ -240,3 +240,96 @@ fn dictionary_save_with_a_stale_base_keeps_another_windows_edit() {
         .expect("Saves without a base overwrite, as the CLI and Agent expect");
     assert_eq!(dictionary.list().unwrap()["profiles"]["shared"]["A"], "4");
 }
+
+#[tokio::test]
+async fn local_dictionary_variables_cover_a_source_until_reset() {
+    let data = DataDir::new();
+    let team = DataDir::new();
+    std::fs::write(
+        team.path().join("dictionary.json"),
+        r#"{"profiles":{"stage":{"HOST":"team.example","PORT":"80"}}}"#,
+    )
+    .unwrap();
+    let runtime = data.runtime();
+    let sources = |request: Value| {
+        let mut request = request;
+        request["service"] = json!("sources");
+        let runtime = runtime.clone();
+        async move { runtime.dispatch(&request).await }
+    };
+    let saved = sources(
+        json!({"op":"save","sources":[{"name":"Team","kind":"folder","path":team.path()}]}),
+    )
+    .await;
+    assert_eq!(saved["ok"], true, "{saved}");
+    let applied = sources(json!({"op":"apply","source":"team"})).await;
+    assert_eq!(applied["ok"], true, "{applied}");
+    let dictionary = runtime.dictionary_store.clone();
+    let list = dictionary.list().unwrap();
+    assert_eq!(list["profiles"]["stage"]["HOST"], "team.example");
+    assert_eq!(list["origins"]["stage"]["source"], "Team");
+
+    let saved = dictionary
+        .dispatch(&json!({"op":"save","name":"stage","variables":{"HOST":"mine","PORT":"80","EXTRA":"1"}}))
+        .unwrap();
+    assert_eq!(
+        saved["origins"]["stage"]["variables"]["HOST"],
+        json!({"origin":"local","source":"Team"})
+    );
+    assert_eq!(
+        saved["origins"]["stage"]["variables"]["PORT"],
+        json!({"origin":"source","source":"Team"})
+    );
+    let local: Value = serde_json::from_slice(
+        &std::fs::read(data.path().join(".dictionary-profiles.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        local["profiles"]["stage"],
+        json!({"HOST":"mine","EXTRA":"1"})
+    );
+    for request in [
+        json!({"op":"delete","name":"stage"}),
+        json!({"op":"rename","name":"stage","newName":"other"}),
+        json!({"op":"save","name":"stage","variables":{"HOST":"mine"}}),
+    ] {
+        assert!(dictionary.dispatch(&request).is_err(), "{request}");
+    }
+
+    std::fs::write(
+        team.path().join("dictionary.json"),
+        r#"{"profiles":{"stage":{"HOST":"new.example","PORT":"81"}}}"#,
+    )
+    .unwrap();
+    let checked = sources(json!({"op":"check","force":true})).await;
+    let changes = &checked["result"]["sources"][0]["changes"];
+    assert!(
+        changes
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|change| change["key"] == "stage/HOST" && change["overridden"] == true),
+        "{checked}"
+    );
+    sources(json!({"op":"apply","source":"team"})).await;
+    let list = dictionary.list().unwrap();
+    assert_eq!(list["profiles"]["stage"]["HOST"], "mine");
+    assert_eq!(list["profiles"]["stage"]["PORT"], "81");
+    let reset = dictionary
+        .dispatch(&json!({"op":"reset","name":"stage","variable":"HOST"}))
+        .unwrap();
+    assert_eq!(reset["profiles"]["stage"]["HOST"], "new.example");
+    assert_eq!(reset["profiles"]["stage"]["EXTRA"], "1");
+    let reset = dictionary
+        .dispatch(&json!({"op":"reset","name":"stage"}))
+        .unwrap();
+    assert_eq!(
+        reset["profiles"]["stage"],
+        json!({"HOST":"new.example","PORT":"81"})
+    );
+    let local: Value = serde_json::from_slice(
+        &std::fs::read(data.path().join(".dictionary-profiles.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(local["profiles"], json!({}));
+}

@@ -13,6 +13,7 @@ mod page_agent;
 mod pane_resizer;
 mod session_database;
 mod sessions;
+mod sources_settings;
 mod templates;
 mod transport;
 mod updates;

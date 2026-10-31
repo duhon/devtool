@@ -97,6 +97,12 @@ fn load_package(
             described.id
         ));
     }
+    if let Some(reason) = described.unsupported(
+        env!("CARGO_PKG_VERSION"),
+        &services_contracts::package::host_platform(),
+    ) {
+        return Err(reason);
+    }
     let endpoint = modules::load(&package.library(), host.clone())?;
     let module = Module::new(endpoint).map_err(|status| format!("no manifest: {status}"))?;
     let manifest = manifest(&module.manifest).map_err(|error| error.message)?;

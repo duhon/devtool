@@ -13,6 +13,10 @@ pub mod command;
 
 /// Version of the wasm exports [`export!`] generates; the console checks it first.
 pub const ABI_VERSION: u32 = 1;
+/// The oldest export version the console still loads: modules update apart from the
+/// application, so a console accepts console parts from [`MIN_ABI_VERSION`] to
+/// [`ABI_VERSION`].
+pub const MIN_ABI_VERSION: u32 = 1;
 
 /// What a service does in the console beyond its manifest data.
 pub trait ServiceUi: Sync {

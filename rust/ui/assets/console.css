@@ -436,6 +436,130 @@
   color: #ff8980;
 }
 
+.module-settings-subtitle {
+  color: #a9adb5;
+}
+
+.module-settings-row select {
+  margin-left: auto;
+}
+
+.module-settings-notes {
+  flex-basis: 100%;
+  color: #a9adb5;
+}
+
+.module-settings-notes pre {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+  font: inherit;
+}
+
+.settings-origin {
+  flex: none;
+  padding: 0 4px;
+  border: 1px solid #43454a;
+  border-radius: 3px;
+  color: #a9adb5;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.source-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid #43454a;
+}
+
+.source-settings input,
+.source-settings select {
+  min-width: 0;
+  padding: 4px;
+  border: 1px solid #43454a;
+  background: #25272a;
+  color: inherit;
+  font: inherit;
+}
+
+.source-settings-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 0;
+}
+
+.source-settings-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.source-settings-head .module-settings-name,
+.source-settings-input {
+  flex: 1;
+  margin-right: 4px;
+}
+
+.source-settings-error {
+  margin: 0;
+  color: #ff8980;
+}
+
+.source-settings-changes {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.source-settings-changes ul {
+  margin: 0;
+  padding-left: 16px;
+}
+
+.source-settings-changes li {
+  display: flex;
+  gap: 6px;
+}
+
+.source-settings-add {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.source-settings-field {
+  display: grid;
+  grid-template-columns: 90px 1fr;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Where a docked panel's content comes from, after its heading tabs. */
+.console-panel-origin {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: stretch;
+  gap: 2px;
+  min-width: 0;
+  padding-left: 4px;
+  overflow-x: auto;
+}
+
+.console-panel-origin > span,
+.console-panel-heading > .settings-origin {
+  align-self: center;
+  margin: 0 4px;
+  white-space: nowrap;
+}
+
+.console-panel-origin > .tab-button {
+  flex: none;
+  white-space: nowrap;
+}
+
 .agent-settings {
   display: flex;
   flex-direction: column;

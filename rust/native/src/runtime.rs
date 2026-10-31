@@ -2,6 +2,7 @@ use crate::core::{
     error::{Result, text},
     hints::Hints,
     registry::Registry,
+    sources::{self, Sources},
     text::SharedStr,
     variables::VariableStore,
 };
@@ -17,6 +18,7 @@ pub struct Runtime {
     pub hints: Hints,
     pub templates: crate::core::templates::Templates,
     pub history: crate::core::history::History,
+    pub sources: Sources,
 }
 impl Runtime {
     pub fn agent_session_sensitive_values(&self, params: &Value) -> Result<Vec<String>> {
@@ -64,6 +66,9 @@ impl Runtime {
     }
     pub fn with_data_dir(path: impl Into<PathBuf>) -> Result<Self> {
         let path = path.into();
+        if let Err(error) = sources::migrate_team_folder(&path) {
+            eprintln!("Team skills folder migration failed: {}", error.message);
+        }
         let variable_store = VariableStore::new(path.join(".variable-profiles.json"));
         let dictionary_store = variable_store.dictionary();
         let registry = Registry::new(variable_store.clone())?;
@@ -80,23 +85,32 @@ impl Runtime {
                 manifests,
             ),
             history: crate::core::history::History::new(path.join(".console-history.sqlite3")),
+            sources: Sources::new(path),
         })
     }
     /// `{"service":"modules"}`: the loaded modules and the packages that failed to load;
     /// `op:"ui"` with a `module` id: the module's console part as base64;
-    /// `op:"install"` with a package `file` as base64 and `op:"remove"` with a `module`
-    /// folder change the modules folder; `forget:true` also deletes the module's history,
-    /// templates and hints. This host keeps the modules it loaded; a new host process loads
-    /// the change.
+    /// `op:"install"` with a package `file` as base64, or with the `source`, `module` and
+    /// `version` of a source's offer, and `op:"remove"` with a `module` folder change the
+    /// modules folder; `forget:true` also deletes the module's history, local templates and
+    /// hints. This host keeps the modules it loaded; a new host process loads the change.
     async fn modules(&self, message: &Value) -> Result<Value> {
         use crate::core::{error::Error, install};
         use base64::Engine;
         match message["op"].as_str() {
             Some("ui") => {}
             Some("install") => {
-                let archive = base64::engine::general_purpose::STANDARD
-                    .decode(message["file"].as_str().unwrap_or_default())
-                    .map_err(|e| Error::new(format!("Invalid package file: {e}")))?;
+                let source = message["source"].as_str();
+                let archive = match source {
+                    Some(source) => {
+                        self.sources
+                            .package(source, &text(message, "module"), &text(message, "version"))
+                            .await?
+                    }
+                    None => base64::engine::general_purpose::STANDARD
+                        .decode(message["file"].as_str().unwrap_or_default())
+                        .map_err(|e| Error::new(format!("Invalid package file: {e}")))?,
+                };
                 let registry = self.registry.clone();
                 let installed = tokio::task::spawn_blocking(move || {
                     install::install(registry.dir(), &archive, |dir| registry.check(dir))
@@ -105,6 +119,7 @@ impl Runtime {
                 .map_err(|e| Error::new(format!("Install failed: {e}")))?
                 .map_err(Error::new)?;
                 let manifest = installed.manifest;
+                sources::set_module_source(self.sources.data(), &manifest.id, source)?;
                 return Ok(json!({
                     "installed": {"id": manifest.id, "name": manifest.name, "version": manifest.version},
                     "replaced": installed.replaced,
@@ -113,6 +128,7 @@ impl Runtime {
             Some("remove") => {
                 let name = text(message, "module");
                 install::remove(self.registry.dir(), &name).map_err(Error::new)?;
+                sources::remove_module_source(self.sources.data(), &name)?;
                 let mut reply = json!({"removed": name});
                 if message["forget"] == true {
                     let (history, templates, hints) = (
@@ -384,6 +400,19 @@ impl Runtime {
             })()
         } else if service == "modules" {
             self.modules(message).await
+        } else if service == "sources" {
+            let installed: Vec<(String, String)> = self
+                .registry
+                .manifests()
+                .iter()
+                .map(|manifest| (manifest.id.clone(), manifest.version.clone()))
+                .collect();
+            let local = || sources::Local {
+                dictionary: self.dictionary_store.local().unwrap_or_default(),
+                templates: self.templates.local().unwrap_or_default(),
+                hints: self.hints.local(),
+            };
+            sources::dispatch(&self.sources, message, local, &installed).await
         } else if service == "vars" {
             if let Some(variables) = message.get("sessionVariables") {
                 self.variable_store.session_dispatch(message, variables)
@@ -400,21 +429,25 @@ impl Runtime {
             match message["op"].as_str() {
                 Some("get") => self.templates.get(),
                 Some("save") => self.templates.save(message),
+                Some("reset") => self.templates.reset(message),
                 _ => Err(crate::core::error::Error::new(
                     "Unknown templates operation",
                 )),
             }
         } else if service == "hints" {
             let service = text(message, "serviceName");
-            if message["op"] == "save" {
-                self.hints.save(&service, &text(message, "text"))
-            } else {
-                let default = self
-                    .registry
-                    .manifest(&service)
-                    .map(|manifest| manifest.console.hints.as_str())
-                    .unwrap_or("");
-                Ok(self.hints.get(&service, default))
+            let default = self
+                .registry
+                .manifest(&service)
+                .map(|manifest| manifest.console.hints.as_str())
+                .unwrap_or("");
+            match message["op"].as_str() {
+                Some("save") => self.hints.save(&service, &text(message, "text"), default),
+                Some("reset") => self
+                    .hints
+                    .forget(&service)
+                    .map(|()| self.hints.get(&service, default)),
+                _ => Ok(self.hints.get(&service, default)),
             }
         } else if message["type"] == "discover" {
             let json = self

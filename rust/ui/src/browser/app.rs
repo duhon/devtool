@@ -171,6 +171,11 @@ pub enum Msg {
     /// A module was removed with its data: drop what this window and the sessions keep for it.
     ForgetModule(String),
     ModuleForgotten(Result<(), String>),
+    /// Checks the sources; `true` also checks the recently checked ones.
+    CheckSources(bool),
+    SourcesChecked(u64, bool, f64, Reply),
+    /// A source's settings were applied: reload what comes from them.
+    SourcesApplied,
     CheckUpdates,
     UpdateSource(u64, Reply),
     UpdateChecked(u64, Result<services_contracts::updates::Release, String>),
@@ -222,6 +227,8 @@ pub enum Msg {
     HintsText(String),
     SaveHints(String),
     StopHints,
+    ResetHints,
+    HintsReset(String, u64, f64, Reply),
     HintsSaved(String, u64, String, f64, Reply),
     Import,
     Imported(String, Result<String, String>),
@@ -251,6 +258,16 @@ pub struct App {
     history_error_seen: bool,
     updates: updates::State,
     settings_status: Option<OperationStatus>,
+    /// The last check of the sources.
+    sources_check: Option<Rc<Value>>,
+    sources_checking: bool,
+    sources_generation: u64,
+    /// The last sources notice put on Settings, so repeated checks don't light it again.
+    sources_notice: String,
+    /// Remounts the settings and panels that show configuration from sources and modules.
+    config_epoch: u64,
+    /// Where each module's hints come from: `{origin, source?}`.
+    hints_origins: BTreeMap<String, Value>,
     /// Start of the Settings warning or error last shown, and when it was first shown.
     settings_seen: Option<(f64, f64)>,
     /// The Settings warning or error on screen and when it appeared, until it counts as seen.
@@ -358,6 +375,12 @@ impl Component for App {
             history_error_seen: false,
             updates: updates::State::default(),
             settings_status: None,
+            sources_check: None,
+            sources_checking: false,
+            sources_generation: 0,
+            sources_notice: String::new(),
+            config_epoch: 0,
+            hints_origins: BTreeMap::new(),
             settings_seen: None,
             settings_shown: None,
             seen: SeenTimer::default(),
@@ -449,6 +472,7 @@ impl Component for App {
             callback.forget();
         }
         ctx.link().send_message(Msg::CheckUpdates);
+        ctx.link().send_message(Msg::CheckSources(false));
         app
     }
     fn update(&mut self, ctx: &Context<Self>, msg: Msg) -> bool {
@@ -467,7 +491,95 @@ impl Component for App {
                     false,
                     ctx.link().callback(Msg::Modules),
                 );
-                return false;
+                self.config_epoch += 1;
+                ctx.link().send_message(Msg::CheckSources(false));
+            }
+            Msg::CheckSources(force) => {
+                if !self.transport.is_native() {
+                    return false;
+                }
+                self.sources_generation += 1;
+                self.sources_checking = true;
+                let (generation, started) = (self.sources_generation, js_sys::Date::now());
+                if force {
+                    self.settings_status =
+                        Some(OperationStatus::event("Check sources", started, None));
+                }
+                self.transport.request(
+                    json!({"service":"sources","op":"check","force":force}),
+                    false,
+                    ctx.link().callback(move |reply| {
+                        Msg::SourcesChecked(generation, force, started, reply)
+                    }),
+                );
+            }
+            Msg::SourcesChecked(generation, force, started, reply) => {
+                if generation != self.sources_generation {
+                    return false;
+                }
+                self.sources_checking = false;
+                let mut status = OperationStatus::event("Check sources", started, Some(&reply));
+                if let Reply::Result(value) = reply {
+                    let (errors, updates) = super::sources_settings::summary(&value);
+                    self.sources_check = Some(Rc::new(value));
+                    let updates = (!updates.is_empty())
+                        .then(|| format!("Updates available: {}", updates.join(", ")));
+                    let mut result = json!({});
+                    if !errors.is_empty() {
+                        result["warning"] = json!(errors.join("; "));
+                    }
+                    status = OperationStatus::event("Check sources", started, Some(&Reply::Result(result)));
+                    if let Some(updates) = updates {
+                        status.text = match errors.is_empty() {
+                            true => format!("Check sources · {updates}"),
+                            false => format!("{} · {updates}", status.text),
+                        };
+                    }
+                }
+                // Automatic checks speak up only about something new.
+                let notice = if status.text.ends_with(" · OK") {
+                    String::new()
+                } else {
+                    status.text.clone()
+                };
+                if force || (!notice.is_empty() && notice != self.sources_notice) {
+                    if !force {
+                        status.started = js_sys::Date::now();
+                    }
+                    self.settings_status = Some(status);
+                }
+                self.sources_notice = notice;
+            }
+            Msg::SourcesApplied => {
+                self.config_epoch += 1;
+                self.templates_epoch += 1;
+                if !self.templates_visited {
+                    self.transport.request(
+                        json!({"service":"templates","op":"get"}),
+                        false,
+                        ctx.link().callback(Msg::TemplatesLoaded),
+                    );
+                }
+                self.transport.request(
+                    json!({"service":"vars","op":"list"}),
+                    false,
+                    ctx.link().callback(Msg::Vars),
+                );
+                for service in crate::services::ids() {
+                    if !self.hints_drafts.contains_key(&service)
+                        && !self.hints_saving.contains(&service)
+                    {
+                        let revision = self.next_hints_revision(&service);
+                        let started = js_sys::Date::now();
+                        self.transport.request(
+                            json!({"service":"hints","op":"get","serviceName":service}),
+                            false,
+                            ctx.link().callback(move |r| {
+                                Msg::Hints(service.clone(), revision, started, r)
+                            }),
+                        );
+                    }
+                }
             }
             Msg::ForgetModule(service) => {
                 self.docs.remove(&service);
@@ -475,6 +587,7 @@ impl Component for App {
                 self.checks.remove(&service);
                 self.viewports.remove(&service);
                 self.hints.remove(&service);
+                self.hints_origins.remove(&service);
                 self.hints_drafts.remove(&service);
                 self.hints_edited.remove(&service);
                 if let Some(id) = self.hints_timers.remove(&service) {
@@ -944,6 +1057,8 @@ impl Component for App {
                 self.console_panel = if self.console_panel == Some(ConsolePanel::Settings) {
                     None
                 } else {
+                    // Recent checks come from the cache; older ones are repeated.
+                    ctx.link().send_message(Msg::CheckSources(false));
                     Some(ConsolePanel::Settings)
                 };
             }
@@ -1206,6 +1321,7 @@ impl Component for App {
                             return true;
                         };
                         self.hints.insert(service.clone(), text.into());
+                        self.hints_origins.insert(service.clone(), v.clone());
                         if self.hints_drafts.contains_key(&service) {
                             ctx.link().send_message(Msg::SaveHints(service));
                         }
@@ -1333,11 +1449,66 @@ impl Component for App {
                     });
                 }
             }
+            Msg::ResetHints => {
+                let service = self.current_language().to_string();
+                if self.hints_saving.contains(&service) {
+                    return false;
+                }
+                if let Some(id) = self.hints_timers.remove(&service) {
+                    window().clear_timeout_with_handle(id);
+                }
+                let started = js_sys::Date::now();
+                if self.hints_drafts.remove(&service).is_some()
+                    && let Err(e) = self.persist_hints_drafts()
+                {
+                    self.record_panel_status(PanelEvent {
+                        owner: service.clone(),
+                        operation: "Hints draft".into(),
+                        started,
+                        reply: Some(Reply::Error(json!({"error":e}))),
+                    });
+                }
+                let revision = self.next_hints_revision(&service);
+                self.hints_saving.insert(service.clone());
+                self.record_panel_status(PanelEvent {
+                    owner: service.clone(),
+                    operation: "Hints reset".into(),
+                    started,
+                    reply: None,
+                });
+                self.transport.request(
+                    json!({"service":"hints","op":"reset","serviceName":service}),
+                    false,
+                    ctx.link().callback(move |r| {
+                        Msg::HintsReset(service.clone(), revision, started, r)
+                    }),
+                );
+            }
+            Msg::HintsReset(service, revision, started, reply) => {
+                self.hints_saving.remove(&service);
+                if let Reply::Result(value) = &reply
+                    && let Some(text) = value["text"].as_str()
+                    && self.hints_revisions.get(&service).copied().unwrap_or(0) == revision
+                {
+                    self.hints.insert(service.clone(), text.into());
+                    self.hints_origins.insert(service.clone(), value.clone());
+                }
+                self.record_panel_status(PanelEvent {
+                    owner: service.clone(),
+                    operation: "Hints reset".into(),
+                    started,
+                    reply: Some(reply),
+                });
+                if self.hints_drafts.contains_key(&service) {
+                    ctx.link().send_message(Msg::SaveHints(service));
+                }
+            }
             Msg::HintsSaved(service, revision, text, started, reply) => {
                 self.hints_saving.remove(&service);
                 let latest = self.hints_revisions.get(&service).copied().unwrap_or(0) == revision;
-                if let Reply::Result(_) = &reply {
+                if let Reply::Result(value) = &reply {
                     self.hints.insert(service.clone(), text.clone());
+                    self.hints_origins.insert(service.clone(), value.clone());
                     if self.hints_drafts.get(&service) == Some(&text) {
                         self.hints_drafts.remove(&service);
                         if let Err(e) = self.persist_hints_drafts() {

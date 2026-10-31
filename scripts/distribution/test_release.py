@@ -203,6 +203,60 @@ class ReleaseTests(unittest.TestCase):
                                 release.publish(root)
                         self.assertNotIn("PATCH", [call.args[0] for call in api.call_args_list])
 
+    def test_each_module_version_is_released_once_apart_from_other_modules(self):
+        releases = [
+            {"tag_name": "devtool-v3.2.0", "draft": False},
+            {"tag_name": "module-rest-v3.2.0", "draft": False},
+            {"tag_name": "module-rest-v2-v9.0.0", "draft": False},
+        ]
+        self.assertFalse(release.should_publish("3.2.0", releases, release.module_tag("rest")))
+        self.assertTrue(release.should_publish("3.2.1", releases, release.module_tag("rest")))
+        self.assertTrue(release.should_publish("3.2.0", releases, release.module_tag("grpc")))
+        with self.assertRaises(ValueError):
+            release.should_publish("3.1.0", releases, release.module_tag("rest"))
+
+    def module(self, root, notes):
+        modules = root / "dist/modules"
+        modules.mkdir(parents=True)
+        archive = modules / "rest-1.2.0-macos-arm64.module.tgz"
+        with tarfile.open(archive, "w:gz") as package:
+            for name, data in {
+                "package.json": json.dumps({"id": "rest", "version": "1.2.0", "platform": "macos-arm64"}),
+                "RELEASE_NOTES.md": notes,
+            }.items():
+                entry = tarfile.TarInfo(name)
+                entry.size = len(data.encode())
+                package.addfile(entry, io.BytesIO(data.encode()))
+        return archive
+
+    def test_module_packages_are_released_with_their_notes_and_never_become_latest(self):
+        with self.package() as (root, _):
+            release.metadata(root)
+            archive = self.module(root, "# REST\n\n## 1.2.0\n\n- Fix\n\n## 1.1.0\n\n- Old\n")
+            uploaded = [{"name": archive.name, "size": archive.stat().st_size, "state": "uploaded",
+                         "digest": "sha256:" + release.sha256(archive)}]
+            with patch.object(release, "api", side_effect=[
+                {"draft": False},
+                None, None, {"id": 43, "draft": True}, [], uploaded,
+                {"html_url": "https://github.com/owner/repo/releases/tag/module-rest-v1.2.0"},
+            ]) as api:
+                with patch.object(release.subprocess, "run") as upload:
+                    release.publish(root)
+            created = api.call_args_list[3].args
+            self.assertEqual(created[2]["tag_name"], "module-rest-v1.2.0")
+            self.assertEqual(created[2]["body"], "- Fix")
+            self.assertEqual(api.call_args_list[-1].args[2]["make_latest"], "false")
+            self.assertEqual(upload.call_args_list[0].args[0][4],
+                             f"https://uploads.github.com/repos/owner/repo/releases/43/assets?name={archive.name}")
+
+    def test_module_notes_must_describe_the_packaged_version(self):
+        with self.package() as (root, _):
+            release.metadata(root)
+            self.module(root, "## 1.1.0\n\n- Old\n")
+            with patch.object(release, "api", return_value={"draft": False}):
+                with self.assertRaisesRegex(ValueError, "1.1.0, not 1.2.0"):
+                    release.publish(root)
+
     def test_retry_replaces_assets_by_id_in_the_selected_draft(self):
         with self.package() as (root, output):
             release.metadata(root)

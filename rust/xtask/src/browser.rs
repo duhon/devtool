@@ -895,7 +895,7 @@ fn scenarios() -> Vec<Scenario> {
             "agent-settings",
             Agent,
             60,
-            "Agent model and reasoning settings, team skills folder",
+            "Agent model and reasoning settings; a folder source: its skill reaches the Agent, its Dictionary profile is overridden and reset, removal",
             script(include_str!("browser-agent-settings.js")),
         ),
         scenario(
@@ -1109,16 +1109,42 @@ fn extract(archive: &Path, directory: &Path) -> Result<PathBuf> {
 /// the distribution does not ship.
 static EXAMPLE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 
-/// Package files a scenario may choose (`Test.chooseFile`): a shipped module repacked, the
-/// example module and an invalid file. A payload without packages (an older release in an
-/// A/B run) offers no shipped one.
-fn module_files(payload: &Path, directory: &Path) -> Result<HashMap<String, PathBuf>> {
+/// Unpacks the release's package files (`dist/modules`) into `directory`, a folder per id:
+/// the modules every scenario starts with.
+fn release_modules(root: &Path, directory: &Path) -> Result<()> {
+    use services_contracts::package::{ARCHIVE_SUFFIX, PACKAGE_FILE, Package, archive};
+    let source = root.join("dist/modules");
+    ensure!(
+        source.is_dir(),
+        "Build the distribution first: cargo run -p xtask -- build"
+    );
+    fs::create_dir_all(directory)?;
+    for entry in fs::read_dir(&source)? {
+        let path = entry?.path();
+        if !path.to_string_lossy().ends_with(ARCHIVE_SUFFIX) {
+            continue;
+        }
+        let bytes = fs::read(&path)?;
+        let described = archive::read(&bytes, PACKAGE_FILE)
+            .map_err(anyhow::Error::msg)?
+            .with_context(|| format!("{} has no {PACKAGE_FILE}", path.display()))?;
+        let package = Package::parse(&described).map_err(anyhow::Error::msg)?;
+        let target = directory.join(&package.id);
+        fs::create_dir(&target)?;
+        archive::unpack(&bytes, &target).map_err(anyhow::Error::msg)?;
+    }
+    Ok(())
+}
+
+/// Package files a scenario may choose (`Test.chooseFile`): a release module repacked, the
+/// example module and an invalid file.
+fn module_files(modules: &Path, directory: &Path) -> Result<HashMap<String, PathBuf>> {
     use services_contracts::package::{Package, archive, archive_name};
     fs::create_dir_all(directory)?;
     let broken = directory.join("broken.module.tgz");
     fs::write(&broken, "not a package")?;
     let mut files = HashMap::from([("broken".to_owned(), broken)]);
-    let graphql = payload.join(services_installer::MODULES).join("graphql");
+    let graphql = modules.join("graphql");
     if graphql.exists() {
         let package = Package::read(&graphql).map_err(anyhow::Error::msg)?;
         let file = directory.join(archive_name(&package));
@@ -1147,6 +1173,11 @@ fn seed_data(data: &Path, fixture_port: u16) -> Result<Vec<(PathBuf, String)>> {
                     }},
             })
             .to_string(),
+        ),
+        (
+            // No sources: the Standard one would reach GitHub from every panel.
+            data.join(".sources.json"),
+            json!({"version":1,"sources":[]}).to_string(),
         ),
         (
             data.join(".console-hints.txt"),
@@ -1449,8 +1480,8 @@ struct Harness {
     archive: PathBuf,
     home: PathBuf,
     data: PathBuf,
-    /// The extracted distribution the browser's host was installed from.
-    payload: PathBuf,
+    /// The release's modules, unpacked: every scenario starts with exactly these installed.
+    modules: PathBuf,
     seeds: Vec<(PathBuf, String)>,
     fixture_url: String,
     fixture_port: u16,
@@ -1476,6 +1507,8 @@ impl Harness {
         let profile = home.join("Chrome's custom profile");
         prepare_home(&home)?;
         let payload = extract(&archive, &temporary.path().join("package"))?;
+        let modules = temporary.path().join("modules");
+        release_modules(root, &modules)?;
         let base = home.join("Library/Application Support/ServicesDevTools");
         let data = base.join("data");
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
@@ -1490,7 +1523,7 @@ impl Harness {
             &temporary.path().join("chrome.stderr"),
         )
         .await?;
-        cdp.files = module_files(&payload, &temporary.path().join("files"))?;
+        cdp.files = module_files(&modules, &temporary.path().join("files"))?;
         let setup = cdp
             .page(
                 &format!("chrome-extension://{EXTENSION_ID}/panel.html"),
@@ -1561,7 +1594,7 @@ impl Harness {
             archive,
             home,
             data,
-            payload,
+            modules,
             seeds,
             fixture_url,
             fixture_port,
@@ -1615,19 +1648,15 @@ impl Harness {
         for (path, contents) in &self.seeds {
             fs::write(path, contents)?;
         }
-        match fs::remove_file(self.data.join(".agent/skills.json")) {
+        match fs::remove_dir_all(self.data.join("sources")) {
             Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
-                return Err(error).context("Removing the Agent team skills setting");
+                return Err(error).context("Removing the downloaded sources");
             }
             _ => {}
         }
-        // A failed `modules` scenario may leave a shipped module removed or another installed.
-        // A payload without packages (an older release in an A/B run) has nothing to restore.
-        let shipped = self.payload.join(services_installer::MODULES);
+        // The release installs no modules; a scenario may remove one or install another.
+        let shipped = &self.modules;
         let modules = self.data.join(services_installer::MODULES);
-        if !shipped.exists() {
-            return self.clear_storage().await;
-        }
         fs::create_dir_all(&modules)?;
         for entry in fs::read_dir(&modules)? {
             let entry = entry?;
@@ -1636,7 +1665,7 @@ impl Harness {
                     .with_context(|| format!("Removing {}", entry.path().display()))?;
             }
         }
-        for entry in fs::read_dir(&shipped)? {
+        for entry in fs::read_dir(shipped)? {
             let id = entry?.file_name();
             if fs::symlink_metadata(modules.join(&id)).is_err() {
                 services_installer::copy_tree(&shipped.join(&id), &modules.join(&id))?;
@@ -1663,21 +1692,24 @@ impl Harness {
         let url = self.panel_url();
         let page = self.cdp.page(&url, INIT).await?;
         self.pages.push(page.clone());
-        let skills = self.temporary.path().join("team skills");
-        if !skills.exists() {
-            fs::create_dir_all(skills.join("shop-deploy"))?;
+        // A team's folder source: a skill and a Dictionary profile.
+        let source = self.temporary.path().join("team source");
+        if !source.exists() {
+            fs::create_dir_all(source.join("skills/shop-deploy"))?;
             fs::write(
-                skills.join("shop-deploy/SKILL.md"),
+                source.join("skills/shop-deploy/SKILL.md"),
                 "---\nname: shop-deploy\ndescription: Deploys the fixture shop\n---\nCheck the shop.\n",
             )?;
-            fs::create_dir_all(skills.join("broken"))?;
-            fs::write(skills.join("broken/SKILL.md"), "---\nname: broken\n---\n")?;
+            fs::write(
+                source.join("dictionary.json"),
+                r#"{"profiles":{"team":{"HOST":"team.fixture.invalid","PORT":"8080"}}}"#,
+            )?;
         }
         let globals = format!(
-            "globalThis.fixtureUrl = {}; globalThis.fixtureVersion = {}; globalThis.fixtureSkills = {};",
+            "globalThis.fixtureUrl = {}; globalThis.fixtureVersion = {}; globalThis.fixtureSource = {};",
             json!(self.fixture_url),
             json!(env!("CARGO_PKG_VERSION")),
-            json!(skills)
+            json!(source)
         );
         self.cdp.evaluate(&page, &globals).await?;
         Ok(page)
@@ -1800,6 +1832,8 @@ impl Harness {
         let base = home.join("Library/Application Support/ServicesDevTools");
         let data = base.join("data");
         seed_data(&data, self.fixture_port)?;
+        // An earlier release's user: the modules they installed stay through updates.
+        services_installer::copy_tree(&self.modules, &data.join(services_installer::MODULES))?;
         services_installer::install(&home, &payload)
             .context("Install into the separate update home")?;
         let result = installed_reload(

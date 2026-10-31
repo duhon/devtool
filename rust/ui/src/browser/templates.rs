@@ -85,11 +85,15 @@ pub enum Msg {
     Saved(Reply),
     Reload,
     Discard,
+    /// Drops the user's own templates of the section, back to the source's.
+    Reset,
     Error(String),
     Seen,
 }
 pub struct Templates {
     library: Library,
+    /// Where each section comes from: `{module: {section: {origin, source?}}}`.
+    origins: Value,
     drafts: BTreeMap<String, Draft>,
     selected: BTreeMap<String, String>,
     statuses: BTreeMap<String, OperationStatus>,
@@ -140,6 +144,7 @@ impl Templates {
             .map_err(|error| format!("Invalid Templates reply: {error}"))?;
         templates::validate(&library)?;
         self.library = library;
+        self.origins = value["origins"].clone();
         self.loaded = true;
         ctx.props().onchange.emit(self.library.clone());
         Ok(())
@@ -161,6 +166,7 @@ impl Component for Templates {
     fn create(ctx: &Context<Self>) -> Self {
         let mut this = Self {
             library: Library::new(),
+            origins: Value::Null,
             drafts: BTreeMap::new(),
             selected: BTreeMap::new(),
             statuses: BTreeMap::new(),
@@ -405,6 +411,31 @@ impl Component for Templates {
                 }
                 ctx.link().send_message(Msg::Reload);
             }
+            Msg::Reset => {
+                if self.saving.is_some() || self.loading {
+                    return false;
+                }
+                let key = self.key(ctx);
+                let Some((service, section)) = key.split_once('/') else {
+                    return false;
+                };
+                if let Some(timer) = self.timer.take() {
+                    window().clear_timeout_with_handle(timer);
+                }
+                self.drafts.remove(&key);
+                self.blocked.remove(&key);
+                self.statuses.remove(&key);
+                if let Err(error) = self.persist() {
+                    self.error = Some(error);
+                    return true;
+                }
+                self.loading = true;
+                ctx.props().transport.request(
+                    json!({"service":"templates","op":"reset","serviceName":service,"section":section}),
+                    false,
+                    ctx.link().callback(Msg::Loaded),
+                );
+            }
             Msg::Error(error) => self.error = Some(error),
             Msg::Seen => {}
         }
@@ -444,6 +475,20 @@ impl Component for Templates {
         } else {
             format!("{} · @@ = @", status.text)
         };
+        let origin = &self.origins[service.as_str()][section];
+        let source = origin["source"].as_str();
+        let origin = match (origin["origin"].as_str(), source) {
+            (Some("local"), _) => html! {<>
+                <span class="settings-origin" data-testid="templates-origin">{source.map(|source|format!("Yours, over source {source}")).unwrap_or_else(||"Yours".into())}</span>
+                <button class="tab-button" data-testid="templates-reset" title="Delete your own templates of this section"
+                    onclick={ctx.link().callback(|_|Msg::Reset)} disabled={self.saving.is_some() || self.loading}>
+                    {source.map(|source|format!("Reset to {source}")).unwrap_or_else(||"Reset".into())}</button>
+            </>},
+            (Some("source"), Some(source)) => html! {
+                <span class="settings-origin" data-testid="templates-origin">{format!("From source {source}")}</span>
+            },
+            _ => Html::default(),
+        };
         let heading = if ctx.props().visible {
             ctx.props().header.cast::<web_sys::Element>().map(|host|yew::create_portal(html!{<>
             <div class="console-panel-tabs" data-testid="templates-sections" role="tablist" aria-label="Template sections">
@@ -458,6 +503,7 @@ impl Component for Templates {
                 <button class="tab-button" data-testid="templates-discard" title="Discard draft and reload saved templates"
                     onclick={ctx.link().callback(|_|Msg::Discard)} disabled={self.saving.is_some() || self.loading}>{"Discard draft"}</button>
             }
+            {origin}
         </>},host)).unwrap_or_default()
         } else {
             Html::default()

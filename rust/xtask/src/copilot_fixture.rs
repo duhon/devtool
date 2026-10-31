@@ -869,9 +869,10 @@ Raw HTML: <img src="https://images.fixture.invalid/raw" onerror="globalThis.agen
                     .context("Missing service guide")?;
                 ensure!(
                     result["topic"] == "services"
-                        && content.contains("#endpoint")
-                        && content.contains("#message")
-                        && content.contains("#command")
+                        && content.contains("#check Title")
+                        && content.contains("module-<id>")
+                        && !content.contains("#endpoint"),
+                    "The services guide must leave request syntax to the module skills"
                 );
                 self.tool(
                     &session,

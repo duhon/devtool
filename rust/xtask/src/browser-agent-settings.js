@@ -1,5 +1,5 @@
 (async () => {
-  const {assert, wait, testid, click, key, openConsole} = testDriver;
+  const {assert, wait, testid, click, key, cm, openConsole} = testDriver;
   // A fresh panel: wait for the restored Console session before using its toolbar.
   await openConsole();
   if (testid('console-agent-toggle').getAttribute('aria-pressed') !== 'true')
@@ -115,46 +115,65 @@
       'New chats must capture the latest model without unsupported Reasoning');
 
     await settings();
-    const folder = testid('agent-team-skills-input');
-    await wait(() => !folder.disabled, 'The team skills setting did not load');
-    assert(folder.value === '' && !document.querySelector('[data-testid="agent-team-skills-clear"]'),
-      'No team skills folder is configured initially');
-    input(folder, 'relative/skills');
-    await click(testid('agent-team-skills-save'));
-    await wait(() => folder.getAttribute('aria-invalid') === 'true',
-      () => `A rejected folder must mark the input: ${testid('settings-update-status').textContent}`);
-    assert(testid('settings-update-status').textContent.includes('absolute path')
-      && testid('settings-update-status').classList.contains('is-error'),
-      `A rejected folder must explain itself in the Settings status: ${testid('settings-update-status').textContent}`);
-    input(folder, fixtureSkills);
-    await wait(() => folder.getAttribute('aria-invalid') === 'false', 'Editing the folder must clear the rejected mark');
-    await click(testid('agent-team-skills-save'));
-    await wait(() => document.querySelector('[data-testid="agent-team-skills-list"]'),
-      () => `The team skills were not listed: ${testid('settings-update-status').textContent}`);
-    assert(testid('agent-team-skills-list').textContent.includes('shop-deploy')
-      && testid('agent-team-skills-list').textContent.includes('Deploys the fixture shop'),
-      `The valid skill must be listed: ${testid('agent-team-skills-list').textContent}`);
-    assert(testid('agent-team-skills-problems').textContent.includes('broken: SKILL.md frontmatter has no description'),
-      `An invalid skill must be explained: ${testid('agent-team-skills-problems').textContent}`);
-    assert(testid('settings-update-status').textContent.includes('Team skills folder saved · 1 skill')
-      && testid('settings-update-status').classList.contains('is-warning'),
-      `Saving must report the skills and their problem: ${testid('settings-update-status').textContent}`);
+    assert(!document.querySelector('[data-testid="source"]'), 'The scenario starts without sources');
+    const skills = () => document.querySelector('[data-testid="agent-skills-list"]')?.textContent ?? '';
+    assert(!skills().includes('team-shop-deploy'), 'No source skill before the source is added');
+    await click(testid('source-add'));
+    input(testid('source-add-name'), 'Team');
+    const kind = testid('source-add-kind');
+    kind.value = 'folder';
+    kind.dispatchEvent(new Event('change', {bubbles:true}));
+    await wait(() => document.querySelector('[data-testid="source-add-path"]') && !document.querySelector('[data-testid="source-add-repository"]'),
+      'A folder source asks only for its folder');
+    input(testid('source-add-path'), fixtureSource);
+    await click(testid('source-add-save'));
+    const team = () => document.querySelector('[data-testid="source"][data-source="team"]');
+    await wait(() => team()?.querySelector('[data-testid="source-apply"]'),
+      () => `The added source must be checked and offer its settings: ${team()?.textContent}; ${testid('settings-update-status').textContent}`);
+    const changes = team().querySelector('[data-testid="source-changes"]').textContent;
+    assert(changes.includes('skill team-shop-deploy added') && changes.includes('dictionary team/HOST added'),
+      `The check must list what applying changes: ${changes}`);
+    await click(team().querySelector('[data-testid="source-apply"]'));
+    await wait(() => team()?.querySelector('[data-testid="source-up-to-date"]') && skills().includes('team-shop-deploy'),
+      () => `Applying must bring the source's skill: ${skills()}; ${team()?.textContent}`);
+    const skill = [...document.querySelectorAll('[data-testid="agent-skill"]')].find(row => row.textContent.includes('team-shop-deploy'));
+    assert(skill.querySelector('[data-testid="agent-skill-origin"]').textContent.includes('Source Team')
+      && skill.textContent.includes('Deploys the fixture shop'),
+      `A source skill must name its source: ${skill.textContent}`);
     await agent();
     await newChat();
     const used = await ask('agent skills');
-    assert(used.includes(`Skill directories: ${fixtureSkills}; skills: shop-deploy`),
-      `The next turn must hand the team folder to Copilot: ${used}`);
-    assert(document.querySelector('[data-testid="agent-status-debug"]').textContent.includes('shop-deploy'),
+    assert(/skills: .*team-shop-deploy/.test(used) && used.includes('sources/team/skills'),
+      `The next turn must hand the source's skill to Copilot: ${used}`);
+    assert(document.querySelector('[data-testid="agent-status-debug"]').textContent.includes('team-shop-deploy'),
       'The Agent status debug must list the skills Copilot used');
+
+    await click(testid('console-dictionary-toggle'));
+    const tabs = () => [...document.querySelector('.console-panel-tabs').querySelectorAll('[role="tab"]')];
+    const profile = await wait(() => tabs().find(tab => tab.querySelector('.tab-label')?.textContent === 'team'),
+      () => `The source's Dictionary profile must be listed: ${tabs().map(tab => tab.textContent)}`);
+    await click(profile);
+    await wait(() => document.querySelector('[data-testid="dictionary-origin-label"]')?.textContent === 'From source Team'
+      && cm('console-dictionary').getValue().includes('team.fixture.invalid'),
+      () => `A source profile must name its source: ${document.querySelector('[data-testid="dictionary-origin"]')?.textContent}`);
+    assert(!document.querySelector('[data-testid="dictionary-reset"]'), 'An untouched source profile has nothing to reset');
+    cm('console-dictionary').setValue(cm('console-dictionary').getValue().replace('team.fixture.invalid', 'mine.fixture.invalid'));
+    const own = () => document.querySelector('[data-testid="dictionary-reset-variable"][data-variable="HOST"]');
+    await wait(() => own() && !document.querySelector('[data-testid="dictionary-reset-variable"][data-variable="PORT"]'),
+      () => `A changed variable must become the user's own: ${testid('dictionary-origin').textContent}`);
+    await click(own());
+    await wait(() => !own() && cm('console-dictionary').getValue().includes('team.fixture.invalid'),
+      () => `Reset must restore the source's value: ${cm('console-dictionary').getValue()}`);
+    await click(testid('console-dictionary-toggle'));
+
     await settings();
-    await click(testid('agent-team-skills-clear'));
-    await wait(() => folder.value === '' && !document.querySelector('[data-testid="agent-team-skills-list"]'),
-      'Clear must remove the team skills folder');
-    assert(testid('settings-update-status').textContent.includes('Team skills folder cleared'),
-      `Clearing must be reported: ${testid('settings-update-status').textContent}`);
+    await click(team().querySelector('[data-testid="source-remove"]'));
+    await click(team().querySelector('[data-testid="source-remove-confirm"]'));
+    await wait(() => !team() && !skills().includes('team-shop-deploy'),
+      () => `Removing the source must remove its skill: ${skills()}`);
     await agent();
     const cleared = await ask('agent skills');
-    assert(cleared.includes('Skill directories: none'), `A cleared folder must stop reaching Copilot: ${cleared}`);
+    assert(!cleared.includes('team-shop-deploy'), `A removed source must stop reaching Copilot: ${cleared}`);
   } finally {
     if (originalOptions === null) localStorage.removeItem('servicesConsole.agentOptions');
     else localStorage.setItem('servicesConsole.agentOptions', originalOptions);
@@ -164,6 +183,6 @@
     await click(testid('agent-sessions').querySelector(`[data-session-id="${originalChat}"]`));
     input(testid('agent-composer'), originalDraft);
   }
-  globalThis.agentSettingsReceipt = {categories:3,reasoning:['low','high'],newChats:created.length,existingChatPreserved:true,teamSkills:['shop-deploy']};
+  globalThis.agentSettingsReceipt = {categories:3,reasoning:['low','high'],newChats:created.length,existingChatPreserved:true,sourceSkills:['team-shop-deploy'],dictionaryReset:true};
   return true;
 })()

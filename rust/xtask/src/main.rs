@@ -40,14 +40,29 @@ fn target(root: &Path) -> PathBuf {
 }
 
 /// A module built as a package: a `cdylib` crate with a `manifest.json` (the shipped ones are
-/// in `rust/modules/<dir>`) and its console part (`ui/`, built for `wasm32-unknown-unknown`)
-/// when it has one.
+/// in `rust/modules/<dir>`), its console part (`ui/`, built for `wasm32-unknown-unknown`),
+/// Agent skill (`skill/SKILL.md`) and `RELEASE_NOTES.md` when it has them.
 #[derive(Clone)]
 struct Package {
     id: String,
     version: String,
+    /// `[package.metadata.services] min-core`: the oldest application version it works with.
+    min_core: Option<String>,
+    dir: PathBuf,
     library: String,
     ui: Option<String>,
+}
+
+impl Package {
+    /// Its `package.json`, built for this computer's platform.
+    fn described(&self) -> services_contracts::package::Package {
+        services_contracts::package::Package {
+            id: self.id.clone(),
+            version: self.version.clone(),
+            min_core: self.min_core.clone(),
+            platform: Some(services_contracts::package::host_platform()),
+        }
+    }
 }
 
 /// A crate's `version`, following `version.workspace = true` to the root manifest.
@@ -64,6 +79,25 @@ fn crate_version(root: &Path, manifest: &Path) -> Result<String> {
         None => version(&root.join("Cargo.toml"))?
             .with_context(|| format!("No version for {}", manifest.display())),
     }
+}
+
+/// `min-core = "X.Y.Z"` in a crate's `[package.metadata.services]`.
+fn crate_min_core(manifest: &Path) -> Result<Option<String>> {
+    let text = fs::read_to_string(manifest)?;
+    let mut section = "";
+    for line in text.lines().map(str::trim) {
+        if line.starts_with('[') {
+            section = line;
+        } else if section == "[package.metadata.services]"
+            && let Some(value) = line.strip_prefix("min-core = \"")
+        {
+            let value = value.strip_suffix('"').context("Invalid min-core")?;
+            services_contracts::package::version(value)
+                .map_err(|e| anyhow::anyhow!("{}: min-core {e}", manifest.display()))?;
+            return Ok(Some(value.to_owned()));
+        }
+    }
+    Ok(None)
 }
 
 fn crate_name(manifest: &Path) -> Result<String> {
@@ -97,11 +131,26 @@ fn package_at(root: &Path, dir: &Path) -> Result<Package> {
             .context("Module manifest without id")?
             .to_owned(),
         version: crate_version(root, &cargo)?,
+        min_core: crate_min_core(&cargo)?,
+        dir: dir.to_path_buf(),
         library: crate_name(&cargo)?,
         ui: ui.exists().then(|| crate_name(&ui)).transpose()?,
     };
     services_contracts::package::check_id(&package.id).map_err(anyhow::Error::msg)?;
     services_contracts::package::version(&package.version).map_err(anyhow::Error::msg)?;
+    let notes = dir.join(services_contracts::package::NOTES_FILE);
+    if notes.is_file() {
+        let newest = fs::read_to_string(&notes)?.lines().find_map(|line| {
+            line.strip_prefix("## ")
+                .map(|title| title.trim().to_owned())
+        });
+        ensure!(
+            newest.as_deref() == Some(package.version.as_str()),
+            "{} must start with \"## {}\", the module's version",
+            notes.display(),
+            package.version
+        );
+    }
     Ok(package)
 }
 
@@ -118,8 +167,9 @@ fn packages(root: &Path) -> Result<Vec<Package>> {
     Ok(packages)
 }
 
-/// Builds `packages` and lays each out as `<modules>/<id>/{package.json,module.dylib,ui.wasm}`;
-/// `link` symlinks the build outputs instead of copying them (a development data directory).
+/// Builds `packages` and lays each out as `<modules>/<id>/{package.json,module.dylib,ui.wasm,
+/// RELEASE_NOTES.md,skills/module-<id>/}`; `link` symlinks the build outputs instead of copying
+/// them (a development data directory).
 fn build_packages(
     root: &Path,
     packages: &[Package],
@@ -159,11 +209,32 @@ fn build_packages(
         fs::create_dir_all(&dir)?;
         fs::write(
             dir.join(services_contracts::package::PACKAGE_FILE),
-            serde_json::to_vec_pretty(&services_contracts::package::Package {
-                id: package.id.clone(),
-                version: package.version.clone(),
-            })?,
+            serde_json::to_vec_pretty(&package.described())?,
         )?;
+        let notes = package.dir.join(services_contracts::package::NOTES_FILE);
+        let placed = dir.join(services_contracts::package::NOTES_FILE);
+        if notes.is_file() {
+            fs::copy(&notes, &placed)?;
+        } else if placed.exists() {
+            fs::remove_file(&placed)?;
+        }
+        let skills = dir.join(services_contracts::package::SKILLS_DIR);
+        if skills.exists() {
+            fs::remove_dir_all(&skills)?;
+        }
+        let skill = package.dir.join("skill");
+        if skill.is_dir() {
+            let name = services_contracts::package::skill_name(&package.id);
+            let text = fs::read_to_string(skill.join("SKILL.md"))
+                .with_context(|| format!("{} has no SKILL.md", skill.display()))?;
+            ensure!(
+                text.lines()
+                    .any(|line| line.trim_end() == format!("name: {name}")),
+                "{} must be named {name} in its frontmatter",
+                skill.join("SKILL.md").display()
+            );
+            copy_tree(&skill, &skills.join(name))?;
+        }
         let mut files = vec![(
             target(root)
                 .join(profile)
@@ -196,7 +267,7 @@ fn build_packages(
 
 const PACKAGE_USAGE: &str = "package <module id | module crate folder>... [--out FOLDER]";
 
-/// Package files (`<id>-<version>.module.tgz`, Settings → Modules → Install from file) of
+/// Package files (`<id>-<version>-<platform>.module.tgz`, Settings → Modules → Install from file) of
 /// shipped modules (by id) and module crates (by folder), built for release into `--out`
 /// (`target/packages` by default). Returns the files it writes.
 fn package_files(root: &Path, args: &[String]) -> Result<Vec<PathBuf>> {
@@ -229,18 +300,20 @@ fn package_files(root: &Path, args: &[String]) -> Result<Vec<PathBuf>> {
         !selected.is_empty(),
         "Usage: cargo run -p xtask -- {PACKAGE_USAGE}"
     );
+    archives(root, &selected, &out)
+}
+
+/// Builds `packages` for release and writes their package files into `out`.
+fn archives(root: &Path, packages: &[Package], out: &Path) -> Result<Vec<PathBuf>> {
     let staging = tempfile::tempdir()?;
-    build_packages(root, &selected, staging.path(), true, false)?;
-    fs::create_dir_all(&out)?;
+    build_packages(root, packages, staging.path(), true, false)?;
+    fs::create_dir_all(out)?;
     let mut files = Vec::new();
-    for package in &selected {
+    for package in packages {
         let archive = services_contracts::package::archive::pack(&staging.path().join(&package.id))
             .map_err(anyhow::Error::msg)?;
         let file = out.join(services_contracts::package::archive_name(
-            &services_contracts::package::Package {
-                id: package.id.clone(),
-                version: package.version.clone(),
-            },
+            &package.described(),
         ));
         fs::write(&file, archive)?;
         files.push(file);
@@ -417,13 +490,11 @@ fn build_distribution(root: &Path, args: &[String]) -> Result<()> {
             payload.join("native/bin").join(binary),
         )?;
     }
-    build_packages(
-        root,
-        &packages(root)?,
-        &payload.join(services_installer::MODULES),
-        true,
-        false,
-    )?;
+    let modules = root.join("dist/modules");
+    if modules.exists() {
+        fs::remove_dir_all(&modules)?;
+    }
+    archives(root, &packages(root)?, &modules)?;
     let id = build_extension(root, &payload.join("extension"))?;
     let manifest: Value =
         serde_json::from_slice(&fs::read(payload.join("extension/manifest.json"))?)?;
@@ -466,8 +537,9 @@ fn build_distribution(root: &Path, args: &[String]) -> Result<()> {
         .replace("@VERSION@", version);
     fs::write(output.join("install.sh"), installer)?;
     println!(
-        "Distribution: {}\nLocal install: ./install.sh",
-        output.display()
+        "Distribution: {}\nModule packages: {}\nLocal install: ./install.sh, then Settings → Modules",
+        output.display(),
+        modules.display()
     );
     if !repository.is_empty() {
         println!(

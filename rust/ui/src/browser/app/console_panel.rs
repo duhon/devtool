@@ -159,6 +159,32 @@ impl App {
             })
             .unwrap_or_default()
     }
+    /// Where the hints of `service` come from, with Reset for the user's own hints.
+    pub(super) fn view_hints_origin(&self, ctx: &Context<Self>, service: &str) -> Html {
+        let Some(origin) = self.hints_origins.get(service) else {
+            return Html::default();
+        };
+        let source = origin["source"].as_str();
+        let (label, reset) = match (origin["origin"].as_str(), source) {
+            (Some("local"), Some(source)) => (
+                format!("Yours, over source {source}"),
+                Some(format!("Reset to {source}")),
+            ),
+            (Some("local"), None) => ("Yours".to_owned(), Some("Reset to the module's".to_owned())),
+            (Some("source"), Some(source)) => (format!("From source {source}"), None),
+            _ => return Html::default(),
+        };
+        html! {
+            <span class="console-panel-origin" data-testid="hints-origin">
+                <span class="settings-origin" data-testid="hints-origin-label">{label}</span>
+                if let Some(reset) = reset {
+                    <button type="button" class="tab-button" data-testid="hints-reset"
+                        disabled={self.hints_saving.contains(service)}
+                        onclick={ctx.link().callback(|_|Msg::ResetHints)}>{reset}</button>
+                }
+            </span>
+        }
+    }
     pub(super) fn service_indicator(&self, service: &str) -> (crate::activity::Indicator, String) {
         let source = self.docs.get(service).map(String::as_str).unwrap_or("");
         let regions = self
@@ -823,6 +849,7 @@ impl App {
                     if self.console_panel==Some(ConsolePanel::Hints) {
                         <div class="console-panel-heading" data-testid="console-hints-heading">
                             <span class="tab-button active" data-testid="console-hints-title">{format!("{} completion hints",crate::services::label(service))}{indicator(self.hints_indicator(service),"Hints status".into())}</span>
+                            {self.view_hints_origin(ctx, service)}
                         </div>
                     }
                     if self.console_panel==Some(ConsolePanel::Sessions) {
@@ -881,14 +908,20 @@ impl App {
                                 </div>
                                 if self.transport.is_native() {
                                     <crate::browser::module_settings::ModuleSettings transport={self.transport.clone()}
+                                        check={self.sources_check.clone()}
                                         onstatus={ctx.link().callback(Msg::SettingsStatus)}
                                         onforget={ctx.link().callback(Msg::ForgetModule)}
                                         onchange={ctx.link().callback(|_|Msg::ModulesChanged)}/>
+                                    <crate::browser::sources_settings::SourcesSettings transport={self.transport.clone()}
+                                        check={self.sources_check.clone()} checking={self.sources_checking}
+                                        oncheck={ctx.link().callback(Msg::CheckSources)}
+                                        onapplied={ctx.link().callback(|_|Msg::SourcesApplied)}
+                                        onstatus={ctx.link().callback(Msg::SettingsStatus)}/>
                                 }
                                 <crate::browser::agent_settings::AgentSettings transport={self.transport.clone()}
                                     onstatus={ctx.link().callback(Msg::SettingsStatus)}/>
                                 if self.transport.is_native() {
-                                    <crate::browser::agent_skills::AgentSkills transport={self.transport.clone()}
+                                    <crate::browser::agent_skills::AgentSkills key={format!("skills:{}", self.config_epoch)} transport={self.transport.clone()}
                                         onstatus={ctx.link().callback(Msg::SettingsStatus)}/>
                                 }
                             </section>

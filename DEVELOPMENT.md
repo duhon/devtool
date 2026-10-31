@@ -18,6 +18,11 @@ cargo run -p xtask -- build
 ./install.sh
 ```
 
+The installer installs the application only; `build` also writes the module
+packages to `dist/modules/`. Install them in Settings → Modules → Install from
+file…, or add `dist/` as a folder source in Settings → Sources and install them
+from Settings → Modules.
+
 `build --repository OWNER/REPO --branch BRANCH` sets the update source.
 Publishing: [scripts/distribution/README.md](scripts/distribution/README.md).
 Extension only: [adapters/extension/README.md](adapters/extension/README.md).
@@ -55,7 +60,8 @@ cargo run -p xtask -- test <type>   # one kind at a time
 - `rust/contracts` — module manifest, package format, protocol constants.
 - `rust/module-api`, `rust/module-ui` — SDKs of a module's native part
   (`module.dylib`) and console part (`ui.wasm`).
-- `rust/modules/<id>` — the six shipped modules.
+- `rust/modules/<id>` — the standard modules, each released on its own with its
+  version, `RELEASE_NOTES.md` and Agent skill (`skill/SKILL.md`).
 - `rust/examples/echo` — an unshipped example module and the module guide.
 - `rust/ui` — the browser UI (Yew/WebAssembly); `rust/ui/assets` — styles and
   vendored CodeMirror.
