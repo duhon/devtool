@@ -1,6 +1,10 @@
-//! Apache ActiveMQ Artemis: lists queues, browses, sends and receives messages through the
-//! broker's Jolokia management API (the web console, port 8161).
+//! Apache ActiveMQ Artemis over the broker's Jolokia management API (the web console, port
+//! 8161). `#action` lists queues, addresses and consumers, browses, receives, sends and publishes
+//! messages, and purges, moves, retries, pauses and resumes queues.
 
+mod action;
+
+use action::Command;
 use base64::Engine;
 use serde_json::{Map, Value, json};
 use services_contracts::columns;
@@ -14,7 +18,6 @@ use std::time::Instant;
 const DOMAIN: &str = "org.apache.activemq.artemis";
 const JOLOKIA_PATH: &str = "/console/jolokia";
 const CALL_TIMEOUT_MS: u64 = 30_000;
-const MAX_COUNT: u64 = 1000;
 /// Characters (text) or bytes (bytes body) of a message body the broker returns over
 /// management by default (`management-message-attribute-size-limit`).
 const BODY_LIMIT: usize = 256;
@@ -23,23 +26,9 @@ const SEND: &str =
     "sendMessage(java.util.Map,int,java.lang.String,boolean,java.lang.String,java.lang.String)";
 /// `sendMessage` type of a text message.
 const TEXT_MESSAGE: u8 = 3;
-const QUEUE_COLUMNS: [&str; 13] = [
-    "queue",
-    "address",
-    "routing-type",
-    "messages",
-    "delivering",
-    "scheduled",
-    "consumers",
-    "added",
-    "acked",
-    "killed",
-    "expired",
-    "durable",
-    "paused",
-];
+/// Headers the debug panel shows masked.
+const SECRET_HEADERS: [&str; 3] = ["authorization", "proxy-authorization", "cookie"];
 const MESSAGE_COLUMNS: [&str; 5] = ["message-id", "timestamp", "body", "properties", "headers"];
-const SEND_COLUMNS: [&str; 2] = ["queue", "message-id"];
 const CUT: &str = "the broker returns at most management-message-attribute-size-limit characters of a body over management (256 by default)";
 
 pub struct Artemis;
@@ -48,7 +37,7 @@ impl Service for Artemis {
     fn manifest(&self) -> Manifest {
         Manifest {
             execute: true,
-            discover: false,
+            discover: true,
             stream: false,
             ..Manifest::from_json(include_str!("../manifest.json"), env!("CARGO_PKG_VERSION"))
         }
@@ -56,6 +45,10 @@ impl Service for Artemis {
 
     async fn execute(&self, call: Call) -> Result<Value> {
         run(&call.host, &call.params).await
+    }
+
+    async fn discover(&self, call: Call) -> Result<Value> {
+        discover(&call.host, &call.params).await
     }
 
     fn outcome(&self, response: &Value) -> &'static str {
@@ -73,48 +66,119 @@ pub fn endpoint(host: EndpointArc) -> std::result::Result<EndpointBox, Status> {
 
 services_module_api::export!(endpoint);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Command {
-    Queues,
-    Browse,
-    Send,
-    Receive,
+/// How a list shows a broker field.
+#[derive(Clone, Copy, PartialEq)]
+enum Cell {
+    Text,
+    Number,
+    Flag,
+    /// Milliseconds since the epoch.
+    Time,
+    /// A JSON list in a string: `["ANYCAST"]`.
+    Names,
 }
 
-impl Command {
-    fn parse(command: &str) -> Result<Self> {
-        Ok(match command.trim().to_ascii_uppercase().as_str() {
-            "QUEUES" => Self::Queues,
-            "BROWSE" => Self::Browse,
-            "SEND" => Self::Send,
-            "RECEIVE" => Self::Receive,
-            _ => {
-                return Err(Error::new(
-                    "The Artemis command must be QUEUES, BROWSE, SEND or RECEIVE",
-                ));
-            }
-        })
-    }
+/// A list column, the broker field it shows and filters by, and how it is shown.
+type Field = (&'static str, &'static str, Cell);
 
-    fn name(self) -> &'static str {
-        match self {
-            Self::Queues => "QUEUES",
-            Self::Browse => "BROWSE",
-            Self::Send => "SEND",
-            Self::Receive => "RECEIVE",
-        }
-    }
+struct List {
+    operation: &'static str,
+    sort: &'static str,
+    fields: &'static [Field],
+    what: &'static str,
+}
 
-    fn columns(self) -> &'static [&'static str] {
-        match self {
-            Self::Queues => &QUEUE_COLUMNS,
-            Self::Browse | Self::Receive => &MESSAGE_COLUMNS,
-            Self::Send => &SEND_COLUMNS,
-        }
+const QUEUES: List = List {
+    operation: "listQueues(java.lang.String,int,int)",
+    sort: "name",
+    what: "queues",
+    fields: &[
+        ("queue", "name", Cell::Text),
+        ("address", "address", Cell::Text),
+        ("routing-type", "routingType", Cell::Text),
+        ("messages", "messageCount", Cell::Number),
+        ("delivering", "deliveringCount", Cell::Number),
+        ("scheduled", "scheduledCount", Cell::Number),
+        ("consumers", "consumerCount", Cell::Number),
+        ("added", "messagesAdded", Cell::Number),
+        ("acked", "messagesAcked", Cell::Number),
+        ("killed", "messagesKilled", Cell::Number),
+        ("expired", "messagesExpired", Cell::Number),
+        ("durable", "durable", Cell::Flag),
+        ("paused", "paused", Cell::Flag),
+    ],
+};
+
+const ADDRESSES: List = List {
+    operation: "listAddresses(java.lang.String,int,int)",
+    sort: "name",
+    what: "addresses",
+    fields: &[
+        ("address", "name", Cell::Text),
+        ("routing-types", "routingTypes", Cell::Names),
+        ("queues", "queueCount", Cell::Number),
+        ("messages", "messageCount", Cell::Number),
+        ("routed", "routedMessageCount", Cell::Number),
+        ("unrouted", "unroutedMessageCount", Cell::Number),
+        ("size", "addressSize", Cell::Number),
+        ("paging", "paging", Cell::Flag),
+        ("paused", "paused", Cell::Flag),
+        ("internal", "internal", Cell::Flag),
+        ("temporary", "temporary", Cell::Flag),
+        ("auto-created", "autoCreated", Cell::Flag),
+    ],
+};
+
+const CONSUMERS: List = List {
+    operation: "listConsumers(java.lang.String,int,int)",
+    sort: "id",
+    what: "consumers",
+    fields: &[
+        ("consumer", "id", Cell::Number),
+        ("queue", "queue", Cell::Text),
+        ("address", "address", Cell::Text),
+        ("client-id", "clientID", Cell::Text),
+        ("user", "user", Cell::Text),
+        ("protocol", "protocol", Cell::Text),
+        ("remote-address", "remoteAddress", Cell::Text),
+        ("filter", "filter", Cell::Text),
+        ("created", "creationTime", Cell::Text),
+        ("in-transit", "messagesInTransit", Cell::Number),
+        ("delivered", "messagesDelivered", Cell::Number),
+        ("acked", "messagesAcknowledged", Cell::Number),
+        ("last-delivered", "lastDeliveredTime", Cell::Time),
+        ("last-acked", "lastAcknowledgedTime", Cell::Time),
+        ("status", "status", Cell::Text),
+    ],
+};
+
+fn list_of(command: Command) -> Option<&'static List> {
+    match command {
+        Command::Queues => Some(&QUEUES),
+        Command::Addresses => Some(&ADDRESSES),
+        Command::Consumers => Some(&CONSUMERS),
+        _ => None,
     }
 }
 
-/// The broker from `http(s)://user:password@host:8161/<queue>`.
+fn column_names(command: Command) -> Vec<&'static str> {
+    if let Some(list) = list_of(command) {
+        return list.fields.iter().map(|field| field.0).collect();
+    }
+    match command {
+        Command::Send => vec!["queue", "message-id"],
+        Command::Publish => vec!["address", "message-id"],
+        Command::Purge => vec!["queue", "removed"],
+        Command::Move => vec!["queue", "to", "moved"],
+        Command::Retry => vec!["queue", "retried"],
+        Command::Pause | Command::Resume => vec!["queue", "paused"],
+        Command::Jolokia => vec!["request", "status", "value", "error"],
+        _ => MESSAGE_COLUMNS.to_vec(),
+    }
+}
+
+/// The broker from `#endpoint`: its web console, `http(s)://user:password@host:8161`, or its
+/// Jolokia URL.
 #[derive(Debug, PartialEq)]
 pub struct Target {
     /// The Jolokia URL, without credentials.
@@ -122,28 +186,28 @@ pub struct Target {
     pub origin: String,
     pub user: Option<String>,
     pub password: Option<String>,
-    /// The percent-decoded URL path without its leading `/`; empty for QUEUES.
-    pub queue: String,
     /// The endpoint with the password masked.
     pub shown: String,
 }
 
-pub fn target(url: &str, jolokia_path: &str) -> Result<Target> {
+pub fn target(url: &str) -> Result<Target> {
     let url = url.trim();
+    let first = url.split_whitespace().next().unwrap_or_default();
+    if Command::parse(first).is_some() {
+        return Err(Error::new(format!(
+            "#endpoint is only the broker URL now; the command goes in #action: {} /queue",
+            first.to_ascii_uppercase()
+        )));
+    }
     let invalid = || Error::new(format!("Invalid Artemis URL: {url}"));
     let parsed = url::Url::parse(url).map_err(|_| invalid())?;
     if !matches!(parsed.scheme(), "http" | "https") {
         return Err(Error::new(
-            "The Artemis endpoint is the broker's web console URL: http://user:password@host:8161/<queue>",
+            "The Artemis endpoint is the broker's web console URL: http://host:8161",
         ));
     }
     if parsed.host_str().is_none_or(str::is_empty) {
         return Err(invalid());
-    }
-    if parsed.query().is_some() || parsed.fragment().is_some() {
-        return Err(Error::new(
-            "Put only the queue name in the URL path; write ? and # in it as %3F and %23",
-        ));
     }
     let decode = |part: &str| {
         percent_encoding::percent_decode_str(part)
@@ -151,16 +215,13 @@ pub fn target(url: &str, jolokia_path: &str) -> Result<Target> {
             .map(|part| part.into_owned())
             .map_err(|_| invalid())
     };
-    let path = parsed.path().trim_start_matches('/').trim_end_matches('/');
-    let jolokia_path = match jolokia_path.trim() {
-        "" => JOLOKIA_PATH,
-        path if path.starts_with('/') => path,
-        _ => return Err(Error::new("Jolokia-Path must start with /")),
-    };
     let mut jolokia = parsed.clone();
     let _ = jolokia.set_username("");
     let _ = jolokia.set_password(None);
-    jolokia.set_path(jolokia_path);
+    jolokia.set_fragment(None);
+    if matches!(parsed.path(), "" | "/") {
+        jolokia.set_path(JOLOKIA_PATH);
+    }
     let mut shown = parsed.clone();
     if parsed.password().is_some() {
         let _ = shown.set_password(Some(MASK));
@@ -170,109 +231,139 @@ pub fn target(url: &str, jolokia_path: &str) -> Result<Target> {
         origin: parsed.origin().ascii_serialization(),
         user: Some(decode(parsed.username())?).filter(|user| !user.is_empty()),
         password: parsed.password().map(decode).transpose()?,
-        queue: decode(path)?,
         shown: shown.into(),
     })
 }
 
-struct Request {
-    command: Command,
-    target: Target,
-    /// `#headers`: string properties of a SEND message.
-    properties: Map<String, Value>,
-    body: String,
-    count: u64,
-    filter: String,
-    selector: String,
-    durable: bool,
-    columns: columns::Options,
+fn basic(user: &str, password: &str) -> String {
+    format!(
+        "Basic {}",
+        base64::engine::general_purpose::STANDARD.encode(format!("{user}:{password}"))
+    )
 }
 
-fn count(params: &Value, default: u64) -> Result<u64> {
-    let invalid = || Error::new(format!("Count must be an integer from 1 to {MAX_COUNT}"));
-    let value = match params.get("count") {
-        None | Some(Value::Null) => return Ok(default),
-        Some(Value::String(value)) if value.trim().is_empty() => return Ok(default),
-        Some(Value::String(value)) => value.trim().parse::<u64>().map_err(|_| invalid())?,
-        Some(value) => value.as_u64().ok_or_else(invalid)?,
-    };
-    if (1..=MAX_COUNT).contains(&value) {
-        Ok(value)
-    } else {
-        Err(invalid())
-    }
+struct Request {
+    /// `#action` as written.
+    text: String,
+    action: action::Action,
+    target: Target,
+    /// The HTTP headers of every Jolokia call: the defaults, the endpoint's login and
+    /// `#headers`.
+    headers: Map<String, Value>,
+    body: String,
+    persistent: bool,
+    columns: columns::Options,
 }
 
 impl Request {
     fn parse(params: &Value) -> Result<Self> {
-        let command = Command::parse(&required(params, "command")?)?;
+        let target = target(&required(params, "url")?)?;
+        let written = text(params, "action");
+        let action = action::parse(&written).map_err(Error::new)?;
+        let command = action.command;
         let name = command.name();
-        let target = target(&required(params, "url")?, &text(params, "jolokiaPath"))?;
-        match command {
-            Command::Queues if !target.queue.is_empty() => {
+        let mut headers = Map::new();
+        headers.insert("Content-Type".into(), json!("application/json"));
+        headers.insert("Accept".into(), json!("application/json"));
+        headers.insert("Origin".into(), json!(target.origin));
+        if let Some(user) = &target.user {
+            let password = target.password.as_deref().unwrap_or("");
+            headers.insert("Authorization".into(), json!(basic(user, password)));
+        }
+        for (header, value) in error::headers(params)?.as_object().into_iter().flatten() {
+            if target.user.is_some() && header.eq_ignore_ascii_case("authorization") {
                 return Err(Error::new(
-                    "QUEUES lists every queue: drop the queue from the URL, or narrow the list with Filter",
+                    "Log in either in the endpoint or with an Authorization header, not both",
                 ));
             }
-            Command::Browse | Command::Send | Command::Receive if target.queue.is_empty() => {
-                return Err(Error::new(format!(
-                    "Add the queue to the endpoint: {name} http://host:8161/<queue>"
-                )));
-            }
-            _ => {}
-        }
-        let mut properties = Map::new();
-        for (key, value) in error::headers(params)?.as_object().into_iter().flatten() {
-            properties.insert(key.clone(), json!(error::string(value)));
+            headers.retain(|name, _| !name.eq_ignore_ascii_case(header));
+            headers.insert(header.clone(), json!(error::string(value)));
         }
         let body = text(params, "body");
-        if command != Command::Send && (!properties.is_empty() || !body.is_empty()) {
+        let takes_body = matches!(command, Command::Send | Command::Publish | Command::Jolokia);
+        if !takes_body && !body.trim().is_empty() {
             return Err(Error::new(format!(
-                "{name} takes no #headers or #body: they are the message of a SEND"
+                "{name} takes no #body: it is the message of SEND and PUBLISH, or the request of JOLOKIA"
             )));
         }
-        use Command::*;
-        for (key, option, commands) in [
-            ("count", "Count", &[Queues, Browse, Receive][..]),
-            ("filter", "Filter", &[Queues]),
-            ("selector", "Selector", &[Browse, Receive]),
-            ("durable", "Durable", &[Send]),
-        ] {
-            if !text(params, key).trim().is_empty() && !commands.contains(&command) {
-                let names: Vec<_> = commands.iter().map(|command| command.name()).collect();
+        if command == Command::Jolokia && body.trim().is_empty() {
+            return Err(Error::new(
+                "JOLOKIA sends #body to Jolokia: {\"type\":\"read\",\"mbean\":\"java.lang:type=Memory\"}",
+            ));
+        }
+        let persistent = match text(params, "persistent")
+            .trim()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "" => true,
+            _ if !matches!(command, Command::Send | Command::Publish) => {
                 return Err(Error::new(format!(
-                    "{option} applies to {}, not {name}",
-                    names.join(", ")
+                    "Persistent applies to SEND or PUBLISH, not {name}"
                 )));
             }
-        }
-        let durable = match text(params, "durable").trim().to_ascii_lowercase().as_str() {
-            "" | "true" | "yes" => true,
+            "true" | "yes" => true,
             "false" | "no" => false,
-            _ => return Err(Error::new("Durable must be true or false")),
+            _ => return Err(Error::new("Persistent must be true or false")),
         };
         let columns = columns::Options::parse(params).map_err(Error::without_debug)?;
         columns
-            .apply(&mut grid(command.columns(), json!({}), vec![]))
+            .apply(&mut grid(&column_names(command), json!({}), vec![]))
             .map_err(Error::new)?;
         Ok(Self {
-            count: count(
-                params,
-                match command {
-                    Command::Queues => 100,
-                    Command::Browse => 10,
-                    Command::Send | Command::Receive => 1,
-                },
-            )?,
-            command,
+            text: written,
+            action,
             target,
-            properties,
+            headers,
             body,
-            filter: text(params, "filter").trim().to_owned(),
-            selector: text(params, "selector").trim().to_owned(),
-            durable,
+            persistent,
             columns,
         })
+    }
+
+    fn header(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(header, _)| header.eq_ignore_ascii_case(name))
+            .and_then(|(_, value)| value.as_str())
+    }
+
+    /// The user and password `sendMessage` takes: the endpoint's login, or a Basic
+    /// Authorization header.
+    fn credentials(&self) -> (Option<String>, Option<String>) {
+        if self.target.user.is_some() {
+            return (self.target.user.clone(), self.target.password.clone());
+        }
+        let login = self
+            .header("Authorization")
+            .and_then(|value| value.trim().split_once(' '))
+            .filter(|(scheme, _)| scheme.eq_ignore_ascii_case("basic"))
+            .and_then(|(_, token)| {
+                base64::engine::general_purpose::STANDARD
+                    .decode(token.trim())
+                    .ok()
+            })
+            .and_then(|login| String::from_utf8(login).ok());
+        match login.as_deref().and_then(|login| login.split_once(':')) {
+            Some((user, password)) => (Some(user.into()), Some(password.into())),
+            None => (None, None),
+        }
+    }
+
+    /// The headers as the debug panel shows them.
+    fn shown_headers(&self) -> Value {
+        let headers: Map<String, Value> = self
+            .headers
+            .iter()
+            .map(|(name, value)| {
+                let secret = SECRET_HEADERS.contains(&name.to_ascii_lowercase().as_str());
+                (
+                    name.clone(),
+                    if secret { json!(MASK) } else { value.clone() },
+                )
+            })
+            .collect();
+        Value::Object(headers)
     }
 }
 
@@ -291,23 +382,24 @@ pub async fn run(host: &Host, params: &Value) -> Result<Value> {
     let request = Request::parse(params)?;
     let mut jolokia = Jolokia {
         host,
-        target: &request.target,
+        request: &request,
         started,
         calls: vec![],
     };
-    let result = match request.command {
-        Command::Queues => queues(&mut jolokia, &request).await,
+    let result = match request.action.command {
+        Command::Queues | Command::Addresses | Command::Consumers => {
+            list(&mut jolokia, &request).await
+        }
         Command::Browse => browse(&mut jolokia, &request).await,
-        Command::Send => send(&mut jolokia, &request).await,
         Command::Receive => receive(&mut jolokia, &request).await,
+        Command::Send | Command::Publish => send(&mut jolokia, &request).await,
+        Command::Purge => purge(&mut jolokia, &request).await,
+        Command::Move => move_messages(&mut jolokia, &request).await,
+        Command::Retry => retry(&mut jolokia, &request).await,
+        Command::Pause | Command::Resume => pause(&mut jolokia, &request).await,
+        Command::Jolokia => raw(&mut jolokia, &request).await,
     };
-    let mut debug = json!({
-        "request":{
-            "command":request.command.name(),"url":request.target.shown,
-            "jolokia":request.target.jolokia,
-        },
-        "calls":jolokia.calls,
-    });
+    let debug = jolokia.debug();
     let duration = started.elapsed().as_millis();
     match result {
         Ok(mut result) => {
@@ -316,32 +408,126 @@ pub async fn run(host: &Host, params: &Value) -> Result<Value> {
             result["debug"] = debug;
             Ok(result)
         }
-        Err(mut error) => {
-            match error.debug.take().map(|debug| *debug) {
-                // A failed host call: keep its connection details.
-                Some(Value::Object(details)) => {
-                    for (key, value) in details {
-                        debug[key] = value;
-                    }
-                }
-                _ => debug["error"] = json!({"name":"Error","message":error.message}),
-            }
-            error.debug = Some(Box::new(debug));
-            error.duration_ms = Some(duration);
-            Err(error)
-        }
+        Err(error) => Err(debugged(error, debug, duration)),
     }
+}
+
+/// `error` with the request and calls the debug panel shows, the password masked.
+fn debugged(mut error: Error, mut debug: Value, duration: u128) -> Error {
+    match error.debug.take().map(|debug| *debug) {
+        // A failed host call: keep its connection details.
+        Some(Value::Object(details)) => {
+            for (key, value) in details {
+                debug[key] = value;
+            }
+        }
+        _ => debug["error"] = json!({"name":"Error","message":error.message}),
+    }
+    error.debug = Some(Box::new(debug));
+    error.duration_ms = Some(duration);
+    error
+}
+
+/// How many queues and addresses discovery reads.
+const DISCOVERED: u64 = action::MAX_LIMIT;
+/// Name prefixes of the broker's own queues and addresses (MQTT sessions, notifications,
+/// management replies).
+const SYSTEM: [&str; 2] = ["$sys.", "activemq."];
+
+/// The queue and address names `#action` completes, without the broker's own ones.
+pub async fn discover(host: &Host, params: &Value) -> Result<Value> {
+    let mut params = params.clone();
+    params["action"] = json!("QUEUES");
+    let request = Request::parse(&params)?;
+    let mut jolokia = Jolokia {
+        host,
+        request: &request,
+        started: Instant::now(),
+        calls: vec![],
+    };
+    let started = jolokia.started;
+    discovered(&mut jolokia).await.map_err(|error| {
+        let mut debug = jolokia.debug();
+        if let Some(request) = debug["request"].as_object_mut() {
+            request.remove("action");
+        }
+        debugged(error, debug, started.elapsed().as_millis())
+    })
+}
+
+async fn discovered(jolokia: &mut Jolokia<'_>) -> Result<Value> {
+    let broker = broker(jolokia).await?;
+    let mut names = Map::new();
+    let lists = [(QUEUES, "internalQueue"), (ADDRESSES, "internal")];
+    let operations = lists
+        .iter()
+        .map(|(list, _)| {
+            let options = json!({
+                "field":"","operation":"","value":"","sortOrder":"asc","sortColumn":list.sort,
+            });
+            exec(
+                &broker,
+                list.operation,
+                json!([options.to_string(), 1, DISCOVERED]),
+            )
+        })
+        .collect();
+    for ((list, internal), reply) in lists.iter().zip(jolokia.many(operations).await?) {
+        let listed: Value = value(&reply)?
+            .as_str()
+            .and_then(|listed| serde_json::from_str(listed).ok())
+            .ok_or_else(|| Error::new(format!("Artemis {} did not return JSON", list.operation)))?;
+        let own = |item: &Value| {
+            [*internal, "temporary"]
+                .iter()
+                .any(|flag| item[flag] == true || item[flag] == "true")
+        };
+        let listed: Vec<_> = listed["data"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|item| !own(item))
+            .filter_map(|item| item["name"].as_str())
+            .filter(|name| !SYSTEM.iter().any(|prefix| name.starts_with(prefix)))
+            .collect();
+        names.insert(list.what.into(), json!(listed));
+    }
+    let mut after: Map<String, Value> = action::COMMANDS
+        .iter()
+        .filter_map(|command| {
+            let list = match command.resource()? {
+                "queue" => QUEUES.what,
+                "address" => ADDRESSES.what,
+                _ => return None,
+            };
+            Some((command.name().into(), json!(list)))
+        })
+        .collect();
+    after.insert("TO".into(), json!(QUEUES.what));
+    Ok(json!({"names":names,"after":after}))
 }
 
 struct Jolokia<'a> {
     host: &'a Host,
-    target: &'a Target,
+    request: &'a Request,
     started: Instant,
     /// What the debug panel shows: each HTTP call with the password masked.
     calls: Vec<Value>,
 }
 
 impl Jolokia<'_> {
+    /// The request and the calls so far, as the debug panel shows them.
+    fn debug(&self) -> Value {
+        let request = self.request;
+        json!({
+            "request":{
+                "action":request.text,"url":request.target.shown,
+                "jolokia":request.target.jolokia,"headers":request.shown_headers(),
+            },
+            "calls":self.calls,
+        })
+    }
+
     /// One operation's `value`; a failed operation fails the call.
     async fn one(&mut self, operation: Value) -> Result<Value> {
         let shown = masked(&operation);
@@ -361,21 +547,11 @@ impl Jolokia<'_> {
     }
 
     async fn post(&mut self, body: Value, shown: Value) -> Result<Value> {
-        let mut headers = json!({
-            "Content-Type":"application/json","Accept":"application/json",
-            "Origin":self.target.origin,
-        });
-        if let Some(user) = &self.target.user {
-            let credentials = format!("{user}:{}", self.target.password.as_deref().unwrap_or(""));
-            headers["Authorization"] = json!(format!(
-                "Basic {}",
-                base64::engine::general_purpose::STANDARD.encode(credentials)
-            ));
-        }
+        let target = &self.request.target;
         let request = HttpRequest {
             method: "POST".into(),
-            url: self.target.jolokia.clone(),
-            headers: http::header_list(&headers),
+            url: target.jolokia.clone(),
+            headers: http::header_list(&Value::Object(self.request.headers.clone())),
             body: Some(body.to_string().into_bytes()),
             text: true,
             timeout_ms: CALL_TIMEOUT_MS,
@@ -393,12 +569,12 @@ impl Jolokia<'_> {
         let reply = String::from_utf8_lossy(&response.body);
         if response.status != 200 {
             call["response"] = json!(excerpt(&reply));
-            return Err(http_error(self.target, &response, &reply));
+            return Err(http_error(self.request, &response, &reply));
         }
         let reply: Value = serde_json::from_str(&reply).map_err(|_| {
             Error::new(format!(
                 "Expected a Jolokia reply from {}, got: {}",
-                self.target.jolokia,
+                target.jolokia,
                 excerpt(&reply)
             ))
         })?;
@@ -441,9 +617,9 @@ fn excerpt(text: &str) -> String {
     }
 }
 
-fn http_error(target: &Target, response: &HttpResponse, reply: &str) -> Error {
+fn http_error(request: &Request, response: &HttpResponse, reply: &str) -> Error {
     let status = response.status;
-    let url = &target.jolokia;
+    let url = &request.target.jolokia;
     Error::new(match status {
         300..=399 => {
             let location = response
@@ -452,18 +628,18 @@ fn http_error(target: &Target, response: &HttpResponse, reply: &str) -> Error {
                 .find(|header| header.name.eq_ignore_ascii_case("location"))
                 .map_or("another address", |header| header.value.as_str());
             format!(
-                "{url} redirects to {location} (HTTP {status}): check http or https, the port and Jolokia-Path"
+                "{url} redirects to {location} (HTTP {status}): check http or https and the port of the endpoint"
             )
         }
-        401 | 403 if target.user.is_none() => format!(
-            "Artemis asks for a login (HTTP {status}): put it in the endpoint, http://user:password@host:8161/…"
+        401 | 403 if request.header("Authorization").is_none() => format!(
+            "Artemis asks for a login (HTTP {status}): put it in the endpoint, http://user:password@host:8161, or add an Authorization header"
         ),
         401 | 403 => format!(
-            "Artemis refused the request (HTTP {status}): check the user and password in the endpoint, that the user has a management role, and that jolokia-access.xml allows the origin {}",
-            target.origin
+            "Artemis refused the request (HTTP {status}): check the login, that the user has a management role, and that jolokia-access.xml allows the origin {}",
+            request.header("Origin").unwrap_or_default()
         ),
         404 => format!(
-            "No Jolokia at {url} (HTTP 404): use the broker's web console port (8161 by default) or set Jolokia-Path"
+            "No Jolokia at {url} (HTTP 404): the endpoint is the broker's web console, http://host:8161, or its Jolokia URL; the queue goes in #action"
         ),
         _ => format!(
             "Jolokia answered HTTP {status} {}: {}",
@@ -508,71 +684,155 @@ fn found(names: Value, missing: impl FnOnce() -> String) -> Result<String> {
     }
 }
 
+async fn search(jolokia: &mut Jolokia<'_>, pattern: String) -> Result<Value> {
+    jolokia.one(json!({"type":"search","mbean":pattern})).await
+}
+
+async fn broker(jolokia: &mut Jolokia<'_>) -> Result<String> {
+    let names = search(jolokia, format!("{DOMAIN}:broker=*")).await?;
+    found(names, || {
+        format!(
+            "No Artemis broker at {}; is it the web console of Apache ActiveMQ Artemis?",
+            jolokia.request.target.jolokia
+        )
+    })
+}
+
 async fn queue(jolokia: &mut Jolokia<'_>, name: &str) -> Result<String> {
     let pattern = format!(
         "{DOMAIN}:component=addresses,subcomponent=queues,queue={},*",
         quote(name)
     );
-    let names = jolokia
-        .one(json!({"type":"search","mbean":pattern}))
-        .await?;
-    found(names, || {
+    found(search(jolokia, pattern).await?, || {
         format!("Queue {name} does not exist; QUEUES lists the broker's queues")
     })
 }
 
-async fn queues(jolokia: &mut Jolokia<'_>, request: &Request) -> Result<Value> {
-    let names = jolokia
-        .one(json!({"type":"search","mbean":format!("{DOMAIN}:broker=*")}))
-        .await?;
-    let broker = found(names, || {
-        format!(
-            "No Artemis broker at {}; is it the web console of Apache ActiveMQ Artemis?",
-            jolokia.target.jolokia
-        )
-    })?;
-    let filtered = !request.filter.is_empty();
+async fn address(jolokia: &mut Jolokia<'_>, name: &str) -> Result<String> {
+    let pattern = format!(
+        "{DOMAIN}:broker=*,component=addresses,address={}",
+        quote(name)
+    );
+    found(search(jolokia, pattern).await?, || {
+        format!("Address {name} does not exist; ADDRESSES lists the broker's addresses")
+    })
+}
+
+fn exec(mbean: &str, operation: &str, arguments: Value) -> Value {
+    json!({"type":"exec","mbean":mbean,"operation":operation,"arguments":arguments})
+}
+
+/// The WHERE of PURGE and MOVE: `null` for every message.
+fn selector(request: &Request) -> Value {
+    match request.action.selector.as_str() {
+        "" => Value::Null,
+        selector => json!(selector),
+    }
+}
+
+/// QUEUES, ADDRESSES and CONSUMERS: one page of the broker's list, filtered by one condition.
+async fn list(jolokia: &mut Jolokia<'_>, request: &Request) -> Result<Value> {
+    let action = &request.action;
+    let Some(list) = list_of(action.command) else {
+        return Err(Error::new(format!(
+            "{} is not a list",
+            action.command.name()
+        )));
+    };
+    let broker = broker(jolokia).await?;
+    let (field, operation, filter) = match &action.condition {
+        Some(condition) => {
+            let field = list
+                .fields
+                .iter()
+                .find(|field| field.0.eq_ignore_ascii_case(&condition.column))
+                .map_or(condition.column.as_str(), |field| field.1);
+            (field, condition.operation, condition.value.as_str())
+        }
+        None => ("", "", ""),
+    };
     let options = json!({
-        "field":if filtered {"name"} else {""},"operation":if filtered {"CONTAINS"} else {""},
-        "value":request.filter,"sortOrder":"asc","sortColumn":"name",
+        "field":field,"operation":operation,"value":filter,"sortOrder":"asc","sortColumn":list.sort,
     });
     let listed = jolokia
-        .one(json!({
-            "type":"exec","mbean":broker,"operation":"listQueues(java.lang.String,int,int)",
-            "arguments":[options.to_string(),1,request.count],
-        }))
-        .await?;
+        .one(exec(
+            &broker,
+            list.operation,
+            json!([options.to_string(), 1, action.limit]),
+        ))
+        .await
+        .map_err(|error| match &action.condition {
+            Some(condition) if error.message.contains("No enum constant") => {
+                let columns: Vec<_> = list.fields.iter().map(|field| field.0).collect();
+                Error::new(format!(
+                    "{} has no column {}: WHERE takes {}",
+                    action.command.name(),
+                    condition.column,
+                    columns.join(", ")
+                ))
+            }
+            _ => error,
+        })?;
     let listed: Value = listed
         .as_str()
         .and_then(|listed| serde_json::from_str(listed).ok())
-        .ok_or_else(|| Error::new("Artemis listQueues did not return JSON"))?;
+        .ok_or_else(|| Error::new(format!("Artemis {} did not return JSON", list.operation)))?;
     let rows: Vec<Value> = listed["data"]
         .as_array()
         .into_iter()
         .flatten()
-        .map(queue_row)
+        .map(|item| row(list.fields, item))
         .collect();
     let shown = rows.len();
     let mut types = Map::new();
-    for column in &QUEUE_COLUMNS[3..11] {
-        types.insert((*column).into(), json!("number"));
+    for (column, _, cell) in list.fields {
+        let kind = match cell {
+            Cell::Number => "number",
+            Cell::Flag => "boolean",
+            Cell::Time => "datetime",
+            Cell::Text | Cell::Names => continue,
+        };
+        types.insert((*column).into(), json!(kind));
     }
-    types.insert("durable".into(), json!("boolean"));
-    types.insert("paused".into(), json!("boolean"));
-    let mut result = grid(&QUEUE_COLUMNS, Value::Object(types), rows);
+    let columns: Vec<_> = list.fields.iter().map(|field| field.0).collect();
+    let mut result = grid(&columns, Value::Object(types), rows);
     let total = number(&listed["count"]).as_u64().unwrap_or(0);
     if total > shown as u64 {
         warn(
             &mut result,
             vec![format!(
-                "Showing {shown} of {total} queues; raise Count or narrow the list with Filter"
+                "Showing {shown} of {total} {}; raise LIMIT or narrow the list with WHERE",
+                list.what
             )],
         );
     }
     Ok(result)
 }
 
-/// `listQueues` reports every field as a string.
+fn row(fields: &[Field], item: &Value) -> Value {
+    let mut row = Map::new();
+    for (column, field, cell) in fields {
+        let value = &item[*field];
+        let shown = match cell {
+            Cell::Text => value.clone(),
+            Cell::Number => number(value),
+            Cell::Flag => flag(value),
+            Cell::Time => match value.as_i64() {
+                Some(ms) if ms > 0 => json!(utc(ms)),
+                Some(_) => Value::Null,
+                None => value.clone(),
+            },
+            Cell::Names => match value.as_str().map(serde_json::from_str::<Vec<String>>) {
+                Some(Ok(names)) => json!(names.join(", ")),
+                _ => value.clone(),
+            },
+        };
+        row.insert((*column).into(), shown);
+    }
+    Value::Object(row)
+}
+
+/// The broker's lists report every field as a string.
 fn number(value: &Value) -> Value {
     match value {
         Value::String(text) => text
@@ -590,25 +850,16 @@ fn flag(value: &Value) -> Value {
     }
 }
 
-fn queue_row(queue: &Value) -> Value {
-    json!({
-        "queue":queue["name"],"address":queue["address"],"routing-type":queue["routingType"],
-        "messages":number(&queue["messageCount"]),"delivering":number(&queue["deliveringCount"]),
-        "scheduled":number(&queue["scheduledCount"]),"consumers":number(&queue["consumerCount"]),
-        "added":number(&queue["messagesAdded"]),"acked":number(&queue["messagesAcked"]),
-        "killed":number(&queue["messagesKilled"]),"expired":number(&queue["messagesExpired"]),
-        "durable":flag(&queue["durable"]),"paused":flag(&queue["paused"]),
-    })
-}
-
 fn browsing(mbean: &str, request: &Request) -> Value {
-    if request.selector.is_empty() {
-        json!({"type":"exec","mbean":mbean,"operation":"browse(int,int)","arguments":[1,request.count]})
+    let action = &request.action;
+    if action.selector.is_empty() {
+        exec(mbean, "browse(int,int)", json!([1, action.limit]))
     } else {
-        json!({
-            "type":"exec","mbean":mbean,"operation":"browse(int,int,java.lang.String)",
-            "arguments":[1,request.count,request.selector],
-        })
+        exec(
+            mbean,
+            "browse(int,int,java.lang.String)",
+            json!([1, action.limit, action.selector]),
+        )
     }
 }
 
@@ -630,14 +881,16 @@ fn message_grid(rows: Vec<Value>) -> Value {
 }
 
 async fn browse(jolokia: &mut Jolokia<'_>, request: &Request) -> Result<Value> {
-    let mbean = queue(jolokia, &request.target.queue).await?;
-    let counting = if request.selector.is_empty() {
+    let action = &request.action;
+    let mbean = queue(jolokia, &action.resource).await?;
+    let counting = if action.selector.is_empty() {
         json!({"type":"read","mbean":mbean,"attribute":["MessageCount","DeliveringCount"]})
     } else {
-        json!({
-            "type":"exec","mbean":mbean,"operation":"countMessages(java.lang.String)",
-            "arguments":[request.selector],
-        })
+        exec(
+            &mbean,
+            "countMessages(java.lang.String)",
+            json!([action.selector]),
+        )
     };
     let replies = jolokia
         .many(vec![browsing(&mbean, request), counting])
@@ -657,8 +910,8 @@ async fn browse(jolokia: &mut Jolokia<'_>, request: &Request) -> Result<Value> {
     let mut warnings = vec![];
     if let Some(total) = total.filter(|total| *total > shown) {
         let mut warning = format!("Showing {shown} of {total} messages");
-        if shown == request.count {
-            warning.push_str("; raise Count to see more");
+        if shown == action.limit {
+            warning.push_str("; raise LIMIT to see more");
         } else if let Some(delivering) = delivering.filter(|delivering| *delivering > 0) {
             warning.push_str(&format!(
                 "; {delivering} are out with consumers and cannot be browsed"
@@ -674,28 +927,158 @@ async fn browse(jolokia: &mut Jolokia<'_>, request: &Request) -> Result<Value> {
     Ok(result)
 }
 
+/// SEND to a queue, PUBLISH to an address (each of its queues gets a copy).
 async fn send(jolokia: &mut Jolokia<'_>, request: &Request) -> Result<Value> {
-    let mbean = queue(jolokia, &request.target.queue).await?;
+    let action = &request.action;
+    let (mbean, column) = if action.command == Command::Publish {
+        (address(jolokia, &action.resource).await?, "address")
+    } else {
+        (queue(jolokia, &action.resource).await?, "queue")
+    };
+    let (user, password) = request.credentials();
     let id = jolokia
-        .one(json!({
-            "type":"exec","mbean":mbean,"operation":SEND,
-            "arguments":[
-                request.properties,TEXT_MESSAGE,request.body,request.durable,
-                request.target.user,request.target.password,
-            ],
-        }))
+        .one(exec(
+            &mbean,
+            SEND,
+            json!([
+                action.properties,
+                TEXT_MESSAGE,
+                request.body,
+                request.persistent,
+                user,
+                password
+            ]),
+        ))
         .await?;
     Ok(grid(
-        &SEND_COLUMNS,
+        &[column, "message-id"],
         json!({}),
-        vec![json!({"queue":request.target.queue,"message-id":error::string(&id)})],
+        vec![json!({column:action.resource,"message-id":error::string(&id)})],
     ))
+}
+
+/// One row of a queue operation that returns a count or a flag.
+fn done(request: &Request, column: &str, value: Value, kind: &str) -> Value {
+    let action = &request.action;
+    let mut row = json!({"queue":action.resource});
+    if action.command == Command::Move {
+        row["to"] = json!(action.to);
+    }
+    row[column] = number(&value);
+    grid(
+        &column_names(action.command),
+        json!({column:kind}),
+        vec![row],
+    )
+}
+
+async fn purge(jolokia: &mut Jolokia<'_>, request: &Request) -> Result<Value> {
+    let mbean = queue(jolokia, &request.action.resource).await?;
+    let removed = jolokia
+        .one(exec(
+            &mbean,
+            "removeMessages(java.lang.String)",
+            json!([selector(request)]),
+        ))
+        .await?;
+    Ok(done(request, "removed", removed, "number"))
+}
+
+async fn move_messages(jolokia: &mut Jolokia<'_>, request: &Request) -> Result<Value> {
+    let action = &request.action;
+    let mbean = queue(jolokia, &action.resource).await?;
+    // The broker's own error for a missing target names no queue list.
+    queue(jolokia, &action.to).await?;
+    let moved = jolokia
+        .one(exec(
+            &mbean,
+            "moveMessages(java.lang.String,java.lang.String)",
+            json!([selector(request), action.to]),
+        ))
+        .await?;
+    Ok(done(request, "moved", moved, "number"))
+}
+
+async fn retry(jolokia: &mut Jolokia<'_>, request: &Request) -> Result<Value> {
+    let mbean = queue(jolokia, &request.action.resource).await?;
+    let retried = jolokia
+        .one(exec(&mbean, "retryMessages()", json!([])))
+        .await?;
+    Ok(done(request, "retried", retried, "number"))
+}
+
+async fn pause(jolokia: &mut Jolokia<'_>, request: &Request) -> Result<Value> {
+    let mbean = queue(jolokia, &request.action.resource).await?;
+    let operation = if request.action.command == Command::Pause {
+        "pause()"
+    } else {
+        "resume()"
+    };
+    let replies = jolokia
+        .many(vec![
+            exec(&mbean, operation, json!([])),
+            json!({"type":"read","mbean":mbean,"attribute":"Paused"}),
+        ])
+        .await?;
+    value(&replies[0])?;
+    Ok(done(request, "paused", value(&replies[1])?, "boolean"))
+}
+
+/// JOLOKIA: `#body` as is, one Jolokia request or a list of them; a row per reply.
+async fn raw(jolokia: &mut Jolokia<'_>, request: &Request) -> Result<Value> {
+    let body: Value = serde_json::from_str(&request.body).map_err(|error| {
+        Error::new(format!(
+            "JOLOKIA takes a JSON request or a list of them in #body: {error}"
+        ))
+    })?;
+    let sent = match &body {
+        Value::Array(requests) => requests.clone(),
+        Value::Object(_) => vec![body.clone()],
+        _ => {
+            return Err(Error::new(
+                "JOLOKIA takes a JSON request or a list of them in #body",
+            ));
+        }
+    };
+    let replies = match jolokia.post(body.clone(), body).await? {
+        Value::Array(replies) => replies,
+        reply => vec![reply],
+    };
+    let mut failed = 0;
+    let rows: Vec<Value> = replies
+        .iter()
+        .enumerate()
+        .map(|(at, reply)| {
+            if reply["status"] != 200 {
+                failed += 1;
+            }
+            let sent = sent.get(at).cloned().unwrap_or_default();
+            json!({
+                "request":reply.get("request").cloned().unwrap_or(sent),"status":reply["status"],
+                "value":reply.get("value").cloned().unwrap_or_default(),
+                "error":reply.get("error").cloned().unwrap_or_default(),
+            })
+        })
+        .collect();
+    let count = rows.len();
+    let mut result = grid(
+        &column_names(Command::Jolokia),
+        json!({"request":"json","status":"number","value":"json"}),
+        rows,
+    );
+    if failed > 0 {
+        warn(
+            &mut result,
+            vec![format!("{failed} of {count} Jolokia requests failed")],
+        );
+    }
+    Ok(result)
 }
 
 /// Management has no consumer: RECEIVE browses messages, then removes each one it can show
 /// whole.
 async fn receive(jolokia: &mut Jolokia<'_>, request: &Request) -> Result<Value> {
-    let mbean = queue(jolokia, &request.target.queue).await?;
+    let mbean = queue(jolokia, &request.action.resource).await?;
     let browsed = messages(jolokia.one(browsing(&mbean, request)).await?)?;
     let (whole, cut): (Vec<_>, Vec<_>) = browsed.into_iter().partition(|m| !is_cut(m));
     let mut ids = vec![];
@@ -712,9 +1095,7 @@ async fn receive(jolokia: &mut Jolokia<'_>, request: &Request) -> Result<Value> 
     if !ids.is_empty() {
         let removals = ids
             .iter()
-            .map(|id| {
-                json!({"type":"exec","mbean":mbean,"operation":"removeMessage(long)","arguments":[id]})
-            })
+            .map(|id| exec(&mbean, "removeMessage(long)", json!([id])))
             .collect();
         let replies = jolokia.many(removals).await?;
         for (message, reply) in whole.iter().zip(&replies) {
@@ -841,9 +1222,13 @@ fn utc(ms: i64) -> String {
 mod tests {
     use super::*;
 
+    fn parse(params: Value) -> Result<Request> {
+        Request::parse(&params)
+    }
+
     #[test]
-    fn endpoint_names_the_queue_and_keeps_the_password_out_of_the_url() {
-        let target = target("https://ad%40min:p%3Ass@broker:8443/orders%3Fnew/", "").unwrap();
+    fn the_endpoint_is_the_web_console_or_the_jolokia_url() {
+        let target = target("https://ad%40min:p%3Ass@broker:8443#x").unwrap();
         assert_eq!(
             target,
             Target {
@@ -851,18 +1236,99 @@ mod tests {
                 origin: "https://broker:8443".into(),
                 user: Some("ad@min".into()),
                 password: Some("p:ss".into()),
-                queue: "orders?new".into(),
-                shown: "https://ad%40min:******@broker:8443/orders%3Fnew/".into(),
+                shown: "https://ad%40min:******@broker:8443/#x".into(),
             }
         );
         assert_eq!(
-            super::target("http://broker:8161", "/jolokia")
+            super::target("http://broker:8161/jolokia/")
                 .unwrap()
                 .jolokia,
-            "http://broker:8161/jolokia"
+            "http://broker:8161/jolokia/"
         );
-        assert!(super::target("tcp://broker:61616/orders", "").is_err());
-        assert!(super::target("http://broker:8161/orders?x", "").is_err());
+        assert!(super::target("tcp://broker:61616").is_err());
+        assert_eq!(
+            super::target("browse http://broker:8161/orders")
+                .unwrap_err()
+                .message,
+            "#endpoint is only the broker URL now; the command goes in #action: BROWSE /queue"
+        );
+    }
+
+    #[test]
+    fn headers_reach_jolokia_and_log_in_a_send() {
+        let request = parse(json!({
+            "url":"http://broker:8161","action":"SEND /orders",
+            "headers":{"authorization":"Basic YWRtaW46czpw","origin":"http://console"},
+        }))
+        .unwrap();
+        assert_eq!(
+            Value::Object(request.headers.clone()),
+            json!({
+                "Content-Type":"application/json","Accept":"application/json",
+                "authorization":"Basic YWRtaW46czpw","origin":"http://console",
+            })
+        );
+        assert_eq!(
+            request.credentials(),
+            (Some("admin".into()), Some("s:p".into()))
+        );
+        assert_eq!(request.shown_headers()["authorization"], MASK);
+        let login = parse(json!({
+            "url":"http://admin:pw@broker:8161","action":"QUEUES","headers":{"Authorization":"x"},
+        }));
+        assert!(login.err().unwrap().message.starts_with("Log in either"));
+    }
+
+    #[test]
+    fn body_and_persistent_belong_to_the_message() {
+        let error = |params: Value| parse(params).err().unwrap().message;
+        assert_eq!(
+            error(json!({"url":"http://b:8161","action":"PURGE /q","body":"x"})),
+            "PURGE takes no #body: it is the message of SEND and PUBLISH, or the request of JOLOKIA"
+        );
+        assert!(
+            error(json!({"url":"http://b:8161","action":"JOLOKIA"}))
+                .starts_with("JOLOKIA sends #body")
+        );
+        assert_eq!(
+            error(json!({"url":"http://b:8161","action":"BROWSE /q","persistent":"false"})),
+            "Persistent applies to SEND or PUBLISH, not BROWSE"
+        );
+        let publish = parse(json!({
+            "url":"http://b:8161","action":"PUBLISH /events","persistent":"no","body":"x",
+        }))
+        .unwrap();
+        assert!(!publish.persistent);
+    }
+
+    #[test]
+    fn list_rows_turn_broker_strings_into_values() {
+        let address = json!({
+            "name":"events","routingTypes":"[\"ANYCAST\",\"MULTICAST\"]","queueCount":"2",
+            "paging":"false","autoCreated":"true",
+        });
+        let row = row(ADDRESSES.fields, &address);
+        assert_eq!(
+            (
+                &row["address"],
+                &row["routing-types"],
+                &row["queues"],
+                &row["auto-created"]
+            ),
+            (
+                &json!("events"),
+                &json!("ANYCAST, MULTICAST"),
+                &json!(2),
+                &json!(true)
+            )
+        );
+        let consumer =
+            json!({"id":"82","lastDeliveredTime":1_714_566_600_123_i64,"lastAcknowledgedTime":0});
+        let row = super::row(CONSUMERS.fields, &consumer);
+        assert_eq!(
+            (&row["consumer"], &row["last-delivered"], &row["last-acked"]),
+            (&json!(82), &json!("2024-05-01T12:30:00.123Z"), &Value::Null)
+        );
     }
 
     #[test]

@@ -49,7 +49,8 @@ pub struct Console {
     /// What schema the service discovers and how the console asks for it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub discovery: Option<Discovery>,
-    /// Completion words offered anywhere in a check.
+    /// Completion words: the methods an `http` endpoint starts with, the commands an `action`
+    /// section starts with, the words of an `spl` search.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub keywords: Vec<String>,
     /// The service's completion hints document before the user saves one.
@@ -93,6 +94,9 @@ pub enum DiscoveryKind {
     GrpcReflection,
     /// Tables and columns of a database.
     Sql,
+    /// Queue and address names of a message broker: `{"names": {list: [name]}, "after":
+    /// {WORD: list}}`, where an `action` section takes a name from `list` after `WORD`.
+    Queues,
 }
 
 impl DiscoveryKind {
@@ -116,7 +120,7 @@ pub struct Section {
     pub shape: Shape,
     /// Highlighting and completion language: `endpoint` (an address), `http` (`METHOD URL`),
     /// `grpc` (`target/Service/Method`), `headers`, `json`, `sql`, `graphql`, `spl`, `proto`,
-    /// `shell`.
+    /// `shell`, `action` (a command, then SQL-like clauses).
     #[serde(default)]
     pub language: String,
     /// The request param the section fills.

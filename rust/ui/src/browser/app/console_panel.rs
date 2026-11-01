@@ -717,12 +717,6 @@ impl App {
                 hints.push((format!("{header}: "), "Header".into()));
             }
         }
-        for keyword in crate::services::get(service)
-            .iter()
-            .flat_map(|service| &service.console.keywords)
-        {
-            hints.push((keyword.clone(), String::new()));
-        }
         if let Some(text) = self.hints.get(service) {
             for line in text
                 .lines()

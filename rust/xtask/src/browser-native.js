@@ -25,9 +25,9 @@
   const endpoints = {
     mysql: 'mysql://mysql.fixture.invalid', rest: 'https://rest.fixture.invalid',
     graphql: 'https://graphql.fixture.invalid', grpc: 'grpc://grpc.fixture.invalid:9000',
-    splunk: 'https://splunk.fixture.invalid', artemis: 'http://artemis.fixture.invalid:8161/orders',
+    splunk: 'https://splunk.fixture.invalid', artemis: 'http://artemis.fixture.invalid:8161',
   };
-  const methods = {rest: 'GET ', artemis: 'BROWSE '};
+  const methods = {rest: 'GET '};
   for (const service of services) {
     await click(testid(`console-service-${service}`));
     const editor = cm('console-editor');

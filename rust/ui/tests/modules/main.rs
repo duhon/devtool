@@ -6,6 +6,7 @@
 mod support;
 
 mod agent;
+mod artemis;
 mod graphql;
 mod grpc;
 mod history;

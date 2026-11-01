@@ -1,33 +1,31 @@
 {
   "id": "artemis",
   "name": "Artemis",
-  "description": "Apache ActiveMQ Artemis over its Jolokia management API (the web console, port 8161). QUEUES lists queues with their counters, BROWSE shows messages without consuming them, SEND puts a text message on a queue, RECEIVE removes messages from a queue and returns them.",
+  "description": "Apache ActiveMQ Artemis over its Jolokia management API (the web console, port 8161). #endpoint is the broker URL; #action is a command, its /queue or /address and clauses: QUEUES, ADDRESSES and CONSUMERS list (WHERE messages > 0, LIMIT n), BROWSE shows messages without consuming them, RECEIVE removes and returns them (WHERE takes a JMS selector), SEND puts a message on a queue and PUBLISH on an address (SET property = 'value'), PURGE deletes messages, MOVE ... TO /queue moves them, RETRY sends dead letters back, PAUSE and RESUME stop and restart delivery, JOLOKIA sends #body to Jolokia as is. #headers are HTTP headers.",
   "params": [
-    {"name": "command", "flag": "command", "alias": "m", "positional": true, "type": "string", "required": true, "default": "QUEUES"},
     {"name": "url", "flag": "endpoint", "alias": "e", "positional": true, "type": "string", "required": true},
+    {"name": "action", "flag": "action", "alias": "a", "positional": true, "type": "string", "default": "QUEUES"},
     {"name": "headers", "flag": "headers", "alias": "H", "type": "json"},
     {"name": "body", "flag": "body", "alias": "b", "type": "string"},
-    {"name": "options", "flag": "options", "alias": "o", "multi": true, "type": "keyvalue", "keys": {"count": "count", "filter": "filter", "selector": "selector", "durable": "durable", "jolokia-path": "jolokiaPath", "columns-type": "columnsType", "columns-size": "columnsSize"}},
-    {"name": "count", "type": "string", "resolve": "none"},
-    {"name": "filter", "type": "string"},
-    {"name": "selector", "type": "string"},
-    {"name": "durable", "type": "string", "resolve": "none"},
-    {"name": "jolokiaPath", "type": "string"},
+    {"name": "options", "flag": "options", "alias": "o", "multi": true, "type": "keyvalue", "keys": {"persistent": "persistent", "columns-type": "columnsType", "columns-size": "columnsSize"}},
+    {"name": "persistent", "type": "string", "resolve": "none"},
     {"name": "columnsType", "type": "string", "resolve": "none"},
     {"name": "columnsSize", "type": "string", "resolve": "none"}
   ],
   "console": {
     "order": 7,
     "sections": [
-      {"name": "endpoint", "shape": "line", "language": "http", "param": "url", "hints": [{"text": "http://localhost:8161/"}, {"text": "https://"}]},
-      {"name": "headers", "shape": "pairs", "language": "headers", "param": "headers"},
-      {"name": "options", "shape": "block", "language": "headers", "param": "options", "hints": [{"text": "Count: ", "detail": "QUEUES: 100, BROWSE: 10, RECEIVE: 1 by default; up to 1000"}, {"text": "Filter: ", "detail": "QUEUES: queue names containing this text"}, {"text": "Selector: ", "detail": "BROWSE, RECEIVE: a JMS selector, e.g. priority > 4"}, {"text": "Durable: false", "detail": "SEND: a non-persistent message"}, {"text": "Jolokia-Path: /console/jolokia", "detail": "Where the broker serves Jolokia"}, {"text": "Columns-Type: ", "detail": "column=json column=datetime column=number column=boolean column=text"}, {"text": "Columns-Size: ", "detail": "column=100 (characters)"}]},
+      {"name": "endpoint", "shape": "line", "language": "endpoint", "param": "url", "connection": true, "hints": [{"text": "http://localhost:8161"}, {"text": "https://"}]},
+      {"name": "headers", "shape": "pairs", "language": "headers", "param": "headers", "connection": true},
+      {"name": "action", "shape": "block", "language": "action", "param": "action", "hints": [{"text": "WHERE ", "detail": "Lists: one condition, messages > 0; messages: a JMS selector"}, {"text": "LIMIT ", "detail": "Lists 100, BROWSE 10, RECEIVE 1 by default; up to 1000"}, {"text": "SET ", "detail": "SEND, PUBLISH: message properties, name = 'value', ..."}, {"text": "TO ", "detail": "MOVE: the target /queue"}, {"text": "AND", "detail": "Selector"}, {"text": "OR", "detail": "Selector"}, {"text": "NOT", "detail": "Selector"}, {"text": "LIKE", "detail": "Selector"}, {"text": "IN", "detail": "Selector"}, {"text": "BETWEEN", "detail": "Selector"}, {"text": "IS NULL", "detail": "Selector"}, {"text": "CONTAINS", "detail": "Lists: the column contains the text"}, {"text": "NOT CONTAINS", "detail": "Lists: the column lacks the text"}, {"text": "_AMQ_GROUP_ID", "detail": "SET: message group"}, {"text": "_AMQ_DUPL_ID", "detail": "SET: duplicate detection id"}, {"text": "_AMQ_ORIG_ADDRESS", "detail": "WHERE: address before DLQ or expiry"}, {"text": "_AMQ_ORIG_QUEUE", "detail": "WHERE: queue before DLQ or expiry"}, {"text": "AMQPriority", "detail": "WHERE: 0-9"}, {"text": "AMQTimestamp", "detail": "WHERE: milliseconds since 1970"}, {"text": "AMQDurable", "detail": "WHERE: 'DURABLE' or 'NON_DURABLE'"}]},
+      {"name": "options", "shape": "block", "language": "headers", "param": "options", "hints": [{"text": "Persistent: false", "detail": "SEND, PUBLISH: a non-persistent message"}, {"text": "Columns-Type: ", "detail": "column=json column=datetime column=number column=boolean column=text"}, {"text": "Columns-Size: ", "detail": "column=100 (characters)"}]},
       {"name": "body", "shape": "block", "language": "json", "param": "body"}
     ],
-    "payload": "body",
+    "discovery": {"kind": "queues", "schemes": ["http", "https"]},
+    "payload": "action",
     "response": "grid",
-    "keywords": ["QUEUES", "BROWSE", "SEND", "RECEIVE"],
-    "hints": "#endpoint\nhttp://localhost:8161/\n",
+    "keywords": ["QUEUES", "ADDRESSES", "CONSUMERS", "BROWSE", "RECEIVE", "SEND", "PUBLISH", "PURGE", "MOVE", "RETRY", "PAUSE", "RESUME", "JOLOKIA"],
+    "hints": "#endpoint\nhttp://localhost:8161\nhttps://\n\n#headers\nAuthorization: Basic \n",
     "timeout": 120
   }
 }

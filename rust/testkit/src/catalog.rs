@@ -76,7 +76,7 @@ pub const MODULES: &[ModuleSpec] = &[
         streaming: true,
         ..service("terminal", "Terminal", "endpoint", false)
     },
-    service("artemis", "Artemis", "url", false),
+    service("artemis", "Artemis", "url", true),
     panel("vars", "Variables", &[("list", "{}")]),
     panel("dictionary", "Dictionary", &[("list", "{}")]),
     panel("templates", "Templates", &[("get", "{}")]),

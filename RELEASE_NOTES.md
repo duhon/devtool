@@ -1,5 +1,18 @@
 # Release notes
 
+## 3.4.0
+
+- The Artemis module 4.0.0 has a new request format: `#endpoint` is the broker,
+  `#action` is the command with its queue and clauses
+  (`BROWSE /DLQ WHERE _AMQ_ORIG_ADDRESS = 'orders' LIMIT 20`), and `#headers` are HTTP
+  headers. It adds ADDRESSES, CONSUMERS, PUBLISH, PURGE, MOVE, RETRY, PAUSE, RESUME and
+  JOLOKIA, and completion offers the broker's queues. Update the module in Settings →
+  Modules; it needs this version.
+- Completion offers saved headers only in header sections, and a service's keywords
+  only where they fit: REST methods at the start of `#endpoint`, Artemis commands at the
+  start of `#action`, SPL words in a Splunk search. Before, `Authorization:` or `QUEUES`
+  could be offered in a JSON body.
+
 ## 3.3.0
 
 - Modules no longer need GitHub releases. A GitHub source is read like a folder: its

@@ -51,12 +51,12 @@ services and their flags.
       --search="index=main error" \
       -o from=-24h -o to=now
 
-    ./dev artemis QUEUES http://admin:admin@localhost:8161 -o filter=order
+    ./dev artemis http://admin:admin@localhost:8161 "QUEUES WHERE messages > 0"
 
-    ./dev artemis BROWSE http://admin:admin@localhost:8161/orders -o count=5
+    ./dev artemis http://admin:admin@localhost:8161 "BROWSE /orders LIMIT 5"
 
-    ./dev artemis SEND http://admin:admin@localhost:8161/orders \
-      --headers='{"tenant":"t1"}' --body='{"id":1}'
+    ./dev artemis http://admin:admin@localhost:8161 "SEND /orders SET tenant = 't1'" \
+      --body='{"id":1}'
 
 `--headers` and `--variables` (where applicable) take a JSON string, e.g.
 `--headers='{"Authorization":"Bearer x"}'`. `proto` is optional for grpc
@@ -65,7 +65,7 @@ console. Splunk's search options (`from`/`to`/`app`/`count`) are all
 one repeatable `-o key=value` flag (like curl's `-H` or docker's `-e`)
 instead of a flag per option — pass as many `-o` as you need, e.g.
 `-o from=-24h -o to=now -o app=search -o count=10`. Artemis takes the
-command and the URL as the first two arguments; `RECEIVE` removes the
+broker URL and the action as the first two arguments; `RECEIVE` removes the
 messages it prints from the queue, `BROWSE` leaves them there.
 
 `terminal` streams: output is written to stdout/stderr as it arrives

@@ -2162,7 +2162,7 @@ pub fn register_modes() -> Result<(), JsValue> {
     }
     for name in [
         "endpoint", "http", "grpc", "headers", "json", "sql", "graphql", "proto", "spl", "shell",
-        "plain",
+        "action", "plain",
     ] {
         define_mode(&cm, name)?;
     }

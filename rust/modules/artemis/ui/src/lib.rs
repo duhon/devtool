@@ -1,4 +1,4 @@
-//! The Artemis console part: `QUEUES`/`BROWSE`/`SEND`/`RECEIVE` checks become broker requests.
+//! The Artemis console part: `#endpoint` is the broker, `#action` the command the module runs.
 
 use serde_json::{Map, Value, json};
 use services_module_ui::{Sections, ServiceUi};
@@ -6,62 +6,99 @@ use services_module_ui::{Sections, ServiceUi};
 /// The module's manifest, for consoles that know the module before a host lists it.
 pub const MANIFEST: &str = include_str!("../../manifest.json");
 
-const COMMANDS: [&str; 4] = ["QUEUES", "BROWSE", "SEND", "RECEIVE"];
+const COMMANDS: [&str; 13] = [
+    "QUEUES",
+    "ADDRESSES",
+    "CONSUMERS",
+    "BROWSE",
+    "RECEIVE",
+    "SEND",
+    "PUBLISH",
+    "PURGE",
+    "MOVE",
+    "RETRY",
+    "PAUSE",
+    "RESUME",
+    "JOLOKIA",
+];
+/// Commands that send `#body`.
+const WITH_BODY: [&str; 3] = ["SEND", "PUBLISH", "JOLOKIA"];
 
 /// `#options` names and the params they fill.
-const OPTIONS: [(&str, &str); 7] = [
-    ("count", "count"),
-    ("filter", "filter"),
-    ("selector", "selector"),
-    ("durable", "durable"),
-    ("jolokia-path", "jolokiaPath"),
+const OPTIONS: [(&str, &str); 3] = [
+    ("persistent", "persistent"),
     ("columns-type", "columnsType"),
     ("columns-size", "columnsSize"),
+];
+/// Options of the earlier format and where their meaning moved.
+const MOVED: [(&str, &str); 5] = [
+    ("count", "LIMIT n in #action"),
+    ("filter", "QUEUES text (names containing it) in #action"),
+    ("selector", "WHERE in #action"),
+    ("durable", "Persistent"),
+    ("jolokia-path", "the #endpoint path"),
 ];
 
 pub struct Artemis;
 
 impl ServiceUi for Artemis {
     fn request(&self, s: &Sections) -> Result<Value, String> {
-        let pieces: Vec<_> = s.text("endpoint").split_whitespace().collect();
-        let command = pieces
+        let endpoint = s.text("endpoint");
+        let words: Vec<_> = endpoint.split_whitespace().collect();
+        if let Some(command) = words
             .first()
-            .map(|command| command.to_ascii_uppercase())
-            .unwrap_or_default();
-        if pieces.len() != 2 || !COMMANDS.contains(&command.as_str()) {
-            return Err(
-                "#endpoint must be QUEUES, BROWSE, SEND or RECEIVE followed by the broker's http:// URL"
-                    .into(),
-            );
+            .map(|word| word.to_ascii_uppercase())
+            .filter(|word| COMMANDS.contains(&word.as_str()))
+        {
+            return Err(format!(
+                "#endpoint is only the broker URL now; move {command} to #action"
+            ));
         }
-        let send = command == "SEND";
-        if !send && !s.text("body").is_empty() {
+        if words.len() != 1 {
+            return Err("#endpoint must be the broker's http:// URL".into());
+        }
+        let action = s.text("action");
+        let command = action
+            .split_whitespace()
+            .next()
+            .unwrap_or("QUEUES")
+            .to_ascii_uppercase();
+        if !COMMANDS.contains(&command.as_str()) {
+            return Err(format!(
+                "#action starts with a command: {}",
+                COMMANDS.join(", ")
+            ));
+        }
+        let body = s.text("body");
+        if !body.is_empty() && !WITH_BODY.contains(&command.as_str()) {
             return Err(format!("{command} takes no #body"));
         }
+        let mut value = json!({"url":words[0],"action":action});
         let headers = s.pairs("headers");
-        if !send && !headers.is_empty() {
-            return Err("#headers are message properties for SEND".into());
+        if !headers.is_empty() {
+            value["headers"] = json!(headers);
+        }
+        if !body.is_empty() {
+            value["body"] = json!(body);
         }
         let options: Map<String, Value> = s
             .pairs("options")
             .into_iter()
             .map(|(k, v)| (k.to_ascii_lowercase(), v))
             .collect();
-        let mut value = json!({"command":command,"url":pieces[1]});
-        if send {
-            value["headers"] = json!(headers);
-            value["body"] = json!(s.text("body"));
-        }
         for (name, v) in &options {
-            let key = OPTIONS
+            let Some(key) = OPTIONS
                 .iter()
                 .find(|(option, _)| option == name)
                 .map(|(_, key)| *key)
-                .ok_or_else(|| {
-                    format!(
-                        "Unknown Artemis option {name:?}; use Count, Filter, Selector, Durable, Jolokia-Path, Columns-Type or Columns-Size"
-                    )
-                })?;
+            else {
+                return Err(match MOVED.iter().find(|(option, _)| option == name) {
+                    Some((_, place)) => format!("Option {name:?} is now {place}"),
+                    None => format!(
+                        "Unknown Artemis option {name:?}; use Persistent, Columns-Type or Columns-Size"
+                    ),
+                });
+            };
             if let Some(v) = v.as_str().filter(|v| !v.is_empty()) {
                 value[key] = json!(v);
             }

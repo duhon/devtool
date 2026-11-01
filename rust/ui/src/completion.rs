@@ -434,7 +434,7 @@ pub fn suggest(
             0
         };
         let value = before[value_start..].trim_start();
-        // An `http` endpoint starts with one of the service's keywords (REST methods, Artemis commands).
+        // An `http` endpoint starts with one of the service's keywords (REST methods).
         if http && field.is_empty() && value_start == 0 {
             return finish(
                 0,
@@ -545,6 +545,47 @@ pub fn suggest(
     let start = token_start(&before);
     let query = &before[start..];
     let from = before[..start].encode_utf16().count();
+    if section_language(&marker) == Some("action") {
+        // The section starts with one of the service's keywords (commands), then its clauses;
+        // a discovered word takes a `/name`.
+        let (from, query) = if before[..start].ends_with('/') {
+            (from - 1, &before[start - 1..])
+        } else {
+            (from, query)
+        };
+        let typed = body[..body.len() - query.len()].trim_end();
+        let previous = typed
+            .rsplit(char::is_whitespace)
+            .next()
+            .unwrap_or("")
+            .to_ascii_uppercase();
+        let names = discovery["after"][previous.as_str()]
+            .as_str()
+            .and_then(|list| discovery["names"][list].as_array());
+        let candidates = if typed.is_empty() {
+            manifest
+                .console
+                .keywords
+                .iter()
+                .map(|keyword| (format!("{keyword} "), "Command".into()))
+                .collect()
+        } else if let Some(names) = names {
+            names
+                .iter()
+                .filter_map(Value::as_str)
+                .map(|name| (format!("{} ", action_name(name)), String::new()))
+                .collect()
+        } else {
+            let mut candidates = if field.is_empty() && before.trim().is_empty() {
+                unused_markers()
+            } else {
+                vec![]
+            };
+            candidates.extend(section_hints(&manifest, &marker));
+            candidates
+        };
+        return finish(from, ch, query, candidates);
+    }
     if graphql_variables {
         let offset = lines[body_start.min(line)..line]
             .iter()
@@ -847,16 +888,45 @@ pub fn suggest(
             candidates,
         );
     }
-    finish(
-        from,
-        ch,
-        query,
-        hints
-            .iter()
-            .filter(|(s, _)| !s.starts_with("{{") && !s.starts_with('#'))
-            .cloned()
-            .collect(),
-    )
+    // Headers are offered in header sections only, keywords where their language places them.
+    let mut candidates: Vec<_> = hints
+        .iter()
+        .filter(|(s, _)| !s.starts_with("{{") && !s.starts_with('#') && !is_header(s))
+        .cloned()
+        .collect();
+    if section_language(&marker) == Some("spl") {
+        candidates.extend(
+            manifest
+                .console
+                .keywords
+                .iter()
+                .map(|keyword| (keyword.clone(), String::new())),
+        );
+    }
+    finish(from, ch, query, candidates)
+}
+/// A queue or address as an `action` section writes it: `/name`, or quoted when the name
+/// would split into several words.
+fn action_name(name: &str) -> String {
+    if name.is_empty()
+        || name
+            .chars()
+            .any(|c| c.is_whitespace() || "'\"=<>!,()".contains(c))
+    {
+        format!("'{}'", name.replace('\'', "''"))
+    } else {
+        format!("/{name}")
+    }
+}
+/// `Name: value`: a header (or an env variable) hint.
+fn is_header(hint: &str) -> bool {
+    !hint.contains("://")
+        && hint.split_once(':').is_some_and(|(name, _)| {
+            !name.is_empty()
+                && name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        })
 }
 enum JsonPathSegment {
     Field(String),

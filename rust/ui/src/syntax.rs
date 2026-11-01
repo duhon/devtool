@@ -5,13 +5,15 @@ pub enum Language {
     Headers,
     /// An address: `scheme://host/path`.
     Endpoint,
-    /// `METHOD URL` with `{param}` path params and a `?query` (REST; Artemis `QUEUES`/`BROWSE`/`SEND`/`RECEIVE`).
+    /// `METHOD URL` with `{param}` path params and a `?query` (REST).
     Http,
     /// `scheme://target/package.Service/Method`.
     Grpc,
     Shell,
     Spl,
     Graphql,
+    /// A command, then SQL-like clauses (`BROWSE /DLQ WHERE a = 'b' LIMIT 20`, Artemis).
+    Action,
     Table,
     Plain,
 }
@@ -25,6 +27,7 @@ impl Language {
             "shell" => Self::Shell,
             "spl" => Self::Spl,
             "graphql" => Self::Graphql,
+            "action" => Self::Action,
             "table" => Self::Table,
             "plain" | "proto" => Self::Plain,
             _ => return None,
@@ -61,6 +64,9 @@ pub struct State {
     pub table_json: Vec<crate::tables::JsonState>,
     #[serde(default)]
     pub vertical_kind: services_contracts::columns::Kind,
+    /// An `action` section has its command word.
+    #[serde(default)]
+    pub action_command: bool,
 }
 fn word(text: &str, extra: &str) -> usize {
     text.chars()
@@ -242,6 +248,70 @@ fn table_token(
     )
 }
 
+/// Clause words of an `action` section.
+const ACTION_KEYWORDS: [&str; 16] = [
+    "WHERE", "LIMIT", "SET", "TO", "AND", "OR", "NOT", "IN", "LIKE", "BETWEEN", "IS", "NULL",
+    "ESCAPE", "CONTAINS", "TRUE", "FALSE",
+];
+const ACTION_SYMBOLS: &str = "=<>!,()";
+
+/// The first word of the section is its command; `/name` is the queue or address; quotes
+/// escape themselves by doubling (`'it''s'`).
+fn action_token(chars: &[char], state: &mut State) -> (usize, Option<&'static str>) {
+    let first = chars[0];
+    let command = !std::mem::replace(&mut state.action_command, true);
+    if first == '\'' || first == '"' {
+        let mut n = 1;
+        while n < chars.len() {
+            if chars[n] == first {
+                if chars.get(n + 1) == Some(&first) {
+                    n += 2;
+                    continue;
+                }
+                n += 1;
+                break;
+            }
+            n += 1;
+        }
+        return (n, Some("string"));
+    }
+    if ACTION_SYMBOLS.contains(first) {
+        let pair = matches!(
+            (first, chars.get(1)),
+            ('<' | '>' | '!', Some('=')) | ('<', Some('>'))
+        );
+        return (if pair { 2 } else { 1 }, Some("operator"));
+    }
+    let n = chars
+        .iter()
+        .enumerate()
+        .take_while(|(i, c)| {
+            !c.is_whitespace()
+                && !ACTION_SYMBOLS.contains(**c)
+                && **c != '\''
+                && **c != '"'
+                && !(**c == '{' && chars.get(i + 1) == Some(&'{'))
+        })
+        .count()
+        .max(1);
+    let word: String = chars[..n].iter().collect();
+    let style = if command {
+        Some("property")
+    } else if first == '/' {
+        Some("def")
+    } else if word.parse::<f64>().is_ok() {
+        Some("number")
+    } else if ACTION_KEYWORDS
+        .iter()
+        .any(|keyword| keyword.eq_ignore_ascii_case(&word))
+    {
+        Some("keyword")
+    } else {
+        None
+    };
+    (n, style)
+}
+
 pub fn token(
     language: Language,
     text: &str,
@@ -334,11 +404,8 @@ pub fn token(
             if pos == 0
                 && http
                 && let Some((method, _)) = rest.split_once(char::is_whitespace)
-                && [
-                    "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "QUEUES", "BROWSE", "SEND",
-                    "RECEIVE",
-                ]
-                .contains(&method.to_ascii_uppercase().as_str())
+                && ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"]
+                    .contains(&method.to_ascii_uppercase().as_str())
             {
                 return (
                     method.chars().count()
@@ -425,6 +492,7 @@ pub fn token(
             )
         }
         Language::Table => unreachable!("Table tokens use the shared line lexer"),
+        Language::Action => action_token(&chars, state),
         Language::Plain => (
             rest.find("{{")
                 .filter(|i| *i > 0)
