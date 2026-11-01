@@ -43,7 +43,8 @@
   const saved = () => JSON.parse(localStorage.getItem(`servicesConsole.agentSession.${chat}`) || 'null');
   await wait(() => saved()?.draft === 'Draft survives panel changes' && saved()?.title === 'Products discussion'
     && JSON.parse(localStorage.getItem('servicesConsole.agentClosedSessions') || '[]').includes(closedChat)
-    && localStorage.getItem('servicesConsole.agentActive') === chat, 'Chat name, draft and closed tab persisted');
+    && localStorage.getItem(`servicesConsole.agentActive.${testid('console-session-name').dataset.sessionId}`) === chat,
+    'Chat name, draft and closed tab persisted');
   const record = saved();
   record.messages.push({ id: 'legacy-empty', role: 'assistant', text: ' \n ' });
   localStorage.setItem(`servicesConsole.agentSession.${chat}`, JSON.stringify(record));

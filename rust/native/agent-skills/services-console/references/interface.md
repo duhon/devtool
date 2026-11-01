@@ -4,6 +4,14 @@ Services DevTools has one interface, the Console; the former per-service forms
 were removed in 3.0. The Agent is embedded in the Console. It runs in the Chrome
 extension over native messaging.
 
+It opens in two ways: inside Chrome DevTools as its Services tab, or standalone
+in a browser tab at `chrome-extension://ckicpgdfkgcmgnclbfbcbkillcpaffnb/panel.html`
+(paste it into the address bar; the address is the same for every installation).
+Standalone inspects no web page, so the page tools are unavailable there, and
+like any new window it starts in empty session 0. To keep the inspected page in
+a separate window, undock DevTools instead: the DevTools ⋮ menu → Dock side →
+Undock into separate window.
+
 ## Layout and controls
 
 - The top service tabs select a service; each installed module adds one.
@@ -58,7 +66,9 @@ numbered table with Switch, Delete and Create from actions and a new-name field.
 Session 0 is temporary, cannot be deleted, and creating from it always makes an
 empty named session. Copies activate immediately. Named sessions autosave checks
 and responses in every service, var, hints and invalid drafts.
-Dictionary, real env and Agent chats are global, not copied with a session.
+Dictionary and real env are global. Agent chats belong to the session where
+they were opened; Create from does not copy them, deleting a session closes them.
+Session 0 chats are shared by session 0 of every window.
 Each new window/DevTools opening starts in empty session 0; users explicitly
 select saved workspaces. Old data is preserved in Imported on first migration.
 Stop active requests/Agent turns and let configuration saves finish before
@@ -234,9 +244,12 @@ separate name field above the transcript. Names, drafts and transcripts persist 
 Changing services or closing the panel preserves the chat and does not stop it.
 The tab's x closes that tab and stops its running Agent turn, revoking pending
 run approvals. It preserves stored chat history and the SDK session; closed
-tabs do not reopen automatically. Closing the last tab creates an empty chat.
-The Closed (N) tab lists closed chats: Restore reopens one with its history;
-Delete or Delete all removes its messages and Copilot history from this computer.
+tabs do not reopen automatically. Closing the last tab creates an empty chat;
+empty chats are not kept. The # tab, left of the chats, lists every open and
+closed chat of all sessions with its session, message count and last activity,
+newest first. Close closes an open chat; Restore reopens a closed chat with its
+history in the current session, moving it there. Delete immediately removes
+its messages and Copilot history from this computer, without confirmation.
 Each status ends with a small red S button. The main S stops only the operation
 shown for the highlighted check, including discovery if that is what the strip
 shows. The Agent S stops only the selected chat and requests it started in any
@@ -271,15 +284,15 @@ request does not guarantee that the remote server stops processing it.
 Console context is provided automatically for each message; there is no sharing
 checkbox or separate context-access approval. Enter sends a chat message;
 Shift+Enter adds a line. There is no Send button or composer placeholder.
-Settings contains a searchable Copilot model input with the model's category
+Settings has the tabs Modules, Sources and Agent; without the native host only
+Agent is shown. Settings → Agent contains a searchable Copilot model input with the model's category
 and a Reasoning selector populated from that model's supported levels. These
 defaults apply only to newly created Agent chats; existing chats retain their
 model and Reasoning, including after reload.
 Without saved preferences, new chats use Copilot Fusion, which manages Reasoning
 automatically. Fusion is a router, not an individual model.
-Settings → Agent skills lists, read-only, the skills every reply gets: the
-skill of each installed module (`module-<id>`) and the skills of the applied
-sources (`<source>-<name>`), each with where it comes from. They apply from the
+Every reply gets the skill of each installed module (`module-<id>`) and the
+skills of the applied sources (`<source>-<name>`). They apply from the
 next reply in every chat and are used through the `skill` tool. Only the
 SKILL.md text is available: you cannot read other files of a skill.
 Settings → Sources lists named sources, GitHub repositories or local folders,

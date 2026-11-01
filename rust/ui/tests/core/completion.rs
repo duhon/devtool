@@ -73,6 +73,36 @@ fn newline_after_request_header_offers_unused_sections() {
 }
 
 #[test]
+fn hints_editor_offers_sections_missing_from_its_text() {
+    for service in services::ids() {
+        let markers = console::markers(&service);
+        let Some(first) = markers.first() else {
+            continue;
+        };
+        let texts = |source: &str| {
+            let current = source.rsplit('\n').next().unwrap_or("");
+            suggest(
+                "hints",
+                &service,
+                source,
+                source.split('\n').count() - 1,
+                current.len(),
+                &[],
+                &Value::Null,
+            )
+            .candidates
+            .into_iter()
+            .map(|candidate| candidate.text)
+            .collect::<Vec<_>>()
+        };
+        let missing: Vec<_> = markers[1..].iter().map(|m| format!("#{m}")).collect();
+        assert_eq!(texts(&format!("#{first}\nvalue\n#")), missing, "{service}");
+        assert!(texts("##").is_empty(), "{service}");
+        assert!(texts("value").is_empty(), "{service}");
+    }
+}
+
+#[test]
 fn non_service_editors_never_offer_console_or_service_syntax() {
     let hints = vec![
         ("#check".into(), String::new()),

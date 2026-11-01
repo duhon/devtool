@@ -1,7 +1,7 @@
 // Shared Console checks reused by several scenarios; loaded after browser-driver.js on every page.
 (() => {
-  const { assert, sleep, seen, wait, waitFor, settle, visible, find, testid, cm, key, move, input, click, button,
-    openConsole, activateSession, setSource, assertNativeScrollbars, nativeTrackPaint, sessionLibrary, nativeHold, holds } = testDriver;
+  const { assert, sleep, seen, wait, waitFor, settle, visible, find, testid, cm, key, type, move, input, click, button,
+    openConsole, activateSession, setSource, candidates, pick, assertNativeScrollbars, nativeTrackPaint, sessionLibrary, nativeHold, holds } = testDriver;
   // Waits for Chrome's overlay scrollbar to fade on its own instead of sleeping past the fade delay.
   const trackFaded = async (element, axes, message) => {
     let last = {};
@@ -578,6 +578,12 @@
       && tabStyle(testid('console-hints-title')) === tabStyle(testid('console-service-rest')),
       'Hints must have a tab-styled title matching the active service tabs');
     const originalHints = hints.getValue();
+    setSource(hints, '#endpoint\nhttp://\n');
+    await type('#');
+    await wait(() => JSON.stringify(candidates()) === JSON.stringify(['#headers', '#body']),
+      () => `Typing # in Hints must offer the sections it lacks: ${JSON.stringify(candidates())}`);
+    await pick(hints, '#body');
+    assert(hints.getLine(2) === '#body', 'Picking a Hints section must insert its header');
     const changedHints = `${originalHints.trimEnd()}\n#headers\nX-Console-Panel-Fixture: saved\n`;
     hints.setValue(changedHints);
     await click(testid('console-hints-toggle'));

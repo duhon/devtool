@@ -566,14 +566,14 @@ async fn installed_reload(
       cm('console-editor').setValue('#check update persistence\n');
       if(testid('console-sessions-toggle').getAttribute('aria-pressed')!=='true') await click(testid('console-sessions-toggle'));
       await testDriver.sessionsIdle();
-      await click(testid('console-settings-toggle'));
+      await testDriver.settingsTab('modules');
       const install=()=>document.querySelector('[data-testid="settings-module"][data-module="app"][data-source="updates"] [data-testid="settings-module-install"]');
       await wait(()=>install()?.closest('tr').querySelector('[data-testid="settings-module-new-version"]')?.textContent==='99.0.1',
         ()=>`The update source must offer the new version: ${testid('settings-panel').innerText}`);
       updateFixture.reloads=0;
       chrome.runtime.reload=()=>{updateFixture.reloads++;};
       // Install refuses while any request is in flight; opening Settings loads the Agent model catalog.
-      await wait(()=>!testid('agent-model-input').disabled, 'Agent model catalog to load before Install', 60000);
+      await wait(()=>document.querySelector('[data-testid="agent-model-input"]')?.disabled===false, 'Agent model catalog to load before Install', 60000);
       await wait(()=>testid('console-session-name').dataset.storageBusy==='false', 'Session save to finish before Install');
       await click(install());
       await wait(()=>updateFixture.reloads===1,
@@ -785,7 +785,7 @@ fn scenarios() -> Vec<Scenario> {
             "sessions",
             Core,
             90,
-            "Named and temporary Console sessions: copies, deletion, drafts, global Dictionary/Agent, cross-window conflicts",
+            "Named and temporary Console sessions: copies, deletion, drafts, global Dictionary, per-session Agent chats, cross-window conflicts",
             script(include_str!("browser-sessions.js")),
         ),
         scenario(
@@ -806,7 +806,7 @@ fn scenarios() -> Vec<Scenario> {
             "layout",
             Core,
             60,
-            "Check spacing, session layout and the application version in Settings",
+            "Check spacing, session layout, the Settings tabs and the application version in Settings",
             script(include_str!("browser-layout.js")),
         )
         .exclusive(),
@@ -906,7 +906,7 @@ fn scenarios() -> Vec<Scenario> {
             "agent-resume",
             Agent,
             60,
-            "A new window restores a saved chat (name, draft, closed tabs) and resumes its SDK session",
+            "A new window restores a saved chat (name, draft, closed tabs) and resumes its SDK session; the # chat list across sessions",
             Kind::Script {
                 setup: Setup::Reopen(include_str!("browser-agent-resume-setup.js")),
                 script: include_str!("browser-agent-resume.js"),

@@ -172,7 +172,7 @@
   await wait(()=>testid('console-dictionary-status').textContent.includes('Dictionary save · OK'));
   await open('agent');
   const composer=await wait(()=>document.querySelector('[data-testid="agent-composer"]'));
-  composer.value='global session draft';
+  composer.value='session B agent draft';
   composer.dispatchEvent(new InputEvent('input',{bubbles:true}));
   await activateSession(a);
   for(const service of ['mysql','graphql','grpc','splunk','terminal']) {
@@ -191,9 +191,13 @@
   cm('console-dictionary').setValue(dictionary);
   await wait(()=>testid('console-dictionary-status').textContent.includes('Dictionary save · OK'));
   await open('agent');
-  await wait(()=>testid('agent-composer').value==='global session draft','Agent chats and drafts must remain global');
-  testid('agent-composer').value='';
-  testid('agent-composer').dispatchEvent(new InputEvent('input',{bubbles:true}));
+  await wait(()=>document.querySelector('[data-testid="agent-composer"]'));
+  assert(testid('agent-composer').value!=='session B agent draft','Agent chats belong to their Console session');
+  await click(testid('agent-chat-list-toggle'));
+  await wait(()=>[...document.querySelectorAll('[data-testid="agent-chat-list"] tbody tr')]
+    .some(row=>row.dataset.state==='open'&&row.cells[1].textContent==='Session B'),
+    'The chat list shows chats of other Console sessions');
+  await click(testid('agent-chat-list-toggle'));
   const frame=document.createElement('iframe');
   frame.src=location.href;
   frame.style.cssText='position:fixed;inset:0;width:100vw;height:100vh;z-index:9999';

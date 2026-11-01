@@ -10,7 +10,8 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     rc::Rc,
 };
-use web_sys::{HtmlInputElement, HtmlTextAreaElement};
+use wasm_bindgen::{JsCast, closure::Closure};
+use web_sys::{HtmlInputElement, HtmlTextAreaElement, StorageEvent};
 use yew::prelude::*;
 
 #[derive(Clone)]
@@ -58,11 +59,17 @@ pub struct Props {
     pub stop_error: Option<StopError>,
     pub stop_generation: u64,
     pub onactivity: Callback<Vec<Activity>>,
+    /// The Console session whose chats the tabs show; the App remounts on a switch.
+    pub console_session: u64,
+    /// Console session names by id, for the chat list.
+    pub session_names: BTreeMap<u64, String>,
 }
 impl PartialEq for Props {
     fn eq(&self, other: &Self) -> bool {
         Rc::ptr_eq(&self.transport, &other.transport)
             && self.owner == other.owner
+            && self.console_session == other.console_session
+            && self.session_names == other.session_names
             && self.visible == other.visible
             && self.foreground == other.foreground
             && self.header == other.header
@@ -93,7 +100,7 @@ fn update_message(messages: &mut Vec<Message>, role: &str, id: &str, text: &str,
         });
     }
 }
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct Chat {
     id: String,
     title: String,
@@ -103,12 +110,56 @@ struct Chat {
     options: services_contracts::agent::Options,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     closed: Option<f64>,
+    /// The Console session the chat belongs to; chats saved before sessions belong to 0.
+    #[serde(default)]
+    console_session: u64,
+    /// When the chat last got a message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    updated: Option<f64>,
 }
-/// Status key of the closed-chats list; chat ids are UUIDs, so it cannot collide.
-const CLOSED: &str = "closed-chats";
+impl Chat {
+    /// Nothing to keep: blank chats are not saved and closing one discards it.
+    fn blank(&self) -> bool {
+        self.messages.is_empty() && self.draft.trim().is_empty()
+    }
+}
+/// A chat in the list: open in some Console session, or closed.
+struct Entry {
+    chat: Chat,
+    closed: bool,
+}
+impl Entry {
+    fn activity(&self) -> Option<f64> {
+        if self.closed {
+            self.chat.closed
+        } else {
+            self.chat.updated
+        }
+    }
+}
+/// Status key of the chat list; chat ids are UUIDs, so it cannot collide.
+const LIST: &str = "chat-list";
 const CLOSED_SESSIONS: &str = "servicesConsole.agentClosedSessions";
+const RECORD_PREFIX: &str = "servicesConsole.agentSession.";
 fn record_key(session: &str) -> String {
-    format!("servicesConsole.agentSession.{session}")
+    format!("{RECORD_PREFIX}{session}")
+}
+fn active_key(console_session: u64) -> String {
+    format!("servicesConsole.agentActive.{console_session}")
+}
+fn parse_chat(raw: &str) -> Result<Chat, String> {
+    serde_json::from_str(raw).map_err(|error| format!("Invalid Agent session data: {error}"))
+}
+fn record_keys(storage: &web_sys::Storage) -> Result<Vec<String>, String> {
+    let mut keys = Vec::new();
+    for index in 0..storage.length().map_err(error)? {
+        if let Some(key) = storage.key(index).map_err(error)?
+            && key.starts_with(RECORD_PREFIX)
+        {
+            keys.push(key);
+        }
+    }
+    Ok(keys)
 }
 fn local_storage() -> Result<web_sys::Storage, String> {
     window()
@@ -152,14 +203,17 @@ pub enum Msg {
     PageApprove(bool),
     PageGuide,
     Seen,
-    ToggleClosed,
+    ToggleList,
     Restore(String),
-    Delete(Vec<String>),
+    Delete(String),
     Deleted(f64, Reply),
+    /// Another window changed this localStorage key.
+    Storage(String),
 }
 pub struct AgentPanel {
     page: super::page_agent::Controller,
     workspace: String,
+    console_session: u64,
     chats: Vec<Chat>,
     saved: BTreeMap<String, String>,
     active: String,
@@ -172,8 +226,9 @@ pub struct AgentPanel {
     renaming: Option<(String, String)>,
     rename_input: NodeRef,
     focus_rename: bool,
-    closed: Vec<Chat>,
-    closed_open: bool,
+    list: Vec<Entry>,
+    list_open: bool,
+    storage_listener: Closure<dyn FnMut(StorageEvent)>,
 }
 pub(super) fn id() -> Result<String, String> {
     call(&get(window().as_ref(), "crypto"), "randomUUID", &[])
@@ -209,6 +264,34 @@ fn closed_sessions(storage: &web_sys::Storage) -> Result<BTreeSet<String>, Strin
         .transpose()
         .map(|sessions| sessions.unwrap_or_default())
 }
+/// Closes the open chats of a deleted Console session; they stay in the chat list.
+pub fn close_console_session(console_session: u64) -> Result<(), String> {
+    let storage = local_storage()?;
+    let mut closed = closed_sessions(&storage)?;
+    let now = js_sys::Date::now();
+    for key in record_keys(&storage)? {
+        let Some(raw) = storage.get_item(&key).map_err(error)? else {
+            continue;
+        };
+        let mut chat = parse_chat(&raw)?;
+        if chat.console_session != console_session || closed.contains(&chat.id) {
+            continue;
+        }
+        if chat.blank() {
+            storage.remove_item(&key).map_err(error)?;
+        } else {
+            chat.closed = Some(now);
+            storage
+                .set_item(
+                    &key,
+                    &serde_json::to_string(&chat).map_err(|error| error.to_string())?,
+                )
+                .map_err(error)?;
+            closed.insert(chat.id);
+        }
+    }
+    save_closed(&storage, &closed)
+}
 impl AgentPanel {
     fn notify_activity(&self, ctx: &Context<Self>) {
         let sessions: BTreeSet<_> = self
@@ -216,7 +299,7 @@ impl AgentPanel {
             .iter()
             .map(|chat| &chat.id)
             .chain(self.turns.keys())
-            .chain(self.statuses.keys().filter(|key| *key == CLOSED))
+            .chain(self.statuses.keys().filter(|key| *key == LIST))
             .collect();
         ctx.props().onactivity.emit(
             sessions
@@ -260,67 +343,126 @@ impl AgentPanel {
             )
     }
     fn shown_key(&self) -> &str {
-        if self.closed_open {
-            CLOSED
-        } else {
-            &self.active
-        }
+        if self.list_open { LIST } else { &self.active }
     }
-    /// Reloads closed chats, newest first; another window may have closed or deleted some.
-    fn load_closed(&mut self) -> Result<(), String> {
+    /// Reloads every chat of every Console session, newest activity first; this window's
+    /// open chats come from memory, others from storage, where other windows change them.
+    fn load_list(&mut self) -> Result<(), String> {
         let storage = local_storage()?;
-        let mut chats = Vec::new();
-        for id in closed_sessions(&storage)? {
+        let closed = closed_sessions(&storage)?;
+        let mut entries: Vec<Entry> = self
+            .chats
+            .iter()
+            .map(|chat| Entry {
+                chat: chat.clone(),
+                closed: false,
+            })
+            .collect();
+        for key in record_keys(&storage)? {
+            let id = &key[RECORD_PREFIX.len()..];
             if self.chats.iter().any(|chat| chat.id == id) {
                 continue;
             }
-            chats.push(match storage.get_item(&record_key(&id)).map_err(error)? {
-                Some(raw) => serde_json::from_str(&raw)
-                    .map_err(|error| format!("Invalid Agent session data: {error}"))?,
-                None => Chat {
-                    id,
-                    title: "Closed chat".into(),
-                    draft: String::new(),
-                    messages: Vec::new(),
-                    options: Default::default(),
-                    closed: None,
-                },
-            });
+            if let Some(raw) = storage.get_item(&key).map_err(error)? {
+                let mut chat = parse_chat(&raw)?;
+                let closed = closed.contains(&chat.id);
+                if !closed {
+                    chat.closed = None;
+                }
+                entries.push(Entry { chat, closed });
+            }
         }
-        chats.sort_by(|left, right| {
+        for id in closed {
+            if !entries.iter().any(|entry| entry.chat.id == id) {
+                entries.push(Entry {
+                    chat: Chat {
+                        id,
+                        title: "Closed chat".into(),
+                        draft: String::new(),
+                        messages: Vec::new(),
+                        options: Default::default(),
+                        closed: None,
+                        console_session: 0,
+                        updated: None,
+                    },
+                    closed: true,
+                });
+            }
+        }
+        entries.sort_by(|left, right| {
             right
-                .closed
+                .activity()
                 .unwrap_or(f64::NEG_INFINITY)
-                .total_cmp(&left.closed.unwrap_or(f64::NEG_INFINITY))
+                .total_cmp(&left.activity().unwrap_or(f64::NEG_INFINITY))
         });
-        self.closed = chats;
+        self.list = entries;
         Ok(())
     }
-    fn closed_status(&mut self, operation: &str, started: f64, reply: Reply) {
+    fn list_status(&mut self, operation: &str, started: f64, reply: Reply) {
         self.statuses.insert(
-            CLOSED.into(),
+            LIST.into(),
             OperationStatus::event(operation, started, Some(&reply)),
         );
     }
+    fn reload_list(&mut self) {
+        if let Err(error) = self.load_list() {
+            self.list_status(
+                "Chats",
+                js_sys::Date::now(),
+                Reply::Error(json!({"error":error})),
+            );
+        }
+    }
+    /// Reopens a closed chat in this Console session, whichever session it was closed in.
     fn restore(&mut self, session: &str) -> Result<(), String> {
-        let index = self
-            .closed
-            .iter()
-            .position(|chat| chat.id == session)
-            .ok_or("Chat is no longer closed")?;
-        let storage = local_storage()?;
-        let mut closed = closed_sessions(&storage)?;
-        closed.remove(session);
-        save_closed(&storage, &closed)?;
-        let mut chat = self.closed.remove(index);
-        chat.closed = None;
-        self.saved.remove(&chat.id);
-        self.active = chat.id.clone();
-        self.chats.push(chat);
-        self.closed_open = false;
+        if !self.chats.iter().any(|chat| chat.id == session) {
+            let entry = self
+                .list
+                .iter()
+                .find(|entry| entry.chat.id == session)
+                .ok_or("Chat is no longer listed")?;
+            let mut chat = entry.chat.clone();
+            chat.closed = None;
+            chat.console_session = self.console_session;
+            let encoded = serde_json::to_string(&chat).map_err(|error| error.to_string())?;
+            let storage = local_storage()?;
+            // Reopened first, so another window sees the moved record as open in this session.
+            let mut closed = closed_sessions(&storage)?;
+            if closed.remove(session) {
+                save_closed(&storage, &closed)?;
+            }
+            storage
+                .set_item(&record_key(session), &encoded)
+                .map_err(error)?;
+            self.saved.insert(chat.id.clone(), encoded);
+            self.chats.push(chat);
+        }
+        self.active = session.to_owned();
+        self.list_open = false;
         self.renaming = None;
         self.scroll = true;
         Ok(())
+    }
+    /// Closes a chat that is open in another Console session, so it can be deleted.
+    fn close_listed(&self, session: &str) -> Result<(), String> {
+        let storage = local_storage()?;
+        let mut closed = closed_sessions(&storage)?;
+        if closed.contains(session) {
+            return Ok(());
+        }
+        let Some(raw) = storage.get_item(&record_key(session)).map_err(error)? else {
+            return Ok(());
+        };
+        let mut chat = parse_chat(&raw)?;
+        chat.closed = Some(js_sys::Date::now());
+        storage
+            .set_item(
+                &record_key(session),
+                &serde_json::to_string(&chat).map_err(|error| error.to_string())?,
+            )
+            .map_err(error)?;
+        closed.insert(chat.id);
+        save_closed(&storage, &closed)
     }
     /// Forgets chats whose Copilot state the native host deleted; failures stay closed for retry.
     fn forget(&mut self, result: &Value) -> Result<(), String> {
@@ -336,24 +478,24 @@ impl AgentPanel {
     }
     fn persist(&mut self) {
         let result = (|| {
-            let storage = window()
-                .local_storage()
-                .map_err(error)?
-                .ok_or("Local storage is unavailable")?;
+            let storage = local_storage()?;
             for chat in &self.chats {
+                if chat.blank() {
+                    if self.saved.remove(&chat.id).is_some() {
+                        storage.remove_item(&record_key(&chat.id)).map_err(error)?;
+                    }
+                    continue;
+                }
                 let encoded = serde_json::to_string(chat).map_err(|error| error.to_string())?;
                 if self.saved.get(&chat.id) != Some(&encoded) {
                     storage
-                        .set_item(
-                            &format!("servicesConsole.agentSession.{}", chat.id),
-                            &encoded,
-                        )
+                        .set_item(&record_key(&chat.id), &encoded)
                         .map_err(error)?;
                     self.saved.insert(chat.id.clone(), encoded);
                 }
             }
             storage
-                .set_item("servicesConsole.agentActive", &self.active)
+                .set_item(&active_key(self.console_session), &self.active)
                 .map_err(error)
         })();
         if let Err(error) = result {
@@ -379,28 +521,43 @@ impl AgentPanel {
                     messages: Vec::new(),
                     options,
                     closed: None,
+                    console_session: self.console_session,
+                    updated: None,
                 });
             }
             Err(error) => self.error = Some(error),
         }
     }
     fn close_chat(&mut self, ctx: &Context<Self>, session: &str) -> Result<(), String> {
-        let index = self
+        let chat = self
             .chats
             .iter()
-            .position(|chat| chat.id == session)
+            .find(|chat| chat.id == session)
             .ok_or("Chat is no longer open")?;
         let storage = local_storage()?;
-        let chat = &mut self.chats[index];
-        chat.closed = Some(js_sys::Date::now());
-        let record = serde_json::to_string(chat).map_err(|error| error.to_string());
-        chat.closed = None;
-        storage
-            .set_item(&record_key(session), &record?)
-            .map_err(error)?;
-        let mut closed = closed_sessions(&storage)?;
-        closed.insert(session.to_owned());
-        save_closed(&storage, &closed)?;
+        if chat.blank() {
+            storage.remove_item(&record_key(session)).map_err(error)?;
+        } else {
+            let mut record = chat.clone();
+            record.closed = Some(js_sys::Date::now());
+            storage
+                .set_item(
+                    &record_key(session),
+                    &serde_json::to_string(&record).map_err(|error| error.to_string())?,
+                )
+                .map_err(error)?;
+            let mut closed = closed_sessions(&storage)?;
+            closed.insert(session.to_owned());
+            save_closed(&storage, &closed)?;
+        }
+        self.drop_chat(ctx, session);
+        Ok(())
+    }
+    /// Removes an open chat from the tabs, stopping its turn.
+    fn drop_chat(&mut self, ctx: &Context<Self>, session: &str) {
+        let Some(index) = self.chats.iter().position(|chat| chat.id == session) else {
+            return;
+        };
         if let Some(turn) = self.turns.get_mut(session) {
             turn.stopping = true;
             self.page.revoke(turn.stream);
@@ -423,11 +580,57 @@ impl AgentPanel {
             }
             self.scroll = true;
         }
+    }
+    /// Applies another window's change of a chat record or of the closed set: a chat
+    /// closed, deleted or moved to another Console session leaves the tabs; one opened
+    /// or restored into this session joins them. Chats running here keep their state.
+    fn sync(&mut self, ctx: &Context<Self>, key: &str) -> Result<(), String> {
+        let storage = local_storage()?;
+        let closed = closed_sessions(&storage)?;
+        if key == CLOSED_SESSIONS {
+            let gone: Vec<String> = self
+                .chats
+                .iter()
+                .filter(|chat| closed.contains(&chat.id))
+                .map(|chat| chat.id.clone())
+                .collect();
+            for id in gone {
+                self.drop_chat(ctx, &id);
+            }
+            return Ok(());
+        }
+        let Some(id) = key.strip_prefix(RECORD_PREFIX) else {
+            return Ok(());
+        };
+        let record = storage
+            .get_item(key)
+            .map_err(error)?
+            .map(|raw| parse_chat(&raw))
+            .transpose()?;
+        match record {
+            Some(mut chat)
+                if !closed.contains(id) && chat.console_session == self.console_session =>
+            {
+                if self.turns.contains_key(id) {
+                    return Ok(());
+                }
+                chat.closed = None;
+                let encoded = serde_json::to_string(&chat).map_err(|error| error.to_string())?;
+                if let Some(held) = self.chats.iter_mut().find(|held| held.id == id) {
+                    *held = chat;
+                } else {
+                    self.chats.push(chat);
+                }
+                self.saved.insert(id.to_owned(), encoded);
+            }
+            _ => self.drop_chat(ctx, id),
+        }
         Ok(())
     }
     fn message(&mut self, session: &str, role: &str, message_id: &str, text: &str, delta: bool) {
         if let Some(chat) = self.chats.iter_mut().find(|chat| chat.id == session) {
             update_message(&mut chat.messages, role, message_id, text, delta);
+            chat.updated = Some(js_sys::Date::now());
         }
         self.scroll = true;
     }
@@ -495,10 +698,20 @@ impl AgentPanel {
 impl Component for AgentPanel {
     type Message = Msg;
     type Properties = Props;
-    fn create(_ctx: &Context<Self>) -> Self {
+    fn create(ctx: &Context<Self>) -> Self {
+        let link = ctx.link().clone();
+        let storage_listener =
+            Closure::<dyn FnMut(StorageEvent)>::new(move |event: StorageEvent| {
+                if let Some(key) = event.key()
+                    && (key.starts_with(RECORD_PREFIX) || key == CLOSED_SESSIONS)
+                {
+                    link.send_message(Msg::Storage(key));
+                }
+            });
         let mut this = Self {
             page: super::page_agent::Controller::default(),
             workspace: String::new(),
+            console_session: ctx.props().console_session,
             chats: Vec::new(),
             saved: BTreeMap::new(),
             active: String::new(),
@@ -511,28 +724,31 @@ impl Component for AgentPanel {
             renaming: None,
             rename_input: NodeRef::default(),
             focus_rename: false,
-            closed: Vec::new(),
-            closed_open: false,
+            list: Vec::new(),
+            list_open: false,
+            storage_listener,
         };
+        if let Err(failure) = window().add_event_listener_with_callback(
+            "storage",
+            this.storage_listener.as_ref().unchecked_ref(),
+        ) {
+            this.error = Some(format!(
+                "Agent chats will not follow other windows: {}",
+                error(failure)
+            ));
+        }
         match workspace_id() {
             Ok(workspace) => {
                 this.workspace = workspace;
                 let result = (|| {
-                    let storage = window()
-                        .local_storage()
-                        .map_err(error)?
-                        .ok_or("Local storage is unavailable")?;
+                    let storage = local_storage()?;
                     let closed = closed_sessions(&storage)?;
-                    for index in 0..storage.length().map_err(error)? {
-                        let Some(key) = storage.key(index).map_err(error)? else {
-                            continue;
-                        };
-                        if key.starts_with("servicesConsole.agentSession.")
-                            && let Some(raw) = storage.get_item(&key).map_err(error)?
-                        {
-                            let mut chat: Chat = serde_json::from_str(&raw)
-                                .map_err(|error| format!("Invalid Agent session data: {error}"))?;
-                            if closed.contains(&chat.id) {
+                    for key in record_keys(&storage)? {
+                        if let Some(raw) = storage.get_item(&key).map_err(error)? {
+                            let mut chat = parse_chat(&raw)?;
+                            if closed.contains(&chat.id)
+                                || chat.console_session != this.console_session
+                            {
                                 continue;
                             }
                             // A close that failed to update the closed set leaves its time behind.
@@ -542,7 +758,7 @@ impl Component for AgentPanel {
                         }
                     }
                     this.active = storage
-                        .get_item("servicesConsole.agentActive")
+                        .get_item(&active_key(this.console_session))
                         .map_err(error)?
                         .unwrap_or_default();
                     Ok::<(), String>(())
@@ -552,9 +768,6 @@ impl Component for AgentPanel {
                 }
                 if this.chats.is_empty() {
                     this.new_chat();
-                }
-                if let Err(error) = this.load_closed() {
-                    this.error = Some(error);
                 }
                 if !this.chats.iter().any(|chat| chat.id == this.active)
                     && let Some(chat) = this.chats.first()
@@ -605,107 +818,94 @@ impl Component for AgentPanel {
     fn update(&mut self, ctx: &Context<Self>, msg: Msg) -> bool {
         match msg {
             Msg::New => {
-                self.closed_open = false;
+                self.list_open = false;
                 self.new_chat();
             }
             Msg::Select(id) => {
-                self.closed_open = false;
+                self.list_open = false;
                 self.active = id;
                 self.renaming = None;
                 self.scroll = true;
             }
             Msg::Close(session) => {
-                if let Err(error) = self.close_chat(ctx, &session) {
+                let closing = if self.chats.iter().any(|chat| chat.id == session) {
+                    self.close_chat(ctx, &session)
+                } else {
+                    self.close_listed(&session)
+                };
+                if let Err(error) = closing {
                     self.error = Some(format!("Could not close chat: {error}"));
-                } else if let Err(error) = self.load_closed() {
-                    self.closed_status(
-                        "Closed chats",
-                        js_sys::Date::now(),
-                        Reply::Error(json!({"error":error})),
-                    );
+                }
+                if self.list_open {
+                    self.reload_list();
                 }
             }
-            Msg::ToggleClosed => {
-                self.closed_open = !self.closed_open;
+            Msg::ToggleList => {
+                self.list_open = !self.list_open;
                 self.renaming = None;
-                self.scroll = !self.closed_open;
-                if self.closed_open
-                    && let Err(error) = self.load_closed()
-                {
-                    self.closed_status(
-                        "Closed chats",
-                        js_sys::Date::now(),
-                        Reply::Error(json!({"error":error})),
-                    );
+                self.scroll = !self.list_open;
+                if self.list_open {
+                    self.reload_list();
                 }
             }
             Msg::Restore(session) => {
                 let started = js_sys::Date::now();
                 if let Err(error) = self.restore(&session) {
-                    self.closed_status(
+                    self.list_status(
                         "Restore chat",
                         started,
                         Reply::Error(json!({"error":error,"sessionId":session})),
                     );
                 }
             }
-            Msg::Delete(sessions) => {
-                if sessions.is_empty()
-                    || self
-                        .statuses
-                        .get(CLOSED)
-                        .is_some_and(|status| status.running)
-                {
+            Msg::Delete(session) => {
+                if self.statuses.get(LIST).is_some_and(|status| status.running) {
                     return false;
                 }
-                let question = if sessions.len() == 1 {
-                    "Delete this closed chat? Its messages and Copilot history are removed from this computer.".to_owned()
-                } else {
-                    format!(
-                        "Delete {} closed chats? Their messages and Copilot history are removed from this computer.",
-                        sessions.len()
-                    )
-                };
                 let started = js_sys::Date::now();
-                match window().confirm_with_message(&question) {
-                    Ok(true) => {}
-                    Ok(false) => return false,
-                    Err(failure) => {
-                        self.closed_status(
-                            "Delete closed chats",
-                            started,
-                            Reply::Error(json!({"error":error(failure)})),
+                // Deleting closes the chat first, so a failed delete leaves it closed for a retry.
+                let closing = if let Some(chat) = self.chats.iter().find(|chat| chat.id == session)
+                {
+                    let blank = chat.blank();
+                    self.close_chat(ctx, &session).map(|()| !blank)
+                } else {
+                    self.close_listed(&session).map(|()| true)
+                };
+                match closing {
+                    Err(error) => self.list_status(
+                        "Delete chat",
+                        started,
+                        Reply::Error(json!({"error":error,"sessionId":session})),
+                    ),
+                    // A blank chat has no Copilot history; closing discarded it.
+                    Ok(false) => {}
+                    Ok(true) => {
+                        let mut status = OperationStatus::event("Delete chat", started, None);
+                        status.debug["sessionId"] = json!(session);
+                        self.statuses.insert(LIST.into(), status);
+                        ctx.props().transport.request(
+                            json!({"service":"agent_sessions","op":"delete","sessionIds":[session]}),
+                            false,
+                            ctx.link()
+                                .callback(move |reply| Msg::Deleted(started, reply)),
                         );
-                        self.notify_activity(ctx);
-                        return true;
                     }
                 }
-                let mut status = OperationStatus::event("Delete closed chats", started, None);
-                status.debug["sessionIds"] = json!(sessions);
-                self.statuses.insert(CLOSED.into(), status);
-                ctx.props().transport.request(
-                    json!({"service":"agent_sessions","op":"delete","sessionIds":sessions}),
-                    false,
-                    ctx.link()
-                        .callback(move |reply| Msg::Deleted(started, reply)),
-                );
+                self.reload_list();
             }
             Msg::Deleted(started, reply) => {
                 let reply = match reply {
                     Reply::Result(mut result) => {
                         if let Err(error) = self.forget(&result) {
                             result["error"] = json!(format!(
-                                "Copilot history was deleted, but the chats could not be removed from this browser: {error}"
+                                "Copilot history was deleted, but the chat could not be removed from this browser: {error}"
                             ));
                         } else if let Some((id, failure)) = result["failed"]
                             .as_object()
                             .and_then(|failed| failed.iter().next())
                         {
                             result["error"] = json!(format!(
-                                "{} chat(s) were not deleted; {id}: {}",
-                                result["failed"]
-                                    .as_object()
-                                    .map_or(0, |failed| failed.len()),
+                                "The chat was not deleted; {id}: {}",
                                 failure.as_str().unwrap_or("failed")
                             ));
                         }
@@ -713,13 +913,17 @@ impl Component for AgentPanel {
                     }
                     reply => reply,
                 };
-                self.closed_status("Delete closed chats", started, reply);
-                if let Err(error) = self.load_closed() {
-                    self.closed_status(
-                        "Closed chats",
-                        js_sys::Date::now(),
-                        Reply::Error(json!({"error":error})),
-                    );
+                self.list_status("Delete chat", started, reply);
+                self.reload_list();
+            }
+            Msg::Storage(key) => {
+                if let Err(error) = self.sync(ctx, &key) {
+                    self.error = Some(format!(
+                        "Could not follow Agent chats of another window: {error}"
+                    ));
+                }
+                if self.list_open {
+                    self.reload_list();
                 }
             }
             Msg::Rename(session) => {
@@ -781,6 +985,7 @@ impl Component for AgentPanel {
                     role: "user".into(),
                     text: prompt.clone(),
                 });
+                chat.updated = Some(js_sys::Date::now());
                 chat.draft.clear();
                 let session = chat.id.clone();
                 let target = session.clone();
@@ -1051,6 +1256,12 @@ impl Component for AgentPanel {
         }
     }
     fn destroy(&mut self, ctx: &Context<Self>) {
+        if let Err(error) = window().remove_event_listener_with_callback(
+            "storage",
+            self.storage_listener.as_ref().unchecked_ref(),
+        ) {
+            web_sys::console::error_1(&error);
+        }
         self.page.shutdown();
         for (session, turn) in &self.turns {
             if let Err(error) = ctx.props().transport.stop(turn.stream) {
@@ -1062,11 +1273,19 @@ impl Component for AgentPanel {
     fn view(&self, ctx: &Context<Self>) -> Html {
         let heading = if ctx.props().visible {
             let tabs = html! {<div class="console-panel-tabs" data-testid="agent-sessions" role="tablist" aria-label="Agent sessions">
+                <button type="button" class={classes!("tab-button","agent-list-toggle",self.list_open.then_some("active"))}
+                    title="All chats: restore or delete" aria-label="All chats" data-testid="agent-chat-list-toggle" aria-pressed={self.list_open.to_string()}
+                    onclick={ctx.link().callback(|_|Msg::ToggleList)}>
+                    <span class="tab-label">{"#"}</span>
+                    if self.statuses.contains_key(LIST) {
+                        {indicator(self.chat_notification(ctx,LIST),format!("All chats · {}",self.chat_indicator(ctx,LIST).name()))}
+                    }
+                </button>
                 {for self.chats.iter().map(|chat|{
                     let id=chat.id.clone();
                     let rename=id.clone(); let close=id.clone(); let close_key=id.clone();
                     let renaming=self.renaming.as_ref().is_some_and(|(id,_)|id==&chat.id);
-                    html!{<button type="button" role="tab" aria-selected={(!self.closed_open && chat.id==self.active).to_string()} key={chat.id.clone()} data-session-id={chat.id.clone()} class={classes!("tab-button",(!self.closed_open && chat.id==self.active).then_some("active"))}
+                    html!{<button type="button" role="tab" aria-selected={(!self.list_open && chat.id==self.active).to_string()} key={chat.id.clone()} data-session-id={chat.id.clone()} class={classes!("tab-button",(!self.list_open && chat.id==self.active).then_some("active"))}
                         onclick={ctx.link().callback(move|_|Msg::Select(id.clone()))}
                         ondblclick={ctx.link().callback(move|_|Msg::Rename(rename.clone()))}>
                         if renaming {
@@ -1100,16 +1319,6 @@ impl Component for AgentPanel {
                 })}
                 <button class="tab-button" title="New chat session" data-testid="agent-new-session"
                     onclick={ctx.link().callback(|_|Msg::New)}>{"+"}</button>
-                if !self.closed.is_empty() || self.closed_open || self.statuses.contains_key(CLOSED) {
-                    <button type="button" class={classes!("tab-button","agent-closed-toggle",self.closed_open.then_some("active"))}
-                        title="Closed chats: restore or delete" data-testid="agent-closed-chats" aria-pressed={self.closed_open.to_string()}
-                        onclick={ctx.link().callback(|_|Msg::ToggleClosed)}>
-                        <span class="tab-label">{format!("Closed ({})",self.closed.len())}</span>
-                        if self.statuses.contains_key(CLOSED) {
-                            {indicator(self.chat_notification(ctx,CLOSED),format!("Closed chats · {}",self.chat_indicator(ctx,CLOSED).name()))}
-                        }
-                    </button>
-                }
             </div>};
             ctx.props()
                 .header
@@ -1139,15 +1348,16 @@ impl Component for AgentPanel {
                 .is_some_and(|approval| approval.session == self.active);
         let footer = if !ctx.props().visible {
             Html::default()
-        } else if self.closed_open {
-            let status = self.statuses.get(CLOSED).cloned().unwrap_or_default();
+        } else if self.list_open {
+            let status = self.statuses.get(LIST).cloned().unwrap_or_default();
             let mut debug = status.debug.clone();
-            debug["closedChats"] = json!(self.closed.len());
+            debug["chats"] = json!(self.list.len());
+            debug["closedChats"] = json!(self.list.iter().filter(|entry| entry.closed).count());
             ctx.props().footer.cast::<web_sys::Element>().map(|host| yew::create_portal(html! {
-                <ConsoleStatus key={CLOSED} text={if status.text.is_empty() {String::new()} else {format!("Agent · Closed chats · {}",status.text)}}
+                <ConsoleStatus key={LIST} text={if status.text.is_empty() {String::new()} else {format!("Agent · Chats · {}",status.text)}}
                     {debug}
                     running={status.running} started={(status.started>0.0).then_some(status.started)}
-                    state={Some(self.chat_indicator(ctx,CLOSED))} testid="agent-status" stop_testid="agent-stop"/>
+                    state={Some(self.chat_indicator(ctx,LIST))} testid="agent-status" stop_testid="agent-stop"/>
             },host)).unwrap_or_default()
         } else {
             ctx.props().footer.cast::<web_sys::Element>().map(|host| yew::create_portal(html! {
@@ -1158,39 +1368,53 @@ impl Component for AgentPanel {
                     testid="agent-status" stop_testid="agent-stop" onstop={ctx.link().callback(|_|Msg::Stop)}/>
             },host)).unwrap_or_default()
         };
-        if self.closed_open {
-            let busy = self
-                .statuses
-                .get(CLOSED)
-                .is_some_and(|status| status.running);
-            let all: Vec<String> = self.closed.iter().map(|chat| chat.id.clone()).collect();
+        if self.list_open {
+            let busy = self.statuses.get(LIST).is_some_and(|status| status.running);
+            let date = |time: f64| {
+                js_sys::Date::new(&time.into())
+                    .to_locale_string("default", &wasm_bindgen::JsValue::UNDEFINED)
+                    .as_string()
+                    .unwrap_or_default()
+            };
             return html! {<>
                 {heading}
                 {footer}
                 <div class="console-agent" data-testid="console-agent" hidden={!ctx.props().visible}>
-                    <div class="agent-closed" data-testid="agent-closed-list" role="list" aria-label="Closed chats">
-                        if self.closed.is_empty() {
-                            <p class="agent-intro">{"No closed chats."}</p>
-                        } else {
-                            <div class="agent-closed-actions">
-                                <span>{"Restore a chat to continue it, or delete it to remove its messages and Copilot history from this computer."}</span>
-                                <button type="button" data-testid="agent-closed-delete-all" disabled={busy}
-                                    onclick={ctx.link().callback(move|_|Msg::Delete(all.clone()))}>{"Delete all"}</button>
-                            </div>
-                        }
-                        {for self.closed.iter().map(|chat|{
-                            let restore=chat.id.clone(); let delete=chat.id.clone();
-                            let messages=chat.messages.iter().filter(|message|!message.text.trim().is_empty()).count();
-                            let closed=chat.closed.map(|time|format!(" · closed {}",js_sys::Date::new(&time.into()).to_locale_string("default",&wasm_bindgen::JsValue::UNDEFINED))).unwrap_or_default();
-                            html!{<div class="agent-closed-item" role="listitem" key={chat.id.clone()} data-session-id={chat.id.clone()}>
-                                <span class="agent-closed-title">{&chat.title}</span>
-                                <span class="agent-closed-meta">{format!("{messages} message{}{closed}",if messages==1 {""} else {"s"})}</span>
-                                <button type="button" data-testid="agent-closed-restore" disabled={busy}
-                                    onclick={ctx.link().callback(move|_|Msg::Restore(restore.clone()))}>{"Restore"}</button>
-                                <button type="button" data-testid="agent-closed-delete" disabled={busy}
-                                    onclick={ctx.link().callback(move|_|Msg::Delete(vec![delete.clone()]))}>{"Delete"}</button>
-                            </div>}
-                        })}
+                    <div class="agent-chats">
+                        <table data-testid="agent-chat-list" aria-label="All chats">
+                            <thead><tr><th>{"Chat"}</th><th>{"Session"}</th><th>{"Messages"}</th><th>{"Last activity"}</th><th></th></tr></thead>
+                            <tbody>
+                            {for self.list.iter().map(|entry|{
+                                let chat=&entry.chat;
+                                let restore=chat.id.clone(); let close=chat.id.clone(); let delete=chat.id.clone();
+                                let here=!entry.closed && chat.console_session==self.console_session;
+                                let messages=chat.messages.iter().filter(|message|!message.text.trim().is_empty()).count();
+                                let session=ctx.props().session_names.get(&chat.console_session).cloned().unwrap_or_else(||"Deleted session".into());
+                                let state=if entry.closed {"Closed"} else {"Open"};
+                                let activity=entry.activity().map(|time|format!("{state} · {}",date(time))).unwrap_or_else(||state.into());
+                                html!{<tr key={chat.id.clone()} data-session-id={chat.id.clone()} data-state={state.to_lowercase()} class={classes!(here.then_some("current"))}>
+                                    <td class="agent-chats-title" title={chat.title.clone()}>{&chat.title}</td>
+                                    <td title={format!("Console session {}",chat.console_session)}>{session}</td>
+                                    <td>{messages}</td>
+                                    <td>{activity}</td>
+                                    <td class="agent-chats-actions">
+                                        if entry.closed {
+                                            <button type="button" data-testid="agent-chat-restore" disabled={busy}
+                                                title="Reopen this chat in the current session"
+                                                onclick={ctx.link().callback(move|_|Msg::Restore(restore.clone()))}>{"Restore"}</button>
+                                        } else {
+                                            <button type="button" data-testid="agent-chat-close" disabled={busy}
+                                                title="Close this chat; its history is kept"
+                                                onclick={ctx.link().callback(move|_|Msg::Close(close.clone()))}>{"Close"}</button>
+                                        }
+                                        <button type="button" data-testid="agent-chat-delete" disabled={busy}
+                                            title="Delete its messages and Copilot history from this computer"
+                                            onclick={ctx.link().callback(move|_|Msg::Delete(delete.clone()))}>{"Delete"}</button>
+                                    </td>
+                                </tr>}
+                            })}
+                            </tbody>
+                        </table>
                     </div>
                     if let Some(error)=&self.error{<div class="agent-error" role="alert">{error}</div>}
                 </div>

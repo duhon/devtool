@@ -1,5 +1,21 @@
 # Release notes
 
+## 3.2.2
+
+- Agent chats belong to Console sessions: each session shows its own chats. The `#` tab,
+  now on the left, lists the chats of every session with the session, the number of
+  messages and the last activity, newest first. An open chat has Close, a closed one has
+  Restore, which brings it into the current session, and Delete removes a chat at once,
+  without asking. Deleting a Console session closes its chats. Chats from before this
+  version are in the Temporary session.
+- Settings has tabs: Modules, Sources and Agent, each with its own status light. The tab
+  you chose is remembered.
+- Hints: typing `#` at the start of a line offers the service's sections that the hints
+  don't have yet.
+- Settings → Modules keeps its columns in place when a long description is opened.
+- The Export, Import and Hints buttons are named without trailing dots.
+- The README shows how to open the application standalone in its own tab.
+
 ## 3.2.1
 
 - Settings → Modules is one table with a row for each module and source: its name, source,

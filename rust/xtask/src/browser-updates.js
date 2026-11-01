@@ -1,5 +1,5 @@
 (async () => {
-  const {assert, wait, testid, click, openConsole, nativeHold, addFolderSource} = testDriver;
+  const {assert, wait, testid, click, openConsole, nativeHold, settingsTab, addFolderSource} = testDriver;
   // A fresh panel: wait for the restored Console session before using its toolbar.
   await openConsole();
   const status = () => testid('settings-update-status');
@@ -20,9 +20,9 @@
     for (let next = row?.nextElementSibling; next && next.dataset.testid !== 'settings-module'; next = next.nextElementSibling)
       if (next.dataset.testid === `settings-module-${name}`) return next;
   };
-  if (testid('console-settings-toggle').getAttribute('aria-pressed') !== 'true')
-    await click(testid('console-settings-toggle'));
-  await wait(() => testid('agent-model-input') && !testid('agent-model-input').disabled && app(''),
+  await settingsTab('modules');
+  const model = () => document.querySelector('[data-testid="agent-model-input"]');
+  await wait(() => model() && !model().disabled && app(''),
     () => `Settings did not load: ${text()}`);
   await showDebug();
   assert(status().classList.contains('console-status')
@@ -61,7 +61,7 @@
     await click(testid('settings-modules-check'));
     await wait(() => status().classList.contains('is-running') && status().querySelector('.console-status-spinner'),
       'A check must show the running spinner');
-    assert(testid('settings-modules-check').disabled && light('settings-title') === 'running'
+    assert(testid('settings-modules-check').disabled && light('settings-tab-modules') === 'running'
       && debug().textContent.includes('Check sources'),
       () => `Checking must disable repeated clicks, animate the light and show in Debug: ${debug().textContent}`);
   } finally {
@@ -114,7 +114,7 @@
     await click(install());
     await wait(() => updateFixture.deliver, 'The install request must be sent');
     assert(testid('update-progress').textContent.includes('Keep this window open')
-      && status().classList.contains('is-running') && light('settings-title') === 'running'
+      && status().classList.contains('is-running') && light('settings-tab-modules') === 'running'
       && debug().textContent.includes('installing'),
       () => `An install must show its progress: ${text()}; ${debug().textContent}`);
     updateFixture.deliver();

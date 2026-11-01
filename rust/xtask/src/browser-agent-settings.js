@@ -13,8 +13,7 @@
     element.dispatchEvent(new InputEvent('input', {bubbles:true}));
   };
   const settings = async () => {
-    if (testid('console-settings-toggle').getAttribute('aria-pressed') !== 'true')
-      await click(testid('console-settings-toggle'));
+    await testDriver.settingsTab('agent');
     await wait(() => testid('agent-model-input') && !testid('agent-model-input').disabled,
       () => `Model catalog did not load: ${document.querySelector('[data-testid="settings-update-status"]')?.textContent}`);
   };
@@ -117,6 +116,7 @@
     await settings();
     assert(!document.querySelector('[data-testid="source"]'), 'The scenario starts without sources');
     await testDriver.addFolderSource('Team', fixtureSource);
+    await testDriver.settingsTab('sources');
     const team = () => document.querySelector('[data-testid="source"][data-source="team"]');
     await wait(() => team()?.querySelector('[data-testid="source-apply"]'),
       () => `The added source must be checked and offer its settings: ${team()?.textContent}; ${testid('settings-update-status').textContent}`);
@@ -153,6 +153,7 @@
     await click(testid('console-dictionary-toggle'));
 
     await settings();
+    await testDriver.settingsTab('sources');
     await click(team().querySelector('[data-testid="source-remove"]'));
     await click(team().querySelector('[data-testid="source-remove-confirm"]'));
     await wait(() => !team(), 'Removing the source must remove its row');

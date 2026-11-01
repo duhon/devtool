@@ -219,14 +219,25 @@ processing may continue after client cancellation; the stopped result says so.
 Agent tabs use the shared Console tab styling. Double-click a tab to rename
 inline (Enter/blur saves, Escape cancels); there is no separate name field.
 Each tab has a close control. Closing stops its turn and revokes pending
-approvals, but keeps the per-chat history and SDK session. Closed IDs persist
-under `servicesConsole.agentClosedSessions` and are excluded when a new panel
-loads. Closing the last tab creates a fresh empty chat. The **Closed (N)** tab
-lists closed chats, newest first: Restore reopens one with its history and SDK
-session; Delete and Delete all (confirmed) ask the native `agent_sessions`
-service to remove `<data>/.agent/sessions/<id>/`, then drop the browser records.
-Chats running in another connection, or a request with an invalid ID, are not
-deleted and stay listed; errors appear in the list's status.
+approvals, but keeps the per-chat history and SDK session. Chats belong to a
+Console session: each record `servicesConsole.agentSession.<id>` stores its
+`console_session`, and the panel shows only open chats of the current session,
+with the selected chat in `servicesConsole.agentActive.<session>`. Session 0
+chats are shared by session 0 of every window. Closed IDs persist under
+`servicesConsole.agentClosedSessions`; deleting a Console session closes its
+chats, Create from does not copy them, and legacy records belong to session 0.
+Empty chats are never saved. Closing the last tab creates a fresh empty chat.
+Other windows follow chat changes through `storage` events.
+
+The **#** tab, left of the chats, lists every open and closed chat of all
+sessions (name, session, message count, last activity), newest first; rows of
+the current session are highlighted. Close closes an open chat, including one
+open in another session. Restore reopens a closed chat with its history and SDK
+session in the current session, moving it there. Delete (no confirmation)
+asks the native `agent_sessions` service to remove
+`<data>/.agent/sessions/<id>/`, then drops the browser records. Chats running
+in another connection, or a request with an invalid ID, are not deleted and
+stay listed; errors appear in the list's status.
 
 Enter sends a chat message; Shift+Enter inserts a newline. There is no Send
 button. Empty drafts and sends during an active turn are ignored. Assistant
@@ -234,7 +245,13 @@ messages render Markdown paragraphs, emphasis, lists, code blocks and tables as
 Yew nodes. Raw HTML stays literal, unsafe link schemes are inert, and images
 never load external resources. User messages remain literal text.
 
-Settings loads the Copilot model catalog through the native SDK once per DevTools
+Settings groups its controls into Modules, Sources and Agent tabs; without the
+native host only Agent is shown. The selected tab is remembered locally
+(`servicesConsole.settingsTab`). Every tab has its own status light (Modules also
+covers application updates) while the toolbar light shows the newest status.
+Hidden tabs stay mounted, so checks and drafts survive switching.
+
+Settings → Agent loads the Copilot model catalog through the native SDK once per DevTools
 window; reopen DevTools to pick up catalog changes. The model input
 filters suggestions by name, ID and published capability category; Reasoning
 lists only that model's supported levels. Without saved preferences, new chats

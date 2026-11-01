@@ -307,8 +307,19 @@
     await key('Enter');
     assert(editor.lineCount() === lines + 1, `${expected}: Enter must insert a line`);
   };
-  // Adds a folder source in the open Settings panel.
+  // Opens Settings on one of its tabs: modules, sources or agent.
+  const settingsTab = async name => {
+    const toggle = testid('console-settings-toggle');
+    if (toggle.getAttribute('aria-pressed') !== 'true') await click(toggle);
+    const tab = await wait(() => document.querySelector(`[data-testid="settings-tab-${name}"]`), `Settings tab ${name}`);
+    if (tab.getAttribute('aria-selected') !== 'true') await click(tab);
+    await wait(() => document.querySelector(`[data-testid="settings-group-${name}"]`)?.hidden === false,
+      `Settings tab ${name} must show its group`);
+  };
+  // Adds a folder source in the open Settings panel, then returns to the tab shown before.
   const addFolderSource = async (name, path) => {
+    const previous = document.querySelector('[data-testid="settings-tabs"] [aria-selected="true"]')?.dataset.testid.slice('settings-tab-'.length);
+    await settingsTab('sources');
     const fill = (id, value) => {
       const field = testid(id);
       field.value = value;
@@ -323,10 +334,11 @@
       'A folder source asks only for its folder');
     fill('source-add-path', path);
     await click(testid('source-add-save'));
+    if (previous && previous !== 'sources') await settingsTab(previous);
   };
   globalThis.testDriver = { assert, sleep, seen, wait, waitFor, during, holds, settle, stable, frames, visible, find, testid, cm, key, type, move, input,
     click, doubleClick, button, openConsole, activateSession, sessionsIdle, setSource, commitRestUrl, candidates, suggest, pick, pickThenEnter,
-    assertNativeScrollbars, nativeTrackPaint, sessionLibrary, nativeHold, addFolderSource, clearSessions: () => sessionRecord('delete') };
+    assertNativeScrollbars, nativeTrackPaint, sessionLibrary, nativeHold, settingsTab, addFolderSource, clearSessions: () => sessionRecord('delete') };
   globalThis.testNativeHealth = () => new Promise(resolve => {
     const port = chrome.runtime.connectNative('com.chrome_extentions.host');
     const timer = setTimeout(() => { port.disconnect(); resolve({ ok: false, error: 'timeout' }); }, 10000);

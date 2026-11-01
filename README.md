@@ -17,8 +17,13 @@ Install the latest release:
 curl -fsSL https://github.com/duhon/devtool/releases/latest/download/install.sh | bash
 ```
 
-Then follow the installer's instructions to add the extension to Chrome once,
-and open DevTools → **Services**.
+Then follow the installer's instructions to add the extension to Chrome once.
+The application opens in two ways: inside Chrome DevTools → **Services**, or
+standalone in its own tab:
+
+```text
+chrome-extension://ckicpgdfkgcmgnclbfbcbkillcpaffnb/panel.html
+```
 
 The installer installs the application only. Add the services you need in
 **Settings** → **Modules**: the standard ones come from this repository's

@@ -1,5 +1,5 @@
 (async()=>{
-  const {assert,wait,click,testid,cm,setSource,key,type,input,openConsole,activateSession,sessionLibrary}=testDriver;
+  const {assert,wait,click,find,testid,cm,setSource,key,type,input,openConsole,activateSession,sessionLibrary}=testDriver;
   await openConsole();
   const initialSession=Number(testid('console-session-name').dataset.sessionId);
   await click(testid('console-service-rest'));
@@ -230,11 +230,21 @@
     && settingsToggle.querySelector('.console-state-light').dataset.state==='ready'
     && [...document.querySelectorAll('.console-toolbar [aria-pressed="true"]')].length===1,
     ()=>`Settings must exclusively activate its right-hand tool without claiming an available update: light=${settingsToggle.querySelector('.console-state-light')?.dataset.state}, pressed=${[...document.querySelectorAll('.console-toolbar [aria-pressed="true"]')].map(button=>button.dataset.testid)}`);
-  assert(testid('settings-title').classList.contains('tab-button')
-    && getComputedStyle(testid('settings-title')).backgroundColor
+  const activeSettingsTab=()=>find('[data-testid="settings-tabs"] > .tab-button.active');
+  assert(getComputedStyle(activeSettingsTab()).backgroundColor
       ===getComputedStyle(document.querySelector('.console-tab-strip > .tab-button.active')).backgroundColor
     && document.querySelector('.console-top-bar').getBoundingClientRect().height===beforeSettingsHeader,
-    'Settings must use the shared active heading without increasing the top bar height');
+    'Settings tabs must use the shared active heading without increasing the top bar height');
+  const settingsGroup=name=>document.querySelector(`[data-testid="settings-group-${name}"]`);
+  const settingsTabs=()=>[...testid('settings-tabs').querySelectorAll('[role="tab"]')].map(tab=>tab.dataset.testid.slice('settings-tab-'.length));
+  const native=!!globalThis.chrome?.runtime?.getManifest;
+  assert(settingsTabs().join()===(native?'modules,sources,agent':'agent'),
+    `Settings must offer Modules and Sources only with the native host, and Agent always: ${settingsTabs()}`);
+  if(native){
+    await click(testid('settings-tab-sources'));
+    await wait(()=>!settingsGroup('sources').hidden&&settingsGroup('modules').hidden&&settingsGroup('agent').hidden
+      &&activeSettingsTab()===testid('settings-tab-sources'),'A Settings tab must show only its own group');
+  }
   assert(editor.getValue()===beforeSettings,'Opening application Settings must not alter the current check');
   await click(settingsToggle);
   // Once visited, Settings stays mounted (hidden) so its model catalog is not reloaded.
@@ -269,6 +279,11 @@
   const b=await create(a,'Layout B');
   await open('settings');
   assert(Math.abs(width()-360)<1,'A copied session must inherit its independent Settings panel width');
+  if(native){
+    assert(testid('settings-tab-sources').getAttribute('aria-selected')==='true'&&!settingsGroup('sources').hidden,
+      'Settings must remember its selected tab across session switches');
+    await testDriver.settingsTab('modules');
+  }
   await open('history');
   assert(Math.abs(width()-410)<1,'Creating from a named session must copy its layout');
   await setWidth(460);

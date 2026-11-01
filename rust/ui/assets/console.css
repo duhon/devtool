@@ -348,8 +348,8 @@
   padding: 8px;
 }
 
-.console-settings > * + * {
-  margin-top: 8px;
+.console-settings > [hidden] {
+  display: none;
 }
 
 .console-settings-actions {
@@ -437,6 +437,14 @@
 .module-settings-details > td {
   padding-bottom: 6px;
   color: #a9adb5;
+}
+
+/* Detail rows wrap to the table width instead of resizing the module columns. */
+.module-settings-details > td > * {
+  box-sizing: border-box;
+  width: 0;
+  min-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .module-settings-details pre {
@@ -975,50 +983,55 @@
   margin-bottom: 6px;
 }
 
-.agent-closed {
+.agent-chats {
   flex: 1 1 0;
   min-height: 0;
   overflow: auto;
   padding: 6px;
 }
 
-.agent-closed-actions,
-.agent-closed-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+.agent-chats table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  text-align: left;
+}
+
+.agent-chats :is(th, td) {
   padding: 4px 6px;
+  border-bottom: 1px solid #43454a;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
-.agent-closed-actions {
+.agent-chats th {
   color: #a9adb5;
-  margin-bottom: 4px;
+  font-weight: normal;
 }
 
-.agent-closed-actions span,
-.agent-closed-meta {
-  flex: 1;
-  min-width: 0;
+.agent-chats th:nth-child(3) {
+  width: 72px;
 }
 
-.agent-closed-item {
-  border-left: 2px solid #43454a;
-  margin-bottom: 4px;
+.agent-chats th:last-child {
+  width: 128px;
+}
+
+.agent-chats tr.current {
   background: #2b2d30;
 }
 
-.agent-closed-title {
-  max-width: 40%;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+.agent-chats tr[data-state="closed"] td:not(.agent-chats-actions) {
+  color: #a9adb5;
 }
 
-.agent-closed-meta {
-  color: #a9adb5;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+.agent-chats-actions {
+  text-align: right;
+}
+
+.agent-chats-actions button {
+  margin-left: 4px;
 }
 
 .console-hints-editor,

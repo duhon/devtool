@@ -23,6 +23,9 @@ use yew::prelude::*;
 
 mod console_panel;
 
+/// Name of Console session 0.
+const TEMPORARY_SESSION: &str = "Temporary";
+
 #[derive(Default)]
 struct Run {
     editor: String,
@@ -119,6 +122,41 @@ impl ConsolePanel {
         }
     }
 }
+/// The tabs of the Settings panel; Modules and Sources need the native host.
+#[derive(Clone, Copy, PartialEq)]
+pub(super) enum SettingsTab {
+    Modules,
+    Sources,
+    Agent,
+}
+impl SettingsTab {
+    const STORAGE: &'static str = "servicesConsole.settingsTab";
+    fn key(self) -> &'static str {
+        match self {
+            Self::Modules => "modules",
+            Self::Sources => "sources",
+            Self::Agent => "agent",
+        }
+    }
+    fn label(self) -> &'static str {
+        match self {
+            Self::Modules => "Modules",
+            Self::Sources => "Sources",
+            Self::Agent => "Agent",
+        }
+    }
+    fn restore() -> Self {
+        let saved = super::window()
+            .local_storage()
+            .ok()
+            .flatten()
+            .and_then(|storage| storage.get_item(Self::STORAGE).ok().flatten());
+        [Self::Sources, Self::Agent]
+            .into_iter()
+            .find(|tab| saved.as_deref() == Some(tab.key()))
+            .unwrap_or(Self::Modules)
+    }
+}
 struct AgentEdit {
     command: crate::agent_workspace::EditCommand,
     request: WorkspaceRequest,
@@ -166,7 +204,8 @@ pub enum Msg {
     PanelWidth(String, u32),
     ToggleHistory,
     ToggleSettings,
-    SettingsStatus(OperationStatus),
+    SettingsTab(SettingsTab),
+    SettingsStatus(SettingsTab, OperationStatus),
     ModulesChanged,
     /// A module was removed with its data: drop what this window and the sessions keep for it.
     ForgetModule(String),
@@ -256,6 +295,11 @@ pub struct App {
     history_error_seen: bool,
     updates: updates::State,
     settings_status: Option<OperationStatus>,
+    settings_tab: SettingsTab,
+    /// The tab whose button started the running forced check of the sources.
+    settings_check_tab: SettingsTab,
+    /// Start and state of the newest operation of each Settings tab, for its light.
+    settings_groups: [Option<(f64, Indicator)>; 3],
     /// The last check of the sources.
     sources_check: Option<Rc<Value>>,
     sources_checking: bool,
@@ -373,6 +417,9 @@ impl Component for App {
             history_error_seen: false,
             updates: updates::State::default(),
             settings_status: None,
+            settings_tab: SettingsTab::restore(),
+            settings_check_tab: SettingsTab::Modules,
+            settings_groups: [None; 3],
             sources_check: None,
             sources_checking: false,
             sources_generation: 0,
@@ -479,8 +526,12 @@ impl Component for App {
                 self.observe_statuses();
                 return true;
             }
-            Msg::SettingsStatus(status) => {
-                self.settings_status = Some(status);
+            Msg::SettingsStatus(tab, status) => self.set_settings_status(tab, status),
+            Msg::SettingsTab(tab) => {
+                self.settings_tab = tab;
+                if let Some(storage) = super::window().local_storage().ok().flatten() {
+                    let _ = storage.set_item(SettingsTab::STORAGE, tab.key());
+                }
             }
             Msg::ModulesChanged => {
                 self.transport.request(
@@ -499,8 +550,11 @@ impl Component for App {
                 self.sources_checking = true;
                 let (generation, started) = (self.sources_generation, js_sys::Date::now());
                 if force {
-                    self.settings_status =
-                        Some(OperationStatus::event("Check sources", started, None));
+                    self.settings_check_tab = self.visible_settings_tab();
+                    self.set_settings_status(
+                        self.settings_check_tab,
+                        OperationStatus::event("Check sources", started, None),
+                    );
                 }
                 self.transport.request(
                     json!({"service":"sources","op":"check","force":force}),
@@ -543,7 +597,15 @@ impl Component for App {
                     if !force {
                         status.started = js_sys::Date::now();
                     }
-                    self.settings_status = Some(status);
+                    // Automatic checks report source problems on Sources, updates on Modules.
+                    let tab = if force {
+                        self.settings_check_tab
+                    } else if matches!(status.indicator(), Indicator::Warning | Indicator::Error) {
+                        SettingsTab::Sources
+                    } else {
+                        SettingsTab::Modules
+                    };
+                    self.set_settings_status(tab, status);
                 }
                 self.sources_notice = notice;
             }
@@ -608,11 +670,14 @@ impl Component for App {
             Msg::ModuleForgotten(result) => {
                 self.forgetting -= 1;
                 if let Err(error) = result {
-                    self.settings_status = Some(OperationStatus::event(
-                        "Remove module data",
-                        js_sys::Date::now(),
-                        Some(&Reply::Error(json!({"error":error}))),
-                    ));
+                    self.set_settings_status(
+                        SettingsTab::Modules,
+                        OperationStatus::event(
+                            "Remove module data",
+                            js_sys::Date::now(),
+                            Some(&Reply::Error(json!({"error":error}))),
+                        ),
+                    );
                 }
             }
             Msg::InstallUpdate(target) => {
@@ -767,6 +832,10 @@ impl Component for App {
             Msg::SessionDelete(id) => {
                 if let Err(error) = self.session_guard() {
                     self.session_result(&Err(error));
+                } else if let Err(error) = super::agent_panel::close_console_session(id) {
+                    self.session_result(&Err(format!(
+                        "The session was not deleted: its Agent chats could not be closed: {error}"
+                    )));
                 } else {
                     self.session_loading = true;
                     let sessions = self.sessions.clone();
@@ -1009,11 +1078,14 @@ impl Component for App {
                         self.sync_services(ctx);
                     }
                     Err(error) => {
-                        self.settings_status = Some(OperationStatus::event(
-                            "Modules",
-                            js_sys::Date::now(),
-                            Some(&Reply::Error(json!({"error":error,"reply":value}))),
-                        ));
+                        self.set_settings_status(
+                            SettingsTab::Modules,
+                            OperationStatus::event(
+                                "Modules",
+                                js_sys::Date::now(),
+                                Some(&Reply::Error(json!({"error":error,"reply":value}))),
+                            ),
+                        );
                     }
                 }
             }
@@ -1729,10 +1801,40 @@ impl App {
         (newest != unseen).then_some(operation)
     }
 
-    fn settings_indicator(&self) -> crate::activity::Indicator {
-        self.settings_operation()
-            .map(OperationStatus::indicator)
-            .unwrap_or_else(|| self.updates.indicator())
+    fn set_settings_status(&mut self, tab: SettingsTab, status: OperationStatus) {
+        self.settings_groups[tab as usize] = Some((status.started, status.indicator()));
+        self.settings_status = Some(status);
+    }
+
+    fn settings_tabs(&self) -> &'static [SettingsTab] {
+        if self.transport.is_native() {
+            &[
+                SettingsTab::Modules,
+                SettingsTab::Sources,
+                SettingsTab::Agent,
+            ]
+        } else {
+            &[SettingsTab::Agent]
+        }
+    }
+
+    fn visible_settings_tab(&self) -> SettingsTab {
+        if self.settings_tabs().contains(&self.settings_tab) {
+            self.settings_tab
+        } else {
+            SettingsTab::Agent
+        }
+    }
+
+    /// The newest operation of a tab; Modules also shows the application update.
+    fn settings_tab_indicator(&self, tab: SettingsTab) -> Indicator {
+        let update = (tab == SettingsTab::Modules)
+            .then(|| (self.updates.status.started, self.updates.indicator()));
+        self.settings_groups[tab as usize]
+            .into_iter()
+            .chain(update)
+            .max_by(|a, b| a.0.total_cmp(&b.0))
+            .map_or(Indicator::Ready, |(_, state)| state)
     }
 
     fn settings_notification(&self) -> crate::activity::Indicator {
@@ -2160,10 +2262,23 @@ impl App {
     fn key(&self) -> String {
         format!("console:{}", self.console_service)
     }
+    /// Console session names by id, for the Agent chat list.
+    pub(super) fn session_names(&self) -> BTreeMap<u64, String> {
+        std::iter::once((0, TEMPORARY_SESSION.to_owned()))
+            .chain(
+                self.sessions
+                    .borrow()
+                    .library
+                    .sessions
+                    .iter()
+                    .map(|session| (session.id, session.name.clone())),
+            )
+            .collect()
+    }
     fn view_sessions(&self, ctx: &Context<Self>) -> Html {
         let store = self.sessions.borrow();
         let library = &store.library;
-        let rows = std::iter::once((0, "Temporary"))
+        let rows = std::iter::once((0, TEMPORARY_SESSION))
             .chain(library.sessions.iter().map(|s| (s.id, s.name.as_str())));
         let reasons = self.busy_reasons();
         html! {<section class="console-sessions" data-testid="console-sessions" data-busy={(!reasons.is_empty()).to_string()} data-busy-reason={reasons.join("; ")}>
@@ -2179,7 +2294,7 @@ impl App {
                         <button data-testid={format!("session-copy-{id}")} onclick={ctx.link().callback(move |_|Msg::SessionCopy(id))}>{"Create from"}</button>
                     </td></tr>})}
             </tbody></table>
-            <p>{"0 is temporary. Creating from 0 starts empty. Named sessions save automatically. Dictionary, environment variables and Agent are shared."}</p>
+            <p>{"0 is temporary. Creating from 0 starts empty. Named sessions save automatically. Dictionary and environment variables are shared. Agent chats belong to their session; deleting a session closes them."}</p>
         </section>}
     }
 }

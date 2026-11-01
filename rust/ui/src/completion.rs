@@ -166,8 +166,40 @@ fn finish(from: usize, to: usize, query: &str, candidates: Vec<(String, String)>
         automatic_directives_only: false,
     }
 }
+/// The Hints editor completes `#section` headers of the edited service that the
+/// text does not contain yet; `##` lines are rejected by validation instead.
+fn hint_sections(service: &str, lines: &[&str], line: usize, before: &str) -> Completion {
+    let full = lines.get(line).copied().unwrap_or("");
+    let typed = before.trim_start();
+    if !typed.starts_with('#') || typed.starts_with("##") || typed.contains(char::is_whitespace) {
+        return finish(0, 0, "", vec![]);
+    }
+    let offset = before.len() - typed.len();
+    let end = full[offset..]
+        .find(char::is_whitespace)
+        .map_or(full.len(), |length| offset + length);
+    let used: BTreeSet<_> = lines
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| *index != line)
+        .filter_map(|(_, text)| text.trim().strip_prefix('#'))
+        .map(str::to_ascii_lowercase)
+        .collect();
+    let candidates = console::markers(service)
+        .into_iter()
+        .filter(|marker| !used.contains(&marker.to_ascii_lowercase()))
+        .map(|marker| (format!("#{marker}"), "Section".into()))
+        .collect();
+    finish(
+        before[..offset].encode_utf16().count(),
+        full[..end].encode_utf16().count(),
+        typed,
+        candidates,
+    )
+}
 /// `field` is empty for Console documents; otherwise the editor holds one
 /// section and `field` names its marker (`headers`, `body`, `variables`, ...).
+/// The Hints editor uses `service` "hints" with the edited service as `field`.
 pub fn suggest(
     service: &str,
     field: &str,
@@ -222,6 +254,9 @@ pub fn suggest(
             &before[start..],
             candidates,
         );
+    }
+    if service == "hints" {
+        return hint_sections(field, &lines, line, &before);
     }
     let Some(manifest) = crate::services::get(service) else {
         return finish(ch, ch, "", vec![]);

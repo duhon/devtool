@@ -856,7 +856,16 @@ impl App {
                         <div class="console-panel-heading"><span class="tab-button active">{"Sessions"}{indicator(crate::activity::Indicator::Ready,"Sessions".into())}</span></div>
                     }
                     if self.console_panel==Some(ConsolePanel::Settings) {
-                        <div class="console-panel-heading"><span class="tab-button active" data-testid="settings-title">{"Settings"}{indicator(self.settings_indicator(),"Settings status".into())}</span></div>
+                        <div class="console-panel-heading">
+                            <div class="console-panel-tabs" data-testid="settings-tabs" role="tablist" aria-label="Settings">
+                                {for self.settings_tabs().iter().map(|&tab|{
+                                    let active=tab==self.visible_settings_tab();
+                                    html!{<button type="button" role="tab" aria-selected={active.to_string()} class={classes!("tab-button",active.then_some("active"))}
+                                        data-testid={format!("settings-tab-{}",tab.key())} onclick={ctx.link().callback(move|_|Msg::SettingsTab(tab))}>
+                                        {tab.label()}{indicator(self.settings_tab_indicator(tab),format!("{} status",tab.label()))}</button>}
+                                })}
+                            </div>
+                        </div>
                     }
                     <div class="console-panel-heading" ref={self.console_panel_header.clone()} data-testid="console-variables-heading"
                         hidden={!matches!(self.console_panel,Some(ConsolePanel::Variables | ConsolePanel::Dictionary | ConsolePanel::Agent | ConsolePanel::Templates | ConsolePanel::History))}></div>
@@ -888,7 +897,9 @@ impl App {
                     <aside class="console-tool-panel" data-testid="console-tool-panel" hidden={self.console_panel.is_none()} aria-label="Console tools">
                         if self.settings_visited {
                             <section class="console-settings" data-testid="settings-panel" aria-label="Application settings" hidden={self.console_panel!=Some(ConsolePanel::Settings)}>
+                                // Every tab stays mounted so its drafts, checks and model catalog survive switching.
                                 if self.transport.is_native() {
+                                    <div role="tabpanel" data-testid="settings-group-modules" hidden={self.visible_settings_tab()!=SettingsTab::Modules}>
                                     <crate::browser::module_settings::ModuleSettings transport={self.transport.clone()}
                                         check={self.sources_check.clone()} checking={self.sources_checking}
                                         oncheck={ctx.link().callback(Msg::CheckSources)}
@@ -896,17 +907,22 @@ impl App {
                                         app_installed={(self.updates.phase==UpdatePhase::Installed).then(||self.updates.target.as_ref().map(|(slug,_)|slug.clone())).flatten()}
                                         onapp={ctx.link().callback(Msg::InstallUpdate)}
                                         onreload={ctx.link().callback(|_|Msg::ReloadUpdate)}
-                                        onstatus={ctx.link().callback(Msg::SettingsStatus)}
+                                        onstatus={ctx.link().callback(|status|Msg::SettingsStatus(SettingsTab::Modules,status))}
                                         onforget={ctx.link().callback(Msg::ForgetModule)}
                                         onchange={ctx.link().callback(|_|Msg::ModulesChanged)}/>
+                                    </div>
+                                    <div role="tabpanel" data-testid="settings-group-sources" hidden={self.visible_settings_tab()!=SettingsTab::Sources}>
                                     <crate::browser::sources_settings::SourcesSettings transport={self.transport.clone()}
                                         check={self.sources_check.clone()} checking={self.sources_checking}
                                         oncheck={ctx.link().callback(Msg::CheckSources)}
                                         onapplied={ctx.link().callback(|_|Msg::SourcesApplied)}
-                                        onstatus={ctx.link().callback(Msg::SettingsStatus)}/>
+                                        onstatus={ctx.link().callback(|status|Msg::SettingsStatus(SettingsTab::Sources,status))}/>
+                                    </div>
                                 }
+                                <div role="tabpanel" data-testid="settings-group-agent" hidden={self.visible_settings_tab()!=SettingsTab::Agent}>
                                 <crate::browser::agent_settings::AgentSettings transport={self.transport.clone()}
-                                    onstatus={ctx.link().callback(Msg::SettingsStatus)}/>
+                                    onstatus={ctx.link().callback(|status|Msg::SettingsStatus(SettingsTab::Agent,status))}/>
+                                </div>
                             </section>
                         }
                         if self.console_panel==Some(ConsolePanel::Sessions) {
@@ -914,7 +930,7 @@ impl App {
                         }
                         if self.console_panel==Some(ConsolePanel::Hints) {
                             <div class="console-hints-editor">
-                                <Editor key={format!("hints:{service}")} cache_key={format!("hints:{service}")} testid="console-hints"
+                                <Editor key={format!("hints:{service}")} cache_key={format!("hints:{service}")} testid="console-hints" service="hints" field={service.clone()}
                                     value={self.hints_drafts.get(service).or_else(||self.hints.get(service)).cloned().unwrap_or_default()} mode="headers" onchange={ctx.link().callback(Msg::HintsText)} onerror={ctx.link().callback(Msg::EditorError)}/>
                             </div>
                         }
@@ -954,6 +970,8 @@ impl App {
                         }
                         if self.agent_visited {
                             <AgentPanel transport={self.transport.clone()} owner={service.clone()} visible={self.console_panel==Some(ConsolePanel::Agent)}
+                                console_session={self.sessions.borrow().library.current}
+                                session_names={self.session_names()}
                                 foreground={!self.hidden}
                                 stop_generation={self.agent_stop_generation} onactivity={ctx.link().callback(Msg::AgentActivity)}
                                 header={self.console_panel_header.clone()}
@@ -997,7 +1015,7 @@ impl App {
                        let (state,title)=crate::activity::summary(self.agent_activity.iter().map(|activity|activity.state));
                        indicator(state,title)
                     }}</button>
-                if supported{<button class="console-import-toggle" data-testid="console-export" onclick={ctx.link().callback(|_|Msg::Export)}>{"Export\u{2026}"}{indicator(self.transfer_indicator(service,Transfer::Export),"Export status".into())}</button><button class="console-import-toggle" data-testid="console-import" onclick={ctx.link().callback(|_|Msg::Import)}>{"Import\u{2026}"}{indicator(self.transfer_indicator(service,Transfer::Import),"Import status".into())}</button>}
+                if supported{<button class="console-import-toggle" data-testid="console-export" onclick={ctx.link().callback(|_|Msg::Export)}>{"Export"}{indicator(self.transfer_indicator(service,Transfer::Export),"Export status".into())}</button><button class="console-import-toggle" data-testid="console-import" onclick={ctx.link().callback(|_|Msg::Import)}>{"Import"}{indicator(self.transfer_indicator(service,Transfer::Import),"Import status".into())}</button>}
                 <button class={classes!("console-hints-toggle",(self.console_panel==Some(ConsolePanel::Templates)).then_some("active"))}
                     data-testid="console-templates-toggle" aria-pressed={(self.console_panel==Some(ConsolePanel::Templates)).to_string()}
                     onclick={ctx.link().callback(|_|Msg::ToggleTemplates)}>{"Templates"}{indicator(self.templates_activity,"Templates status".into())}</button>
@@ -1006,7 +1024,7 @@ impl App {
                     onclick={ctx.link().callback(|_|Msg::ToggleHistory)}>{"History"}{indicator(if self.history_error.is_some() && !self.history_error_seen {
                         crate::activity::Indicator::Error
                     }else{self.history_activity},"History status".into())}</button>
-                <button class={classes!("console-hints-toggle",(self.console_panel==Some(ConsolePanel::Hints)).then_some("active"))} data-testid="console-hints-toggle" aria-pressed={(self.console_panel==Some(ConsolePanel::Hints)).to_string()} onclick={ctx.link().callback(|_|Msg::ToggleHints)}>{"Hints\u{2026}"}{indicator(self.hints_indicator(service),"Hints status".into())}</button>
+                <button class={classes!("console-hints-toggle",(self.console_panel==Some(ConsolePanel::Hints)).then_some("active"))} data-testid="console-hints-toggle" aria-pressed={(self.console_panel==Some(ConsolePanel::Hints)).to_string()} onclick={ctx.link().callback(|_|Msg::ToggleHints)}>{"Hints"}{indicator(self.hints_indicator(service),"Hints status".into())}</button>
                 <button class={classes!("console-hints-toggle",(self.console_panel==Some(ConsolePanel::Variables)).then_some("active"))} data-testid="console-variables-toggle" aria-pressed={(self.console_panel==Some(ConsolePanel::Variables)).to_string()} onclick={ctx.link().callback(|_|Msg::ToggleVariables)}>{"Variables"}{self.profile_indicator(false)}</button>
                 <button class={classes!("console-hints-toggle",(self.console_panel==Some(ConsolePanel::Dictionary)).then_some("active"))} data-testid="console-dictionary-toggle" aria-pressed={(self.console_panel==Some(ConsolePanel::Dictionary)).to_string()} onclick={ctx.link().callback(|_|Msg::ToggleDictionary)}>{"Dictionary"}{self.profile_indicator(true)}</button>
                 <button class={classes!("console-hints-toggle",(self.console_panel==Some(ConsolePanel::Settings)).then_some("active"))}

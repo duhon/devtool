@@ -340,12 +340,12 @@ impl ModuleSettings {
             </tr>
             if let Some(error) = error {
                 <tr class="module-settings-details failed" data-testid="settings-module-error">
-                    <td colspan="5">{error}</td>
+                    <td colspan="5"><div>{error}</div></td>
                 </tr>
             }
             if let Some(reason) = unsupported {
                 <tr class="module-settings-details" data-testid="settings-module-unsupported">
-                    <td colspan="5">{reason}</td>
+                    <td colspan="5"><div>{reason}</div></td>
                 </tr>
             }
             if shown(Detail::Description) {{details("settings-module-description", description)}}

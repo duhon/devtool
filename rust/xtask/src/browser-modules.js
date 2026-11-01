@@ -19,7 +19,8 @@
   };
   const tab = id => document.querySelector(`[data-testid="console-service-${id}"]`);
   const settings = async open => {
-    if ((testid('console-settings-toggle').getAttribute('aria-pressed') === 'true') !== open)
+    if (open) return testDriver.settingsTab('modules');
+    if (testid('console-settings-toggle').getAttribute('aria-pressed') === 'true')
       await click(testid('console-settings-toggle'));
   };
   const kept = '#check kept\n#endpoint\nhttps://kept.fixture.invalid\n';
@@ -34,9 +35,17 @@
       && part(shippedRow, 'name').textContent && !part(shippedRow, 'new-version'),
       `${id}: name, no source and its version expected, got ${shippedRow.textContent}`);
   }
+  const columns = () => [...row('rest').cells].map(cell => Math.round(cell.getBoundingClientRect().left)).join();
+  const closedColumns = columns();
   await click(part(row('rest'), 'name'));
   await wait(() => detail(row('rest'), 'description') && !detail(row('rest'), 'description').textContent.includes('No details.'),
     'The name must show the module description');
+  // A long, multi-line description wraps inside the table instead of resizing its columns.
+  detail(row('rest'), 'description').querySelector('pre').textContent =
+    `${'A long module description line. '.repeat(12)}\nhttps://github.com/example/${'long-path-'.repeat(30)}`;
+  const table = testid('settings-modules');
+  assert(columns() === closedColumns && table.getBoundingClientRect().width <= table.parentElement.clientWidth,
+    `Opening a description must not move the columns: ${closedColumns} -> ${columns()}; table ${table.getBoundingClientRect().width} of ${table.parentElement.clientWidth}`);
   await click(part(row('rest'), 'name'));
 
   const confirmation = (id, source) => detail(row(id, source), 'confirm');
