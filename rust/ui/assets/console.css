@@ -348,13 +348,6 @@
   padding: 8px;
 }
 
-.console-settings-version {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  font: inherit;
-}
-
 .console-settings > * + * {
   margin-top: 8px;
 }
@@ -378,23 +371,78 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding-top: 8px;
-  border-top: 1px solid #43454a;
 }
 
-.module-settings-list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.module-settings-row {
+.module-settings-head {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 2px 0;
+}
+
+.module-settings-hint {
+  color: #a9adb5;
+}
+
+.module-settings-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.module-settings-table th {
+  padding: 2px 4px;
+  color: #a9adb5;
+  font-weight: normal;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.module-settings-table td {
+  padding: 2px 4px;
+  vertical-align: middle;
+}
+
+.module-settings-row > td {
+  border-top: 1px solid #34363a;
+}
+
+.module-settings-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  text-decoration: underline dotted #6b6f76;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.module-settings-link:hover {
+  text-decoration-color: currentColor;
+}
+
+.module-settings-version.failed,
+.module-settings-details.failed {
+  color: #ff8980;
+}
+
+.module-settings-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.module-settings-details > td {
+  padding-bottom: 6px;
+  color: #a9adb5;
+}
+
+.module-settings-details pre {
+  margin: 0;
+  white-space: pre-wrap;
+  font: inherit;
 }
 
 .module-settings-confirm {
@@ -419,40 +467,11 @@
   margin-right: auto;
 }
 
-.module-settings-name {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-}
-
 .module-settings-detail {
   overflow: hidden;
   color: #a9adb5;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.module-settings-row.failed .module-settings-detail {
-  color: #ff8980;
-}
-
-.module-settings-subtitle {
-  color: #a9adb5;
-}
-
-.module-settings-row select {
-  margin-left: auto;
-}
-
-.module-settings-notes {
-  flex-basis: 100%;
-  color: #a9adb5;
-}
-
-.module-settings-notes pre {
-  margin: 4px 0 0;
-  white-space: pre-wrap;
-  font: inherit;
 }
 
 .settings-origin {
@@ -494,6 +513,12 @@
   display: flex;
   align-items: center;
   gap: 4px;
+}
+
+.module-settings-name {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
 }
 
 .source-settings-head .module-settings-name,
@@ -591,12 +616,10 @@
   border-color: #ff8980;
 }
 
-.agent-skills-hint,
-.agent-skills-description {
+.agent-skills-hint {
   color: #a9adb5;
 }
 
-.agent-skills-list,
 .agent-skills-problems {
   display: flex;
   flex-direction: column;
@@ -604,25 +627,6 @@
   margin: 0;
   padding: 0;
   list-style: none;
-}
-
-.agent-skills-list li {
-  display: flex;
-  gap: 8px;
-  min-width: 0;
-}
-
-.agent-skills-name {
-  flex: none;
-}
-
-.agent-skills-description {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.agent-skills-problems {
   color: #e5c07b;
 }
 

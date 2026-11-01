@@ -25,8 +25,8 @@ The installer installs the application only. Add the services you need in
 releases.
 
 Updates are installed from inside the application: **Settings** →
-**Check for updates** → **Update**; module updates are in **Settings** →
-**Modules**.
+**Modules** lists the application (its first row) and every module with their
+sources, versions and newer versions; **Update** installs one.
 
 Uninstall, then remove the extension in Chrome (your data is kept):
 
@@ -36,9 +36,10 @@ Uninstall, then remove the extension in Chrome (your data is kept):
 
 ## Extensions
 
-Every service in the panel is a module, and you can write your own. Install it
-in **Settings** → **Modules** → **Install from file…**. How to write and package
-a module: [rust/examples/echo/README.md](rust/examples/echo/README.md).
+Every service in the panel is a module, and you can write your own. Modules
+are installed from sources only: put the package file in `modules/` of a folder
+source and install it in **Settings** → **Modules**. How to write and package a
+module: [rust/examples/echo/README.md](rust/examples/echo/README.md).
 
 A team can share modules and settings through **Settings** → **Sources**: add a
 GitHub repository or a local folder, then install its modules and apply its

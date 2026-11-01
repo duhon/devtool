@@ -24,13 +24,15 @@ module version (the `version` of `rust/modules/<id>/Cargo.toml`) that has no
 release yet is published as `module-<id>-vX.Y.Z` with the asset
 `<id>-<version>-<platform>.module.tgz`, never as the latest release; its
 description is the newest section of the module's `RELEASE_NOTES.md`, which
-must be its version. To ship a module change, raise its version and add the
+must be its version, ending with a `<!-- services-package {...} -->` comment
+holding its `package.json` (name, description, minimum core) for Settings →
+Modules. To ship a module change, raise its version and add the
 section; the application version need not change. Settings → Modules offers
 these releases through the preconfigured Standard source.
 
 The package and update metadata use the current repository and `main` as their
-source. The updater also accepts the legacy `devtool` channel, but never
-switches repositories or channels automatically. Public releases in
+source; the legacy `devtool` channel is accepted too. The application can be
+updated from any source that offers it, a fork included. Public releases in
 `duhon/devtool` need no GitHub authentication.
 
 The build bakes the repository and version into `install.sh`, so piping

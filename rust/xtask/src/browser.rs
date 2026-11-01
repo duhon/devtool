@@ -53,8 +53,6 @@ struct Cdp {
     dialogs: Vec<Value>,
     inspected_page: Option<String>,
     targets: HashMap<String, String>,
-    /// Files a page may choose in a file input with `Test.chooseFile`, by name.
-    files: HashMap<String, PathBuf>,
 }
 
 impl Cdp {
@@ -159,7 +157,6 @@ impl Cdp {
                                 | "Page.captureScreenshot"
                                 | "Test.inspectedPage"
                                 | "Test.inspectedCommand"
-                                | "Test.chooseFile"
                         ),
                         "Unexpected browser test command: {method}"
                     );
@@ -182,18 +179,6 @@ impl Cdp {
                             | "DOM.getDocument" | "DOM.querySelector" | "DOM.setInspectedNode" | "DOM.disable"),
                             "Unexpected inspected-page test command: {method}");
                         Box::pin(self.call(method, command["params"]["params"].clone(), Some(&inspected))).await?
-                    } else if method == "Test.chooseFile" {
-                        // As a user's choice: Chrome reads the file and fires the input's change event.
-                        let name = command["params"]["file"].as_str().context("Missing test file name")?;
-                        let file = self.files.get(name).with_context(|| format!("Unknown test file {name:?}"))?.clone();
-                        let document = Box::pin(self.call("DOM.getDocument", json!({"depth":0}), Some(&target))).await?;
-                        let node = Box::pin(self.call("DOM.querySelector",
-                            json!({"nodeId":document["root"]["nodeId"],"selector":command["params"]["selector"]}),
-                            Some(&target))).await?;
-                        ensure!(node["nodeId"].as_u64().is_some_and(|node| node > 0),
-                            "No file input matches {}", command["params"]["selector"]);
-                        Box::pin(self.call("DOM.setFileInputFiles",
-                            json!({"files":[file],"nodeId":node["nodeId"]}), Some(&target))).await?
                     } else {
                         Box::pin(self.call(method, command["params"].clone(), Some(&target))).await?
                     };
@@ -456,7 +441,6 @@ async fn launch_browser(
             dialogs: vec![],
             inspected_page: None,
             targets: HashMap::new(),
-            files: HashMap::new(),
         },
     ))
 }
@@ -510,20 +494,7 @@ async fn installed_reload(
         developer_mode == true,
         "Reload fixture must enable developer mode"
     );
-    let url = format!("chrome-extension://{EXTENSION_ID}/panel.html");
-    let page = cdp
-        .page(&url, INIT)
-        .await
-        .context("Opening physical installed extension before update")?;
-    let before = cdp.evaluate(&page,
-        "(async () => { localStorage.setItem('__reload_probe', 'kept'); return { version: chrome.runtime.getManifest().version, probe: await (await fetch(chrome.runtime.getURL('reload-probe.txt'), {cache:'no-store'})).text() }; })()"
-    ).await?;
-    cdp.evaluate(&page, r##"testDriver.wait(() => window.document.querySelector('[data-testid="console-session-name"]'),
-        () => `Reload fixture did not open Console: ${window.document.body.innerText}`).then(() => true)"##).await?;
-    ensure!(
-        before["probe"] == "before-update",
-        "Initial installed resource must load"
-    );
+    // The new version, offered by a folder source.
     let mut manifest: Value =
         serde_json::from_slice(&fs::read(payload.join("extension/manifest.json"))?)?;
     manifest["version"] = json!("99.0.1");
@@ -540,8 +511,7 @@ async fn installed_reload(
         payload.join("distribution.json"),
         serde_json::to_vec_pretty(&distribution)?,
     )?;
-    let archive = home.join("Downloads/services-macos-arm64.tar.gz");
-    fs::create_dir_all(archive.parent().unwrap())?;
+    let archive = home.join("services-update.tar.gz");
     let output = Command::new("/usr/bin/tar")
         .env("COPYFILE_DISABLE", "1")
         .arg("-czf")
@@ -555,28 +525,38 @@ async fn installed_reload(
         "Archive update fixture failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    use sha2::{Digest, Sha256};
-    let sha = format!("{:x}", Sha256::digest(fs::read(&archive)?));
-    let repository = distribution["repository"]
-        .as_str()
-        .context("Fixture update repository")?;
-    let asset_base = format!("https://github.com/{repository}/releases/download/devtool-v99.0.1");
-    let release = json!({
-        "schemaVersion":1,"application":"ServicesDevTools","version":"99.0.1","tag":"devtool-v99.0.1",
-        "commit":"a".repeat(40),"repository":repository,"branch":distribution["branch"],"platform":"darwin",
-        "arch":"arm64","minimumMacOS":"13.5","archive":"services-macos-arm64.tar.gz","sha256":sha,
-        "archiveUrl":format!("{asset_base}/services-macos-arm64.tar.gz"),
-        "checksumsUrl":format!("{asset_base}/checksums.txt"),"installerUrl":format!("{asset_base}/install.sh"),
-    });
-    cdp.evaluate(
-        &page,
-        &format!(
-            "updateFixture.release = {}; updateFixture.archive = {}; true;",
-            release,
-            json!(archive),
-        ),
-    )
-    .await?;
+    let updates = home.join("Update source");
+    update_source(
+        &updates,
+        distribution["repository"]
+            .as_str()
+            .context("Fixture update repository")?,
+        distribution["branch"].as_str().unwrap_or("main"),
+        "99.0.1",
+        &fs::read(&archive)?,
+    )?;
+    fs::remove_file(&archive)?;
+    let data = base.join("data");
+    fs::create_dir_all(&data)?;
+    fs::write(
+        data.join(".sources.json"),
+        json!({"version":1,"sources":[{"name":"Updates","kind":"folder","path":updates}]})
+            .to_string(),
+    )?;
+    let url = format!("chrome-extension://{EXTENSION_ID}/panel.html");
+    let page = cdp
+        .page(&url, INIT)
+        .await
+        .context("Opening physical installed extension before update")?;
+    let before = cdp.evaluate(&page,
+        "(async () => { localStorage.setItem('__reload_probe', 'kept'); return { version: chrome.runtime.getManifest().version, probe: await (await fetch(chrome.runtime.getURL('reload-probe.txt'), {cache:'no-store'})).text() }; })()"
+    ).await?;
+    cdp.evaluate(&page, r##"testDriver.wait(() => window.document.querySelector('[data-testid="console-session-name"]'),
+        () => `Reload fixture did not open Console: ${window.document.body.innerText}`).then(() => true)"##).await?;
+    ensure!(
+        before["probe"] == "before-update",
+        "Initial installed resource must load"
+    );
     ensure!(cdp.evaluate(&page, r##"(async () => {
       const {wait,click,testid,cm,assert}=testDriver;
       // Temporary session 0 is never persisted, so the durable edit happens in imported session 1.
@@ -587,16 +567,15 @@ async fn installed_reload(
       if(testid('console-sessions-toggle').getAttribute('aria-pressed')!=='true') await click(testid('console-sessions-toggle'));
       await testDriver.sessionsIdle();
       await click(testid('console-settings-toggle'));
-      await wait(()=>!testid('settings-update-status').textContent.includes('Checking'));
-      await click(testid('settings-update-check'));
-      await wait(()=>document.querySelector('[data-testid="settings-update-install"]'),
-        ()=>`Approved update did not become available: ${document.body.innerText}; requests=${JSON.stringify(updateFixture.requests)}; release=${JSON.stringify(updateFixture.release)}`);
+      const install=()=>document.querySelector('[data-testid="settings-module"][data-module="app"][data-source="updates"] [data-testid="settings-module-install"]');
+      await wait(()=>install()?.closest('tr').querySelector('[data-testid="settings-module-new-version"]')?.textContent==='99.0.1',
+        ()=>`The update source must offer the new version: ${testid('settings-panel').innerText}`);
       updateFixture.reloads=0;
       chrome.runtime.reload=()=>{updateFixture.reloads++;};
       // Install refuses while any request is in flight; opening Settings loads the Agent model catalog.
       await wait(()=>!testid('agent-model-input').disabled, 'Agent model catalog to load before Install', 60000);
       await wait(()=>testid('console-session-name').dataset.storageBusy==='false', 'Session save to finish before Install');
-      await click(testid('settings-update-install'));
+      await click(install());
       await wait(()=>updateFixture.reloads===1,
         ()=>`Client updater failed: ${document.body.innerText}`, 60000);
       const saved=(await testDriver.sessionLibrary())?.sessions.find(session=>session.id===1);
@@ -799,7 +778,7 @@ fn scenarios() -> Vec<Scenario> {
             "installed-update",
             Core,
             120,
-            "Separate profile: install, client updater download/install, extension reload keeps storage and migrates legacy checks",
+            "Separate profile: install, the application updated from a folder source, extension reload keeps storage and migrates legacy checks",
             Kind::InstalledUpdate,
         ),
         scenario(
@@ -827,7 +806,7 @@ fn scenarios() -> Vec<Scenario> {
             "layout",
             Core,
             60,
-            "Check spacing, session layout and Settings version",
+            "Check spacing, session layout and the application version in Settings",
             script(include_str!("browser-layout.js")),
         )
         .exclusive(),
@@ -835,14 +814,14 @@ fn scenarios() -> Vec<Scenario> {
             "updates",
             Settings,
             60,
-            "Settings design, bottom status, live Debug, update checks, guards, workspace preparation and install errors",
+            "Settings design, bottom status, live Debug, the application row, a source offering a new version with notes, guards, install progress and errors",
             script(include_str!("browser-updates.js")),
         ),
         scenario(
             "modules",
             Settings,
             90,
-            "Settings modules: list, cancelled and confirmed removal, invalid file, install and reinstall from a package file, kept consoles, the example module installed, run and removed",
+            "Settings modules table: shipped modules, cancelled and confirmed removal, a folder source with an invalid file, install from it, kept consoles, the example module installed, run, removed with its data and reinstalled",
             script(include_str!("browser-modules.js")),
         ),
         scenario(
@@ -1136,25 +1115,58 @@ fn release_modules(root: &Path, directory: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Package files a scenario may choose (`Test.chooseFile`): a release module repacked, the
-/// example module and an invalid file.
-fn module_files(modules: &Path, directory: &Path) -> Result<HashMap<String, PathBuf>> {
+/// A folder source offering modules (`modules/`): a release module repacked, the example
+/// module and an invalid file.
+fn module_source(modules: &Path, root: &Path) -> Result<()> {
     use services_contracts::package::{Package, archive, archive_name};
-    fs::create_dir_all(directory)?;
-    let broken = directory.join("broken.module.tgz");
-    fs::write(&broken, "not a package")?;
-    let mut files = HashMap::from([("broken".to_owned(), broken)]);
+    let directory = root.join("modules");
+    fs::create_dir_all(&directory)?;
+    fs::write(directory.join("broken.module.tgz"), "not a package")?;
     let graphql = modules.join("graphql");
-    if graphql.exists() {
-        let package = Package::read(&graphql).map_err(anyhow::Error::msg)?;
-        let file = directory.join(archive_name(&package));
-        fs::write(&file, archive::pack(&graphql).map_err(anyhow::Error::msg)?)?;
-        files.insert("graphql".to_owned(), file);
-    }
-    if let Some(example) = EXAMPLE.get() {
-        files.insert("echo".to_owned(), example.clone());
-    }
-    Ok(files)
+    let package = Package::read(&graphql).map_err(anyhow::Error::msg)?;
+    fs::write(
+        directory.join(archive_name(&package)),
+        archive::pack(&graphql).map_err(anyhow::Error::msg)?,
+    )?;
+    let example = EXAMPLE.get().context("The example module is not built")?;
+    fs::copy(
+        example,
+        directory.join(example.file_name().unwrap_or_default()),
+    )?;
+    Ok(())
+}
+
+/// A folder source offering Services DevTools `version` (`distribution/`): its release
+/// metadata, notes and `archive`.
+fn update_source(
+    root: &Path,
+    repository: &str,
+    branch: &str,
+    version: &str,
+    archive: &[u8],
+) -> Result<()> {
+    use sha2::{Digest, Sha256};
+    let directory = root.join("distribution");
+    fs::create_dir_all(&directory)?;
+    let name = "services-macos-arm64.tar.gz";
+    fs::write(directory.join(name), archive)?;
+    let base = format!("https://github.com/{repository}/releases/download/devtool-v{version}");
+    let release = json!({
+        "schemaVersion":1,"application":"ServicesDevTools","version":version,"tag":format!("devtool-v{version}"),
+        "commit":"a".repeat(40),"repository":repository,"branch":branch,"platform":"darwin",
+        "arch":"arm64","minimumMacOS":"13.5","archive":name,"sha256":format!("{:x}", Sha256::digest(archive)),
+        "archiveUrl":format!("{base}/{name}"),
+        "checksumsUrl":format!("{base}/checksums.txt"),"installerUrl":format!("{base}/install.sh"),
+    });
+    fs::write(
+        directory.join("version.json"),
+        serde_json::to_vec_pretty(&release)?,
+    )?;
+    fs::write(
+        directory.join("release-notes.txt"),
+        format!("- Fixture notes of {version}\n"),
+    )?;
+    Ok(())
 }
 
 /// Writes the legacy native variables and hints every scenario starts from.
@@ -1523,7 +1535,6 @@ impl Harness {
             &temporary.path().join("chrome.stderr"),
         )
         .await?;
-        cdp.files = module_files(&modules, &temporary.path().join("files"))?;
         let setup = cdp
             .page(
                 &format!("chrome-extension://{EXTENSION_ID}/panel.html"),
@@ -1705,11 +1716,29 @@ impl Harness {
                 r#"{"profiles":{"team":{"HOST":"team.fixture.invalid","PORT":"8080"}}}"#,
             )?;
         }
+        // Folder sources of modules and of a newer Services DevTools.
+        let modules = self.temporary.path().join("module source");
+        if !modules.exists() {
+            module_source(&self.modules, &modules)?;
+        }
+        let updates = self.temporary.path().join("update source");
+        if !updates.exists() {
+            update_source(
+                &updates,
+                "fixture/services-devtools",
+                "devtool",
+                "65000.0.0",
+                b"not an archive",
+            )?;
+        }
         let globals = format!(
-            "globalThis.fixtureUrl = {}; globalThis.fixtureVersion = {}; globalThis.fixtureSource = {};",
+            "globalThis.fixtureUrl = {}; globalThis.fixtureVersion = {}; globalThis.fixtureSource = {}; \
+             globalThis.fixtureModules = {}; globalThis.fixtureUpdates = {};",
             json!(self.fixture_url),
             json!(env!("CARGO_PKG_VERSION")),
-            json!(source)
+            json!(source),
+            json!(modules),
+            json!(updates)
         );
         self.cdp.evaluate(&page, &globals).await?;
         Ok(page)

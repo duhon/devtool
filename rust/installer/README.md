@@ -50,14 +50,16 @@ changed. Dependency licenses accompany the distribution.
 
 ## In-app updates
 
-The extension checks GitHub release metadata at startup; it needs neither the
-downloads permission nor cookie access. An unseen update turns the Settings
-indicator green. Checks never install automatically: **Update** saves the
-workspace, downloads through the native runtime, verifies the SHA-256 and
-package identity, installs transactionally and asks to reload the extension.
-The native downloader supports public release assets without GitHub sign-in,
-`gh`, Rust or an API token; private assets must be installed manually, and
-browser credentials are not copied into the native process.
+The application is the first row of Settings → Modules. Any source offers it
+like a module: GitHub releases `devtool-vX.Y.Z` with their `version.json`, or
+`distribution/` of a folder (`version.json`, `release-notes.txt` and the
+archive). A newer version from the source the application came from turns the
+Settings indicator green. Checks never install automatically: **Update** saves
+the workspace, has the native runtime download the archive (or take it from the
+folder), verifies the SHA-256 and package identity, installs transactionally
+and reloads the extension. Private repositories use the token saved in
+Settings → Sources, else `gh auth token`; browser credentials are not copied
+into the native process.
 
 Downloads use private temporary files, a five-minute deadline and a 2 GiB
 limit; redirects stay on approved HTTPS GitHub asset hosts. The downloader
@@ -71,8 +73,7 @@ ID signing or notarization. Diagnostics are saved under
 `~/Library/Application Support/ServicesDevTools/data/` as
 `update-local-signing.json` and `update-installer-signing.json`.
 
-The updater rejects downgrades, unsafe archives, different update sources and
-new Chrome permissions; releases needing more permissions must be installed
+The updater rejects downgrades, unsafe archives and new Chrome permissions; releases needing more permissions must be installed
 manually. Stop active operations and close other Services DevTools windows
 before updating.
 

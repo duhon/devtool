@@ -1,5 +1,5 @@
 // Browser test driver injected into every extension page before the application loads.
-// Exposes `testDriver` (DOM/input helpers and condition waits) plus native/update fetch hooks.
+// Exposes `testDriver` (DOM/input helpers and condition waits) plus native update hooks.
 // Scenario scripts must wait for conditions with `waitFor`/`wait`; `sleep` is only for timed behaviour under test.
 (() => {
   let next = 0;
@@ -14,7 +14,9 @@
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
   // Keeps the status on screen long enough to count as seen (`SEEN_AFTER_MS` in activity.rs).
   const seen = () => sleep(600);
-  globalThis.updateFixture = {release:null,error:null,requests:[],installs:[],branch:'devtool'};
+  // Records application installs; with `installError` or `installResult` set, answers them instead
+  // of the native host, after `deliver()` when `hold` is set.
+  globalThis.updateFixture = {installs:[],installError:null,installResult:null,hold:false,deliver:null};
   // Holds native replies to requests matching `match` until `release()`, e.g. to keep a request in flight.
   const nativeHold = {match:null, ports:new Set(),
     release() { this.match = null; this.ports.forEach(release => release()); }};
@@ -42,56 +44,24 @@
       removeListener(wrapped.get(listener) ?? listener);
       wrapped.delete(listener);
     };
-    port.onMessage.addListener(message => {
-      if (message.ok && message.result?.currentVersion && message.result?.branch)
-        updateFixture.branch = message.result.branch;
-    });
     const send = port.postMessage.bind(port);
     port.postMessage = message => {
       if (message.service === 'updates' && message.op === 'install') {
-        assert(!('archivePath' in message),
-          'The interface must request native downloading, not supply a browser download');
         updateFixture.installs.push(message);
         if (updateFixture.installError || updateFixture.installResult) {
           const reply = updateFixture.installError
             ? {id:message.id,ok:false,error:updateFixture.installError}
             : {id:message.id,ok:true,result:updateFixture.installResult};
-          queueMicrotask(() => listeners.forEach(listener => listener(reply)));
+          const deliver = () => listeners.forEach(listener => listener(reply));
+          if (updateFixture.hold) updateFixture.deliver = deliver;
+          else queueMicrotask(deliver);
           return;
         }
-        if (updateFixture.archive)
-          message = {...message, archivePath:updateFixture.archive};
       }
       if (nativeHold.match?.(message)) held.add(message.id);
       return send(message);
     };
     return port;
-  };
-  const fetchOriginal = globalThis.fetch.bind(globalThis);
-  globalThis.fetch = async (input, options) => {
-    const url = typeof input === 'string' ? input : input.url;
-    const match = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/releases\/latest\/download\/version\.json$/.exec(url);
-    if (!match) return fetchOriginal(input, options);
-    assert(input.credentials === 'include' && input.cache === 'no-store',
-      'Private release checks must use browser-managed credentials and bypass caches');
-    updateFixture.requests.push(url);
-    if (updateFixture.pauseCheck)
-      await new Promise(resolve => { updateFixture.resumeCheck = resolve; });
-    if (updateFixture.error)
-      return Promise.resolve(new Response('Not found', {status:404}));
-    const version = globalThis.chrome.runtime.getManifest().version;
-    const base = `https://github.com/${match[1]}/releases/download/devtool-v${version}`;
-    const release = updateFixture.release || {
-      schemaVersion:1,application:'ServicesDevTools',version,tag:`devtool-v${version}`,
-      commit:'a'.repeat(40),repository:match[1],branch:updateFixture.branch,
-      platform:'darwin',arch:'arm64',minimumMacOS:'13.5',
-      archive:'services-macos-arm64.tar.gz',sha256:'b'.repeat(64),
-      archiveUrl:`${base}/services-macos-arm64.tar.gz`,
-      checksumsUrl:`${base}/checksums.txt`,installerUrl:`${base}/install.sh`,
-    };
-    return Promise.resolve(new Response(JSON.stringify(release), {
-      headers:{'content-type':'application/json'},
-    }));
   };
   if (globalThis.IDBObjectStore) {
     const put = IDBObjectStore.prototype.put;
@@ -337,9 +307,26 @@
     await key('Enter');
     assert(editor.lineCount() === lines + 1, `${expected}: Enter must insert a line`);
   };
+  // Adds a folder source in the open Settings panel.
+  const addFolderSource = async (name, path) => {
+    const fill = (id, value) => {
+      const field = testid(id);
+      field.value = value;
+      field.dispatchEvent(new InputEvent('input', {bubbles:true}));
+    };
+    await click(testid('source-add'));
+    fill('source-add-name', name);
+    const kind = testid('source-add-kind');
+    kind.value = 'folder';
+    kind.dispatchEvent(new Event('change', {bubbles:true}));
+    await wait(() => document.querySelector('[data-testid="source-add-path"]') && !document.querySelector('[data-testid="source-add-repository"]'),
+      'A folder source asks only for its folder');
+    fill('source-add-path', path);
+    await click(testid('source-add-save'));
+  };
   globalThis.testDriver = { assert, sleep, seen, wait, waitFor, during, holds, settle, stable, frames, visible, find, testid, cm, key, type, move, input,
     click, doubleClick, button, openConsole, activateSession, sessionsIdle, setSource, commitRestUrl, candidates, suggest, pick, pickThenEnter,
-    assertNativeScrollbars, nativeTrackPaint, sessionLibrary, nativeHold, clearSessions: () => sessionRecord('delete') };
+    assertNativeScrollbars, nativeTrackPaint, sessionLibrary, nativeHold, addFolderSource, clearSessions: () => sessionRecord('delete') };
   globalThis.testNativeHealth = () => new Promise(resolve => {
     const port = chrome.runtime.connectNative('com.chrome_extentions.host');
     const timer = setTimeout(() => { port.disconnect(); resolve({ ok: false, error: 'timeout' }); }, 10000);

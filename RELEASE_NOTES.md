@@ -1,5 +1,18 @@
 # Release notes
 
+## 3.2.1
+
+- Settings → Modules is one table with a row for each module and source: its name, source,
+  installed version and the newest version available, with Install, Update and Remove. The
+  name shows the description, the source opens its repository or folder, and a version shows
+  its release notes. A module that failed to load shows its version in red with the error.
+- The application is the first row of the table and updates like a module, from any source
+  that offers it, a fork included. The separate Current version section is gone.
+- Modules are installed from sources only; Install from file is gone. To install your own
+  package file, put it in `modules/` of a folder source.
+- The Settings → Agent skills section is gone. Skills that can't be read are a warning in the
+  Agent status and are listed in its Debug.
+
 ## 3.2.0
 
 - Modules are released apart from the application. The installer now installs the

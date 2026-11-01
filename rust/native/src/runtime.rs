@@ -90,9 +90,8 @@ impl Runtime {
     }
     /// `{"service":"modules"}`: the loaded modules and the packages that failed to load;
     /// `op:"ui"` with a `module` id: the module's console part as base64;
-    /// `op:"install"` with a package `file` as base64, or with the `source`, `module` and
-    /// `version` of a source's offer, and `op:"remove"` with a `module` folder change the
-    /// modules folder; `forget:true` also deletes the module's history, local templates and
+    /// `op:"install"` with the `source`, `module` and `version` of a source's offer, and
+    /// `op:"remove"` with a `module` folder change the modules folder; `forget:true` also deletes the module's history, local templates and
     /// hints. This host keeps the modules it loaded; a new host process loads the change.
     async fn modules(&self, message: &Value) -> Result<Value> {
         use crate::core::{error::Error, install};
@@ -100,17 +99,13 @@ impl Runtime {
         match message["op"].as_str() {
             Some("ui") => {}
             Some("install") => {
-                let source = message["source"].as_str();
-                let archive = match source {
-                    Some(source) => {
-                        self.sources
-                            .package(source, &text(message, "module"), &text(message, "version"))
-                            .await?
-                    }
-                    None => base64::engine::general_purpose::STANDARD
-                        .decode(message["file"].as_str().unwrap_or_default())
-                        .map_err(|e| Error::new(format!("Invalid package file: {e}")))?,
-                };
+                let source = message["source"]
+                    .as_str()
+                    .ok_or_else(|| Error::new("Modules are installed from sources"))?;
+                let archive = self
+                    .sources
+                    .package(source, &text(message, "module"), &text(message, "version"))
+                    .await?;
                 let registry = self.registry.clone();
                 let installed = tokio::task::spawn_blocking(move || {
                     install::install(registry.dir(), &archive, |dir| registry.check(dir))
@@ -119,7 +114,7 @@ impl Runtime {
                 .map_err(|e| Error::new(format!("Install failed: {e}")))?
                 .map_err(Error::new)?;
                 let manifest = installed.manifest;
-                sources::set_module_source(self.sources.data(), &manifest.id, source)?;
+                sources::set_module_source(self.sources.data(), &manifest.id, Some(source))?;
                 return Ok(json!({
                     "installed": {"id": manifest.id, "name": manifest.name, "version": manifest.version},
                     "replaced": installed.replaced,
@@ -373,13 +368,11 @@ impl Runtime {
         let result = if message["type"] == "health" {
             Ok(json!({"protocolVersion":services_contracts::PROTOCOL_VERSION}))
         } else if service == "updates" {
-            crate::core::updates::dispatch(message).await
+            crate::core::updates::dispatch(&self.sources, self.sources.data(), message).await
         } else if service == "agent_models" {
             self.agent.catalog().await
         } else if service == "agent_sessions" {
             self.agent.sessions(message).await
-        } else if service == "agent_skills" {
-            self.agent.skills(message)
         } else if service == "history" {
             self.history.dispatch(message).await
         } else if service == "sessions" {
@@ -401,11 +394,30 @@ impl Runtime {
         } else if service == "modules" {
             self.modules(message).await
         } else if service == "sources" {
-            let installed: Vec<(String, String)> = self
+            let installed: Vec<sources::Installed> = self
                 .registry
                 .manifests()
                 .iter()
-                .map(|manifest| (manifest.id.clone(), manifest.version.clone()))
+                .map(|manifest| sources::Installed {
+                    id: manifest.id.clone(),
+                    name: Some(manifest.name.clone()),
+                    description: Some(manifest.description.clone())
+                        .filter(|description| !description.is_empty()),
+                    version: Some(manifest.version.clone()),
+                    error: None,
+                })
+                .chain(
+                    self.registry
+                        .failed()
+                        .iter()
+                        .map(|failed| sources::Installed {
+                            id: text(failed, "module"),
+                            name: None,
+                            description: None,
+                            version: None,
+                            error: failed["error"].as_str().map(str::to_owned),
+                        }),
+                )
                 .collect();
             let local = || sources::Local {
                 dictionary: self.dictionary_store.local().unwrap_or_default(),

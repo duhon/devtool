@@ -337,10 +337,6 @@ impl Agent {
             _ => Err(Error::new("Agent sessions support only list and delete")),
         }
     }
-    /// The module and source skills every following Agent turn gets (`get`).
-    pub fn skills(&self, message: &Value) -> Result<Value> {
-        skills::dispatch(&self.root, message)
-    }
     pub async fn run(
         &self,
         params: &Value,
@@ -391,6 +387,7 @@ impl Agent {
         let mut _lease = None;
         let mut turn_events = None;
         let skill_directories = skills::directories(&self.root);
+        let skill_problems = skills::problems(&self.root);
         let mut result = {
             let work = async {
                 let client = self.client().await?;
@@ -585,6 +582,19 @@ impl Agent {
                     error.message
                 )));
             }
+        }
+        // Agent status shows the first one, its Debug all of them.
+        if let Some(first) = skill_problems.first()
+            && let Ok(value) = result.as_mut()
+        {
+            if value.get("warning").is_none() && value["stopped"] != true {
+                let more = match skill_problems.len() - 1 {
+                    0 => String::new(),
+                    more => format!(" (and {more} more in Debug)"),
+                };
+                value["warning"] = json!(format!("An Agent skill didn't load: {first}{more}"));
+            }
+            value["skillProblems"] = json!(skill_problems);
         }
         result
     }

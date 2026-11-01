@@ -1,5 +1,10 @@
 # REST module release notes
 
+## 3.2.1
+
+- Settings → Modules shows the REST module's name and description before it is
+  installed.
+
 ## 3.2.0
 
 - The REST module is released apart from Services DevTools: install and update it in

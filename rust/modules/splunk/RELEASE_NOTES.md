@@ -1,5 +1,10 @@
 # Splunk module release notes
 
+## 3.2.1
+
+- Settings → Modules shows the Splunk module's name and description before it is
+  installed.
+
 ## 3.2.0
 
 - The Splunk module is released apart from Services DevTools: install and update it in

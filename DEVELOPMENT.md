@@ -19,9 +19,8 @@ cargo run -p xtask -- build
 ```
 
 The installer installs the application only; `build` also writes the module
-packages to `dist/modules/`. Install them in Settings → Modules → Install from
-file…, or add `dist/` as a folder source in Settings → Sources and install them
-from Settings → Modules.
+packages to `dist/modules/`. Add `dist/` as a folder source in Settings →
+Sources and install them from Settings → Modules.
 
 `build --repository OWNER/REPO --branch BRANCH` sets the update source.
 Publishing: [scripts/distribution/README.md](scripts/distribution/README.md).

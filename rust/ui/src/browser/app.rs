@@ -176,10 +176,8 @@ pub enum Msg {
     SourcesChecked(u64, bool, f64, Reply),
     /// A source's settings were applied: reload what comes from them.
     SourcesApplied,
-    CheckUpdates,
-    UpdateSource(u64, Reply),
-    UpdateChecked(u64, Result<services_contracts::updates::Release, String>),
-    InstallUpdate,
+    /// Installs the application version offered by a source: (source slug, version).
+    InstallUpdate((String, String)),
     UpdatePrepared(Result<(), String>),
     UpdateInstalled(Reply),
     ReloadUpdate,
@@ -471,7 +469,6 @@ impl Component for App {
             }
             callback.forget();
         }
-        ctx.link().send_message(Msg::CheckUpdates);
         ctx.link().send_message(Msg::CheckSources(false));
         app
     }
@@ -618,96 +615,11 @@ impl Component for App {
                     ));
                 }
             }
-            Msg::CheckUpdates => {
-                if self.updates.busy() {
+            Msg::InstallUpdate(target) => {
+                if self.updates.busy() || self.updates.phase == UpdatePhase::Installed {
                     return false;
                 }
-                self.updates.generation += 1;
-                let generation = self.updates.generation;
-                self.updates.release = None;
-                self.updates.source = None;
-                self.updates.begin(
-                    UpdatePhase::Checking,
-                    "Check for updates",
-                    json!({"request":{"service":"updates","op":"info"}}),
-                );
-                self.transport.request(
-                    json!({"service":"updates","op":"info"}),
-                    false,
-                    ctx.link()
-                        .callback(move |reply| Msg::UpdateSource(generation, reply)),
-                );
-            }
-            Msg::UpdateSource(generation, reply) => {
-                if generation != self.updates.generation {
-                    return false;
-                }
-                if let Reply::Result(value) | Reply::Error(value) = &reply {
-                    self.updates.record(json!({"response":value}));
-                }
-                let result = match reply {
-                    Reply::Result(value) => {
-                        serde_json::from_value::<services_contracts::updates::Source>(value)
-                            .map_err(|error| format!("Invalid installed update source: {error}"))
-                    }
-                    Reply::Error(value) => Err(err_text(&value)),
-                    _ => Err("Unexpected installed update source response".into()),
-                };
-                match result {
-                    Ok(source) if source.repository.is_empty() => {
-                        self.updates.source = Some(source);
-                        self.updates.transition(UpdatePhase::Unconfigured);
-                    }
-                    Ok(source) if source.current_version != env!("CARGO_PKG_VERSION") => {
-                        self.updates.source = Some(source);
-                        self.updates.fail("The native runtime and interface have different versions. Reload the extension before checking updates.".into());
-                    }
-                    Ok(source) => {
-                        self.updates.source = Some(source.clone());
-                        let url = match source.manifest_url() {
-                            Ok(url) => url,
-                            Err(error) => {
-                                self.updates.fail(error);
-                                return true;
-                            }
-                        };
-                        self.updates.record(json!({"request":{
-                            "method":"GET","url":url
-                        }}));
-                        let link = ctx.link().clone();
-                        spawn_local(async move {
-                            link.send_message(Msg::UpdateChecked(
-                                generation,
-                                updates::check(&source).await,
-                            ));
-                        });
-                    }
-                    Err(error) => self.updates.fail(error),
-                }
-            }
-            Msg::UpdateChecked(generation, result) => {
-                if generation != self.updates.generation {
-                    return false;
-                }
-                match result.and_then(|release| {
-                    let newer = release.newer_than(env!("CARGO_PKG_VERSION"))?;
-                    Ok((release, newer))
-                }) {
-                    Ok((release, newer)) => {
-                        self.updates.release = newer.then_some(release);
-                        self.updates.transition(if newer {
-                            UpdatePhase::Available
-                        } else {
-                            UpdatePhase::Current
-                        });
-                    }
-                    Err(error) => self.updates.fail(error),
-                }
-            }
-            Msg::InstallUpdate => {
-                if self.updates.phase != UpdatePhase::Available {
-                    return false;
-                }
+                self.updates.target = Some(target);
                 let ready = self
                     .session_guard()
                     .map_err(|error| format!("Cannot update while work is active: {error}"))
@@ -719,11 +631,6 @@ impl Component for App {
                 );
                 if let Err(error) = ready {
                     self.updates.fail(error);
-                    return true;
-                }
-                if self.updates.release.is_none() {
-                    self.updates
-                        .fail("Approved update metadata is missing".into());
                     return true;
                 }
                 self.persist_console();
@@ -745,23 +652,24 @@ impl Component for App {
                         self.updates.fail(error);
                         return true;
                     }
+                    let Some((source, version)) = self.updates.target.clone() else {
+                        self.updates.fail("The version to install is missing".into());
+                        return true;
+                    };
+                    let request =
+                        json!({"service":"updates","op":"install","source":source,"version":version});
                     self.updates.transition(UpdatePhase::Installing);
-                    self.updates.record(json!({"request":{
-                        "service":"updates","op":"install","release":self.updates.release
-                    }}));
-                    self.transport.request(
-                        json!({"service":"updates","op":"install","release":self.updates.release}),
-                        false,
-                        ctx.link().callback(Msg::UpdateInstalled),
-                    );
+                    self.updates.record(json!({"request":request}));
+                    self.transport
+                        .request(request, false, ctx.link().callback(Msg::UpdateInstalled));
                 }
                 Err(error) => self.updates.fail(error),
             },
             Msg::UpdateInstalled(reply) => match reply {
                 Reply::Result(value)
                     if value["reload"] == true
-                        && self.updates.release.as_ref().is_some_and(|release| {
-                            value["installedVersion"] == release.version
+                        && self.updates.target.as_ref().is_some_and(|(_, version)| {
+                            value["installedVersion"] == version.as_str()
                         }) =>
                 {
                     self.updates.transition(UpdatePhase::Installed);

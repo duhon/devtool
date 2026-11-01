@@ -9,6 +9,9 @@
 //! skills/<name>/SKILL.md   Agent skills, with their files
 //! modules/*.module.tgz     module packages (folders; GitHub repositories use releases
 //!                          tagged module-<id>-v<version>)
+//! distribution/            the application as a build leaves it: version.json, the archive
+//!                          and release-notes.txt (GitHub repositories use releases tagged
+//!                          devtool-v<version>)
 //! ```
 //!
 //! Checking for changes is automatic; the user applies them. The applied copy of a source
@@ -20,7 +23,10 @@
 use super::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
-use services_contracts::package::{self, Package, archive};
+use services_contracts::{
+    package::{self, APPLICATION_ID, Package, archive},
+    updates::{self, Release},
+};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -43,6 +49,18 @@ pub const TEMPLATES: &str = "templates.json";
 pub const HINTS: &str = "hints";
 pub const SKILLS: &str = "skills";
 const MODULES: &str = "modules";
+const DISTRIBUTION: &str = "distribution";
+const RELEASE_FILE: &str = "version.json";
+/// The platform the application is built for.
+const APPLICATION_PLATFORM: &str = "macos-arm64";
+const APPLICATION_NAME: &str = "Services DevTools";
+const APPLICATION_DESCRIPTION: &str = "The application: the extension, its native host and the installer. Installing a newer version replaces it and keeps the modules, sources and your data; it can't be removed here.";
+/// The application's release notes, for the version running.
+const APPLICATION_NOTES: &str = include_str!("../../../../RELEASE_NOTES.md");
+/// Ends a module release's notes: its `package.json`, `<!-- services-package {…} -->`.
+pub const PACKAGE_MARK: &str = "<!-- services-package ";
+const MAX_RELEASE: u64 = 64 * 1024;
+const MAX_ARCHIVE: u64 = 1024 * 1024 * 1024;
 /// Slugs that would make skill names look like the application's own.
 const RESERVED: &[&str] = &["module", "services", "local"];
 /// The repository the standard modules are released from.
@@ -514,7 +532,7 @@ fn fetch_folder(root: &Path) -> Result<Fetched> {
     Ok(fetched)
 }
 
-/// A module package a source offers.
+/// A module package a source offers, or the application ([`APPLICATION_ID`]).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Offer {
@@ -522,6 +540,11 @@ struct Offer {
     version: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     min_core: Option<String>,
+    /// The module's name and description, when the package tells them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
     /// The changes of this version.
     notes: String,
     size: u64,
@@ -542,6 +565,94 @@ enum Download {
     File {
         path: PathBuf,
     },
+    /// The application's release assets: the archive and its `version.json`.
+    Application {
+        archive: u64,
+        sha256: Option<String>,
+        metadata: u64,
+    },
+}
+
+/// The application offer of version `version`.
+fn application_offer(
+    version: &str,
+    notes: String,
+    size: u64,
+    platform: &str,
+    download: Download,
+) -> Offer {
+    Offer {
+        id: APPLICATION_ID.into(),
+        version: version.into(),
+        min_core: None,
+        name: Some(APPLICATION_NAME.into()),
+        description: Some(APPLICATION_DESCRIPTION.into()),
+        notes,
+        size,
+        unsupported: (platform != APPLICATION_PLATFORM).then(|| {
+            format!("Services DevTools {version} is built for {APPLICATION_PLATFORM}, this computer is {platform}")
+        }),
+        download,
+    }
+}
+
+/// A checked `version.json`: its URLs, version and hash belong to the repository and channel
+/// it names.
+fn read_release(bytes: &[u8]) -> std::result::Result<Release, String> {
+    let release: Release = serde_json::from_slice(bytes)
+        .map_err(|e| format!("{RELEASE_FILE} is not release metadata: {e}"))?;
+    release.validate(&updates::Source {
+        repository: release.repository.clone(),
+        branch: release.branch.clone(),
+        current_version: release.version.clone(),
+    })?;
+    Ok(release)
+}
+
+/// The application in a folder source's `distribution/`, if it holds a `version.json`.
+fn folder_application(root: &Path, platform: &str) -> Option<std::result::Result<Offer, String>> {
+    let dir = root.join(DISTRIBUTION);
+    let metadata = dir.join(RELEASE_FILE);
+    if !metadata.is_file() {
+        return None;
+    }
+    let read = || {
+        let bytes = fs::read(&metadata).map_err(|e| e.to_string())?;
+        if bytes.len() as u64 > MAX_RELEASE {
+            return Err(format!("{RELEASE_FILE} is too large"));
+        }
+        let release = read_release(&bytes)?;
+        let archive = dir.join(&release.archive);
+        let size = fs::metadata(&archive)
+            .map_err(|e| format!("{}: {e}", release.archive))?
+            .len();
+        let notes = fs::read_to_string(dir.join("release-notes.txt")).unwrap_or_default();
+        Ok(application_offer(
+            &release.version,
+            notes.trim().to_owned(),
+            size,
+            platform,
+            Download::File { path: archive },
+        ))
+    };
+    Some(read().map_err(|problem| format!("{DISTRIBUTION}/: {problem}")))
+}
+
+/// A module release's notes and the package its body describes in its last line.
+fn release_body(body: &str) -> (String, Option<Package>) {
+    let mut notes = Vec::new();
+    let mut described = None;
+    for line in body.lines() {
+        match line
+            .trim()
+            .strip_prefix(PACKAGE_MARK)
+            .and_then(|rest| rest.strip_suffix("-->"))
+        {
+            Some(text) => described = Package::parse(text.trim().as_bytes()).ok(),
+            None => notes.push(line),
+        }
+    }
+    (notes.join("\n").trim().to_owned(), described)
 }
 
 /// The section of `## <version>` in release notes.
@@ -564,9 +675,14 @@ fn notes_section(notes: &str, version: &str) -> String {
     out.trim().to_owned()
 }
 
-/// The packages in a folder source's `modules/`.
+/// The packages in a folder source's `modules/` and the application in its `distribution/`.
 fn folder_offers(root: &Path, core: &str, platform: &str) -> (Vec<Offer>, Vec<String>) {
     let (mut offers, mut problems) = (Vec::new(), Vec::new());
+    match folder_application(root, platform) {
+        Some(Ok(offer)) => offers.push(offer),
+        Some(Err(problem)) => problems.push(problem),
+        None => {}
+    }
     let Ok(entries) = fs::read_dir(root.join(MODULES)) else {
         return (offers, problems);
     };
@@ -600,6 +716,8 @@ fn folder_offers(root: &Path, core: &str, platform: &str) -> (Vec<Offer>, Vec<St
                 id: described.id,
                 version: described.version,
                 min_core: described.min_core,
+                name: described.name,
+                description: described.description,
                 notes,
                 size,
                 download: Download::File { path: file.clone() },
@@ -613,16 +731,43 @@ fn folder_offers(root: &Path, core: &str, platform: &str) -> (Vec<Offer>, Vec<St
     (offers, problems)
 }
 
-/// The module package a GitHub release offers for `platform`: a release tagged
-/// `module-<id>-v<version>` with the asset `<id>-<version>-<platform>.module.tgz`.
-fn release_offer(release: &Value, platform: &str) -> Option<Offer> {
+/// What a GitHub release offers for `platform`: a module package (a release tagged
+/// `module-<id>-v<version>` with the asset `<id>-<version>-<platform>.module.tgz`) or the
+/// application (`devtool-v<version>` with the archive and `version.json`).
+fn release_offer(release: &Value, core: &str, platform: &str) -> Option<Offer> {
     if release["draft"] == true || release["prerelease"] == true {
         return None;
     }
-    let (id, version) = release["tag_name"]
-        .as_str()?
-        .strip_prefix("module-")?
-        .rsplit_once("-v")?;
+    let tag = release["tag_name"].as_str()?;
+    let body = release["body"].as_str().unwrap_or_default();
+    let asset = |name: &str| {
+        release["assets"]
+            .as_array()?
+            .iter()
+            .find(|asset| asset["name"] == name)
+    };
+    let digest = |asset: &Value| {
+        asset["digest"]
+            .as_str()
+            .and_then(|digest| digest.strip_prefix("sha256:"))
+            .map(str::to_owned)
+    };
+    if let Some(version) = tag.strip_prefix(updates::TAG_PREFIX) {
+        updates::version(version).ok()?;
+        let archive = asset(updates::ARCHIVE)?;
+        return Some(application_offer(
+            version,
+            body.trim().to_owned(),
+            archive["size"].as_u64().unwrap_or_default(),
+            platform,
+            Download::Application {
+                archive: archive["id"].as_u64()?,
+                sha256: digest(archive),
+                metadata: asset(RELEASE_FILE)?["id"].as_u64()?,
+            },
+        ));
+    }
+    let (id, version) = tag.strip_prefix("module-")?.rsplit_once("-v")?;
     package::check_id(id).ok()?;
     package::version(version).ok()?;
     let name = package::archive_name(&Package {
@@ -631,27 +776,24 @@ fn release_offer(release: &Value, platform: &str) -> Option<Offer> {
         platform: Some(platform.into()),
         ..Package::default()
     });
-    let asset = release["assets"]
-        .as_array()?
-        .iter()
-        .find(|asset| asset["name"] == name.as_str())?;
+    let asset = asset(&name)?;
+    let (notes, described) = release_body(body);
+    let described =
+        described.filter(|described| described.id == id && described.version == version);
     Some(Offer {
         id: id.into(),
         version: version.into(),
-        min_core: None,
-        notes: release["body"]
-            .as_str()
-            .unwrap_or_default()
-            .trim()
-            .to_owned(),
+        min_core: described.as_ref().and_then(|d| d.min_core.clone()),
+        unsupported: described
+            .as_ref()
+            .and_then(|d| d.unsupported(core, platform)),
+        name: described.as_ref().and_then(|d| d.name.clone()),
+        description: described.and_then(|d| d.description),
+        notes,
         size: asset["size"].as_u64().unwrap_or_default(),
-        unsupported: None,
         download: Download::Asset {
             id: asset["id"].as_u64()?,
-            sha256: asset["digest"]
-                .as_str()
-                .and_then(|digest| digest.strip_prefix("sha256:"))
-                .map(str::to_owned),
+            sha256: digest(asset),
         },
     })
 }
@@ -784,6 +926,42 @@ impl GitHub {
         Ok(bytes)
     }
 
+    /// Streams `path` into the new file `file`, which must hash to `sha256`.
+    async fn download(&self, path: &str, file: &Path, maximum: u64, sha256: &str) -> Result<()> {
+        use tokio::io::AsyncWriteExt;
+        let failed = |e: reqwest::Error| {
+            Error::new(format!("GitHub {}: {}", self.repository, e.without_url()))
+        };
+        let mut response = self.get(path, "application/octet-stream").await?;
+        if response
+            .content_length()
+            .is_some_and(|length| length > maximum)
+        {
+            return Err(Error::new(format!("{path} is too large")));
+        }
+        let mut options = tokio::fs::OpenOptions::new();
+        options.write(true).create_new(true).mode(0o600);
+        let mut out = options.open(file).await?;
+        let mut digest = Sha256::new();
+        let mut size = 0u64;
+        while let Some(chunk) = response.chunk().await.map_err(failed)? {
+            size += chunk.len() as u64;
+            if size > maximum {
+                return Err(Error::new(format!("{path} is too large")));
+            }
+            digest.update(&chunk);
+            out.write_all(&chunk).await?;
+        }
+        out.flush().await?;
+        out.sync_all().await?;
+        if !format!("{:x}", digest.finalize()).eq_ignore_ascii_case(sha256) {
+            return Err(Error::new(
+                "The download is damaged (SHA-256 mismatch); nothing was installed",
+            ));
+        }
+        Ok(())
+    }
+
     /// The configuration files below `path` at `branch` and the contents of those `need`
     /// accepts.
     async fn fetch(
@@ -885,7 +1063,7 @@ impl GitHub {
         Ok(fetched)
     }
 
-    async fn offers(&self, platform: &str) -> Result<Vec<Offer>> {
+    async fn offers(&self, core: &str, platform: &str) -> Result<Vec<Offer>> {
         let mut offers = Vec::new();
         for page in 1..=MAX_RELEASE_PAGES {
             let releases = self
@@ -895,7 +1073,7 @@ impl GitHub {
             offers.extend(
                 releases
                     .iter()
-                    .filter_map(|release| release_offer(release, platform)),
+                    .filter_map(|release| release_offer(release, core, platform)),
             );
             if releases.len() < 100 {
                 break;
@@ -1238,6 +1416,35 @@ pub fn remove_module_source(data: &Path, id: &str) -> Result<()> {
     Ok(())
 }
 
+/// A module the application has: loaded, or a package that failed to load.
+pub struct Installed {
+    pub id: String,
+    /// The loaded module's name and description.
+    pub name: Option<String>,
+    pub description: Option<String>,
+    /// The loaded module's version; a failed package's comes from its `package.json`.
+    pub version: Option<String>,
+    pub error: Option<String>,
+}
+
+/// The source the running application came from: its record, else the GitHub source of the
+/// repository it was installed from.
+fn application_source(
+    sources: &[Source],
+    records: &BTreeMap<String, Option<String>>,
+) -> Option<String> {
+    if let Some(slug) = records.get(APPLICATION_ID) {
+        return slug.clone();
+    }
+    let repository = super::updates::installed_repository().unwrap_or_else(|| STANDARD.into());
+    sources
+        .iter()
+        .find(|source| {
+            matches!(&source.location, Location::Github { repository: from, path: None, .. } if from.eq_ignore_ascii_case(&repository))
+        })
+        .map(Source::slug)
+}
+
 // ---------------------------------------------------------------------------------------
 // Checking.
 
@@ -1295,7 +1502,10 @@ async fn check_source(data: &Path, source: &Source, core: &str, platform: &str) 
         checked.problems = fetched.problems;
         checked.modules = match &source.location {
             Location::Github { repository, .. } => {
-                github(data, repository).await?.offers(platform).await?
+                github(data, repository)
+                    .await?
+                    .offers(core, platform)
+                    .await?
             }
             Location::Folder { path } => {
                 let (path, core, platform) = (path.clone(), core.to_owned(), platform.to_owned());
@@ -1308,7 +1518,8 @@ async fn check_source(data: &Path, source: &Source, core: &str, platform: &str) 
             }
         };
         checked.modules.sort_by(|a, b| {
-            a.id.cmp(&b.id).then_with(|| {
+            let module = |offer: &Offer| offer.id != APPLICATION_ID;
+            (module(a), &a.id).cmp(&(module(b), &b.id)).then_with(|| {
                 package::version(&b.version)
                     .ok()
                     .cmp(&package::version(&a.version).ok())
@@ -1458,14 +1669,16 @@ impl Sources {
     }
 
     /// Checks every source unless its last check is recent (`force` checks anyway):
-    /// `{sources:[{name, slug, checkedAt, error?, configs, applied, changes:[{kind, key,
-    /// change, overridden}], problems, modules:[offers]}], installed:{"<module>": {version,
-    /// source?}}}`; `installed` lists the loaded modules as `(id, version)`.
+    /// `{sources:[{name, slug, kind, repository?|path, checkedAt, error?, configs, applied,
+    /// changes:[{kind, key, change, overridden}], problems, modules:[offers]}],
+    /// installed:{"<module>": {version, source?, notes, error?, name?, description?}}}`, where
+    /// `installed` has the
+    /// application too ([`APPLICATION_ID`]).
     pub async fn check(
         &self,
         force: bool,
         local: &Local,
-        installed: &[(String, String)],
+        installed: &[Installed],
     ) -> Result<Value> {
         let sources = sources(&self.data)?;
         let mut checks = read_checks(&self.data);
@@ -1497,7 +1710,7 @@ impl Sources {
         sources: &[Source],
         checks: &BTreeMap<String, Checked>,
         local: &Local,
-        installed: &[(String, String)],
+        installed: &[Installed],
     ) -> Value {
         let described: Vec<Value> = sources
             .iter()
@@ -1514,17 +1727,19 @@ impl Sources {
                         value
                     })
                     .collect();
-                Some(json!({
-                    "name": source.name,
-                    "slug": slug,
-                    "checkedAt": checked.checked_at,
-                    "error": checked.error,
-                    "configs": checked.configs,
-                    "applied": applied,
-                    "changes": changes,
-                    "problems": checked.problems,
-                    "modules": checked.modules,
-                }))
+                let mut described = source.describe();
+                for (key, value) in [
+                    ("checkedAt", json!(checked.checked_at)),
+                    ("error", json!(checked.error)),
+                    ("configs", json!(checked.configs)),
+                    ("applied", json!(applied)),
+                    ("changes", json!(changes)),
+                    ("problems", json!(checked.problems)),
+                    ("modules", json!(checked.modules)),
+                ] {
+                    described[key] = value;
+                }
+                Some(described)
             })
             .collect();
         // Modules without a record came with the application before 3.2.0, from Standard.
@@ -1532,9 +1747,10 @@ impl Sources {
         let standard = sources.iter().find(|source| {
             matches!(&source.location, Location::Github { repository, .. } if repository.eq_ignore_ascii_case(STANDARD))
         });
-        let origins: Map<String, Value> = installed
+        let mut origins: Map<String, Value> = installed
             .iter()
-            .map(|(id, version)| {
+            .map(|module| {
+                let id = &module.id;
                 let slug = match records.get(id) {
                     Some(slug) => slug.clone(),
                     None => standard
@@ -1545,9 +1761,36 @@ impl Sources {
                         })
                         .map(Source::slug),
                 };
-                (id.clone(), json!({"version": version, "source": slug}))
+                let dir = self.data.join(super::modules::DIR).join(id);
+                let version = module
+                    .version
+                    .clone()
+                    .or_else(|| Package::read(&dir).ok().map(|package| package.version));
+                let notes = version
+                    .as_deref()
+                    .and_then(|version| {
+                        let notes = fs::read_to_string(dir.join(package::NOTES_FILE)).ok()?;
+                        Some(notes_section(&notes, version))
+                    })
+                    .unwrap_or_default();
+                (
+                    id.clone(),
+                    json!({"version": version, "source": slug, "notes": notes, "error": module.error,
+                        "name": module.name, "description": module.description}),
+                )
             })
             .collect();
+        let core = env!("CARGO_PKG_VERSION");
+        origins.insert(
+            APPLICATION_ID.into(),
+            json!({
+                "version": core,
+                "source": application_source(sources, &records),
+                "notes": notes_section(APPLICATION_NOTES, core),
+                "name": APPLICATION_NAME,
+                "description": APPLICATION_DESCRIPTION,
+            }),
+        );
         json!({"sources": described, "installed": origins})
     }
 
@@ -1581,13 +1824,9 @@ impl Sources {
         self.get()
     }
 
-    /// Downloads version `version` of module `id` from the source `slug`, as its last check
-    /// found it.
-    pub async fn package(&self, slug: &str, id: &str, version: &str) -> Result<Vec<u8>> {
-        let source = sources(&self.data)?
-            .into_iter()
-            .find(|source| source.slug() == slug)
-            .ok_or_else(|| Error::new(format!("Unknown source \"{slug}\"")))?;
+    /// The source `slug` and what it offers of `id` `version`, as its last check found it.
+    fn offer(&self, slug: &str, id: &str, version: &str) -> Result<(Source, Offer)> {
+        let source = self.source(slug)?;
         let offer = read_checks(&self.data)
             .remove(slug)
             .and_then(|checked| {
@@ -1602,9 +1841,26 @@ impl Sources {
                     source.name
                 ))
             })?;
-        if let Some(reason) = offer.unsupported {
-            return Err(Error::new(reason));
+        if let Some(reason) = &offer.unsupported {
+            return Err(Error::new(reason.clone()));
         }
+        Ok((source, offer))
+    }
+
+    fn source(&self, slug: &str) -> Result<Source> {
+        sources(&self.data)?
+            .into_iter()
+            .find(|source| source.slug() == slug)
+            .ok_or_else(|| Error::new(format!("Unknown source \"{slug}\"")))
+    }
+
+    /// Downloads version `version` of module `id` from the source `slug`, as its last check
+    /// found it.
+    pub async fn package(&self, slug: &str, id: &str, version: &str) -> Result<Vec<u8>> {
+        if id == APPLICATION_ID {
+            return Err(Error::new("Services DevTools is installed by its updater"));
+        }
+        let (source, offer) = self.offer(slug, id, version)?;
         match (&source.location, &offer.download) {
             (Location::Github { repository, .. }, Download::Asset { id: asset, sha256 }) => {
                 let bytes = github(&self.data, repository)
@@ -1631,6 +1887,99 @@ impl Sources {
             }
             _ => Err(Error::new("Check for updates again")),
         }
+    }
+
+    /// Fetches version `version` of the application from the source `slug`, as its last check
+    /// found it: its checked release metadata and the archive, downloaded into the folder
+    /// `into` or, from a folder source, where it lies.
+    pub async fn application(
+        &self,
+        slug: &str,
+        version: &str,
+        into: &Path,
+    ) -> Result<(Release, PathBuf)> {
+        let (source, offer) = self.offer(slug, APPLICATION_ID, version)?;
+        let core = env!("CARGO_PKG_VERSION");
+        if updates::version(version).map_err(Error::new)?
+            <= updates::version(core).map_err(Error::new)?
+        {
+            return Err(Error::new(format!(
+                "Services DevTools {version} is not newer than the running {core}"
+            )));
+        }
+        let changed = || {
+            Error::new(format!(
+                "The release metadata of Services DevTools {version} in \"{}\" names another release; check for updates again",
+                source.name
+            ))
+        };
+        match (&source.location, &offer.download) {
+            (
+                Location::Github { repository, .. },
+                Download::Application {
+                    archive,
+                    sha256,
+                    metadata,
+                },
+            ) => {
+                let github = github(&self.data, repository).await?;
+                let bytes = github
+                    .bytes(
+                        &format!("releases/assets/{metadata}"),
+                        "application/octet-stream",
+                        MAX_RELEASE,
+                    )
+                    .await?;
+                let release = read_release(&bytes).map_err(Error::new)?;
+                if release.version != version
+                    || !release.repository.eq_ignore_ascii_case(repository)
+                    || sha256
+                        .as_ref()
+                        .is_some_and(|sha256| !sha256.eq_ignore_ascii_case(&release.sha256))
+                {
+                    return Err(changed());
+                }
+                let path = into.join(&release.archive);
+                github
+                    .download(
+                        &format!("releases/assets/{archive}"),
+                        &path,
+                        MAX_ARCHIVE,
+                        &release.sha256,
+                    )
+                    .await?;
+                Ok((release, path))
+            }
+            (Location::Folder { path: root }, Download::File { path })
+                if path.starts_with(root.join(DISTRIBUTION)) =>
+            {
+                let dir = root.join(DISTRIBUTION);
+                let bytes = fs::read(dir.join(RELEASE_FILE))
+                    .map_err(|e| Error::new(format!("{}: {e}", dir.display())))?;
+                let release = read_release(&bytes).map_err(Error::new)?;
+                if release.version != version {
+                    return Err(changed());
+                }
+                let path = dir.join(&release.archive);
+                Ok((release, path))
+            }
+            _ => Err(Error::new("Check for updates again")),
+        }
+    }
+
+    /// Opens a folder source's folder in Finder.
+    pub fn open(&self, slug: &str) -> Result<Value> {
+        let source = self.source(slug)?;
+        let Location::Folder { path } = &source.location else {
+            return Err(Error::new(format!("\"{}\" is not a folder", source.name)));
+        };
+        std::process::Command::new("/usr/bin/open")
+            .arg(path)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()?;
+        Ok(json!({}))
     }
 }
 
@@ -1724,12 +2073,13 @@ pub fn migrate_team_folder(data: &Path) -> Result<()> {
     Ok(())
 }
 
-/// The sources service with `op`: get, save, token, check, apply. Install is in the runtime.
+/// The sources service with `op`: get, save, token, check, apply, open. Install is in the
+/// runtime.
 pub async fn dispatch(
     sources: &Sources,
     message: &Value,
     local: impl FnOnce() -> Local,
-    installed: &[(String, String)],
+    installed: &[Installed],
 ) -> Result<Value> {
     match message["op"].as_str().unwrap_or("get") {
         "get" => sources.get(),
@@ -1752,6 +2102,11 @@ pub async fn dispatch(
                 .ok_or_else(|| Error::new("Which source?"))?;
             sources.apply(slug).await
         }
+        "open" => sources.open(
+            message["source"]
+                .as_str()
+                .ok_or_else(|| Error::new("Which source?"))?,
+        ),
         op => Err(Error::new(format!("Unknown sources op: {op}"))),
     }
 }
@@ -1759,6 +2114,27 @@ pub async fn dispatch(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn release_metadata(version: &str, sha256: &str) -> Release {
+        let base = format!("https://github.com/duhon/devtool/releases/download/devtool-v{version}");
+        Release {
+            schema_version: 1,
+            application: "ServicesDevTools".into(),
+            version: version.into(),
+            tag: format!("devtool-v{version}"),
+            commit: "a".repeat(40),
+            repository: "duhon/devtool".into(),
+            branch: "main".into(),
+            platform: "darwin".into(),
+            arch: "arm64".into(),
+            minimum_macos: "13.5".into(),
+            archive: updates::ARCHIVE.into(),
+            sha256: sha256.into(),
+            archive_url: format!("{base}/{}", updates::ARCHIVE),
+            checksums_url: format!("{base}/checksums.txt"),
+            installer_url: format!("{base}/install.sh"),
+        }
+    }
 
     fn folder_source(name: &str, path: &Path) -> Value {
         json!({"name": name, "kind": "folder", "path": path})
@@ -1928,8 +2304,26 @@ mod tests {
             version: version.into(),
             min_core: Some(min_core.into()),
             platform: Some(package::host_platform()),
+            name: Some("Redis".into()),
+            description: None,
         };
         fs::create_dir_all(team.path().join(MODULES)).unwrap();
+        let distribution = team.path().join(DISTRIBUTION);
+        fs::create_dir_all(&distribution).unwrap();
+        fs::write(distribution.join(updates::ARCHIVE), b"archive").unwrap();
+        fs::write(distribution.join("release-notes.txt"), "- New app\n").unwrap();
+        fs::write(
+            distribution.join(RELEASE_FILE),
+            serde_json::to_vec(&release_metadata("65000.0.0", &self::sha256(b"archive"))).unwrap(),
+        )
+        .unwrap();
+        let installed = data.path().join("modules/redis");
+        fs::create_dir_all(&installed).unwrap();
+        fs::write(
+            installed.join(package::NOTES_FILE),
+            "## 1.0.0\n- Installed notes\n",
+        )
+        .unwrap();
         for (version, min_core) in [("1.0.0", "1.0.0"), ("2.0.0", "99.0.0")] {
             fs::write(
                 package.path().join(package::PACKAGE_FILE),
@@ -1959,20 +2353,45 @@ mod tests {
             .check(
                 false,
                 &Local::default(),
-                &[("redis".into(), "1.0.0".into())],
+                &[
+                    Installed {
+                        id: "redis".into(),
+                        name: Some("Redis".into()),
+                        description: None,
+                        version: Some("1.0.0".into()),
+                        error: None,
+                    },
+                    Installed {
+                        id: "broken".into(),
+                        name: None,
+                        description: None,
+                        version: None,
+                        error: Some("not a services module".into()),
+                    },
+                ],
             )
             .await
             .unwrap();
+        assert_eq!(checked["sources"][0]["kind"], "folder");
         let modules = &checked["sources"][0]["modules"];
-        assert_eq!(modules[0]["version"], "2.0.0");
+        assert_eq!(
+            (
+                &modules[0]["id"],
+                &modules[0]["version"],
+                &modules[0]["notes"]
+            ),
+            (&json!("app"), &json!("65000.0.0"), &json!("- New app"))
+        );
+        assert_eq!(modules[1]["version"], "2.0.0");
         assert!(
-            modules[0]["unsupported"]
+            modules[1]["unsupported"]
                 .as_str()
                 .unwrap()
                 .contains("99.0.0")
         );
-        assert_eq!(modules[1]["version"], "1.0.0");
-        assert_eq!(modules[1]["notes"], "- Notes of 1.0.0");
+        assert_eq!(modules[2]["version"], "1.0.0");
+        assert_eq!(modules[2]["name"], "Redis");
+        assert_eq!(modules[2]["notes"], "- Notes of 1.0.0");
         assert!(
             checked["sources"][0]["problems"][0]
                 .as_str()
@@ -1980,8 +2399,41 @@ mod tests {
                 .contains("broken")
         );
         assert_eq!(
-            checked["installed"],
-            json!({"redis": {"version": "1.0.0", "source": null}})
+            checked["installed"]["redis"],
+            json!({"version": "1.0.0", "source": null, "notes": "- Installed notes", "error": null,
+                "name": "Redis", "description": null})
+        );
+        assert_eq!(
+            checked["installed"]["broken"],
+            json!({"version": null, "source": null, "notes": "", "error": "not a services module",
+                "name": null, "description": null})
+        );
+        assert_eq!(
+            checked["installed"]["app"]["version"],
+            env!("CARGO_PKG_VERSION")
+        );
+        assert!(sources.package("team", "app", "65000.0.0").await.is_err());
+        let into = tempfile::tempdir().unwrap();
+        let (release, path) = sources
+            .application("team", "65000.0.0", into.path())
+            .await
+            .unwrap();
+        assert_eq!(
+            (release.version.as_str(), path),
+            ("65000.0.0", distribution.join(updates::ARCHIVE))
+        );
+        fs::write(
+            distribution.join(RELEASE_FILE),
+            serde_json::to_vec(&release_metadata("65001.0.0", &self::sha256(b"archive"))).unwrap(),
+        )
+        .unwrap();
+        assert!(
+            sources
+                .application("team", "65000.0.0", into.path())
+                .await
+                .unwrap_err()
+                .message
+                .contains("names another release")
         );
         let bytes = sources.package("team", "redis", "1.0.0").await.unwrap();
         assert_eq!(
@@ -2009,6 +2461,7 @@ mod tests {
                 "module-my-rest-v1.2.3",
                 "my-rest-1.2.3-macos-arm64.module.tgz",
             ),
+            "3.2.0",
             "macos-arm64",
         )
         .unwrap();
@@ -2024,17 +2477,64 @@ mod tests {
             }
         );
         assert_eq!(offer.notes, "- Fixes");
+        assert_eq!((offer.name, offer.unsupported), (None, None));
         assert!(
             release_offer(
                 &release("module-rest-v1.2.3", "rest-1.2.3-macos-arm64.module.tgz"),
+                "3.2.0",
                 "linux-x86_64"
             )
             .is_none()
         );
-        assert!(release_offer(&release("devtool-v3.2.0", "x"), "macos-arm64").is_none());
+        assert!(release_offer(&release("devtool-v3.2.0", "x"), "3.2.0", "macos-arm64").is_none());
         let mut draft = release("module-rest-v1.0.0", "rest-1.0.0-macos-arm64.module.tgz");
         draft["draft"] = json!(true);
-        assert!(release_offer(&draft, "macos-arm64").is_none());
+        assert!(release_offer(&draft, "3.2.0", "macos-arm64").is_none());
+
+        // The package described at the end of the notes.
+        let mut described = release("module-rest-v1.2.3", "rest-1.2.3-macos-arm64.module.tgz");
+        described["body"] = json!(format!(
+            "- Fixes\n\n{PACKAGE_MARK}{} -->\n",
+            json!({"id": "rest", "version": "1.2.3", "minCore": "9.0.0", "name": "REST", "description": "Calls APIs"})
+        ));
+        let offer = release_offer(&described, "3.2.0", "macos-arm64").unwrap();
+        assert_eq!(offer.notes, "- Fixes");
+        assert_eq!(
+            (offer.name.as_deref(), offer.description.as_deref()),
+            (Some("REST"), Some("Calls APIs"))
+        );
+        assert!(offer.unsupported.unwrap().contains("9.0.0"));
+
+        // The application.
+        let mut application = release("devtool-v3.3.0", updates::ARCHIVE);
+        application["assets"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id": 8, "name": RELEASE_FILE, "size": 1}));
+        let offer = release_offer(&application, "3.2.0", "macos-arm64").unwrap();
+        assert_eq!(
+            (
+                offer.id.as_str(),
+                offer.version.as_str(),
+                offer.notes.as_str()
+            ),
+            (APPLICATION_ID, "3.3.0", "- Fixes")
+        );
+        assert_eq!(
+            offer.download,
+            Download::Application {
+                archive: 7,
+                sha256: Some("ab".into()),
+                metadata: 8
+            }
+        );
+        assert!(offer.unsupported.is_none());
+        assert!(
+            release_offer(&application, "3.2.0", "linux-x86_64")
+                .unwrap()
+                .unsupported
+                .is_some()
+        );
         assert_eq!(
             notes_section("## 2.0.0\n- b\n## 1.0.0\n- a\n", "1.0.0"),
             "- a"

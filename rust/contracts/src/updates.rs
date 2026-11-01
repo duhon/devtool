@@ -57,14 +57,6 @@ impl Source {
         }
         Ok(())
     }
-
-    pub fn manifest_url(&self) -> Result<String, String> {
-        self.validate()?;
-        Ok(format!(
-            "https://github.com/{}/releases/latest/download/version.json",
-            self.repository
-        ))
-    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -188,10 +180,6 @@ mod tests {
             let mut release = release();
             release.branch = branch.into();
             assert!(release.validate(&source).is_ok());
-            assert_eq!(
-                source.manifest_url().unwrap(),
-                "https://github.com/owner/repository/releases/latest/download/version.json"
-            );
             release.branch = if branch == "main" { "devtool" } else { "main" }.into();
             assert!(release.validate(&source).is_err());
         }

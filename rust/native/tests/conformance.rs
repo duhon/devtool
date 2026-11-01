@@ -371,9 +371,9 @@ async fn panel_state_survives_a_restart() {
             json!("Team"),
         ),
     ];
-    // History keeps its own state (tests/core/history.rs); sessions, agent_sessions and
-    // agent_skills derive theirs from other services' storage.
-    let mut covered = vec!["history", "sessions", "agent_sessions", "agent_skills"];
+    // History keeps its own state (tests/core/history.rs); sessions and agent_sessions derive
+    // theirs from other services' storage.
+    let mut covered = vec!["history", "sessions", "agent_sessions"];
     for (panel, mut write, (op, fields), pointer, expected) in cases {
         module(panel);
         write["service"] = json!(panel);

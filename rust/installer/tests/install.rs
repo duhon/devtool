@@ -97,6 +97,11 @@ fn archive_update_preserves_data_and_refuses_repeat_or_downgrade() {
     assert!(!paths.data.join("update-installer-signing.json").exists());
     fs::write(paths.data.join("saved-request"), "keep this request").unwrap();
     change_version(&payload, "2.0.0");
+    // Any source may offer the application, a fork too.
+    let metadata = payload.join("distribution.json");
+    let mut value: Value = serde_json::from_slice(&fs::read(&metadata).unwrap()).unwrap();
+    value["repository"] = json!("fork/repository");
+    fs::write(metadata, serde_json::to_vec(&value).unwrap()).unwrap();
     let path = directory.path().join("update.tar.gz");
     let sha = archive(&payload, &path);
     services_installer::updates::install_archive(&home, &path, &sha, "2.0.0").unwrap();
@@ -105,6 +110,7 @@ fn archive_update_preserves_data_and_refuses_repeat_or_downgrade() {
     )
     .unwrap();
     assert_eq!(installed["version"], "2.0.0");
+    assert_eq!(installed["repository"], "fork/repository");
     let signing: Value =
         serde_json::from_slice(&fs::read(paths.data.join("update-local-signing.json")).unwrap())
             .unwrap();
@@ -236,19 +242,13 @@ fn failed_local_signing_preserves_the_installed_version_and_diagnostics() {
 
 #[test]
 fn archive_rejections_leave_the_installed_application_and_data_unchanged() {
-    for case in ["checksum", "version", "source", "permissions", "health"] {
+    for case in ["checksum", "version", "permissions", "health"] {
         let (directory, home, payload, _) = fixture();
         let paths = install(&home, &payload).unwrap();
         let manifest_path = paths.base.join("extension/manifest.json");
         let original = fs::read(&manifest_path).unwrap();
         fs::write(paths.data.join("saved-request"), "preserve").unwrap();
         change_version(&payload, "2.0.0");
-        if case == "source" {
-            let path = payload.join("distribution.json");
-            let mut value: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-            value["repository"] = json!("foreign/repository");
-            fs::write(path, serde_json::to_vec(&value).unwrap()).unwrap();
-        }
         if case == "permissions" {
             let path = payload.join("extension/manifest.json");
             let mut value: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();

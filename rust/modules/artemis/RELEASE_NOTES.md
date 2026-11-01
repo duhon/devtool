@@ -1,5 +1,10 @@
 # Artemis module release notes
 
+## 3.2.1
+
+- Settings → Modules shows the Artemis module's name and description before it is
+  installed.
+
 ## 3.2.0
 
 - The Artemis module is released apart from Services DevTools: install and update it in

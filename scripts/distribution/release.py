@@ -282,8 +282,12 @@ def release_once(tag, name, notes, output, names, latest):
     print(f"Published {published['html_url']}")
 
 
+PACKAGE_MARK = "<!-- services-package "
+
+
 def module_release(archive):
-    """`(id, version, notes)` of a module package file; the notes of its version."""
+    """`(id, version, notes)` of a module package file: the notes of its version, ending with
+    its package.json, which Settings → Modules reads (name, description, minCore)."""
     with tarfile.open(archive) as package:
         described = json.load(package.extractfile("package.json"))
         try:
@@ -296,7 +300,8 @@ def module_release(archive):
         raise ValueError(f"{archive.name}: the newest module notes are for {noted}, not {version}")
     if archive.name != f"{module}-{version}-{described['platform']}{MODULE_SUFFIX}":
         raise ValueError(f"{archive.name} is not named by its package")
-    return module, version, notes
+    described = json.dumps(described, separators=(",", ":"), ensure_ascii=False)
+    return module, version, f"{notes}\n\n{PACKAGE_MARK}{described.replace('--', '-\\u002d')} -->"
 
 
 def publish(root=ROOT):

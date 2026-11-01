@@ -48,6 +48,9 @@ struct Package {
     version: String,
     /// `[package.metadata.services] min-core`: the oldest application version it works with.
     min_core: Option<String>,
+    /// The manifest's `name` and `description`.
+    name: String,
+    description: String,
     dir: PathBuf,
     library: String,
     ui: Option<String>,
@@ -61,6 +64,8 @@ impl Package {
             version: self.version.clone(),
             min_core: self.min_core.clone(),
             platform: Some(services_contracts::package::host_platform()),
+            name: Some(self.name.clone()),
+            description: Some(self.description.clone()).filter(|text| !text.is_empty()),
         }
     }
 }
@@ -132,6 +137,14 @@ fn package_at(root: &Path, dir: &Path) -> Result<Package> {
             .to_owned(),
         version: crate_version(root, &cargo)?,
         min_core: crate_min_core(&cargo)?,
+        name: manifest["name"]
+            .as_str()
+            .context("Module manifest without name")?
+            .to_owned(),
+        description: manifest["description"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned(),
         dir: dir.to_path_buf(),
         library: crate_name(&cargo)?,
         ui: ui.exists().then(|| crate_name(&ui)).transpose()?,
@@ -267,7 +280,7 @@ fn build_packages(
 
 const PACKAGE_USAGE: &str = "package <module id | module crate folder>... [--out FOLDER]";
 
-/// Package files (`<id>-<version>-<platform>.module.tgz`, Settings → Modules → Install from file) of
+/// Package files (`<id>-<version>-<platform>.module.tgz`, offered by a folder source's `modules/`) of
 /// shipped modules (by id) and module crates (by folder), built for release into `--out`
 /// (`target/packages` by default). Returns the files it writes.
 fn package_files(root: &Path, args: &[String]) -> Result<Vec<PathBuf>> {

@@ -1,24 +1,36 @@
-//! Settings: the installed modules, the modules the sources offer, installing from a source or
-//! a package file and removing a package. The host changes the modules folder; the panel then
-//! restarts its host, which loads the change. Removal keeps the module's consoles, history,
-//! templates and hints unless the user deletes them too.
+//! Settings: one table of the modules, each with the source it comes from — the installed
+//! version, the newest one the source offers, installing, updating and removing. The
+//! application itself is the `app` row and updates the same way, but can't be removed. The
+//! host changes the modules folder; the panel then restarts its host, which loads the change.
+//! Removal keeps the module's consoles, history, templates and hints unless the user deletes
+//! them too.
 
 use super::{
-    error,
     sources_settings::newer,
     transport::{Reply, Transport},
     views::OperationStatus,
 };
 use serde_json::{Value, json};
-use std::{collections::BTreeMap, rc::Rc};
-use web_sys::{HtmlInputElement, HtmlSelectElement};
+use services_contracts::package::APPLICATION_ID;
+use std::{collections::BTreeSet, rc::Rc};
+use web_sys::HtmlInputElement;
 use yew::prelude::*;
 
 #[derive(Properties, Clone)]
 pub struct Props {
     pub transport: Rc<Transport>,
-    /// The last check of the sources, with their module offers.
+    /// The last check of the sources: their offers and what is installed.
     pub check: Option<Rc<Value>>,
+    pub checking: bool,
+    /// Checks the sources again.
+    pub oncheck: Callback<bool>,
+    /// An application update is in progress.
+    pub app_busy: bool,
+    /// The source an application update was installed from, waiting for the reload.
+    pub app_installed: Option<String>,
+    /// Installs the application `(source slug, version)`.
+    pub onapp: Callback<(String, String)>,
+    pub onreload: Callback<()>,
     pub onstatus: Callback<OperationStatus>,
     /// A module was removed with its data; the panel drops what it keeps for the module.
     pub onforget: Callback<String>,
@@ -35,102 +47,138 @@ impl PartialEq for Props {
         };
         Rc::ptr_eq(&self.transport, &other.transport)
             && same_check
+            && self.checking == other.checking
+            && self.oncheck == other.oncheck
+            && self.app_busy == other.app_busy
+            && self.app_installed == other.app_installed
+            && self.onapp == other.onapp
+            && self.onreload == other.onreload
             && self.onstatus == other.onstatus
             && self.onforget == other.onforget
             && self.onchange == other.onchange
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Detail {
+    Description,
+    Notes,
+    NewNotes,
+}
+
 pub enum Msg {
-    Load,
-    Loaded(Reply),
-    Pick,
-    Chosen,
-    Read(Result<Vec<u8>, String>),
-    /// Asks to confirm removing the package folder.
-    Remove(String),
+    /// Shows or hides a detail of a row.
+    Toggle(String, Detail),
+    /// Asks to confirm removing a row's module: `(row key, module)`.
+    Remove(String, String),
     Forget(bool),
     Cancel,
     Confirm,
-    /// Picks the version of a source's module: `(source slug, module, version)`.
-    Version(String, String, String),
     /// Installs `(source slug, module, version)`.
     Install(String, String, String),
+    /// Opens a folder source.
+    Open(String),
+    Opened(f64, Reply),
     Changed(&'static str, f64, Reply),
 }
 
-struct Row {
-    /// The package folder: the module id, or the folder of a package that failed to load.
-    folder: String,
-    title: String,
-    detail: String,
-    version: String,
-    failed: bool,
-}
-
-/// The versions of one module a source offers, newest first.
-struct Offered<'a> {
-    source: &'a str,
-    slug: &'a str,
+/// A module with one source: what the source offers and what is installed from it. A module
+/// installed from no source, or from one that no longer offers it, has a row of its own.
+struct Row<'a> {
     id: &'a str,
-    versions: Vec<&'a Value>,
+    slug: Option<&'a str>,
+    source: Option<&'a Value>,
+    /// The versions the source offers, newest first.
+    offers: Vec<&'a Value>,
+    /// What is installed, when it is installed from this source.
+    installed: Option<&'a Value>,
 }
 
-/// Every source's offers, grouped by module.
-fn offered(check: &Value) -> Vec<Offered<'_>> {
-    let mut out: Vec<Offered> = Vec::new();
-    for source in check["sources"].as_array().into_iter().flatten() {
+impl Row<'_> {
+    fn key(&self) -> String {
+        format!("{}/{}", self.slug.unwrap_or_default(), self.id)
+    }
+
+    fn app(&self) -> bool {
+        self.id == APPLICATION_ID
+    }
+
+    fn title(&self) -> &str {
+        self.installed
+            .and_then(|installed| installed["name"].as_str())
+            .or_else(|| self.offers.first()?["name"].as_str())
+            .unwrap_or(self.id)
+    }
+
+    fn description(&self) -> &str {
+        self.offers
+            .first()
+            .and_then(|offer| offer["description"].as_str())
+            .or_else(|| self.installed?["description"].as_str())
+            .unwrap_or_default()
+    }
+
+    /// The newest version the source offers that can be installed here.
+    fn newest(&self) -> Option<&Value> {
+        self.offers
+            .iter()
+            .copied()
+            .find(|offer| offer.get("unsupported").is_none())
+    }
+}
+
+fn rows(check: &Value) -> Vec<Row<'_>> {
+    let sources: Vec<&Value> = check["sources"].as_array().into_iter().flatten().collect();
+    let mut rows: Vec<Row> = Vec::new();
+    for source in &sources {
+        let slug = source["slug"].as_str();
         for offer in source["modules"].as_array().into_iter().flatten() {
             let id = offer["id"].as_str().unwrap_or_default();
-            let slug = source["slug"].as_str().unwrap_or_default();
-            match out.last_mut() {
-                Some(last) if last.slug == slug && last.id == id => last.versions.push(offer),
-                _ => out.push(Offered {
-                    source: source["name"].as_str().unwrap_or_default(),
-                    slug,
+            match rows.iter_mut().find(|row| row.id == id && row.slug == slug) {
+                Some(row) => row.offers.push(offer),
+                None => rows.push(Row {
                     id,
-                    versions: vec![offer],
+                    slug,
+                    source: Some(source),
+                    offers: vec![offer],
+                    installed: None,
                 }),
             }
         }
     }
-    out
+    for (id, installed) in check["installed"].as_object().into_iter().flatten() {
+        let slug = installed["source"].as_str();
+        match rows
+            .iter_mut()
+            .find(|row| slug.is_some() && row.id == id && row.slug == slug)
+        {
+            Some(row) => row.installed = Some(installed),
+            None => rows.push(Row {
+                id,
+                slug,
+                source: sources
+                    .iter()
+                    .copied()
+                    .find(|source| slug.is_some() && source["slug"].as_str() == slug),
+                offers: Vec::new(),
+                installed: Some(installed),
+            }),
+        }
+    }
+    rows.sort_by(|a, b| (!a.app(), a.id).cmp(&(!b.app(), b.id)));
+    rows
 }
 
 pub struct ModuleSettings {
-    rows: Vec<Row>,
     busy: bool,
-    input: NodeRef,
-    /// The package folder whose removal waits for confirmation.
-    confirming: Option<String>,
+    /// The details shown, by row key.
+    open: BTreeSet<(String, Detail)>,
+    /// The row whose module waits for the removal to be confirmed: `(row key, module)`.
+    confirming: Option<(String, String)>,
     /// Remove the module's consoles, history, templates and hints too.
     forget: bool,
-    /// The package folder being removed with its data.
+    /// The module being removed with its data.
     forgetting: Option<String>,
-    /// The picked version of a source's module, by `(source slug, module)`.
-    versions: BTreeMap<(String, String), String>,
-}
-
-fn rows(value: &Value) -> Vec<Row> {
-    let text = |value: &Value, key: &str| value[key].as_str().unwrap_or_default().to_owned();
-    let modules = value["modules"].as_array().into_iter().flatten();
-    let failed = value["failed"].as_array().into_iter().flatten();
-    modules
-        .map(|module| Row {
-            folder: text(module, "id"),
-            title: text(module, "name"),
-            detail: format!("{} {}", text(module, "id"), text(module, "version")),
-            version: text(module, "version"),
-            failed: false,
-        })
-        .chain(failed.map(|package| Row {
-            folder: text(package, "module"),
-            title: text(package, "module"),
-            detail: text(package, "error"),
-            version: String::new(),
-            failed: true,
-        }))
-        .collect()
 }
 
 impl ModuleSettings {
@@ -147,124 +195,247 @@ impl ModuleSettings {
                 .callback(move |reply| Msg::Changed(operation, started, reply)),
         );
     }
+
+    fn toggle(&self, ctx: &Context<Self>, key: &str, detail: Detail) -> Callback<MouseEvent> {
+        let key = key.to_owned();
+        ctx.link()
+            .callback(move |_| Msg::Toggle(key.clone(), detail))
+    }
+
+    fn view_source(&self, ctx: &Context<Self>, row: &Row) -> Html {
+        let Some(source) = row.source else {
+            return html! {<span data-testid="settings-module-source">{"—"}</span>};
+        };
+        let name = source["name"].as_str().unwrap_or_default().to_owned();
+        if source["kind"] == "folder" {
+            let slug = row.slug.unwrap_or_default().to_owned();
+            return html! {
+                <button type="button" class="module-settings-link" data-testid="settings-module-source"
+                    title={source["path"].as_str().unwrap_or_default().to_owned()}
+                    onclick={ctx.link().callback(move |_| Msg::Open(slug.clone()))}>{name}</button>
+            };
+        }
+        let repository = source["repository"].as_str().unwrap_or_default();
+        let url = match source["path"].as_str() {
+            Some(path) => format!(
+                "https://github.com/{repository}/tree/{}/{path}",
+                source["branch"].as_str().unwrap_or("HEAD")
+            ),
+            None => format!("https://github.com/{repository}"),
+        };
+        html! {
+            <a class="module-settings-link" data-testid="settings-module-source" href={url}
+                target="_blank" rel="noopener noreferrer">{name}</a>
+        }
+    }
+
+    fn view_row(&self, ctx: &Context<Self>, row: &Row, app_version: Option<&str>) -> Html {
+        let props = ctx.props();
+        let key = row.key();
+        let shown = |detail| self.open.contains(&(key.clone(), detail));
+        let slug = row.slug.unwrap_or_default().to_owned();
+        let version = row
+            .installed
+            .and_then(|installed| installed["version"].as_str());
+        let error = row
+            .installed
+            .and_then(|installed| installed["error"].as_str());
+        let base = if row.app() { app_version } else { version };
+        let newest = row.newest().filter(|offer| {
+            let offered = offer["version"].as_str().unwrap_or_default();
+            match base {
+                Some(base) if row.app() || row.installed.is_some() => newer(offered, base),
+                _ => true,
+            }
+        });
+        let new_version = newest
+            .and_then(|offer| offer["version"].as_str())
+            .unwrap_or_default()
+            .to_owned();
+        let unsupported = row
+            .newest()
+            .is_none()
+            .then(|| row.offers.first()?["unsupported"].as_str())
+            .flatten();
+        let confirming = self
+            .confirming
+            .as_ref()
+            .is_some_and(|(confirming, _)| *confirming == key);
+        let reload = row.app() && props.app_installed.as_deref() == row.slug;
+        let busy = self.busy || props.app_busy || props.app_installed.is_some() && row.app();
+        let install = {
+            let (slug, id, version) = (slug.clone(), row.id.to_owned(), new_version.clone());
+            let app = row.app();
+            let onapp = props.onapp.clone();
+            ctx.link().batch_callback(move |_| {
+                if app {
+                    onapp.emit((slug.clone(), version.clone()));
+                    None
+                } else {
+                    Some(Msg::Install(slug.clone(), id.clone(), version.clone()))
+                }
+            })
+        };
+        let description = row.description().to_owned();
+        let notes = row
+            .installed
+            .and_then(|installed| installed["notes"].as_str())
+            .unwrap_or_default()
+            .to_owned();
+        let new_notes = newest
+            .and_then(|offer| offer["notes"].as_str())
+            .unwrap_or_default()
+            .to_owned();
+        let details = |testid: &'static str, text: String| {
+            html! {
+                <tr class="module-settings-details" data-testid={testid}>
+                    <td colspan="5"><pre>{if text.trim().is_empty() { "No details.".to_owned() } else { text }}</pre></td>
+                </tr>
+            }
+        };
+        html! {<>
+            <tr class={classes!("module-settings-row", error.map(|_| "failed"))} data-testid="settings-module"
+                data-module={row.id.to_owned()} data-source={slug.clone()}>
+                <td>
+                    <button type="button" class="module-settings-link" data-testid="settings-module-name"
+                        title="Description" onclick={self.toggle(ctx, &key, Detail::Description)}>{row.title()}</button>
+                </td>
+                <td>{self.view_source(ctx, row)}</td>
+                <td>
+                    if row.installed.is_some() {
+                        <button type="button" class={classes!("module-settings-link", "module-settings-version", error.map(|_| "failed"))}
+                            data-testid="settings-module-version" title="Release notes"
+                            onclick={self.toggle(ctx, &key, Detail::Notes)}>{version.unwrap_or("failed")}</button>
+                    } else {
+                        <span data-testid="settings-module-version">{"—"}</span>
+                    }
+                </td>
+                <td>
+                    if newest.is_some() {
+                        <button type="button" class="module-settings-link" data-testid="settings-module-new-version"
+                            title="Release notes" onclick={self.toggle(ctx, &key, Detail::NewNotes)}>{&new_version}</button>
+                    }
+                </td>
+                <td class="module-settings-actions">
+                    if reload {
+                        <button type="button" class="tab-button" data-testid="settings-module-reload"
+                            onclick={props.onreload.reform(|_| ())}>{"Reload extension"}</button>
+                    } else if newest.is_some() && row.installed.is_some() {
+                        <button type="button" class="tab-button" data-testid="settings-module-update"
+                            disabled={busy} onclick={install}>{"Update"}</button>
+                    } else if newest.is_some() {
+                        <button type="button" class="tab-button" data-testid="settings-module-install"
+                            disabled={busy} onclick={install}>{"Install"}</button>
+                    }
+                    if row.installed.is_some() {
+                        <button type="button" class="tab-button" data-testid="settings-module-remove"
+                            title={row.app().then_some("The application can't be removed")}
+                            disabled={self.busy || confirming || row.app()}
+                            onclick={{
+                                let (key, id) = (key.clone(), row.id.to_owned());
+                                ctx.link().callback(move |_| Msg::Remove(key.clone(), id.clone()))
+                            }}>{"Remove"}</button>
+                    }
+                </td>
+            </tr>
+            if let Some(error) = error {
+                <tr class="module-settings-details failed" data-testid="settings-module-error">
+                    <td colspan="5">{error}</td>
+                </tr>
+            }
+            if let Some(reason) = unsupported {
+                <tr class="module-settings-details" data-testid="settings-module-unsupported">
+                    <td colspan="5">{reason}</td>
+                </tr>
+            }
+            if shown(Detail::Description) {{details("settings-module-description", description)}}
+            if shown(Detail::Notes) {{details("settings-module-notes", notes)}}
+            if shown(Detail::NewNotes) {{details("settings-module-new-notes", new_notes)}}
+            if confirming {
+                <tr class="module-settings-details">
+                    <td colspan="5">
+                        <div class="module-settings-confirm" role="group" data-testid="settings-module-confirm">
+                            <p>{format!("Remove module \"{}\"? Its consoles, checks, history, templates and hints are kept and come back when it is installed again.", row.title())}</p>
+                            <label>
+                                <input type="checkbox" data-testid="settings-module-forget" checked={self.forget}
+                                    onchange={ctx.link().callback(|e: Event| Msg::Forget(e.target_unchecked_into::<HtmlInputElement>().checked()))}/>
+                                {"Delete them too, in every session"}
+                            </label>
+                            <button type="button" class="tab-button" data-testid="settings-module-remove-confirm" disabled={self.busy}
+                                onclick={ctx.link().callback(|_| Msg::Confirm)}>{"Remove"}</button>
+                            <button type="button" class="tab-button" data-testid="settings-module-remove-cancel"
+                                onclick={ctx.link().callback(|_| Msg::Cancel)}>{"Cancel"}</button>
+                        </div>
+                    </td>
+                </tr>
+            }
+        </>}
+    }
 }
 
 impl Component for ModuleSettings {
     type Message = Msg;
     type Properties = Props;
 
-    fn create(ctx: &Context<Self>) -> Self {
-        ctx.link().send_message(Msg::Load);
+    fn create(_: &Context<Self>) -> Self {
         Self {
-            rows: Vec::new(),
             busy: false,
-            input: NodeRef::default(),
+            open: BTreeSet::new(),
             confirming: None,
             forget: false,
             forgetting: None,
-            versions: BTreeMap::new(),
         }
     }
 
     fn update(&mut self, ctx: &Context<Self>, msg: Msg) -> bool {
         match msg {
-            Msg::Load => {
-                ctx.props().transport.request(
-                    json!({"service":"modules"}),
-                    false,
-                    ctx.link().callback(Msg::Loaded),
-                );
-                return false;
-            }
-            Msg::Loaded(reply) => match reply {
-                Reply::Result(value) => {
-                    self.rows = rows(&value);
-                    if !self
-                        .rows
-                        .iter()
-                        .any(|row| self.confirming.as_ref() == Some(&row.folder))
-                    {
-                        self.confirming = None;
-                    }
-                }
-                Reply::Error(_) => {
-                    self.rows.clear();
-                    self.confirming = None;
-                }
-                _ => return false,
-            },
-            Msg::Pick => {
-                if let Some(input) = self.input.cast::<HtmlInputElement>() {
-                    input.click();
-                }
-                return false;
-            }
-            Msg::Chosen => {
-                let Some(input) = self.input.cast::<HtmlInputElement>() else {
-                    return false;
-                };
-                let Some(file) = input.files().and_then(|files| files.get(0)) else {
-                    return false;
-                };
-                // The same file can be chosen again after a failed install.
-                input.set_value("");
-                self.busy = true;
-                let link = ctx.link().clone();
-                wasm_bindgen_futures::spawn_local(async move {
-                    let bytes = wasm_bindgen_futures::JsFuture::from(file.array_buffer())
-                        .await
-                        .map(|buffer| js_sys::Uint8Array::new(&buffer).to_vec())
-                        .map_err(error);
-                    link.send_message(Msg::Read(bytes));
-                });
-            }
-            Msg::Read(bytes) => {
-                use base64::Engine;
-                match bytes {
-                    Ok(bytes) => self.change(
-                        ctx,
-                        "Install module",
-                        json!({
-                            "service": "modules",
-                            "op": "install",
-                            "file": base64::engine::general_purpose::STANDARD.encode(bytes),
-                        }),
-                    ),
-                    Err(message) => {
-                        self.busy = false;
-                        ctx.props().onstatus.emit(OperationStatus::event(
-                            "Install module",
-                            js_sys::Date::now(),
-                            Some(&Reply::Error(json!({"error":message}))),
-                        ));
-                    }
+            Msg::Toggle(key, detail) => {
+                if !self.open.remove(&(key.clone(), detail)) {
+                    self.open.insert((key, detail));
                 }
             }
-            Msg::Remove(folder) => {
-                self.confirming = Some(folder);
+            Msg::Remove(key, id) => {
+                self.confirming = Some((key, id));
                 self.forget = false;
             }
             Msg::Forget(forget) => self.forget = forget,
             Msg::Cancel => self.confirming = None,
             Msg::Confirm => {
-                let Some(folder) = self.confirming.take() else {
+                let Some((_, id)) = self.confirming.take() else {
                     return false;
                 };
-                self.forgetting = self.forget.then(|| folder.clone());
+                self.forgetting = self.forget.then(|| id.clone());
                 self.change(
                     ctx,
                     "Remove module",
-                    json!({"service":"modules","op":"remove","module":folder,"forget":self.forget}),
+                    json!({"service":"modules","op":"remove","module":id,"forget":self.forget}),
                 );
-            }
-            Msg::Version(slug, id, version) => {
-                self.versions.insert((slug, id), version);
             }
             Msg::Install(slug, id, version) => self.change(
                 ctx,
                 "Install module",
                 json!({"service":"modules","op":"install","source":slug,"module":id,"version":version}),
             ),
+            Msg::Open(slug) => {
+                let started = js_sys::Date::now();
+                ctx.props().transport.request(
+                    json!({"service":"sources","op":"open","source":slug}),
+                    false,
+                    ctx.link()
+                        .callback(move |reply| Msg::Opened(started, reply)),
+                );
+                return false;
+            }
+            Msg::Opened(started, reply) => {
+                if !matches!(reply, Reply::Result(_)) {
+                    ctx.props().onstatus.emit(OperationStatus::event(
+                        "Open source",
+                        started,
+                        Some(&reply),
+                    ));
+                }
+                return false;
+            }
             Msg::Changed(operation, started, reply) => {
                 self.busy = false;
                 let forgetting = self.forgetting.take();
@@ -290,13 +461,12 @@ impl Component for ModuleSettings {
                             format!("Removed {removed}")
                         }
                     };
-                    if let Some(folder) = forgetting {
-                        ctx.props().onforget.emit(folder);
+                    if let Some(module) = forgetting {
+                        ctx.props().onforget.emit(module);
                     }
                     // Only a new host process loads the changed modules folder.
                     ctx.props().transport.connect();
                     ctx.props().onchange.emit(());
-                    ctx.link().send_message(Msg::Load);
                 }
                 ctx.props().onstatus.emit(status);
             }
@@ -305,158 +475,32 @@ impl Component for ModuleSettings {
     }
 
     fn view(&self, ctx: &Context<Self>) -> Html {
-        let check = ctx.props().check.as_deref();
-        let offers = check.map(offered).unwrap_or_default();
-        let source_of =
-            |id: &str| check.and_then(|check| check["installed"][id]["source"].as_str());
-        let name_of = |slug: &str| {
-            offers
-                .iter()
-                .find(|offered| offered.slug == slug)
-                .map(|offered| offered.source.to_owned())
-                .or_else(|| {
-                    check?["sources"]
-                        .as_array()?
-                        .iter()
-                        .find(|source| source["slug"] == slug)?["name"]
-                        .as_str()
-                        .map(str::to_owned)
-                })
-                .unwrap_or_else(|| slug.to_owned())
-        };
-        // The newest supported version of an installed module in its source, if newer.
-        let update = |row: &Row| {
-            let slug = source_of(&row.folder)?;
-            let offered = offers
-                .iter()
-                .find(|offered| offered.slug == slug && offered.id == row.folder)?;
-            let version = offered
-                .versions
-                .iter()
-                .find(|offer| offer.get("unsupported").is_none())?["version"]
-                .as_str()?;
-            newer(version, &row.version).then(|| (slug.to_owned(), version.to_owned()))
-        };
+        let props = ctx.props();
+        let check = props.check.as_deref();
+        let rows = check.map(rows).unwrap_or_default();
+        let app_version =
+            check.and_then(|check| check["installed"][APPLICATION_ID]["version"].as_str());
         html! {
             <div class="module-settings" data-testid="module-settings">
-                <strong>{"Modules"}</strong>
-                if self.rows.is_empty() {
-                    <span class="agent-skills-hint" data-testid="settings-modules-empty">{"No modules installed yet. Install them from a source below or from a package file."}</span>
-                }
-                <ul class="module-settings-list">
-                    {for self.rows.iter().map(|row| {
-                        let folder = row.folder.clone();
-                        let confirming = self.confirming.as_deref() == Some(row.folder.as_str());
-                        let source = (!row.failed).then(|| source_of(&row.folder)).flatten();
-                        let update = (!row.failed).then(|| update(row)).flatten();
-                        html! {
-                            <li class={classes!("module-settings-row", row.failed.then_some("failed"))}
-                                data-testid="settings-module" data-module={row.folder.clone()}>
-                                <span class="module-settings-name">
-                                    <span>{&row.title}</span>
-                                    <span class="module-settings-detail" title={row.detail.clone()}>{&row.detail}</span>
-                                </span>
-                                if let Some(slug) = source {
-                                    <span class="settings-origin" data-testid="settings-module-source" title="The source it was installed from">{name_of(slug)}</span>
-                                }
-                                if let Some((slug, version)) = update {
-                                    <button type="button" class="tab-button" data-testid="settings-module-update" disabled={self.busy}
-                                        onclick={ctx.link().callback({
-                                            let (folder, version) = (row.folder.clone(), version.clone());
-                                            move |_| Msg::Install(slug.clone(), folder.clone(), version.clone())
-                                        })}>{format!("Update to {version}")}</button>
-                                }
-                                <button type="button" class="tab-button" data-testid="settings-module-remove" disabled={self.busy || confirming}
-                                    onclick={ctx.link().callback(move |_| Msg::Remove(folder.clone()))}>{"Remove"}</button>
-                                if confirming {
-                                    <div class="module-settings-confirm" role="group" data-testid="settings-module-confirm">
-                                        <p>{format!("Remove module \"{}\"? Its consoles, checks, history, templates and hints are kept and come back when it is installed again.", row.title)}</p>
-                                        <label>
-                                            <input type="checkbox" data-testid="settings-module-forget" checked={self.forget}
-                                                onchange={ctx.link().callback(|e: Event| Msg::Forget(e.target_unchecked_into::<HtmlInputElement>().checked()))}/>
-                                            {"Delete them too, in every session"}
-                                        </label>
-                                        <button type="button" class="tab-button" data-testid="settings-module-remove-confirm" disabled={self.busy}
-                                            onclick={ctx.link().callback(|_| Msg::Confirm)}>{"Remove"}</button>
-                                        <button type="button" class="tab-button" data-testid="settings-module-remove-cancel"
-                                            onclick={ctx.link().callback(|_| Msg::Cancel)}>{"Cancel"}</button>
-                                    </div>
-                                }
-                            </li>
-                        }
-                    })}
-                </ul>
-                if !offers.is_empty() {
-                    <span class="module-settings-subtitle">{"Available from sources"}</span>
-                    <ul class="module-settings-list" data-testid="settings-module-offers">
-                        {for offers.iter().map(|offered| {
-                            let key = (offered.slug.to_owned(), offered.id.to_owned());
-                            let picked = self.versions.get(&key).cloned().unwrap_or_else(|| {
-                                offered.versions.iter()
-                                    .find(|offer| offer.get("unsupported").is_none())
-                                    .or(offered.versions.first())
-                                    .and_then(|offer| offer["version"].as_str())
-                                    .unwrap_or_default()
-                                    .to_owned()
-                            });
-                            let offer = offered.versions.iter().find(|offer| offer["version"] == picked.as_str());
-                            let unsupported = offer.and_then(|offer| offer["unsupported"].as_str());
-                            let notes = offer.and_then(|offer| offer["notes"].as_str()).unwrap_or_default();
-                            let installed = self.rows.iter().find(|row| !row.failed && row.folder == offered.id);
-                            let from = installed.and_then(|_| source_of(offered.id));
-                            let here = from == Some(offered.slug);
-                            let current = here && installed.is_some_and(|row| row.version == picked);
-                            let label = match (installed, here) {
-                                _ if current => "Installed",
-                                (Some(_), true) => "Install this version",
-                                (Some(_), false) => "Install instead",
-                                (None, _) => "Install",
-                            };
-                            let detail = match (installed, from) {
-                                (Some(row), Some(slug)) if !here => format!("from {} · installed {} from {}", offered.source, row.version, name_of(slug)),
-                                (Some(row), None) => format!("from {} · installed {} from a file", offered.source, row.version),
-                                _ => format!("from {}", offered.source),
-                            };
-                            let (slug, id) = key.clone();
-                            let install = {
-                                let (slug, id, picked) = (slug.clone(), id.clone(), picked.clone());
-                                ctx.link().callback(move |_| Msg::Install(slug.clone(), id.clone(), picked.clone()))
-                            };
-                            html! {
-                                <li class="module-settings-row" data-testid="settings-module-offer" data-source={slug.clone()} data-module={id.clone()}>
-                                    <span class="module-settings-name">
-                                        <span>{offered.id}</span>
-                                        <span class="module-settings-detail" title={detail.clone()}>{detail}</span>
-                                    </span>
-                                    <select data-testid="settings-module-offer-version" aria-label={format!("Version of {}", offered.id)}
-                                        onchange={ctx.link().callback(move |event: Event| Msg::Version(slug.clone(), id.clone(), event.target_unchecked_into::<HtmlSelectElement>().value()))}>
-                                        {for offered.versions.iter().map(|offer| {
-                                            let version = offer["version"].as_str().unwrap_or_default().to_owned();
-                                            html!{<option value={version.clone()} selected={version == picked}>{version}</option>}
-                                        })}
-                                    </select>
-                                    <button type="button" class="tab-button" data-testid="settings-module-offer-install"
-                                        disabled={self.busy || current || unsupported.is_some()} onclick={install}>{label}</button>
-                                    if let Some(reason) = unsupported {
-                                        <span class="source-settings-error" data-testid="settings-module-offer-unsupported">{reason}</span>
-                                    }
-                                    if !notes.trim().is_empty() {
-                                        <details class="module-settings-notes">
-                                            <summary>{"Release notes"}</summary>
-                                            <pre>{notes}</pre>
-                                        </details>
-                                    }
-                                </li>
-                            }
-                        })}
-                    </ul>
-                }
-                <div class="console-settings-actions">
-                    <button type="button" class="tab-button" data-testid="settings-module-install" disabled={self.busy}
-                        onclick={ctx.link().callback(|_| Msg::Pick)}>{"Install from file…"}</button>
-                    <input type="file" hidden=true accept={services_contracts::package::ARCHIVE_EXTENSION} ref={self.input.clone()}
-                        data-testid="settings-module-file" onchange={ctx.link().callback(|_: Event| Msg::Chosen)}/>
+                <div class="module-settings-head">
+                    <strong>{"Modules"}</strong>
+                    <button type="button" class="tab-button" data-testid="settings-modules-check"
+                        disabled={props.checking} onclick={props.oncheck.reform(|_| true)}>{"Check for updates"}</button>
                 </div>
+                if rows.is_empty() {
+                    <span class="module-settings-hint" data-testid="settings-modules-empty">
+                        {if props.checking { "Checking the sources…" } else { "Check the sources to see the modules." }}
+                    </span>
+                } else {
+                    <table class="module-settings-table" data-testid="settings-modules">
+                        <thead>
+                            <tr><th>{"Name"}</th><th>{"Source"}</th><th>{"Version"}</th><th>{"New version"}</th><th></th></tr>
+                        </thead>
+                        <tbody>
+                            {for rows.iter().map(|row| self.view_row(ctx, row, app_version))}
+                        </tbody>
+                    </table>
+                }
             </div>
         }
     }

@@ -1,169 +1,133 @@
 (async () => {
-  const {assert, seen, wait, testid, click, openConsole, activateSession} = testDriver;
+  const {assert, wait, testid, click, openConsole, nativeHold, addFolderSource} = testDriver;
   // A fresh panel: wait for the restored Console session before using its toolbar.
   await openConsole();
   const status = () => testid('settings-update-status');
   const text = () => status().querySelector('.console-status-text').textContent;
   const debug = () => document.querySelector('[data-testid="settings-update-status-debug"]');
   const body = () => testid('settings-panel');
+  const light = id => testid(id).querySelector('.console-state-light').dataset.state;
   const noBodyErrors = () => assert(!body().querySelector('[role="alert"], [role="status"]'),
     'Update progress and errors belong in the shared footer, never in the Settings body');
   const showDebug = async () => {
     if (debug().hidden) await click(status());
     await wait(() => !debug().hidden);
   };
-  const open = async () => {
-    if (testid('console-settings-toggle').getAttribute('aria-pressed') !== 'true')
-      await click(testid('console-settings-toggle'));
-    await wait(() => !text().includes('Checking'));
-    await showDebug();
+  const app = source => document.querySelector(`[data-testid="settings-module"][data-module="app"][data-source="${source}"]`);
+  const part = (row, name) => row?.querySelector(`[data-testid="settings-module-${name}"]`);
+  // Details are the rows following a module's row.
+  const detail = (row, name) => {
+    for (let next = row?.nextElementSibling; next && next.dataset.testid !== 'settings-module'; next = next.nextElementSibling)
+      if (next.dataset.testid === `settings-module-${name}`) return next;
   };
-  await open();
-  await wait(() => testid('agent-model-input') && !testid('agent-model-input').disabled,
-    () => `Model settings did not load: ${text()}`);
-  await click(testid('settings-update-check'));
-  await wait(() => text() === 'Up to date', () => `Update check must finish as Up to date: ${text()}`);
-  assert(text() === 'Up to date',
-    'Equal release versions must not claim an available update');
+  if (testid('console-settings-toggle').getAttribute('aria-pressed') !== 'true')
+    await click(testid('console-settings-toggle'));
+  await wait(() => testid('agent-model-input') && !testid('agent-model-input').disabled && app(''),
+    () => `Settings did not load: ${text()}`);
+  await showDebug();
   assert(status().classList.contains('console-status')
     && status().closest('.console-right-status')
     && !status().closest('[data-testid="settings-panel"]'),
     'Settings must reuse the same bottom status region as other panels');
-  assert([...body().querySelectorAll('button')].every(button => button.classList.contains('tab-button')),
+  assert([...body().querySelectorAll('button:not(.module-settings-link)')].every(button => button.classList.contains('tab-button')),
     'Settings actions must reuse shared panel button styling');
   const bodyBox = body().getBoundingClientRect(), footerBox = status().getBoundingClientRect();
   assert(footerBox.top >= bodyBox.bottom - 1 && footerBox.width > 0,
     'Settings status must be visible below the panel body');
-  noBodyErrors();
-  updateFixture.pauseCheck = true;
-  await click(testid('settings-update-check'));
-  await wait(() => status().classList.contains('is-running')
-    && status().querySelector('.console-status-spinner'));
-  assert(testid('settings-update-check').disabled
-    && testid('settings-title').querySelector('.console-state-light').dataset.state === 'running',
-    'Checking must disable repeated clicks and animate the shared panel indicator');
-  await wait(() => updateFixture.resumeCheck);
+
+  // The application is the first module: no source yet, the running version, never removable.
+  const current = app('');
+  assert(current === testid('settings-modules').querySelector('[data-testid="settings-module"]'),
+    'The application must lead the Modules table');
+  assert(part(current, 'name').textContent === 'Services DevTools'
+    && part(current, 'source').textContent === '—'
+    && part(current, 'version').textContent === fixtureVersion
+    && !part(current, 'new-version') && !part(current, 'install') && !part(current, 'update')
+    && part(current, 'remove').disabled,
+    `The application row must show its version and refuse removal: ${current.textContent}`);
+  await click(part(current, 'name'));
+  await wait(() => detail(app(''), 'description')?.textContent.includes("it can't be removed here"),
+    'The name must show the description');
+  await click(part(app(''), 'version'));
+  await wait(() => detail(app(''), 'notes') && !detail(app(''), 'notes').textContent.includes('No details.'),
+    () => `The version must show its release notes: ${detail(app(''), 'notes')?.textContent}`);
+  await click(part(app(''), 'name'));
+  await click(part(app(''), 'version'));
+  await wait(() => !detail(app(''), 'description') && !detail(app(''), 'notes'), 'Details must toggle off');
+
+  // A running check animates the shared footer and the panel light.
+  nativeHold.match = message => message.service === 'sources' && message.op === 'check';
   try {
-    await showDebug();
-    await wait(() => !debug().hidden && debug().textContent.includes('Check for updates')
-      && debug().textContent.includes('checking'),
-      () => `Debug must show a running check: hidden=${debug().hidden}; ${debug().textContent}`);
+    await click(testid('settings-modules-check'));
+    await wait(() => status().classList.contains('is-running') && status().querySelector('.console-status-spinner'),
+      'A check must show the running spinner');
+    assert(testid('settings-modules-check').disabled && light('settings-title') === 'running'
+      && debug().textContent.includes('Check sources'),
+      () => `Checking must disable repeated clicks, animate the light and show in Debug: ${debug().textContent}`);
   } finally {
-    updateFixture.pauseCheck = false;
-    updateFixture.resumeCheck();
-    delete updateFixture.resumeCheck;
+    nativeHold.release();
   }
-  await wait(() => text() === 'Up to date');
-  assert(debug().textContent.includes('current') && !status().querySelector('.console-status-spinner'),
-    'An open Debug must update with the result and stop the running spinner');
-  assert(!document.querySelector('[data-testid="settings-update-install"]'),
-    'An equal version must not be installable');
-  const repository = new URL(updateFixture.requests.at(-1)).pathname.split('/').slice(1,3).join('/');
-  const version = '65000.0.0', base = `https://github.com/${repository}/releases/download/devtool-v${version}`;
-  const release = {
-    schemaVersion:1,application:'ServicesDevTools',version,tag:`devtool-v${version}`,
-    commit:'a'.repeat(40),repository,branch:updateFixture.branch,platform:'darwin',arch:'arm64',
-    minimumMacOS:'13.5',archive:'services-macos-arm64.tar.gz',sha256:'b'.repeat(64),
-    archiveUrl:`${base}/services-macos-arm64.tar.gz`,
-    checksumsUrl:`${base}/checksums.txt`,installerUrl:`${base}/install.sh`,
-  };
-  updateFixture.error = 'signed out';
-  await click(testid('settings-update-check'));
-  await wait(() => text().includes('HTTP 404'));
-  assert(status().classList.contains('is-error') && debug().textContent.includes('HTTP 404')
-    && !document.querySelector('[data-testid="settings-update-install"]'),
-    'Missing private access must be an explicit error, never up to date');
+  await wait(() => text() === 'Check sources · OK' && !status().querySelector('.console-status-spinner'),
+    () => `The check must finish: ${text()}`);
   noBodyErrors();
-  updateFixture.error = null;
-  updateFixture.release = {...release,archiveUrl:'https://foreign.invalid/update.tar.gz'};
-  await click(testid('settings-update-check'));
-  await wait(() => text().includes('trusted'));
-  assert(debug().textContent.includes('trusted'),
-    'Rejected update metadata must also be visible in Debug');
-  assert(!document.querySelector('[data-testid="settings-update-install"]'),
-    'Foreign archive URLs must not become installable');
-  updateFixture.release = release;
-  testid('settings-update-check').click();
-  testid('console-settings-toggle').click();
-  await wait(() => testid('console-settings-toggle').querySelector('.console-state-light').dataset.state === 'success',
-    'An unseen new release must illuminate Settings green');
-  await open();
-  assert(testid('settings-update-version').textContent === version
-    && testid('settings-update-install').textContent === 'Update',
-    'Settings must show the exact approved major version and an installation action');
-  await seen();
-  await click(testid('console-settings-toggle'));
-  assert(testid('console-settings-toggle').querySelector('.console-state-light').dataset.state === 'ready',
-    'Viewing the update must acknowledge the traffic-light notification');
-  updateFixture.release = null;
-  await open();
-  await click(testid('settings-update-check'));
-  await wait(() => text() === 'Up to date');
-  assert(updateFixture.installs.length === 0,
-    'Checking releases must not download or install without user consent');
-  const available = async () => {
-    updateFixture.release = release;
-    await click(testid('settings-update-check'));
-    await wait(() => document.querySelector('[data-testid="settings-update-install"]'),
-      () => `Approved update must become available: ${text()}`);
-  };
-  await available();
+
+  // A folder source offering a newer application.
+  await addFolderSource('Updates', fixtureUpdates);
+  await wait(() => part(app('updates'), 'new-version')?.textContent === '65000.0.0',
+    () => `The source must offer the new version: ${testid('settings-modules').textContent}; ${text()}`);
+  const offered = app('updates');
+  assert(part(offered, 'source').textContent === 'Updates' && part(offered, 'version').textContent === '—'
+    && part(offered, 'install') && !part(offered, 'remove'),
+    `Another source's application must be installable: ${offered.textContent}`);
+  await click(part(offered, 'new-version'));
+  await wait(() => detail(app('updates'), 'new-notes')?.textContent.includes('Fixture notes of 65000.0.0'),
+    'The new version must show its release notes');
+  assert(updateFixture.installs.length === 0, 'Checking must not install without user consent');
+
+  const install = () => part(app('updates'), 'install');
   const getViews = chrome.extension.getViews;
   const reload = chrome.runtime.reload;
   try {
     chrome.extension.getViews = () => [window, {document}];
-    await click(testid('settings-update-install'));
+    await click(install());
     await wait(() => text().includes('Close other Services DevTools windows'));
     assert(debug().textContent.includes('Close other Services DevTools windows'),
       'A blocked update must report its guard failure in status and Debug');
+    assert(updateFixture.installs.length === 0, 'Failed update guards must not send an installation request');
     noBodyErrors();
     chrome.extension.getViews = () => [window];
-    assert(updateFixture.installs.length === 0,
-      'Failed update guards must not send an installation request');
-    await available();
+
     updateFixture.installError = 'Fixture installer failed before activation';
-    await click(testid('settings-update-install'));
+    await click(install());
     await wait(() => text().includes(updateFixture.installError));
-    assert(debug().textContent.includes(updateFixture.installError)
-      && status().classList.contains('is-error'),
+    assert(debug().textContent.includes(updateFixture.installError) && status().classList.contains('is-error'),
       'Native installation failures must be visible in status and Debug');
+    const request = updateFixture.installs.at(-1);
+    assert(request.source === 'updates' && request.version === '65000.0.0',
+      `The install must name the source and version: ${JSON.stringify(request)}`);
     noBodyErrors();
     updateFixture.installError = null;
-    await available();
-    updateFixture.installResult = {reload:true,installedVersion:version};
+
+    updateFixture.installResult = {reload:true, installedVersion:'65000.0.0'};
+    updateFixture.hold = true;
     chrome.runtime.reload = () => { throw new Error('Fixture automatic reload failed'); };
-    await click(testid('settings-update-install'));
+    await click(install());
+    await wait(() => updateFixture.deliver, 'The install request must be sent');
+    assert(testid('update-progress').textContent.includes('Keep this window open')
+      && status().classList.contains('is-running') && light('settings-title') === 'running'
+      && debug().textContent.includes('installing'),
+      () => `An install must show its progress: ${text()}; ${debug().textContent}`);
+    updateFixture.deliver();
     await wait(() => text().includes('automatic reload failed'));
     assert(debug().textContent.includes('Fixture automatic reload failed')
-      && status().classList.contains('is-error') && testid('settings-update-reload'),
+      && status().classList.contains('is-error') && part(app('updates'), 'reload')
+      && !document.querySelector('[data-testid="update-progress"]'),
       'Post-install reload errors must remain in status and Debug with a retry action');
     noBodyErrors();
   } finally {
     chrome.extension.getViews = getViews;
     chrome.runtime.reload = reload;
-    updateFixture.installError = null;
-    updateFixture.installResult = null;
-  }
-  await click(testid('console-settings-toggle'));
-  // A session switch rechecks updates in the background; the model catalog that
-  // loads later when Settings opens must not hide that unseen failure.
-  const light = id => testid(id).querySelector('.console-state-light').dataset.state;
-  updateFixture.error = 'signed out';
-  try {
-    await activateSession(0);
-    await wait(() => light('console-settings-toggle') === 'error',
-      () => `A failed background update check must illuminate Settings red: ${light('console-settings-toggle')}`);
-    await click(testid('console-settings-toggle'));
-    await wait(() => testid('agent-model-input') && !testid('agent-model-input').disabled,
-      () => `Model settings did not load: ${text()}`);
-    assert(text().includes('HTTP 404') && light('settings-title') === 'error',
-      `A newer successful Settings operation must not hide an unseen update error: ${text()}`);
-    await seen();
-    await click(testid('console-settings-toggle'));
-    assert(light('console-settings-toggle') === 'ready',
-      'Viewing the update error must acknowledge the traffic-light notification');
-  } finally {
-    updateFixture.error = null;
+    Object.assign(updateFixture, {installError:null, installResult:null, hold:false, deliver:null});
   }
   return true;
 })()

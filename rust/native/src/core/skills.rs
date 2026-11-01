@@ -1,7 +1,6 @@
 //! Agent skills on disk: folders of `<name>/SKILL.md` skills with YAML frontmatter. Module
 //! packages and sources bring skills; the application renames them so that skills from
 //! different places never share a name.
-use serde_json::{Value, json};
 use std::path::Path;
 
 /// The skill file of a skill folder.
@@ -116,41 +115,6 @@ pub fn rename_file(folder: &Path, name: &str) -> Result<(), String> {
         std::fs::write(&file, renamed).map_err(|e| format!("{}: {e}", file.display()))?;
     }
     Ok(())
-}
-
-/// The skills of a skills folder as `{name, description, folder, origin}` and why some
-/// folders are not skills.
-pub fn list(dir: &Path, origin: &Value, skills: &mut Vec<Value>, problems: &mut Vec<String>) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    let mut folders: Vec<_> = entries
-        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-        .filter(|path| path.is_dir())
-        .collect();
-    folders.sort();
-    for folder in folders {
-        let name = folder
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        let file = folder.join(FILE);
-        if name.starts_with('.') || !file.is_file() {
-            continue;
-        }
-        match std::fs::read_to_string(&file)
-            .map_err(|error| format!("cannot read SKILL.md: {error}"))
-            .and_then(|text| frontmatter(&text))
-        {
-            Ok((skill, description)) => skills.push(json!({
-                "name": skill,
-                "description": description,
-                "folder": name,
-                "origin": origin,
-            })),
-            Err(problem) => problems.push(format!("{name}: {problem}")),
-        }
-    }
 }
 
 /// Checks the skills folder of an unpacked module package: only the module's own skill,

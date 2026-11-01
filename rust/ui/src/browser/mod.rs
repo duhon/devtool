@@ -1,7 +1,6 @@
 mod agent_markdown;
 mod agent_panel;
 mod agent_settings;
-mod agent_skills;
 mod app;
 mod check_rail;
 mod console_variables;

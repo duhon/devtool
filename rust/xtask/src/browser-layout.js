@@ -211,23 +211,19 @@
   const beforeSettingsHeader=document.querySelector('.console-top-bar').getBoundingClientRect().height;
   await open('settings');
   const settings=testid('settings-panel'),settingsToggle=testid('console-settings-toggle');
-  assert(testid('settings-version').textContent===fixtureVersion,
-    'Application Settings must show the exact compiled release version in native and HTTP interfaces');
   if(globalThis.chrome?.runtime?.getManifest){
-    assert(testid('settings-version').textContent===chrome.runtime.getManifest().version,
-      'The Settings version must match the installed extension version');
+    const app=()=>settings.querySelector('[data-testid="settings-module"][data-module="app"] [data-testid="settings-module-version"]');
+    await wait(()=>app(),'The Modules table must list the application');
+    assert(app().textContent===fixtureVersion&&fixtureVersion===chrome.runtime.getManifest().version,
+      `The application row must show the exact compiled release version of the installed extension: ${app().textContent}`);
   }
-  await wait(()=>!testid('settings-update-status').textContent.includes('Checking'));
-  assert(testid('settings-version').closest('.console-settings-version')?.textContent===`Current version${fixtureVersion}`,
-    `Settings must label the current version ${fixtureVersion}: ${settings.textContent}`);
   const editable=[...settings.querySelectorAll('input,select,textarea,.CodeMirror')]
-    .filter(field=>!field.closest('[data-testid="agent-settings"],[data-testid="source-settings"],[data-testid="settings-module-offers"]'))
-    .filter(field=>!(field.matches('[data-testid="settings-module-file"]')&&field.type==='file'&&field.hidden));
+    .filter(field=>!field.closest('[data-testid="agent-settings"],[data-testid="source-settings"]'));
   assert(!editable.length,
-    `Application Settings must not contain editable fields besides the Agent settings, the Sources, the module versions offered by them and the hidden module file picker: ${editable.map(field=>field.outerHTML)}`);
-  const updateCheck=document.querySelector('[data-testid="settings-update-check"]');
-  assert(globalThis.chrome?.runtime?.getManifest ? updateCheck : !updateCheck,
-    'Settings must expose authenticated update checks only in the Chrome extension');
+    `Application Settings must not contain editable fields besides the Agent settings and the Sources: ${editable.map(field=>field.outerHTML)}`);
+  const modulesCheck=document.querySelector('[data-testid="settings-modules-check"]');
+  assert(globalThis.chrome?.runtime?.getManifest ? modulesCheck : !modulesCheck,
+    'Settings must expose the Modules and their update checks only in the Chrome extension');
   // Opening Settings loads the Copilot model catalog; its light runs until that finishes.
   await wait(()=>settingsToggle.querySelector('.console-state-light').dataset.state!=='running','Copilot model catalog load in Settings');
   assert(settingsToggle.classList.contains('active')

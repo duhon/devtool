@@ -437,11 +437,19 @@ fn archived_install_native_services_update_and_uninstall() {
         .collect();
     modules.sort();
     assert!(!modules.is_empty(), "the build must write module packages");
+    // Modules are installed from sources: dist/ is a folder source with the packages in modules/.
+    let (saved, _) = host.request(json!({"id":98,"service":"sources","op":"save",
+        "sources":[{"name":"Dist","kind":"folder","path":repository().join("dist")}]}));
+    assert_eq!(saved["ok"], true, "{saved}");
+    let (checked, _) = host.request(json!({"id":99,"service":"sources","op":"check","force":true}));
+    assert_eq!(checked["ok"], true, "{checked}");
     for (index, file) in modules.iter().enumerate() {
-        use base64::Engine;
-        let (installed, _) = host
-            .request(json!({"id":100 + index,"service":"modules","op":"install",
-            "file":base64::engine::general_purpose::STANDARD.encode(fs::read(file).unwrap())}));
+        // <id>-<version>-<platform>.module.tgz
+        let name = file.file_name().unwrap().to_str().unwrap();
+        let (module, rest) = name.split_once('-').unwrap();
+        let version = rest.split_once('-').unwrap().0;
+        let (installed, _) = host.request(json!({"id":100 + index,"service":"modules",
+            "op":"install","source":"dist","module":module,"version":version}));
         assert_eq!(installed["ok"], true, "{}: {installed}", file.display());
     }
     host.close();

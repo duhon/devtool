@@ -51,12 +51,16 @@ pub fn skill_name(id: &str) -> String {
     format!("module-{}", id.replace('_', "-"))
 }
 
+/// The id the application itself has among the modules in Settings → Modules: sources offer
+/// it like a module (`devtool-v<version>` releases), and it is installed by the updater.
+pub const APPLICATION_ID: &str = "app";
+
 /// Ids the host answers itself (`{"service": id}`); a module can't take them.
 pub const RESERVED_IDS: &[&str] = &[
     "agent",
+    APPLICATION_ID,
     "agent_models",
     "agent_sessions",
-    "agent_skills",
     "dictionary",
     "hints",
     "history",
@@ -80,6 +84,11 @@ pub struct Package {
     /// The platform the library was built for ([`host_platform`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub platform: Option<String>,
+    /// The module's name and description from its manifest, shown before it is installed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 impl Package {
@@ -355,7 +364,7 @@ mod tests {
                 "{id}"
             );
         }
-        for id in ["vars", "modules", "agent", "history"] {
+        for id in ["vars", "modules", "agent", "history", "app"] {
             assert_eq!(
                 check_id(id),
                 Err(format!("module id \"{id}\" is reserved by the host"))
@@ -386,6 +395,7 @@ mod tests {
             version: "1.0.0".into(),
             min_core: Some("3.2.0".into()),
             platform: Some("macos-arm64".into()),
+            ..Package::default()
         };
         assert_eq!(archive_name(&package), "rest-1.0.0-macos-arm64.module.tgz");
         assert_eq!(package.unsupported("3.2.0", "macos-arm64"), None);

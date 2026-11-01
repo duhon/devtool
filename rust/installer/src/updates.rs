@@ -168,11 +168,6 @@ pub(super) fn validate_upgrade(
             > version(&source.current_version).map_err(anyhow::Error::msg)?,
         "Update must be newer than the installed version"
     );
-    ensure!(
-        metadata["repository"] == installed["repository"]
-            && metadata["branch"] == installed["branch"],
-        "Downloaded package update source differs from the installed application"
-    );
     let current_manifest: Value =
         serde_json::from_slice(&fs::read(paths.base.join("extension/manifest.json"))?)?;
     let next_manifest: Value =

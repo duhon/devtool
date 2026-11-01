@@ -242,11 +242,11 @@ use Copilot Fusion (the SDK's `auto` router), which manages Reasoning itself.
 Choices persist locally and are captured when a new chat is created. Existing
 chats and resumed SDK sessions retain their original model and reasoning settings.
 
-Settings → Agent skills lists, read-only (`agent_skills` `get`), the skills every
-following Agent reply gets, in new and existing chats: each installed module's
-`skills/module-<id>/` and each applied source's `skills/<slug>-<name>/`, with
-their origin and the ones that could not be read (frontmatter needs `name` and
-`description`). The host hands their folders to the SDK as skill directories
+Every following Agent reply, in new and existing chats, gets the skills of each
+installed module (`skills/module-<id>/`) and of each applied source
+(`skills/<slug>-<name>/`). Skills that could not be read (frontmatter needs
+`name` and `description`) are a warning in the Agent status and are listed in its
+debug (`skillProblems`). The host hands their folders to the SDK as skill directories
 with the built-in `skill` tool; no other skills (personal `~/.copilot/skills` or
 bundled ones) are loaded. The root `services-console` skill is compiled in and
 can't be replaced. A skill only supplies its `SKILL.md` instructions: the Agent
@@ -263,10 +263,16 @@ overrides) and Apply copies it to `<data>/sources/<slug>/`. Configuration is
 layered: later sources override earlier ones, the user's own changes override
 them all, and an update never merges. The Dictionary, Templates and Hints show
 the source of a source's profile, section or hints; Reset drops the user's own
-change. Settings → Modules lists the module versions the sources offer
-(GitHub releases `module-<id>-v<version>`, `modules/*.module.tgz` in a folder),
-with release notes; Install or Update downloads one (a GitHub asset is checked
-against its published sha256) and installs it, replacing a module with the same id from any source. Private repositories
+change. Settings → Modules is a table with a row per module and source: what
+the sources offer (GitHub releases `module-<id>-v<version>`, `modules/*.module.tgz`
+in a folder) and what is installed. The name shows the description, the source
+opens its repository or folder, the version and the newest version show their
+release notes. Install or Update downloads the newest version (a GitHub asset is
+checked against its published sha256) and installs it, replacing a module with
+the same id from any source; Remove asks first. The first row, `app`, is the
+application: any source can offer it (GitHub releases `devtool-v<version>`,
+`distribution/` of a folder); Update saves the workspace, has the native updater
+install it and reloads the extension; it can't be removed. Private repositories
 use the token saved in Settings, else `gh auth token`.
 
 Each message automatically provides Console request context; the Agent can read

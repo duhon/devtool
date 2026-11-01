@@ -116,17 +116,7 @@
 
     await settings();
     assert(!document.querySelector('[data-testid="source"]'), 'The scenario starts without sources');
-    const skills = () => document.querySelector('[data-testid="agent-skills-list"]')?.textContent ?? '';
-    assert(!skills().includes('team-shop-deploy'), 'No source skill before the source is added');
-    await click(testid('source-add'));
-    input(testid('source-add-name'), 'Team');
-    const kind = testid('source-add-kind');
-    kind.value = 'folder';
-    kind.dispatchEvent(new Event('change', {bubbles:true}));
-    await wait(() => document.querySelector('[data-testid="source-add-path"]') && !document.querySelector('[data-testid="source-add-repository"]'),
-      'A folder source asks only for its folder');
-    input(testid('source-add-path'), fixtureSource);
-    await click(testid('source-add-save'));
+    await testDriver.addFolderSource('Team', fixtureSource);
     const team = () => document.querySelector('[data-testid="source"][data-source="team"]');
     await wait(() => team()?.querySelector('[data-testid="source-apply"]'),
       () => `The added source must be checked and offer its settings: ${team()?.textContent}; ${testid('settings-update-status').textContent}`);
@@ -134,12 +124,8 @@
     assert(changes.includes('skill team-shop-deploy added') && changes.includes('dictionary team/HOST added'),
       `The check must list what applying changes: ${changes}`);
     await click(team().querySelector('[data-testid="source-apply"]'));
-    await wait(() => team()?.querySelector('[data-testid="source-up-to-date"]') && skills().includes('team-shop-deploy'),
-      () => `Applying must bring the source's skill: ${skills()}; ${team()?.textContent}`);
-    const skill = [...document.querySelectorAll('[data-testid="agent-skill"]')].find(row => row.textContent.includes('team-shop-deploy'));
-    assert(skill.querySelector('[data-testid="agent-skill-origin"]').textContent.includes('Source Team')
-      && skill.textContent.includes('Deploys the fixture shop'),
-      `A source skill must name its source: ${skill.textContent}`);
+    await wait(() => team()?.querySelector('[data-testid="source-up-to-date"]'),
+      () => `Applying must bring the source's settings: ${team()?.textContent}`);
     await agent();
     await newChat();
     const used = await ask('agent skills');
@@ -169,8 +155,7 @@
     await settings();
     await click(team().querySelector('[data-testid="source-remove"]'));
     await click(team().querySelector('[data-testid="source-remove-confirm"]'));
-    await wait(() => !team() && !skills().includes('team-shop-deploy'),
-      () => `Removing the source must remove its skill: ${skills()}`);
+    await wait(() => !team(), 'Removing the source must remove its row');
     await agent();
     const cleared = await ask('agent skills');
     assert(!cleared.includes('team-shop-deploy'), `A removed source must stop reaching Copilot: ${cleared}`);

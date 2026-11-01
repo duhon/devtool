@@ -39,11 +39,8 @@ web-sys = { version = "0.3", features = [
   "Window", "Document", "Element", "HtmlElement", "HtmlInputElement",
   "HtmlTextAreaElement", "HtmlSelectElement", "Node", "Storage", "Event",
   "InputEvent", "KeyboardEvent", "MouseEvent", "PointerEvent", "DragEvent", "DataTransfer", "CssStyleDeclaration",
-  "Request", "RequestInit", "Response", "Headers",
-  "RequestCredentials", "RequestCache", "AbortController", "AbortSignal",
   "console", "DomRect", "Navigator",
   "Clipboard", "FocusEvent", "ResizeObserver", "BeforeUnloadEvent",
   "IdbFactory", "IdbOpenDbRequest", "IdbDatabase", "IdbObjectStore",
-  "IdbRequest", "IdbTransaction", "IdbTransactionMode", "DomException",
-  "Blob", "File", "FileList"
+  "IdbRequest", "IdbTransaction", "IdbTransactionMode", "DomException"
 ] }

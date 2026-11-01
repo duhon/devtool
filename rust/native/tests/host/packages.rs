@@ -99,13 +99,27 @@ fn ids(reply: &services_testkit::Reply) -> Vec<String> {
         .collect()
 }
 
-fn install(file: &[u8]) -> serde_json::Value {
-    use base64::Engine;
-    json!({
-        "service": "modules",
-        "op": "install",
-        "file": base64::engine::general_purpose::STANDARD.encode(file),
-    })
+/// A checked folder source "Team" offering the package `file` of `id` `version`.
+async fn team(host: &Host, id: &str, version: &str) -> tempfile::TempDir {
+    let folder = tempfile::tempdir().unwrap();
+    std::fs::create_dir(folder.path().join("modules")).unwrap();
+    std::fs::write(package(&folder), packages::file(id, version)).unwrap();
+    host.send(json!({"service":"sources","op":"save",
+        "sources":[{"name":"Team","kind":"folder","path":folder.path()}]}))
+        .await
+        .ok();
+    host.send(json!({"service":"sources","op":"check","force":true}))
+        .await
+        .ok();
+    folder
+}
+
+fn package(team: &tempfile::TempDir) -> std::path::PathBuf {
+    team.path().join("modules/offered.module.tgz")
+}
+
+fn install(id: &str, version: &str) -> serde_json::Value {
+    json!({"service":"modules","op":"install","source":"team","module":id,"version":version})
 }
 
 #[tokio::test]
@@ -115,9 +129,9 @@ async fn a_package_file_installs_replaces_and_is_removed_for_the_next_host() {
     std::fs::remove_dir_all(modules.join("graphql")).unwrap();
     let host = Host::on(data);
     let version = packages::version("graphql");
-    let file = packages::file("graphql", version);
+    let _team = team(&host, "graphql", version).await;
 
-    let installed = host.send(install(&file)).await;
+    let installed = host.send(install("graphql", version)).await;
     assert_eq!(
         installed.ok(),
         &json!({"installed":{"id":"graphql","name":"GraphQL","version":version},"replaced":null})
@@ -147,7 +161,7 @@ async fn a_package_file_installs_replaces_and_is_removed_for_the_next_host() {
         .await;
     assert!(graphql.value().get("error").is_some(), "the module runs");
 
-    let again = next.send(install(&file)).await;
+    let again = next.send(install("graphql", version)).await;
     assert_eq!(again.ok()["replaced"], version);
     assert_eq!(hidden(&modules), Vec::<String>::new());
 
@@ -185,8 +199,9 @@ async fn a_module_written_with_the_sdk_installs_from_its_package_file_and_runs()
     let data = DataDir::new();
     let modules = data.path().join("modules");
     let host = Host::on(data);
+    let _team = team(&host, "echo", "0.1.0").await;
 
-    let installed = host.send(install(&packages::file("echo", "0.1.0"))).await;
+    let installed = host.send(install("echo", "0.1.0")).await;
     assert_eq!(
         installed.ok(),
         &json!({"installed":{"id":"echo","name":"Echo","version":"0.1.0"},"replaced":null})
@@ -285,9 +300,8 @@ async fn an_invalid_package_file_leaves_the_installed_package_alone() {
     let host = Host::on(data);
     let before = std::fs::read(modules.join("graphql/package.json")).unwrap();
 
-    let misdescribed = host
-        .send(install(&packages::file("graphql", "0.0.1")))
-        .await;
+    let team = team(&host, "graphql", "0.0.1").await;
+    let misdescribed = host.send(install("graphql", "0.0.1")).await;
     assert_eq!(
         misdescribed.error(),
         format!(
@@ -295,15 +309,9 @@ async fn an_invalid_package_file_leaves_the_installed_package_alone() {
             packages::version("graphql")
         )
     );
-    let not_base64 = host
-        .send(json!({"service":"modules","op":"install","file":"%%"}))
-        .await;
-    assert!(
-        not_base64.error().starts_with("Invalid package file"),
-        "{}",
-        not_base64.error()
-    );
-    let garbage = host.send(install(b"not a package")).await;
+    // The file changed after the check.
+    std::fs::write(package(&team), "not a package").unwrap();
+    let garbage = host.send(install("graphql", "0.0.1")).await;
     assert!(
         garbage.error().starts_with("Invalid package file"),
         "{}",

@@ -888,27 +888,14 @@ impl App {
                     <aside class="console-tool-panel" data-testid="console-tool-panel" hidden={self.console_panel.is_none()} aria-label="Console tools">
                         if self.settings_visited {
                             <section class="console-settings" data-testid="settings-panel" aria-label="Application settings" hidden={self.console_panel!=Some(ConsolePanel::Settings)}>
-                                <div class="console-settings-version"><span>{"Current version"}</span><strong data-testid="settings-version">{env!("CARGO_PKG_VERSION")}</strong></div>
-                                if let Some(release)=&self.updates.release {
-                                    <div class="console-settings-version"><span>{"New version"}</span><strong data-testid="settings-update-version">{&release.version}</strong></div>
-                                }
-                                <div class="console-settings-actions">
-                                if self.updates.phase==UpdatePhase::Installed {
-                                    <button type="button" class="tab-button" data-testid="settings-update-reload" onclick={ctx.link().callback(|_|Msg::ReloadUpdate)}>{"Reload extension"}</button>
-                                } else if self.transport.is_native() {
-                                    <button type="button" class="tab-button" data-testid="settings-update-check" disabled={self.updates.busy() || self.updates.phase==UpdatePhase::Checking}
-                                        onclick={ctx.link().callback(|_|Msg::CheckUpdates)}>{"Check for updates"}</button>
-                                    if self.updates.phase==UpdatePhase::Available {
-                                        <button type="button" class="tab-button" data-testid="settings-update-install" onclick={ctx.link().callback(|_|Msg::InstallUpdate)}>{"Update"}</button>
-                                    }
-                                    if let Some(source)=self.updates.source.as_ref().filter(|source|source.validate().is_ok()) {
-                                        <a class="tab-button" href={format!("https://github.com/{}/releases",source.repository)} target="_blank" rel="noopener noreferrer">{"Open GitHub releases"}</a>
-                                    }
-                                }
-                                </div>
                                 if self.transport.is_native() {
                                     <crate::browser::module_settings::ModuleSettings transport={self.transport.clone()}
-                                        check={self.sources_check.clone()}
+                                        check={self.sources_check.clone()} checking={self.sources_checking}
+                                        oncheck={ctx.link().callback(Msg::CheckSources)}
+                                        app_busy={self.updates.busy()}
+                                        app_installed={(self.updates.phase==UpdatePhase::Installed).then(||self.updates.target.as_ref().map(|(slug,_)|slug.clone())).flatten()}
+                                        onapp={ctx.link().callback(Msg::InstallUpdate)}
+                                        onreload={ctx.link().callback(|_|Msg::ReloadUpdate)}
                                         onstatus={ctx.link().callback(Msg::SettingsStatus)}
                                         onforget={ctx.link().callback(Msg::ForgetModule)}
                                         onchange={ctx.link().callback(|_|Msg::ModulesChanged)}/>
@@ -920,10 +907,6 @@ impl App {
                                 }
                                 <crate::browser::agent_settings::AgentSettings transport={self.transport.clone()}
                                     onstatus={ctx.link().callback(Msg::SettingsStatus)}/>
-                                if self.transport.is_native() {
-                                    <crate::browser::agent_skills::AgentSkills key={format!("skills:{}", self.config_epoch)} transport={self.transport.clone()}
-                                        onstatus={ctx.link().callback(Msg::SettingsStatus)}/>
-                                }
                             </section>
                         }
                         if self.console_panel==Some(ConsolePanel::Sessions) {

@@ -1,5 +1,10 @@
 # MySQL module release notes
 
+## 3.2.1
+
+- Settings → Modules shows the MySQL module's name and description before it is
+  installed.
+
 ## 3.2.0
 
 - The MySQL module is released apart from Services DevTools: install and update it in

@@ -244,7 +244,10 @@ class ReleaseTests(unittest.TestCase):
                     release.publish(root)
             created = api.call_args_list[3].args
             self.assertEqual(created[2]["tag_name"], "module-rest-v1.2.0")
-            self.assertEqual(created[2]["body"], "- Fix")
+            self.assertEqual(
+                created[2]["body"],
+                '- Fix\n\n<!-- services-package {"id":"rest","version":"1.2.0","platform":"macos-arm64"} -->',
+            )
             self.assertEqual(api.call_args_list[-1].args[2]["make_latest"], "false")
             self.assertEqual(upload.call_args_list[0].args[0][4],
                              f"https://uploads.github.com/repos/owner/repo/releases/43/assets?name={archive.name}")

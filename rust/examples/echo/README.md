@@ -137,16 +137,17 @@ tar -czf my-module-0.1.0-macos-arm64.module.tgz -C pkg package.json module.dylib
 
 ## Install and remove
 
-**Settings → Modules → Install from file…** and choose the package file. The
+Put the package file in `modules/` of a folder, add the folder in **Settings →
+Sources**, then **Install** its row in **Settings → Modules**. The
 host unpacks it next to the modules folder, signs the library ad hoc and
 clears its quarantine flag (Chrome marks every file its native host writes),
 loads it once to check the id, the version and the ABI, then puts it in place
-of `<modules>/<id>`. A manual install always installs, also an older version.
+of `<modules>/<id>`, whatever version and source the module had.
 The panel then restarts its host: requests it was running fail with “The
 native host was restarted”; other open panels see the module after they
 reconnect.
 
-**Remove** in the same list asks first, then deletes the folder. By default the
+**Remove** in the same row asks first, then deletes the folder. By default the
 consoles, checks, history, templates and hints of a removed module are kept and
 come back when a module with the same id is installed again; check “Delete them
 too, in every session” to delete them with the module. A removed standard module
@@ -154,9 +155,9 @@ can be installed again from Settings → Modules.
 
 To share a module, put its package file in a source: `modules/` of a folder, or
 a GitHub release tagged `module-<id>-v<version>` with the package file as an
-asset. Settings → Modules then offers its versions, with their release notes, to
-everyone who added the source; installing one replaces a module with the same
-id, whatever its source.
+asset. Settings → Modules then has a row for the module and the source, with
+the newest version and its release notes, for everyone who added the source;
+installing it replaces a module with the same id, whatever its source.
 
 A package the host cannot load stays in the list with its error.
 

@@ -1,11 +1,7 @@
 //! The skills handed to every Agent turn: the skill of each installed module and the
 //! skills of the applied sources. The root `services-console` skill is compiled in and
 //! served by the `console_skill` tool, so nothing here can replace it.
-use crate::{
-    Error, Result,
-    core::{skills, sources},
-};
-use serde_json::{Value, json};
+use crate::core::{skills, sources};
 use services_contracts::package::SKILLS_DIR;
 use std::path::{Path, PathBuf};
 
@@ -40,28 +36,47 @@ pub(super) fn directories(root: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-/// `get`: `{skills: [{name, description, folder, origin}], problems}` where `origin` is
-/// `{kind: "module", module}` or `{kind: "source", source}`.
-pub(super) fn dispatch(root: &Path, message: &Value) -> Result<Value> {
-    if !matches!(message["op"].as_str(), None | Some("get")) {
-        return Err(Error::new("Agent skills support only get"));
-    }
+/// Why skills in the folders of the next turn won't load: `<origin>: <skill>: <problem>`.
+pub(super) fn problems(root: &Path) -> Vec<String> {
     let data = data(root);
-    let (mut list, mut problems) = (Vec::new(), Vec::new());
-    for (module, dir) in module_dirs(data) {
-        let origin = json!({"kind": "module", "module": module});
-        skills::list(&dir, &origin, &mut list, &mut problems);
+    let origins = module_dirs(data)
+        .into_iter()
+        .map(|(module, dir)| (format!("module {module}"), dir))
+        .chain(
+            sources::skill_dirs(data)
+                .into_iter()
+                .map(|(source, dir)| (format!("source {source}"), dir)),
+        );
+    let mut problems = Vec::new();
+    for (origin, dir) in origins {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        let mut folders: Vec<PathBuf> = entries
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .filter(|path| path.is_dir())
+            .collect();
+        folders.sort();
+        for folder in folders {
+            let name = folder.file_name().unwrap_or_default().to_string_lossy();
+            if name.starts_with('.') {
+                continue;
+            }
+            if let Err(problem) = std::fs::read_to_string(folder.join(skills::FILE))
+                .map_err(|e| format!("cannot read {}: {e}", skills::FILE))
+                .and_then(|text| skills::frontmatter(&text).map(drop))
+            {
+                problems.push(format!("{origin}: {name}: {problem}"));
+            }
+        }
     }
-    for (source, dir) in sources::skill_dirs(data) {
-        let origin = json!({"kind": "source", "source": source});
-        skills::list(&dir, &origin, &mut list, &mut problems);
-    }
-    Ok(json!({"skills": list, "problems": problems}))
+    problems
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     fn skill(folder: &Path, name: &str, description: &str) {
         std::fs::create_dir_all(folder.join(name)).unwrap();
@@ -86,6 +101,9 @@ mod tests {
             "module-old",
             "Old",
         );
+        let broken = data.path().join("modules/grpc/skills/module-grpc");
+        std::fs::create_dir_all(&broken).unwrap();
+        std::fs::write(broken.join("SKILL.md"), "---\nname: module-grpc\n---\n").unwrap();
         let team = tempfile::tempdir().unwrap();
         skill(&team.path().join("skills"), "deploy", "Deploys");
         let sources = sources::Sources::new(data.path());
@@ -97,20 +115,14 @@ mod tests {
         assert_eq!(
             directories(&root),
             [
+                data.path().join("modules/grpc/skills"),
                 data.path().join("modules/rest/skills"),
                 data.path().join("sources/team/skills")
             ]
         );
-        let got = dispatch(&root, &json!({"op": "get"})).unwrap();
         assert_eq!(
-            got["skills"],
-            json!([
-                {"name": "module-rest", "description": "REST", "folder": "module-rest",
-                 "origin": {"kind": "module", "module": "rest"}},
-                {"name": "team-deploy", "description": "Deploys", "folder": "team-deploy",
-                 "origin": {"kind": "source", "source": "Team"}},
-            ])
+            problems(&root),
+            ["module grpc: module-grpc: SKILL.md frontmatter has no description"]
         );
-        assert!(dispatch(&root, &json!({"op": "save"})).is_err());
     }
 }
