@@ -7,7 +7,7 @@ to the page you are debugging, with shared variables, saved checks, templates
 and request history in one place.
 macOS 13.5+ on Apple Silicon.
 
-<!-- Demo GIF goes here. -->
+![Services DevTools demo](docs/demo.gif)
 
 ## Install, update, uninstall
 
