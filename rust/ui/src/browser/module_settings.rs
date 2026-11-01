@@ -216,12 +216,16 @@ impl ModuleSettings {
             };
         }
         let repository = source["repository"].as_str().unwrap_or_default();
+        let branch = source["branch"].as_str();
         let url = match source["path"].as_str() {
             Some(path) => format!(
                 "https://github.com/{repository}/tree/{}/{path}",
-                source["branch"].as_str().unwrap_or("HEAD")
+                branch.unwrap_or("HEAD")
             ),
-            None => format!("https://github.com/{repository}"),
+            None => match branch {
+                Some(branch) => format!("https://github.com/{repository}/tree/{branch}"),
+                None => format!("https://github.com/{repository}"),
+            },
         };
         html! {
             <a class="module-settings-link" data-testid="settings-module-source" href={url}

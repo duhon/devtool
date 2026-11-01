@@ -1,5 +1,25 @@
 # Release notes
 
+## 3.3.0
+
+- Modules no longer need GitHub releases. A GitHub source is read like a folder: its
+  `modules/*.module.tgz` files in a branch and folder you choose, and Settings → Modules
+  offers the newest version of each module. A check lists the folder through GitHub's API
+  and downloads a package only when its file changed, so checks stay fast with many
+  versions. The README describes where a team can keep its packages: a folder in the main
+  branch, a separate branch or a separate repository.
+- The Standard source now reads the `modules` branch of `duhon/devtool`, which holds the
+  newest package of each standard module; a saved Standard source moves to it by itself.
+  Checking for a new application reads only the latest release.
+- The session name next to the Console tabs is a centered blue label instead of a
+  button-like box.
+- The Delete button of a chat in the Agent's `#` list is no longer cut off.
+- The Agent's guide to the application is split into smaller topics, so the Agent reads it
+  whole; before, the guide was cut short and the Agent could give a wrong link to open the
+  application standalone.
+- The README explains how a source's Agent skills are named and how to write their
+  descriptions so the Agent picks them.
+
 ## 3.2.2
 
 - Agent chats belong to Console sessions: each session shows its own chats. The `#` tab,

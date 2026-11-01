@@ -7,12 +7,16 @@
 //! templates.json           {"<module>": {"<section>": "<templates text>"}}
 //! hints/<module>.md        the module's hints
 //! skills/<name>/SKILL.md   Agent skills, with their files
-//! modules/*.module.tgz     module packages (folders; GitHub repositories use releases
-//!                          tagged module-<id>-v<version>)
+//! modules/*.module.tgz     module packages, `<id>-<version>[-<platform>].module.tgz`
 //! distribution/            the application as a build leaves it: version.json, the archive
 //!                          and release-notes.txt (GitHub repositories use releases tagged
 //!                          devtool-v<version>)
 //! ```
+//!
+//! A GitHub source is a folder of a branch, read through GitHub's API. A check lists the
+//! folder's trees and reads a package file's `package.json` and notes only when the file (its
+//! git blob) is new, then forgets its bytes; installing downloads it again and checks its
+//! git hash.
 //!
 //! Checking for changes is automatic; the user applies them. The applied copy of a source
 //! lives in `<data>/sources/<slug>/`, its skills renamed `<slug>-<name>`. Configuration is
@@ -57,20 +61,17 @@ const APPLICATION_NAME: &str = "Services DevTools";
 const APPLICATION_DESCRIPTION: &str = "The application: the extension, its native host and the installer. Installing a newer version replaces it and keeps the modules, sources and your data; it can't be removed here.";
 /// The application's release notes, for the version running.
 const APPLICATION_NOTES: &str = include_str!("../../../../RELEASE_NOTES.md");
-/// Ends a module release's notes: its `package.json`, `<!-- services-package {…} -->`.
-pub const PACKAGE_MARK: &str = "<!-- services-package ";
 const MAX_RELEASE: u64 = 64 * 1024;
 const MAX_ARCHIVE: u64 = 1024 * 1024 * 1024;
 /// Slugs that would make skill names look like the application's own.
 const RESERVED: &[&str] = &["module", "services", "local"];
 /// The repository the standard modules are released from.
 pub const STANDARD: &str = "duhon/devtool";
-/// How long a check answers from its last result unless forced.
-const CHECK_AGE: u64 = 15 * 60;
+/// The branch of [`STANDARD`] that holds the latest package of each standard module.
+const STANDARD_BRANCH: &str = "modules";
 const MAX_FILE: u64 = 1024 * 1024;
 const MAX_FILES: usize = 1000;
 const MAX_PACKAGE: u64 = 256 * 1024 * 1024;
-const MAX_RELEASE_PAGES: u32 = 5;
 const API: &str = "https://api.github.com";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -105,9 +106,24 @@ impl Source {
             name: "Standard".into(),
             location: Location::Github {
                 repository: STANDARD.into(),
-                branch: None,
+                branch: Some(STANDARD_BRANCH.into()),
                 path: None,
             },
+        }
+    }
+
+    /// Standard as saved before 3.3.0, when its modules were releases: the default branch.
+    fn migrate(self) -> Self {
+        match &self.location {
+            Location::Github {
+                repository,
+                branch: None,
+                path: None,
+            } if repository.eq_ignore_ascii_case(STANDARD) => Self {
+                location: Source::standard().location,
+                ..self
+            },
+            _ => self,
         }
     }
 
@@ -141,7 +157,7 @@ struct Settings {
 pub fn sources(data: &Path) -> Result<Vec<Source>> {
     match fs::read(data.join(SETTINGS_FILE)) {
         Ok(bytes) => serde_json::from_slice::<Settings>(&bytes)
-            .map(|settings| settings.sources)
+            .map(|settings| settings.sources.into_iter().map(Source::migrate).collect())
             .map_err(|e| Error::new(format!("Invalid sources settings: {e}"))),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(vec![Source::standard()]),
         Err(e) => Err(e.into()),
@@ -449,6 +465,8 @@ struct Fetched {
     files: Files,
     contents: Contents,
     problems: Vec<String>,
+    /// The tree hash of a GitHub source's `modules/`.
+    modules: Option<String>,
 }
 
 fn sha256(bytes: &[u8]) -> String {
@@ -507,6 +525,7 @@ fn fetch_folder(root: &Path) -> Result<Fetched> {
         files: Files::new(),
         contents: Contents::new(),
         problems: Vec::new(),
+        modules: None,
     };
     for path in found {
         match config_file(&path) {
@@ -557,10 +576,11 @@ struct Offer {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 enum Download {
-    /// A release asset and the SHA-256 GitHub reports for it.
-    Asset {
-        id: u64,
-        sha256: Option<String>,
+    /// A package file in a GitHub source's `modules/` and its git blob hash, which the
+    /// download must match.
+    Blob {
+        name: String,
+        sha: String,
     },
     File {
         path: PathBuf,
@@ -638,23 +658,6 @@ fn folder_application(root: &Path, platform: &str) -> Option<std::result::Result
     Some(read().map_err(|problem| format!("{DISTRIBUTION}/: {problem}")))
 }
 
-/// A module release's notes and the package its body describes in its last line.
-fn release_body(body: &str) -> (String, Option<Package>) {
-    let mut notes = Vec::new();
-    let mut described = None;
-    for line in body.lines() {
-        match line
-            .trim()
-            .strip_prefix(PACKAGE_MARK)
-            .and_then(|rest| rest.strip_suffix("-->"))
-        {
-            Some(text) => described = Package::parse(text.trim().as_bytes()).ok(),
-            None => notes.push(line),
-        }
-    }
-    (notes.join("\n").trim().to_owned(), described)
-}
-
 /// The section of `## <version>` in release notes.
 fn notes_section(notes: &str, version: &str) -> String {
     let mut out = String::new();
@@ -705,23 +708,15 @@ fn folder_offers(root: &Path, core: &str, platform: &str) -> (Vec<Offer>, Vec<St
                 return Err("larger than 256 MiB".into());
             }
             let bytes = fs::read(&file).map_err(|e| e.to_string())?;
-            let described = archive::read(&bytes, package::PACKAGE_FILE)?
-                .ok_or_else(|| format!("no {}", package::PACKAGE_FILE))?;
-            let described = Package::parse(&described)?;
-            let notes = archive::read(&bytes, package::NOTES_FILE)?
-                .map(|notes| notes_section(&String::from_utf8_lossy(&notes), &described.version))
-                .unwrap_or_default();
-            Ok(Offer {
-                unsupported: described.unsupported(core, platform),
-                id: described.id,
-                version: described.version,
-                min_core: described.min_core,
-                name: described.name,
-                description: described.description,
+            let (described, notes) = read_package(&bytes)?;
+            Ok(package_offer(
+                described,
                 notes,
                 size,
-                download: Download::File { path: file.clone() },
-            })
+                core,
+                platform,
+                Download::File { path: file.clone() },
+            ))
         };
         match read() {
             Ok(offer) => offers.push(offer),
@@ -731,71 +726,201 @@ fn folder_offers(root: &Path, core: &str, platform: &str) -> (Vec<Offer>, Vec<St
     (offers, problems)
 }
 
-/// What a GitHub release offers for `platform`: a module package (a release tagged
-/// `module-<id>-v<version>` with the asset `<id>-<version>-<platform>.module.tgz`) or the
-/// application (`devtool-v<version>` with the archive and `version.json`).
-fn release_offer(release: &Value, core: &str, platform: &str) -> Option<Offer> {
+/// The `package.json` of a package file's contents and the notes of its version.
+fn read_package(bytes: &[u8]) -> std::result::Result<(Package, String), String> {
+    let described = archive::read(bytes, package::PACKAGE_FILE)?
+        .ok_or_else(|| format!("no {}", package::PACKAGE_FILE))?;
+    let described = Package::parse(&described)?;
+    let notes = archive::read(bytes, package::NOTES_FILE)?
+        .map(|notes| notes_section(&String::from_utf8_lossy(&notes), &described.version))
+        .unwrap_or_default();
+    Ok((described, notes))
+}
+
+fn package_offer(
+    described: Package,
+    notes: String,
+    size: u64,
+    core: &str,
+    platform: &str,
+    download: Download,
+) -> Offer {
+    Offer {
+        unsupported: described.unsupported(core, platform),
+        id: described.id,
+        version: described.version,
+        min_core: described.min_core,
+        name: described.name,
+        description: described.description,
+        notes,
+        size,
+        download,
+    }
+}
+
+/// The offer of the contents of `name` in a GitHub source's `modules/`, which must hold the
+/// module, version and platform its name says.
+fn blob_offer(
+    name: &str,
+    sha: &str,
+    bytes: &[u8],
+    core: &str,
+    platform: &str,
+) -> std::result::Result<Offer, String> {
+    let (described, notes) = read_package(bytes)?;
+    if package_name(name)
+        != Some((
+            described.id.clone(),
+            described.version.clone(),
+            described.platform.clone(),
+        ))
+    {
+        return Err(format!(
+            "holds {} {}, not what its name says",
+            described.id, described.version
+        ));
+    }
+    let download = Download::Blob {
+        name: name.into(),
+        sha: sha.into(),
+    };
+    Ok(package_offer(
+        described,
+        notes,
+        bytes.len() as u64,
+        core,
+        platform,
+        download,
+    ))
+}
+
+/// The offer of the file `name` (git blob `sha`) a former check (`known`) read, for `core`.
+fn known_offer(
+    known: &[Offer],
+    name: &str,
+    sha: &str,
+    core: &str,
+    platform: &str,
+) -> Option<Offer> {
+    let mut offer = known
+        .iter()
+        .find(|offer| {
+            matches!(&offer.download, Download::Blob { name: known, sha: hash }
+                if known == name && hash.eq_ignore_ascii_case(sha))
+        })?
+        .clone();
+    offer.unsupported = Package {
+        id: offer.id.clone(),
+        version: offer.version.clone(),
+        min_core: offer.min_core.clone(),
+        platform: package_name(name)?.2,
+        ..Package::default()
+    }
+    .unsupported(core, platform);
+    Some(offer)
+}
+
+/// The module id, version and platform a package file's name
+/// (`<id>-<version>[-<platform>].module.tgz`) gives.
+fn package_name(name: &str) -> Option<(String, String, Option<String>)> {
+    let parts: Vec<&str> = name
+        .strip_suffix(package::ARCHIVE_SUFFIX)?
+        .split('-')
+        .collect();
+    // An id has no dots, so the first part with one is the version.
+    let at = parts.iter().position(|part| part.contains('.'))?;
+    let id = parts[..at].join("-");
+    package::check_id(&id).ok()?;
+    package::version(parts[at]).ok()?;
+    let platform = parts[at + 1..].join("-");
+    Some((
+        id,
+        parts[at].to_owned(),
+        (!platform.is_empty()).then_some(platform),
+    ))
+}
+
+/// A file of a GitHub source's `modules/`: its name, git blob hash and size.
+type PackageFile = (String, String, u64);
+
+/// The newest package file of each module for `platform` among the files of a source's
+/// `modules/`, and the files not named like packages.
+fn newest_packages(files: Vec<PackageFile>, platform: &str) -> (Vec<PackageFile>, Vec<String>) {
+    let mut newest: BTreeMap<String, ([u64; 3], PackageFile)> = BTreeMap::new();
+    let mut problems = Vec::new();
+    for file in files {
+        let Some((id, version, built)) = package_name(&file.0) else {
+            problems.push(format!(
+                "{MODULES}/{}: not named <id>-<version>-<platform>{}",
+                file.0,
+                package::ARCHIVE_SUFFIX
+            ));
+            continue;
+        };
+        if built.is_some_and(|built| built != platform) {
+            continue;
+        }
+        let Ok(version) = package::version(&version) else {
+            continue;
+        };
+        if newest.get(&id).is_none_or(|(known, _)| version > *known) {
+            newest.insert(id, (version, file));
+        }
+    }
+    (
+        newest.into_values().map(|(_, file)| file).collect(),
+        problems,
+    )
+}
+
+/// The git blob hash of `bytes`: the SHA-1 of `blob <length>\0<bytes>`.
+fn blob_sha(bytes: &[u8]) -> String {
+    let mut digest = ring::digest::Context::new(&ring::digest::SHA1_FOR_LEGACY_USE_ONLY);
+    digest.update(format!("blob {}\0", bytes.len()).as_bytes());
+    digest.update(bytes);
+    digest
+        .finish()
+        .as_ref()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// The application a GitHub release offers for `platform`: a release tagged
+/// `devtool-v<version>` with the archive and `version.json`.
+fn release_offer(release: &Value, platform: &str) -> Option<Offer> {
     if release["draft"] == true || release["prerelease"] == true {
         return None;
     }
-    let tag = release["tag_name"].as_str()?;
-    let body = release["body"].as_str().unwrap_or_default();
+    let version = release["tag_name"]
+        .as_str()?
+        .strip_prefix(updates::TAG_PREFIX)?;
+    updates::version(version).ok()?;
     let asset = |name: &str| {
         release["assets"]
             .as_array()?
             .iter()
             .find(|asset| asset["name"] == name)
     };
-    let digest = |asset: &Value| {
-        asset["digest"]
+    let archive = asset(updates::ARCHIVE)?;
+    Some(application_offer(
+        version,
+        release["body"]
             .as_str()
-            .and_then(|digest| digest.strip_prefix("sha256:"))
-            .map(str::to_owned)
-    };
-    if let Some(version) = tag.strip_prefix(updates::TAG_PREFIX) {
-        updates::version(version).ok()?;
-        let archive = asset(updates::ARCHIVE)?;
-        return Some(application_offer(
-            version,
-            body.trim().to_owned(),
-            archive["size"].as_u64().unwrap_or_default(),
-            platform,
-            Download::Application {
-                archive: archive["id"].as_u64()?,
-                sha256: digest(archive),
-                metadata: asset(RELEASE_FILE)?["id"].as_u64()?,
-            },
-        ));
-    }
-    let (id, version) = tag.strip_prefix("module-")?.rsplit_once("-v")?;
-    package::check_id(id).ok()?;
-    package::version(version).ok()?;
-    let name = package::archive_name(&Package {
-        id: id.into(),
-        version: version.into(),
-        platform: Some(platform.into()),
-        ..Package::default()
-    });
-    let asset = asset(&name)?;
-    let (notes, described) = release_body(body);
-    let described =
-        described.filter(|described| described.id == id && described.version == version);
-    Some(Offer {
-        id: id.into(),
-        version: version.into(),
-        min_core: described.as_ref().and_then(|d| d.min_core.clone()),
-        unsupported: described
-            .as_ref()
-            .and_then(|d| d.unsupported(core, platform)),
-        name: described.as_ref().and_then(|d| d.name.clone()),
-        description: described.and_then(|d| d.description),
-        notes,
-        size: asset["size"].as_u64().unwrap_or_default(),
-        download: Download::Asset {
-            id: asset["id"].as_u64()?,
-            sha256: digest(asset),
+            .unwrap_or_default()
+            .trim()
+            .to_owned(),
+        archive["size"].as_u64().unwrap_or_default(),
+        platform,
+        Download::Application {
+            archive: archive["id"].as_u64()?,
+            sha256: archive["digest"]
+                .as_str()
+                .and_then(|digest| digest.strip_prefix("sha256:"))
+                .map(str::to_owned),
+            metadata: asset(RELEASE_FILE)?["id"].as_u64()?,
         },
-    })
+    ))
 }
 
 fn http() -> Result<reqwest::Client> {
@@ -860,6 +985,12 @@ struct GitHub {
 
 impl GitHub {
     async fn get(&self, path: &str, accept: &str) -> Result<reqwest::Response> {
+        self.send(path, accept)
+            .await
+            .and_then(|response| self.success(response))
+    }
+
+    async fn send(&self, path: &str, accept: &str) -> Result<reqwest::Response> {
         let mut request = self
             .client
             .get(format!("{API}/repos/{}/{path}", self.repository))
@@ -868,10 +999,13 @@ impl GitHub {
         if let Some(token) = &self.token {
             request = request.bearer_auth(token);
         }
-        let response = request
+        request
             .send()
             .await
-            .map_err(|e| Error::new(format!("GitHub {}: {}", self.repository, e.without_url())))?;
+            .map_err(|e| Error::new(format!("GitHub {}: {}", self.repository, e.without_url())))
+    }
+
+    fn success(&self, response: reqwest::Response) -> Result<reqwest::Response> {
         let status = response.status();
         if status.is_success() {
             return Ok(response);
@@ -902,6 +1036,89 @@ impl GitHub {
             .json()
             .await
             .map_err(|e| Error::new(format!("GitHub {}: {}", self.repository, e.without_url())))
+    }
+
+    /// The application the repository's latest release offers, if it has one.
+    async fn application(&self, platform: &str) -> Result<Option<Offer>> {
+        let response = self
+            .send("releases/latest", "application/vnd.github+json")
+            .await?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        let release: Value =
+            self.success(response)?.json().await.map_err(|e| {
+                Error::new(format!("GitHub {}: {}", self.repository, e.without_url()))
+            })?;
+        Ok(release_offer(&release, platform))
+    }
+
+    /// The newest package of each module for `platform` in the tree `tree` (a source's
+    /// `modules/`). Only the files `known` (former checks' offers) lacks are downloaded.
+    async fn modules(
+        &self,
+        tree: &str,
+        known: &[Offer],
+        core: &str,
+        platform: &str,
+    ) -> Result<(Vec<Offer>, Vec<String>)> {
+        let listed = self.json(&format!("git/trees/{tree}")).await?;
+        let files = listed["tree"]
+            .as_array()
+            .map(|entries| {
+                entries
+                    .iter()
+                    .filter(|entry| entry["type"] == "blob")
+                    .filter_map(|entry| {
+                        Some((
+                            entry["path"].as_str()?.to_owned(),
+                            entry["sha"].as_str()?.to_owned(),
+                            entry["size"].as_u64().unwrap_or_default(),
+                        ))
+                    })
+                    .filter(|(name, ..)| name.ends_with(package::ARCHIVE_SUFFIX))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let (files, mut problems) = newest_packages(files, platform);
+        let mut offers = Vec::new();
+        for (name, sha, size) in files {
+            let shown = format!("{MODULES}/{name}");
+            if size > MAX_PACKAGE {
+                problems.push(format!("{shown}: larger than 256 MiB"));
+                continue;
+            }
+            let offer = match known_offer(known, &name, &sha, core, platform) {
+                Some(offer) => Ok(offer),
+                None => blob_offer(&name, &sha, &self.blob(&sha).await?, core, platform),
+            };
+            match offer {
+                Ok(offer) => offers.push(offer),
+                Err(problem) => problems.push(format!("{shown}: {problem}")),
+            }
+        }
+        Ok((offers, problems))
+    }
+
+    /// The file of the git blob `sha`, which must hash to it.
+    async fn blob(&self, sha: &str) -> Result<Vec<u8>> {
+        if sha.len() != 40 || !sha.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(Error::new("Check for updates again"));
+        }
+        let bytes = self
+            .bytes(
+                &format!("git/blobs/{sha}"),
+                "application/vnd.github.raw+json",
+                MAX_PACKAGE,
+            )
+            .await?;
+        if !blob_sha(&bytes).eq_ignore_ascii_case(sha) {
+            return Err(Error::new(format!(
+                "GitHub {}: a downloaded package is damaged (its git hash differs)",
+                self.repository
+            )));
+        }
+        Ok(bytes)
     }
 
     async fn bytes(&self, path: &str, accept: &str, maximum: u64) -> Result<Vec<u8>> {
@@ -982,6 +1199,7 @@ impl GitHub {
             files: Files::new(),
             contents: Contents::new(),
             problems: Vec::new(),
+            modules: None,
         };
         let mut blobs = Vec::new();
         let entries = |tree: &Value| -> Vec<(String, String, String, u64)> {
@@ -1005,6 +1223,7 @@ impl GitHub {
         for (name, kind, sha, size) in entries(&root) {
             match (name.as_str(), kind.as_str()) {
                 (DICTIONARY | TEMPLATES, "blob") => blobs.push((name, sha, size)),
+                (MODULES, "tree") => fetched.modules = Some(sha),
                 (HINTS | SKILLS, "tree") => {
                     let tree = self
                         .json(&format!(
@@ -1061,25 +1280,6 @@ impl GitHub {
             fetched.files.insert(path, sha);
         }
         Ok(fetched)
-    }
-
-    async fn offers(&self, core: &str, platform: &str) -> Result<Vec<Offer>> {
-        let mut offers = Vec::new();
-        for page in 1..=MAX_RELEASE_PAGES {
-            let releases = self
-                .json(&format!("releases?per_page=100&page={page}"))
-                .await?;
-            let releases = releases.as_array().cloned().unwrap_or_default();
-            offers.extend(
-                releases
-                    .iter()
-                    .filter_map(|release| release_offer(release, core, platform)),
-            );
-            if releases.len() < 100 {
-                break;
-            }
-        }
-        Ok(offers)
     }
 }
 
@@ -1478,7 +1678,15 @@ fn write_checks(data: &Path, checks: &BTreeMap<String, Checked>) -> Result<()> {
     )
 }
 
-async fn check_source(data: &Path, source: &Source, core: &str, platform: &str) -> Checked {
+/// Checks `source`; `known` are the offers of former checks, whose package files need not
+/// be read again.
+async fn check_source(
+    data: &Path,
+    source: &Source,
+    known: &[Offer],
+    core: &str,
+    platform: &str,
+) -> Checked {
     let slug = source.slug();
     let dir = data.join(DIR).join(&slug);
     let applied = read_meta(&dir).map(|meta| meta.files).unwrap_or_default();
@@ -1502,10 +1710,15 @@ async fn check_source(data: &Path, source: &Source, core: &str, platform: &str) 
         checked.problems = fetched.problems;
         checked.modules = match &source.location {
             Location::Github { repository, .. } => {
-                github(data, repository)
-                    .await?
-                    .offers(core, platform)
-                    .await?
+                let github = github(data, repository).await?;
+                let mut offers: Vec<Offer> =
+                    github.application(platform).await?.into_iter().collect();
+                if let Some(tree) = &fetched.modules {
+                    let (modules, problems) = github.modules(tree, known, core, platform).await?;
+                    offers.extend(modules);
+                    checked.problems.extend(problems);
+                }
+                offers
             }
             Location::Folder { path } => {
                 let (path, core, platform) = (path.clone(), core.to_owned(), platform.to_owned());
@@ -1539,11 +1752,16 @@ async fn check_source(data: &Path, source: &Source, core: &str, platform: &str) 
 #[derive(Clone)]
 pub struct Sources {
     data: PathBuf,
+    /// When this host process started: checks made since then are not repeated unforced.
+    started: u64,
 }
 
 impl Sources {
     pub fn new(data: impl Into<PathBuf>) -> Self {
-        Self { data: data.into() }
+        Self {
+            data: data.into(),
+            started: now(),
+        }
     }
 
     pub fn data(&self) -> &Path {
@@ -1668,7 +1886,8 @@ impl Sources {
         self.get()
     }
 
-    /// Checks every source unless its last check is recent (`force` checks anyway):
+    /// Checks every source not checked since this host process started (`force` checks
+    /// anyway), so DevTools checks once each time it opens the application:
     /// `{sources:[{name, slug, kind, repository?|path, checkedAt, error?, configs, applied,
     /// changes:[{kind, key, change, overridden}], problems, modules:[offers]}],
     /// installed:{"<module>": {version, source?, notes, error?, name?, description?}}}`, where
@@ -1685,15 +1904,19 @@ impl Sources {
         let core = env!("CARGO_PKG_VERSION");
         let platform = package::host_platform();
         let mut changed = false;
+        let known: Vec<Offer> = checks
+            .values()
+            .flat_map(|checked| checked.modules.iter().cloned())
+            .collect();
         for source in &sources {
             let slug = source.slug();
             let fresh = checks.get(&slug).is_some_and(|checked| {
-                checked.source == *source && now().saturating_sub(checked.checked_at) < CHECK_AGE
+                checked.source == *source && checked.checked_at >= self.started
             });
             if force || !fresh {
                 checks.insert(
                     slug,
-                    check_source(&self.data, source, core, &platform).await,
+                    check_source(&self.data, source, &known, core, &platform).await,
                 );
                 changed = true;
             }
@@ -1862,23 +2085,8 @@ impl Sources {
         }
         let (source, offer) = self.offer(slug, id, version)?;
         match (&source.location, &offer.download) {
-            (Location::Github { repository, .. }, Download::Asset { id: asset, sha256 }) => {
-                let bytes = github(&self.data, repository)
-                    .await?
-                    .bytes(
-                        &format!("releases/assets/{asset}"),
-                        "application/octet-stream",
-                        MAX_PACKAGE,
-                    )
-                    .await?;
-                if let Some(expected) = sha256
-                    && !self::sha256(&bytes).eq_ignore_ascii_case(expected)
-                {
-                    return Err(Error::new(format!(
-                        "The downloaded {id} {version} is damaged (SHA-256 mismatch)"
-                    )));
-                }
-                Ok(bytes)
+            (Location::Github { repository, .. }, Download::Blob { sha, .. }) => {
+                github(&self.data, repository).await?.blob(sha).await
             }
             (Location::Folder { path: root }, Download::File { path })
                 if path.starts_with(root.join(MODULES)) =>
@@ -2239,14 +2447,24 @@ mod tests {
             hint(data, "rest"),
             Some(("Team".into(), "Use staging".into()))
         );
+        let changes = |checked: Value| checked["sources"][0]["changes"].clone();
+        let before = changes(sources.check(false, &local, &[]).await.unwrap());
         write(
             team.path(),
             "dictionary.json",
             r#"{"profiles":{"stage":{"HOST":"b","PORT":"1"}}}"#,
         );
-        let checked = sources.check(true, &local, &[]).await.unwrap();
+        // A host process checks once; a new one checks again.
         assert_eq!(
-            checked["sources"][0]["changes"],
+            changes(sources.check(false, &local, &[]).await.unwrap()),
+            before
+        );
+        let restarted = Sources {
+            started: now() + 1,
+            ..Sources::new(data)
+        };
+        assert_eq!(
+            changes(restarted.check(false, &local, &[]).await.unwrap()),
             json!([{"kind":"dictionary","key":"stage/HOST","change":"changed","overridden":true}])
         );
         // An invalid source keeps the applied copy.
@@ -2451,67 +2669,133 @@ mod tests {
     }
 
     #[test]
-    fn releases_offer_the_package_for_this_platform() {
-        let release = |tag: &str, asset: &str| {
-            json!({"tag_name": tag, "draft": false, "prerelease": false, "body": "- Fixes",
-                "assets": [{"id": 7, "name": asset, "size": 10, "digest": "sha256:ab"}]})
-        };
-        let offer = release_offer(
-            &release(
-                "module-my-rest-v1.2.3",
-                "my-rest-1.2.3-macos-arm64.module.tgz",
-            ),
-            "3.2.0",
+    fn a_modules_folder_offers_the_newest_package_of_each_module_for_this_platform() {
+        assert_eq!(
+            package_name("my-rest-1.2.3-macos-arm64.module.tgz"),
+            Some(("my-rest".into(), "1.2.3".into(), Some("macos-arm64".into())))
+        );
+        assert_eq!(
+            package_name("rest-1.2.3.module.tgz"),
+            Some(("rest".into(), "1.2.3".into(), None))
+        );
+        for name in [
+            "rest.module.tgz",
+            "rest-1.2-macos.module.tgz",
+            "Rest-1.2.3.module.tgz",
+            "rest-1.2.3.tgz",
+        ] {
+            assert_eq!(package_name(name), None, "{name}");
+        }
+        let file = |name: &str| (name.to_owned(), format!("sha of {name}"), 1);
+        let (newest, problems) = newest_packages(
+            vec![
+                file("rest-1.9.0-macos-arm64.module.tgz"),
+                file("rest-1.10.0-macos-arm64.module.tgz"),
+                file("rest-2.0.0-linux-x86_64.module.tgz"),
+                file("echo-1.0.0.module.tgz"),
+                file("notes.module.tgz"),
+            ],
             "macos-arm64",
+        );
+        let names: Vec<&str> = newest.iter().map(|(name, ..)| name.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "echo-1.0.0.module.tgz",
+                "rest-1.10.0-macos-arm64.module.tgz"
+            ]
+        );
+        assert_eq!(problems.len(), 1);
+        assert!(problems[0].starts_with("modules/notes.module.tgz"));
+    }
+
+    #[test]
+    fn a_github_package_file_is_read_once_by_its_git_hash() {
+        // `git hash-object` of "hello\n".
+        assert_eq!(
+            blob_sha(b"hello\n"),
+            "ce013625030ba8dba906f756967f9e9ca394464a"
+        );
+        let folder = tempfile::tempdir().unwrap();
+        let described = Package {
+            id: "rest".into(),
+            version: "1.2.0".into(),
+            min_core: Some("4.0.0".into()),
+            platform: Some("macos-arm64".into()),
+            name: Some("REST".into()),
+            description: None,
+        };
+        fs::write(
+            folder.path().join(package::PACKAGE_FILE),
+            serde_json::to_vec(&described).unwrap(),
         )
         .unwrap();
+        fs::write(folder.path().join(package::LIBRARY_FILE), b"library").unwrap();
+        fs::write(folder.path().join(package::NOTES_FILE), "## 1.2.0\n- Fix\n").unwrap();
+        let bytes = archive::pack(folder.path()).unwrap();
+        let name = package::archive_name(&described);
+        let sha = blob_sha(&bytes);
+        let offer = blob_offer(&name, &sha, &bytes, "3.3.0", "macos-arm64").unwrap();
         assert_eq!(
-            (offer.id.as_str(), offer.version.as_str()),
-            ("my-rest", "1.2.3")
+            (offer.name.as_deref(), offer.notes.as_str()),
+            (Some("REST"), "- Fix")
         );
-        assert_eq!(
-            offer.download,
-            Download::Asset {
-                id: 7,
-                sha256: Some("ab".into())
-            }
-        );
-        assert_eq!(offer.notes, "- Fixes");
-        assert_eq!((offer.name, offer.unsupported), (None, None));
+        assert!(offer.unsupported.as_deref().unwrap().contains("4.0.0"));
+        for misnamed in ["rest-1.1.0-macos-arm64.module.tgz", "rest-1.2.0.module.tgz"] {
+            assert!(
+                blob_offer(misnamed, &sha, &bytes, "3.3.0", "macos-arm64")
+                    .unwrap_err()
+                    .contains("not what its name says")
+            );
+        }
+
+        // A later check reuses it while the file is the same, for the core running then.
+        let known = [offer];
+        let again =
+            known_offer(&known, &name, &sha.to_uppercase(), "4.0.0", "macos-arm64").unwrap();
+        assert_eq!(again.unsupported, None);
+        assert_eq!(again.notes, "- Fix");
+        assert!(known_offer(&known, &name, &"0".repeat(40), "4.0.0", "macos-arm64").is_none());
         assert!(
-            release_offer(
-                &release("module-rest-v1.2.3", "rest-1.2.3-macos-arm64.module.tgz"),
-                "3.2.0",
-                "linux-x86_64"
+            known_offer(
+                &known,
+                "rest-1.2.0.module.tgz",
+                &sha,
+                "4.0.0",
+                "macos-arm64"
             )
             .is_none()
         );
-        assert!(release_offer(&release("devtool-v3.2.0", "x"), "3.2.0", "macos-arm64").is_none());
-        let mut draft = release("module-rest-v1.0.0", "rest-1.0.0-macos-arm64.module.tgz");
-        draft["draft"] = json!(true);
-        assert!(release_offer(&draft, "3.2.0", "macos-arm64").is_none());
+    }
 
-        // The package described at the end of the notes.
-        let mut described = release("module-rest-v1.2.3", "rest-1.2.3-macos-arm64.module.tgz");
-        described["body"] = json!(format!(
-            "- Fixes\n\n{PACKAGE_MARK}{} -->\n",
-            json!({"id": "rest", "version": "1.2.3", "minCore": "9.0.0", "name": "REST", "description": "Calls APIs"})
-        ));
-        let offer = release_offer(&described, "3.2.0", "macos-arm64").unwrap();
-        assert_eq!(offer.notes, "- Fixes");
-        assert_eq!(
-            (offer.name.as_deref(), offer.description.as_deref()),
-            (Some("REST"), Some("Calls APIs"))
-        );
-        assert!(offer.unsupported.unwrap().contains("9.0.0"));
+    #[test]
+    fn standard_saved_before_its_modules_branch_moves_to_it() {
+        let data = tempfile::tempdir().unwrap();
+        let team = Source {
+            name: "Team".into(),
+            location: Location::Github {
+                repository: "team/devtools".into(),
+                branch: None,
+                path: None,
+            },
+        };
+        let mut old = Source::standard();
+        old.location = Location::Github {
+            repository: "Duhon/DevTool".into(),
+            branch: None,
+            path: None,
+        };
+        write_sources(data.path(), &[old, team.clone()]).unwrap();
+        assert_eq!(sources(data.path()).unwrap(), [Source::standard(), team]);
+    }
 
-        // The application.
-        let mut application = release("devtool-v3.3.0", updates::ARCHIVE);
-        application["assets"]
-            .as_array_mut()
-            .unwrap()
-            .push(json!({"id": 8, "name": RELEASE_FILE, "size": 1}));
-        let offer = release_offer(&application, "3.2.0", "macos-arm64").unwrap();
+    #[test]
+    fn the_latest_release_offers_the_application() {
+        let mut release = json!({"tag_name": "devtool-v3.3.0", "draft": false, "prerelease": false,
+            "body": "- Fixes", "assets": [
+                {"id": 7, "name": updates::ARCHIVE, "size": 10, "digest": "sha256:ab"},
+                {"id": 8, "name": RELEASE_FILE, "size": 1}]});
+        let offer = release_offer(&release, "macos-arm64").unwrap();
         assert_eq!(
             (
                 offer.id.as_str(),
@@ -2530,11 +2814,13 @@ mod tests {
         );
         assert!(offer.unsupported.is_none());
         assert!(
-            release_offer(&application, "3.2.0", "linux-x86_64")
+            release_offer(&release, "linux-x86_64")
                 .unwrap()
                 .unsupported
                 .is_some()
         );
+        release["tag_name"] = json!("module-rest-v1.0.0");
+        assert!(release_offer(&release, "macos-arm64").is_none());
         assert_eq!(
             notes_section("## 2.0.0\n- b\n## 1.0.0\n- a\n", "1.0.0"),
             "- a"

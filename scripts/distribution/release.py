@@ -1,4 +1,5 @@
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -16,9 +17,11 @@ VERSION = re.compile(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)")
 PREFIX = "devtool-v"
 ARCHIVE = "services-macos-arm64.tar.gz"
 ASSETS = (ARCHIVE, "checksums.txt", "install.sh", "version.json")
-# Modules are released apart from the application: one release per module version, never
-# the latest release (the application's update check reads the latest one).
-MODULE_PREFIX = "module-"
+# Modules are released apart from the application: the branch MODULES_BRANCH holds one
+# commit with the newest package of each module in MODULES_DIR, which Settings → Modules
+# reads through the Standard source.
+MODULES_BRANCH = "modules"
+MODULES_DIR = "modules"
 MODULE_SUFFIX = ".module.tgz"
 
 
@@ -116,8 +119,52 @@ def should_publish(version, releases, prefix=PREFIX):
     return True
 
 
-def module_tag(module):
-    return f"{MODULE_PREFIX}{module}-v"
+def package_name(name):
+    """`(id, version)` of a package file named `<id>-<version>[-<platform>].module.tgz`, else
+    None; an id has no dots, so the first part with one is the version."""
+    if not name.endswith(MODULE_SUFFIX):
+        return None
+    parts = name[:-len(MODULE_SUFFIX)].split("-")
+    at = next((index for index, part in enumerate(parts) if "." in part), None)
+    if not at or not VERSION.fullmatch(parts[at]):
+        return None
+    return "-".join(parts[:at]), parts[at]
+
+
+def git_blob_sha(data):
+    return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
+
+
+def published_modules():
+    """`{file name: blob sha}` of the packages in the modules branch; empty before its first
+    publication."""
+    tree = api("GET", f"git/trees/{MODULES_BRANCH}:{MODULES_DIR}", missing_ok=True)
+    if tree is None:
+        return {}
+    if tree.get("truncated"):
+        raise ValueError(f"The {MODULES_BRANCH} branch lists too many files")
+    return {entry["path"]: entry["sha"] for entry in tree["tree"] if entry["type"] == "blob"}
+
+
+def new_modules(versions, published):
+    """The `(id, version)` of `versions` (`{id: version}`) that `published` (the file names in
+    the modules branch) lacks; a version older than the published one is an error."""
+    newest = {}
+    for name in published:
+        parsed = package_name(name)
+        if parsed:
+            module, version = parsed
+            if module not in newest or version_tuple(version) > version_tuple(newest[module]):
+                newest[module] = version
+    found = []
+    for module, version in versions.items():
+        if module in newest:
+            if version_tuple(version) == version_tuple(newest[module]):
+                continue
+            if version_tuple(version) < version_tuple(newest[module]):
+                raise ValueError(f"Module {module} {version} is older than the published {newest[module]}")
+        found.append((module, version))
+    return found
 
 
 def modules(root=ROOT):
@@ -148,19 +195,15 @@ def plan():
             break
         page += 1
     application = should_publish(version, releases)
-    new_modules = [
-        f"{module_tag(module)}{module_version}"
-        for module, module_version in modules().items()
-        if should_publish(module_version, releases, module_tag(module))
-    ]
-    publish = application or bool(new_modules)
+    changed = new_modules(modules(), published_modules())
+    publish = application or bool(changed)
     outputs = {"version": version, "tag": PREFIX + version, "publish": str(publish).lower()}
     with open(os.environ["GITHUB_OUTPUT"], "a") as output:
         for key, value in outputs.items():
             output.write(f"{key}={value}\n")
     print(f"{'Build' if application else 'Already published; skip'}: {PREFIX}{version}")
-    for tag in new_modules:
-        print(f"Build: {tag}")
+    for module, module_version in changed:
+        print(f"Build: module {module} {module_version}")
 
 
 def prepare(root=ROOT):
@@ -282,12 +325,9 @@ def release_once(tag, name, notes, output, names, latest):
     print(f"Published {published['html_url']}")
 
 
-PACKAGE_MARK = "<!-- services-package "
-
-
-def module_release(archive):
-    """`(id, version, notes)` of a module package file: the notes of its version, ending with
-    its package.json, which Settings → Modules reads (name, description, minCore)."""
+def module_package(archive):
+    """`(id, version)` of a module package file, whose notes must start with its version and
+    whose name must be the one its package.json gives."""
     with tarfile.open(archive) as package:
         described = json.load(package.extractfile("package.json"))
         try:
@@ -295,13 +335,67 @@ def module_release(archive):
         except KeyError:
             raise ValueError(f"{archive.name} has no RELEASE_NOTES.md") from None
     module, version = described["id"], described["version"]
-    noted, notes = newest_notes(text)
+    noted, _ = newest_notes(text)
     if noted != version:
         raise ValueError(f"{archive.name}: the newest module notes are for {noted}, not {version}")
     if archive.name != f"{module}-{version}-{described['platform']}{MODULE_SUFFIX}":
         raise ValueError(f"{archive.name} is not named by its package")
-    described = json.dumps(described, separators=(",", ":"), ensure_ascii=False)
-    return module, version, f"{notes}\n\n{PACKAGE_MARK}{described.replace('--', '-\\u002d')} -->"
+    return module, version
+
+
+def publish_modules(root=ROOT):
+    """Points the modules branch at a new commit without history holding the newest package of
+    each built module: a version already there keeps its published file, a new one is
+    uploaded, older versions are dropped. Nothing changes when every version is there."""
+    archives = sorted((root / "dist/modules").glob(f"*{MODULE_SUFFIX}"))
+    if not archives:
+        print(f"The build has no module packages; leave the {MODULES_BRANCH} branch unchanged")
+        return
+    published = published_modules()
+    by_module = {}
+    for name, sha in published.items():
+        parsed = package_name(name)
+        if parsed:
+            by_module[parsed[0]] = (parsed[1], name, sha)
+    files = {}
+    changed = False
+    for archive in archives:
+        module, version = module_package(archive)
+        if module in files:
+            raise ValueError(f"Two packages of module {module}")
+        known = by_module.get(module)
+        if known and version_tuple(version) == version_tuple(known[0]):
+            files[module] = (known[1], known[2])
+            continue
+        if known and version_tuple(version) < version_tuple(known[0]):
+            raise ValueError(f"Module {module} {version} is older than the published {known[0]}")
+        data = archive.read_bytes()
+        blob = api("POST", "git/blobs", {
+            "content": base64.b64encode(data).decode(), "encoding": "base64",
+        })
+        if blob["sha"] != git_blob_sha(data):
+            raise ValueError(f"GitHub stored {archive.name} differently")
+        files[module] = (archive.name, blob["sha"])
+        changed = True
+        print(f"Publish module {module} {version}")
+    if not changed and set(published) == {name for name, _ in files.values()}:
+        print(f"Already published; leave the {MODULES_BRANCH} branch unchanged")
+        return
+    tree = api("POST", "git/trees", {"tree": [
+        {"path": f"{MODULES_DIR}/{name}", "mode": "100644", "type": "blob", "sha": sha}
+        for name, sha in sorted(files.values())
+    ]})
+    commit = api("POST", "git/commits", {
+        "message": f"Modules of {os.environ['GITHUB_SHA']}",
+        "tree": tree["sha"],
+        "parents": [],
+    })
+    reference = f"heads/{MODULES_BRANCH}"
+    if api("GET", f"git/ref/{reference}", missing_ok=True) is None:
+        api("POST", "git/refs", {"ref": f"refs/{reference}", "sha": commit["sha"]})
+    else:
+        api("PATCH", f"git/refs/{reference}", {"sha": commit["sha"], "force": True})
+    print(f"Published the {MODULES_BRANCH} branch: {commit['sha']}")
 
 
 def publish(root=ROOT):
@@ -317,12 +411,7 @@ def publish(root=ROOT):
     if document["sha256"] != digest or (output / "checksums.txt").read_text() != f"{digest}  {ARCHIVE}\n":
         raise ValueError("Release artifact checksum mismatch")
     release_once(PREFIX + version, f"Services DevTools {version}", notes, output, ASSETS, True)
-    for archive in sorted((root / "dist/modules").glob(f"*{MODULE_SUFFIX}")):
-        module, module_version, module_notes = module_release(archive)
-        release_once(
-            f"{module_tag(module)}{module_version}", f"{module} module {module_version}",
-            module_notes, archive.parent, (archive.name,), False,
-        )
+    publish_modules(root)
 
 
 if __name__ == "__main__":

@@ -19,16 +19,16 @@ blocks the release; run the browser scenarios locally before pushing. Assets
 are uploaded to a draft before publication and are never replaced.
 
 Modules are released apart from the application. The installer contains no
-modules; the build writes one package per module to `dist/modules/`. Each
-module version (the `version` of `rust/modules/<id>/Cargo.toml`) that has no
-release yet is published as `module-<id>-vX.Y.Z` with the asset
-`<id>-<version>-<platform>.module.tgz`, never as the latest release; its
-description is the newest section of the module's `RELEASE_NOTES.md`, which
-must be its version, ending with a `<!-- services-package {...} -->` comment
-holding its `package.json` (name, description, minimum core) for Settings →
-Modules. To ship a module change, raise its version and add the
-section; the application version need not change. Settings → Modules offers
-these releases through the preconfigured Standard source.
+modules; the build writes one package per module to `dist/modules/`. When a
+module version (the `version` of `rust/modules/<id>/Cargo.toml`) is not in the
+`modules` branch yet, the workflow builds and replaces that branch with a
+single commit without history holding `modules/<id>-<version>-<platform>.module.tgz`
+for the newest version of each module: a version already there keeps its
+published file, an older one is dropped. The newest section of the module's
+`RELEASE_NOTES.md`, which the package contains, must be its version. To ship a
+module change, raise its version and add the section; the application version
+need not change. Settings → Modules offers these packages through the
+preconfigured Standard source (`duhon/devtool`, branch `modules`).
 
 The package and update metadata use the current repository and `main` as their
 source; the legacy `devtool` channel is accepted too. The application can be

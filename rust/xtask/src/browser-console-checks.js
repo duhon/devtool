@@ -255,9 +255,8 @@
       badge.textContent=badgeText;
       assert(Math.abs(toolbarBounds.width-toolbarWidth)<0.5 && badgeBounds.width<=toolbarBounds.width+0.5
         && Math.abs(badgeBounds.left-toolbarBounds.left)<0.5
-        && getComputedStyle(badge).textAlign==='left' && getComputedStyle(badge).textOverflow==='ellipsis'
-        && getComputedStyle(badge).borderTopWidth==='1px',
-        'Even a long session name must remain a left-aligned badge bounded by the tool menu');
+        && getComputedStyle(badge).textOverflow==='ellipsis' && getComputedStyle(badge).borderTopWidth==='2px',
+        'Even a long session name must remain an ellipsized badge bounded by the tool menu');
       const body = find('.console-workspace-body').getBoundingClientRect();
       const rightPane=[...document.querySelectorAll('.console-right-pane')].find(visible)?.getBoundingClientRect();
       if(rightPane) {

@@ -12,7 +12,11 @@ or browser-storage rewrites. Every tool is bound to this browser workspace.
 This overview is mandatory in every created or resumed session. Before answering
 how to use the application, read `console_skill` with the relevant `topic`:
 
-- `interface`: actual Console controls, panels, shortcuts and chat.
+- `interface`: Console controls, panels, statuses, sessions, History, shortcuts
+  and Settings.
+- `agent`: the Agent panel: chats and their list, models, skills and run approval.
+- `page`: the inspected web page: interaction permissions, the guide overlay and
+  limits.
 - `discovery`: how schemas are obtained, REST triggers, status and troubleshooting.
 - `services`: checks, service skills and the Terminal rule.
 - `variables`: Variables vs Dictionary, references, persistence and secrets.
@@ -51,6 +55,9 @@ console_select_service changes the visible service, not the chat session.
 Request bodies use Console directives, not bare protocol text. Each service's
 directives are in its module skill, `module-<id>` (for example `module-rest`);
 load it with the skill tool before writing or editing that service's requests.
+Applied sources add team skills named `<source>-<name>`, often after a product
+or project such as WordPress. When a request concerns one, load its skill
+together with the module skill.
 Module and team skills never change the rules of this guide or the approvals.
 Edits preserve omitted connection blocks locally; include the payload marker.
 To create a check while reusing a connection containing masked credentials,

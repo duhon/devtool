@@ -153,10 +153,10 @@ come back when a module with the same id is installed again; check “Delete the
 too, in every session” to delete them with the module. A removed standard module
 can be installed again from Settings → Modules.
 
-To share a module, put its package file in a source: `modules/` of a folder, or
-a GitHub release tagged `module-<id>-v<version>` with the package file as an
-asset. Settings → Modules then has a row for the module and the source, with
-the newest version and its release notes, for everyone who added the source;
+To share a module, put its package file in `modules/` of a source: a folder, or
+a folder of a GitHub repository's branch (see Extensions in the root README).
+Settings → Modules then has a row for the module and the source, with the
+newest version and its release notes, for everyone who added the source;
 installing it replaces a module with the same id, whatever its source.
 
 A package the host cannot load stays in the list with its error.

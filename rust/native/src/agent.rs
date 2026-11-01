@@ -18,11 +18,19 @@ use tokio_util::sync::CancellationToken;
 mod skills;
 
 const SKILL: &str = include_str!("../agent-skills/services-console/SKILL.md");
-const KNOWLEDGE: [(&str, &str); 5] = [
+const KNOWLEDGE: [(&str, &str); 7] = [
     ("overview", SKILL),
     (
         "interface",
         include_str!("../agent-skills/services-console/references/interface.md"),
+    ),
+    (
+        "agent",
+        include_str!("../agent-skills/services-console/references/agent.md"),
+    ),
+    (
+        "page",
+        include_str!("../agent-skills/services-console/references/page.md"),
     ),
     (
         "discovery",
@@ -635,19 +643,34 @@ fn application_knowledge(arguments: &Value) -> Result<Value> {
             .as_str()
             .ok_or_else(|| Error::new("Application knowledge topic must be a string"))?,
     };
-    let content = KNOWLEDGE.iter().find(|(name, _)| *name == topic)
+    let content = KNOWLEDGE
+        .iter()
+        .find(|(name, _)| *name == topic)
         .map(|(_, content)| *content)
-        .ok_or_else(|| Error::new(format!("Unknown application knowledge topic '{topic}'. Available: overview, interface, discovery, services, variables.")))?;
+        .ok_or_else(|| {
+            Error::new(format!(
+                "Unknown application knowledge topic '{topic}'. Available: {}.",
+                knowledge_topics()
+            ))
+        })?;
     Ok(
         json!({"name":"services-console","version":env!("CARGO_PKG_VERSION"),"topic":topic,
         "topics":KNOWLEDGE.iter().map(|(name,_)|*name).collect::<Vec<_>>(),"content":content}),
     )
 }
 
+fn knowledge_topics() -> String {
+    KNOWLEDGE
+        .iter()
+        .map(|(name, _)| *name)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 fn workspace_tools(bridge: Arc<Mutex<Option<Bridge>>>) -> Vec<Tool> {
     let handler = Arc::new(WorkspaceTool { bridge });
     let mut tools: Vec<_> = [
-        ("console_skill", "Read authoritative application knowledge. Optional topic: overview, interface, discovery, services or variables. Read the relevant topic before explaining UI, discovery, service syntax or variables."),
+        ("console_skill", "Read authoritative application knowledge. Read the relevant topic before explaining UI, the Agent panel, page tools, discovery, service syntax or variables. Optional topic:"),
         ("console_context", "Read fresh service, active check, check IDs/revisions and available variables."),
         ("console_read_check", "Read a request page. Requires service and checkId; optional offset/limit."),
         ("console_read_response", "Read a bounded response page. Requires service, checkId; optional offset and limit."),
@@ -658,7 +681,7 @@ fn workspace_tools(bridge: Arc<Mutex<Option<Bridge>>>) -> Vec<Tool> {
         ("console_select_service", "Select a visible Console service. Requires service."),
         ("console_run_check", "Request one-time human approval and run a check. Only when the user asks. Requires service, checkId, revision."),
     ].into_iter().map(|(name, description)| Tool::new(name)
-        .with_description(description)
+        .with_description(if name=="console_skill" {format!("{description} {}.", knowledge_topics())} else {description.to_owned()})
         .with_parameters(if name=="console_skill" {
             json!({"type":"object","properties":{"topic":{"type":"string","enum":KNOWLEDGE.iter().map(|(name,_)|*name).collect::<Vec<_>>()}},
                 "additionalProperties":false})
@@ -1235,6 +1258,12 @@ mod tests {
             assert_eq!(value["content"], content);
             assert!(!content.trim().is_empty());
             assert!(value["topics"].as_array().unwrap().contains(&json!(topic)));
+            // Copilot replaces a tool reply over about 20 KB with a file path the Agent cannot read.
+            let reply = value.to_string().len();
+            assert!(
+                reply <= 16 * 1024,
+                "Topic {topic} is {reply} bytes; split it so a reply stays readable"
+            );
         }
         for invalid in [
             json!({"topic":"unknown"}),

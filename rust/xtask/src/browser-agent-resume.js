@@ -73,6 +73,13 @@
     `An open chat of this session is highlighted and can be closed: ${row(fresh).outerHTML}`);
   assert(row(lastSession).querySelector('[data-testid="agent-chat-restore"]') && !row(lastSession).querySelector('[data-testid="agent-chat-close"]'),
     'A closed chat can be restored');
+  const clipped = [...testid('agent-chat-list').querySelectorAll('tbody button')].filter(button => {
+    const cell = button.closest('td').getBoundingClientRect(), box = button.getBoundingClientRect();
+    return box.left < cell.left - 0.5 || box.right > cell.right + 0.5;
+  }).map(button => `${button.closest('tr').dataset.state} ${button.textContent}`);
+  const list = document.querySelector('.agent-chats');
+  assert(!clipped.length && list.scrollWidth <= list.clientWidth,
+    `Row buttons must be whole and the list must not scroll sideways: ${clipped}; ${list.scrollWidth}/${list.clientWidth}`);
   await click(row(lastSession).querySelector('[data-testid="agent-chat-restore"]'));
   await wait(() => testid('agent-sessions').querySelector('.active')?.dataset.sessionId === lastSession
     && testid('agent-transcript').textContent.includes('Edited live check'), 'Restore reopens the chat with its history');

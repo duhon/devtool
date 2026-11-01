@@ -1034,7 +1034,7 @@ impl Component for App {
                 self.console_panel = if self.console_panel == Some(ConsolePanel::Settings) {
                     None
                 } else {
-                    // Recent checks come from the cache; older ones are repeated.
+                    // The host checks once per process; later requests get its saved results.
                     ctx.link().send_message(Msg::CheckSources(false));
                     Some(ConsolePanel::Settings)
                 };

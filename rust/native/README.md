@@ -15,10 +15,12 @@ an isolated working directory, filtered child environment, telemetry disabled
 and a custom-tool-only allowlist. Permission requests for other tools are
 denied. The bundled `services-console` overview is mandatory in every created
 or resumed session. `console_skill` reads the versioned application knowledge
-topics: overview, interface, discovery, services and variables. Their source
-is `agent-skills/services-console/SKILL.md` and its `references/` directory;
-they are compiled into the companion, not read from the user's filesystem.
-Update these references when changing UI controls or service workflows.
+topics: overview, interface, agent, page, discovery, services and variables.
+Their source is `agent-skills/services-console/SKILL.md` and its `references/`
+directory; they are compiled into the companion, not read from the user's
+filesystem. Update these references when changing UI controls or service
+workflows, and keep each topic under the size checked by the agent tests: a
+larger tool reply reaches Copilot only as an unreadable file path.
 Chat history is
 managed by the SDK and resumed after companion restarts; application profiles
 and Console documents remain owned by their existing services/browser.
