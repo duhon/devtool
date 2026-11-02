@@ -52,7 +52,7 @@
     'A draft of an unloaded module must not break Templates');
   assert(!testid('templates-panel').querySelector('.agent-intro'),'Templates must not show an introductory heading above the editor');
   assert(testid('templates-status').textContent.includes('@@ = @'),'The short escaping hint must live in the status strip');
-  assert([...testid('templates-sections').querySelectorAll('[role="tab"]')].map(tab=>tab.textContent).join(',')==='check,endpoint,headers,body',
+  assert([...testid('templates-sections').querySelectorAll('[role="tab"]')].map(tab=>tab.textContent).join(',')==='check,endpoint,headers,options,body',
     'REST Templates must expose exactly its own section tabs');
   await select('body');
   if(location.protocol==='http:') assert(cm('templates-editor').getValue().includes('@my_create_book'),

@@ -579,7 +579,7 @@
     const originalHints = hints.getValue();
     setSource(hints, '#endpoint\nhttp://\n');
     await type('#');
-    await wait(() => JSON.stringify(candidates()) === JSON.stringify(['#headers', '#body']),
+    await wait(() => JSON.stringify(candidates()) === JSON.stringify(['#headers', '#options', '#body']),
       () => `Typing # in Hints must offer the sections it lacks: ${JSON.stringify(candidates())}`);
     await pick(hints, '#body');
     assert(hints.getLine(2) === '#body', 'Picking a Hints section must insert its header');
