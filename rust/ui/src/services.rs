@@ -91,6 +91,7 @@ pub fn seed() -> Vec<Manifest> {
     seed.extend(
         linked().map(|(manifest, _)| serde_json::from_str(manifest).expect("package manifest")),
     );
+    seed.iter_mut().for_each(Manifest::add_console_options);
     seed.sort_by_key(|manifest| manifest.console.order.unwrap_or(u32::MAX));
     seed
 }
@@ -143,7 +144,8 @@ pub fn validate(manifests: &[Manifest]) -> Result<(), String> {
 }
 
 /// Replaces the registry; `true` when the list changed.
-pub fn install(manifests: Vec<Manifest>) -> Result<bool, String> {
+pub fn install(mut manifests: Vec<Manifest>) -> Result<bool, String> {
+    manifests.iter_mut().for_each(Manifest::add_console_options);
     validate(&manifests)?;
     let mut registry = REGISTRY.write().unwrap_or_else(|e| e.into_inner());
     if **registry == manifests {

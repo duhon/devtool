@@ -52,10 +52,14 @@ fn every_manifest_is_unambiguous_and_its_console_is_self_consistent() {
             console.sections.iter().all(|s| !s.language.is_empty()),
             "{id}"
         );
+        assert!(manifest.section("options").is_some(), "{id}: no #options");
         for section in &console.sections {
             let param = section.param.as_deref();
+            // Core adds #options without a param when the module has none:
+            // its console keys never reach the module.
             assert!(
-                param.is_some_and(|param| names.iter().any(|name| *name == param)),
+                (section.name == "options" && param.is_none())
+                    || param.is_some_and(|param| names.iter().any(|name| *name == param)),
                 "{id}: #{} fills no declared param",
                 section.name
             );

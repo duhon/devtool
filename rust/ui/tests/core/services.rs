@@ -38,11 +38,18 @@ fn the_built_in_modules_seed_the_tabs_labels_and_order() {
 fn sections_and_new_documents_come_from_the_manifests() {
     for (service, sections) in [
         ("mysql", &["endpoint", "options", "query"][..]),
-        ("rest", &["endpoint", "headers", "body"]),
-        ("graphql", &["endpoint", "headers", "variables", "query"]),
-        ("grpc", &["endpoint", "headers", "proto", "message"]),
+        // The console's own `#options` (Repeat, Until, Format) come before the payload.
+        ("rest", &["endpoint", "headers", "options", "body"]),
+        (
+            "graphql",
+            &["endpoint", "headers", "variables", "options", "query"],
+        ),
+        (
+            "grpc",
+            &["endpoint", "headers", "proto", "options", "message"],
+        ),
         ("splunk", &["endpoint", "headers", "options", "search"]),
-        ("terminal", &["endpoint", "command", "env"]),
+        ("terminal", &["endpoint", "options", "command", "env"]),
     ] {
         assert_eq!(console::markers(service), sections, "{service}");
         let mut template = vec!["check"];

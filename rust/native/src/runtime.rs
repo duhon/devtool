@@ -268,7 +268,12 @@ impl Runtime {
             });
         };
         let ended = history::now();
-        let duration = clock.elapsed().as_millis() as u64;
+        // A repeat keeps its runs back and saves the last one, timed from its first start.
+        let deferred = context["defer"] == true;
+        let (started, duration) = match context["startedAt"].as_u64() {
+            Some(first) if deferred => (first, ended.saturating_sub(first)),
+            _ => (started, clock.elapsed().as_millis() as u64),
+        };
         let saved =
             async {
                 let check_id = history::uuid(context, "checkId")?;
@@ -315,23 +320,27 @@ impl Runtime {
                     },
                     response_text
                 );
-                self.history
-                    .save(Snapshot {
-                        check_id,
-                        session_id,
-                        title: redactor.text(title),
-                        service,
-                        started,
-                        ended,
-                        duration,
-                        status: status.into(),
-                        text,
-                    })
-                    .await
+                let snapshot = Snapshot {
+                    check_id,
+                    session_id,
+                    title: redactor.text(title),
+                    service,
+                    started,
+                    ended,
+                    duration,
+                    status: status.into(),
+                    text,
+                };
+                if deferred {
+                    self.history.defer(snapshot);
+                    return Ok(None);
+                }
+                self.history.save(snapshot).await.map(Some)
             }
             .await;
         let metadata = match saved {
-            Ok(id) => json!({"saved":true,"id":id}),
+            Ok(Some(id)) => json!({"saved":true,"id":id}),
+            Ok(None) => json!({"deferred":true}),
             Err(e) => json!({"saved":false,"error":e.to_string()}),
         };
         match result {

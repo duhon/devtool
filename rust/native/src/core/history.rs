@@ -5,7 +5,9 @@ use regex::Regex;
 use rusqlite::{Connection, TransactionBehavior, params};
 use serde_json::{Value, json};
 use std::{
+    collections::HashMap,
     path::PathBuf,
+    sync::{Arc, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -17,6 +19,8 @@ pub struct History {
     pub path: PathBuf,
     quota: usize,
     target: usize,
+    /// The latest run of each repeating check, saved once its repeat ends.
+    deferred: Arc<Mutex<HashMap<String, Snapshot>>>,
 }
 pub struct Snapshot {
     pub check_id: String,
@@ -111,7 +115,31 @@ impl History {
             path,
             quota: MAX_BYTES,
             target: MAX_BYTES / 2,
+            deferred: Default::default(),
         }
+    }
+    /// Keeps a repeat's run until `commit`; a later run of the same check replaces it.
+    pub fn defer(&self, snapshot: Snapshot) {
+        self.deferred
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(snapshot.check_id.clone(), snapshot);
+    }
+    /// Saves the last run of a finished repeat.
+    pub async fn commit(&self, message: &Value) -> Result<Value> {
+        let check = uuid(message, "checkId")?;
+        let snapshot = self
+            .deferred
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&check);
+        Ok(match snapshot {
+            Some(snapshot) => match self.save(snapshot).await {
+                Ok(id) => json!({"saved":true,"id":id}),
+                Err(e) => json!({"saved":false,"error":e.to_string()}),
+            },
+            None => json!({"empty":true}),
+        })
     }
     fn open(&self) -> Result<Connection> {
         if let Some(parent) = self.path.parent() {
@@ -247,6 +275,9 @@ impl History {
         Ok(id)
     }
     pub async fn dispatch(&self, message: &Value) -> Result<Value> {
+        if message["op"] == "commit" {
+            return self.commit(message).await;
+        }
         let this = self.clone();
         let message = message.clone();
         tokio::task::spawn_blocking(move || this.read(&message))
@@ -643,6 +674,55 @@ mod tests {
             .unwrap();
         assert!(list["bytes"].as_u64().unwrap() <= 20_000);
         assert!(list["total"].as_u64().unwrap() > 0);
+    }
+    #[tokio::test]
+    async fn a_repeat_saves_only_its_last_run_timed_from_its_first_start() {
+        let data = Data::new();
+        services_testkit::packages::install(&data.0);
+        let runtime = crate::Runtime::with_data_dir(&data.0).unwrap();
+        let store = runtime.history.clone();
+        for text in ["first", "second"] {
+            let (tx, mut rx) = tokio::sync::mpsc::channel(128);
+            let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
+            let reply = runtime
+                .execute(
+                    &json!({"service":"terminal",
+                        "params":{"endpoint":"sh -c","command":format!("printf {text}")},
+                        "history":{"checkId":CHECK,"sessionId":CHECK,"title":"repeat",
+                            "source":"#check repeat","defer":true,"startedAt":1000}}),
+                    tokio_util::sync::CancellationToken::new(),
+                    Some(tx),
+                )
+                .await
+                .unwrap();
+            drain.await.unwrap();
+            assert_eq!(reply["history"], json!({"deferred":true}));
+        }
+        let list = json!({"op":"list","checkId":CHECK});
+        assert_eq!(store.dispatch(&list).await.unwrap()["total"], 0);
+        let commit = json!({"op":"commit","checkId":CHECK});
+        let saved = store.dispatch(&commit).await.unwrap();
+        assert_eq!(saved["saved"], true);
+        let entries = store.dispatch(&list).await.unwrap();
+        assert_eq!(entries["total"], 1);
+        let entry = &entries["entries"][0];
+        assert_eq!(entry["startedAt"], 1000);
+        assert_eq!(
+            entry["durationMs"].as_i64().unwrap(),
+            entry["endedAt"].as_i64().unwrap() - 1000
+        );
+        let text = store
+            .dispatch(&json!({"op":"get","entryId":saved["id"]}))
+            .await
+            .unwrap()["text"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert!(text.contains("second") && !text.contains("first"), "{text}");
+        assert_eq!(
+            store.dispatch(&commit).await.unwrap(),
+            json!({"empty":true})
+        );
     }
     #[tokio::test]
     async fn retention_is_global_transactional_reclaims_pages_and_never_purges_new_entry() {

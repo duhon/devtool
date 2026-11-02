@@ -90,7 +90,12 @@ fn suggests_only_options_and_its_parameter_keys() {
             "Preview: false",
             "Offset: 0",
             "Columns-Type: ",
-            "Columns-Size: "
+            "Columns-Size: ",
+            "Repeat: 5",
+            "Until: changed",
+            "Format: table",
+            "Format: vertical",
+            "Format: json"
         ]
     );
 }

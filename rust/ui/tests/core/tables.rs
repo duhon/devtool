@@ -3,7 +3,7 @@
 
 use serde_json::{Value, json};
 use services_contracts::columns::Kind;
-use services_ui::tables::{cell, render};
+use services_ui::tables::{cell, json as rows_json, render};
 
 #[test]
 fn ordinary_table_remains_plain_copyable_text() {
@@ -34,6 +34,20 @@ fn json_is_compact_in_tables_and_pretty_only_when_typed_and_vertical() {
     assert_eq!(cell(&json!("not JSON"), Kind::Json, true), "not JSON");
     assert_eq!(cell(&Value::Null, Kind::Json, true), "NULL");
     assert_eq!(cell(&json!("null"), Kind::Json, true), "null");
+}
+
+#[test]
+fn json_format_lists_rows_in_column_order_with_parsed_json_columns() {
+    let result = json!({
+        "columns":["id","feed","name"],
+        "rows":[{"name":"x","feed":"{\"a\":1}","id":1},{"name":null,"feed":"not JSON","id":2}],
+        "columnTypes":{"feed":"json"}
+    });
+    assert_eq!(
+        serde_json::from_str::<Value>(&rows_json(&result)).unwrap(),
+        json!([{"id":1,"feed":{"a":1},"name":"x"},{"id":2,"feed":"not JSON","name":null}])
+    );
+    assert!(rows_json(&result).starts_with("[\n  {\n    \"id\": 1,\n    \"feed\": {"));
 }
 
 #[test]

@@ -77,6 +77,36 @@ pub fn check_response(
         console_response(service, result, vertical)
     }
 }
+/// A check response as the console shows it with `Format:`; History and the Agent keep
+/// [`check_response`].
+pub fn formatted_response(
+    service: &str,
+    result: &Value,
+    vertical: bool,
+    format: Option<crate::console::Format>,
+    stdout: &str,
+    stderr: &str,
+) -> String {
+    use crate::console::Format;
+    if format == Some(Format::Json)
+        && result["columns"].is_array()
+        && result.get("error").is_none()
+        && result["cancelled"] != true
+    {
+        let json = crate::tables::json(result);
+        return if result["preview"] == true {
+            format!("{}\n\n{json}", services_contracts::SPLUNK_PREVIEW_WARNING)
+        } else {
+            json
+        };
+    }
+    let vertical = match format {
+        Some(Format::Table) => false,
+        Some(Format::Vertical) => true,
+        _ => vertical,
+    };
+    check_response(service, result, vertical, stdout, stderr)
+}
 /// A streamed response: its output, then the error or a warning.
 fn stream_body(result: &Value, stdout: &str, stderr: &str) -> String {
     let mut body = format!("{stdout}{stderr}{}", result["error"].as_str().unwrap_or(""));

@@ -22,6 +22,8 @@ Undock into separate window.
   Variables and Dictionary. A tool opens in the right half-width panel.
 - Hints edits saved completions; it is not the discovery/schema panel. Typing
   `#` at the start of a line offers the service's sections the hints lack.
+  Lines under a `#section` line of Hints are offered only in that section;
+  lines before any section are offered where their shape fits.
 - Templates opens a global, per-service library with section tabs (REST:
   check, endpoint, headers, body). Each definition starts with `@name description`
   at the start of a line, followed by literal multiline content until the next
@@ -138,10 +140,13 @@ purges oldest completed entries toward 50 MiB, retaining the new entry; a
 snapshot over 100 MiB is rejected explicitly, never silently truncated.
 History storage failures do not fail or repeat the actual request and are
 reported separately in the History indicator.
+A repeating check (`Repeat:` in `#options`) records one execution when the
+repeat ends: its last run, timed from the first start.
 
 ## Keyboard and editing
 
-In the service editor, Shift+Enter runs the active check. The visible cursor
+In the service editor, Shift+Enter runs the active check; on a running check it
+cancels the run, and on a check waiting to repeat it stops the repeat. The visible cursor
 selects its check, even if multiple checks fit in the viewport. Scrolling keeps
 that selection until the cursor leaves view, then the top visible editor line
 selects the check; revealing the cursor restores its selection. Numbered check

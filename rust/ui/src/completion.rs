@@ -245,7 +245,14 @@ pub fn suggest(
             hints
                 .iter()
                 .filter(|(s, _)| s.starts_with(&format!("{{{{{profile}:")))
-                .cloned()
+                .map(|(s, detail)| {
+                    let detail = if detail.starts_with(SAVED) {
+                        SAVED.into()
+                    } else {
+                        detail.clone()
+                    };
+                    (s.clone(), detail)
+                })
                 .collect()
         };
         return finish(
@@ -292,6 +299,8 @@ pub fn suggest(
     } else {
         field.into()
     };
+    let (own, hints) = scoped(hints, &marker);
+    let hints = hints.as_slice();
     let graphql_variables =
         manifest.language("") == "graphql" && section_language(&marker) == Some("json");
     let used: BTreeSet<_> = block
@@ -382,33 +391,30 @@ pub fn suggest(
             .filter_map(|(_, l)| l.split_once(':'))
             .map(|(k, _)| k.trim().to_ascii_lowercase())
             .collect();
-        let declared = section_hints(&manifest, &marker);
-        let candidates = if !declared.is_empty() {
-            declared
-        } else {
-            let mut candidates = hints
+        let mut candidates = section_hints(&manifest, &marker);
+        // Unscoped `Name: value` lines are headers; a key list a module declares (`#options`,
+        // `#env`) takes only the lines saved under it.
+        let unscoped = marker == "headers" || candidates.is_empty();
+        candidates.extend(own.iter().cloned());
+        if unscoped {
+            candidates.extend(hints.iter().filter(|(s, _)| is_header(s)).cloned());
+        }
+        if openapi && marker == "headers" {
+            let known: BTreeSet<_> = candidates
                 .iter()
-                .filter(|(s, _)| s.contains(':') && !s.contains("://") && !s.starts_with("{{"))
-                .cloned()
-                .collect::<Vec<_>>();
-            if openapi && marker == "headers" {
-                let known: BTreeSet<_> = candidates
-                    .iter()
-                    .map(|(s, _)| s.split(':').next().unwrap_or("").to_ascii_lowercase())
-                    .collect();
-                for name in discovery["headers"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .filter_map(Value::as_str)
-                {
-                    if !known.contains(&name.to_ascii_lowercase()) {
-                        candidates.push((format!("{name}: "), "OpenAPI header".into()));
-                    }
+                .map(|(s, _)| s.split(':').next().unwrap_or("").to_ascii_lowercase())
+                .collect();
+            for name in discovery["headers"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+            {
+                if !known.contains(&name.to_ascii_lowercase()) {
+                    candidates.push((format!("{name}: "), "OpenAPI header".into()));
                 }
             }
-            candidates
-        };
+        }
         let mut result = finish(
             0,
             ch,
@@ -534,11 +540,8 @@ pub fn suggest(
                 );
             }
         }
-        let mut candidates = hints
-            .iter()
-            .filter(|(s, _)| s.contains("://"))
-            .cloned()
-            .collect::<Vec<_>>();
+        let mut candidates = own.clone();
+        candidates.extend(hints.iter().filter(|(s, _)| s.contains("://")).cloned());
         candidates.extend(section_hints(&manifest, "endpoint"));
         return finish(value_start, ch, value, candidates);
     }
@@ -563,12 +566,14 @@ pub fn suggest(
             .as_str()
             .and_then(|list| discovery["names"][list].as_array());
         let candidates = if typed.is_empty() {
-            manifest
+            let mut candidates: Vec<_> = manifest
                 .console
                 .keywords
                 .iter()
                 .map(|keyword| (format!("{keyword} "), "Command".into()))
-                .collect()
+                .collect();
+            candidates.extend(own.iter().cloned());
+            candidates
         } else if let Some(names) = names {
             names
                 .iter()
@@ -626,6 +631,7 @@ pub fn suggest(
                     ));
                 }
             }
+            candidates.extend(own.iter().cloned());
             candidates.push((object_snippet(&before), "JSON object".into()));
             return finish(ch, ch, "", candidates);
         }
@@ -805,6 +811,7 @@ pub fn suggest(
                 discovery,
                 &request_variables,
             );
+        let candidates = first_word(&body, &fragment, &own, candidates);
         let offset = before.len().saturating_sub(fragment.len());
         let mut result = finish(
             before[..offset].encode_utf16().count(),
@@ -880,6 +887,7 @@ pub fn suggest(
     }
     if section_language(&marker) == Some("sql") {
         let (fragment, candidates) = crate::sql_completion::suggest(&body, &whole_body, discovery);
+        let candidates = first_word(&body, &fragment, &own, candidates);
         let offset = before.len().saturating_sub(fragment.len());
         return finish(
             before[..offset].encode_utf16().count(),
@@ -888,12 +896,17 @@ pub fn suggest(
             candidates,
         );
     }
-    // Headers are offered in header sections only, keywords where their language places them.
-    let mut candidates: Vec<_> = hints
-        .iter()
-        .filter(|(s, _)| !s.starts_with("{{") && !s.starts_with('#') && !is_header(s))
-        .cloned()
-        .collect();
+    // Headers are offered in header sections only, addresses in the endpoint, keywords where
+    // their language places them.
+    let mut candidates = own;
+    candidates.extend(
+        hints
+            .iter()
+            .filter(|(s, _)| {
+                !s.starts_with("{{") && !s.starts_with('#') && !is_header(s) && !is_url(s)
+            })
+            .cloned(),
+    );
     if section_language(&marker) == Some("spl") {
         candidates.extend(
             manifest
@@ -917,6 +930,68 @@ fn action_name(name: &str) -> String {
     } else {
         format!("/{name}")
     }
+}
+const SAVED: &str = "Saved hint";
+/// The lines of a service's Hints text. A line under `#section` is tagged with it and is
+/// offered in that section only; a line before any section is offered by its shape.
+pub fn saved_hints(text: &str) -> Vec<(String, String)> {
+    let mut section = None;
+    let mut hints = vec![];
+    for line in text.lines().map(str::trim).filter(|line| !line.is_empty()) {
+        if let Some(name) = line.strip_prefix('#') {
+            section = Some(name.trim().to_ascii_lowercase());
+        } else {
+            let detail = section
+                .as_ref()
+                .map_or(SAVED.into(), |section| format!("{SAVED} #{section}"));
+            hints.push((line.to_owned(), detail));
+        }
+    }
+    hints
+}
+/// Hint text and its detail.
+type Hints = Vec<(String, String)>;
+/// Splits the hints into the saved lines of `marker` and everything not saved for
+/// another section.
+fn scoped(hints: &[(String, String)], marker: &str) -> (Hints, Hints) {
+    let mut own = vec![];
+    let mut rest = vec![];
+    for (text, detail) in hints {
+        match detail
+            .strip_prefix(SAVED)
+            .and_then(|tag| tag.strip_prefix(" #"))
+        {
+            Some(section) if section == marker => own.push((text.clone(), SAVED.into())),
+            Some(_) => {}
+            None => rest.push((text.clone(), detail.clone())),
+        }
+    }
+    (own, rest)
+}
+/// Saved lines lead the candidates while the cursor is on the section's first word.
+fn first_word(
+    body: &str,
+    fragment: &str,
+    own: &[(String, String)],
+    candidates: Vec<(String, String)>,
+) -> Vec<(String, String)> {
+    let typed = body.get(..body.len().saturating_sub(fragment.len()));
+    if typed.is_some_and(|typed| typed.trim().is_empty()) {
+        own.iter().cloned().chain(candidates).collect()
+    } else {
+        candidates
+    }
+}
+/// A line that holds a `scheme://` address, such as an endpoint.
+fn is_url(hint: &str) -> bool {
+    hint.split_whitespace().any(|word| {
+        word.split_once("://").is_some_and(|(scheme, _)| {
+            scheme.starts_with(|c: char| c.is_ascii_alphabetic())
+                && scheme
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || "+-.".contains(c))
+        })
+    })
 }
 /// `Name: value`: a header (or an env variable) hint.
 fn is_header(hint: &str) -> bool {

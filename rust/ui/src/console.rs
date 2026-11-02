@@ -101,13 +101,119 @@ pub fn sections(service: &str, source: &str) -> BTreeMap<String, String> {
     result
 }
 
+/// How the console shows a table response (`Format:` in `#options`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Format {
+    Table,
+    Vertical,
+    Json,
+}
+
+/// The `#options` keys the console handles itself; the module never receives them.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct RunOptions {
+    /// `Repeat: N`: run again N seconds (here milliseconds) after each response, until Stop.
+    pub repeat: Option<u32>,
+    /// `Until: changed`: a repeat stops when the shown response changes.
+    pub until_changed: bool,
+    pub format: Option<Format>,
+}
+
+/// Takes the console's own keys out of `#options`. What remains goes to a module that
+/// declares the section; one that does not only has the console's keys.
+fn run_options(
+    manifest: &services_contracts::manifest::Manifest,
+    sections: &mut BTreeMap<String, String>,
+) -> Result<RunOptions, String> {
+    let mut options = RunOptions::default();
+    let Some(text) = sections.remove("options") else {
+        return Ok(options);
+    };
+    let grid = manifest.console.response == services_contracts::manifest::View::Grid;
+    let own = manifest
+        .section("options")
+        .is_some_and(|section| section.param.is_some());
+    let mut rest = vec![];
+    for line in text.lines() {
+        let Some((name, value)) = line.split_once(':') else {
+            if !line.trim().is_empty() {
+                rest.push(line);
+            }
+            continue;
+        };
+        let value = value.trim();
+        match name.trim().to_ascii_lowercase().as_str() {
+            "repeat" => {
+                let seconds = value
+                    .strip_suffix('s')
+                    .unwrap_or(value)
+                    .trim()
+                    .parse::<f64>()
+                    .ok()
+                    .filter(|seconds| (1.0..=86_400.0).contains(seconds))
+                    .ok_or_else(|| {
+                        format!("Repeat takes seconds from 1 to 86400, not {value:?}")
+                    })?;
+                options.repeat = Some((seconds * 1000.0).round() as u32);
+            }
+            "until" if value.eq_ignore_ascii_case("changed") => options.until_changed = true,
+            "until" => return Err(format!("Until takes \"changed\", not {value:?}")),
+            "format" if !grid => {
+                return Err(format!(
+                    "Format applies to table responses; {} answers with a body",
+                    manifest.name
+                ));
+            }
+            "format" => {
+                options.format = Some(match value.to_ascii_lowercase().as_str() {
+                    "table" => Format::Table,
+                    "vertical" => Format::Vertical,
+                    "json" => Format::Json,
+                    _ => {
+                        return Err(format!(
+                            "Format takes table, vertical or json, not {value:?}"
+                        ));
+                    }
+                });
+            }
+            _ => rest.push(line),
+        }
+    }
+    if options.until_changed && options.repeat.is_none() {
+        return Err("Until: changed needs Repeat: N".into());
+    }
+    if let Some(line) = rest.first().filter(|_| !own) {
+        let name = line.split_once(':').map_or(*line, |(name, _)| name).trim();
+        return Err(format!(
+            "Unknown option {name:?}; {} takes {}",
+            manifest.name,
+            if grid {
+                "Repeat, Until and Format"
+            } else {
+                "Repeat and Until"
+            }
+        ));
+    }
+    if !rest.is_empty() {
+        sections.insert("options".into(), rest.join("\n"));
+    }
+    Ok(options)
+}
+
 pub fn parse(service: &str, source: &str) -> Result<Value, String> {
+    parse_run(service, source).map(|(params, _)| params)
+}
+
+/// The module request of a check and the options the console runs it with.
+pub fn parse_run(service: &str, source: &str) -> Result<(Value, RunOptions), String> {
     let Some(manifest) = crate::services::get(service) else {
         return Err(format!("Unsupported console service: {service}"));
     };
     let ui = crate::services::ui_of(&manifest)?;
     ui.check(source)?;
-    let s = crate::services::Sections(sections(service, source));
+    let mut sections = sections(service, source);
+    let options = run_options(&manifest, &mut sections)?;
+    let s = crate::services::Sections(sections);
     if s.text("endpoint").is_empty() {
         return Err(format!("{service} request needs a #endpoint block"));
     }
@@ -117,7 +223,7 @@ pub fn parse(service: &str, source: &str) -> Result<Value, String> {
             "{service} request needs an explicit #{payload} marker before its body"
         ));
     }
-    ui.request(&s)
+    ui.request(&s).map(|params| (params, options))
 }
 
 #[derive(Clone, Debug, PartialEq)]

@@ -3,7 +3,9 @@
 
 use serde_json::json;
 use services_module_ui::command::shell_words;
-use services_ui::console::{self, export, import, parse, replace_response};
+use services_ui::console::{
+    self, Format, RunOptions, export, import, parse, parse_run, replace_response,
+};
 
 #[test]
 fn hints_allow_free_text_but_reject_storage_boundaries_and_broken_references() {
@@ -68,6 +70,68 @@ fn every_service_console_parses_into_its_request_shape() {
         "4"
     );
     assert!(parse("graphql", "#endpoint\nhttps://a\n#variables\nbad").is_err());
+}
+
+#[test]
+fn console_options_run_the_check_and_never_reach_the_module() {
+    let (params, options) = parse_run(
+        "rest",
+        "#endpoint\nGET https://a\n#options\nrepeat: 1.5\nUntil: Changed",
+    )
+    .unwrap();
+    assert_eq!(params, parse("rest", "#endpoint\nGET https://a").unwrap());
+    assert_eq!(
+        options,
+        RunOptions {
+            repeat: Some(1500),
+            until_changed: true,
+            format: None
+        }
+    );
+    // A module with its own options keeps them; the console's are taken out first.
+    let (params, options) = parse_run(
+        "artemis",
+        "#endpoint\nhttp://broker:8161\n#action\nSEND /orders\n#options\nRepeat: 2\nPersistent: false\n#body\n{}",
+    )
+    .unwrap();
+    assert_eq!(params["persistent"], "false");
+    assert_eq!(options.repeat, Some(2000));
+    let (params, options) = parse_run(
+        "mysql",
+        "#endpoint\nmysql://fixture/db\n#options\nFormat: JSON\n#query\nselect 1",
+    )
+    .unwrap();
+    assert_eq!(
+        params,
+        parse("mysql", "#endpoint\nmysql://fixture/db\n#query\nselect 1").unwrap()
+    );
+    assert_eq!(options.format, Some(Format::Json));
+    for (service, options, error) in [
+        ("rest", "Until: changed", "Until: changed needs Repeat: N"),
+        ("rest", "Repeat: 0", "Repeat takes seconds from 1 to 86400"),
+        (
+            "rest",
+            "Repeat: soon",
+            "Repeat takes seconds from 1 to 86400",
+        ),
+        ("rest", "Repeat: 5\nUntil: never", "Until takes \"changed\""),
+        ("rest", "Format: json", "Format applies to table responses"),
+        ("rest", "X-Debug: 1", "Unknown option \"X-Debug\""),
+        (
+            "mysql",
+            "Format: csv",
+            "Format takes table, vertical or json",
+        ),
+    ] {
+        let endpoint = if service == "rest" {
+            "GET https://a"
+        } else {
+            "mysql://fixture/db\n#query\nselect 1"
+        };
+        let source = format!("#endpoint\n{endpoint}\n#options\n{options}");
+        let result = parse_run(service, &source).unwrap_err();
+        assert!(result.contains(error), "{options}: {result}");
+    }
 }
 
 #[test]

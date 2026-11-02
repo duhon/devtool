@@ -53,7 +53,7 @@ impl App {
             .chain(self.discovery_history.get(service).into_iter().flatten())
             .filter(|status| line.is_some() && status.check_line(service) == line)
             .max_by(|a, b| a.started.total_cmp(&b.started));
-        if run.is_some_and(|run| run.running)
+        if run.is_some_and(Run::active)
             || discovery.is_none_or(|status| run.is_some_and(|run| run.started >= status.started))
         {
             (run, None)
@@ -70,7 +70,7 @@ impl App {
     pub(super) fn check_state(&self, service: &str, line: usize) -> crate::activity::Indicator {
         let (run, discovery) = self.check_status(service, Some(line));
         if let Some(run) = run {
-            crate::activity::Indicator::status(&run.status, run.running)
+            crate::activity::Indicator::status(&run.status, run.active())
         } else if let Some(status) = discovery {
             crate::activity::Indicator::status(&status.text, status.request.is_some())
         } else {
@@ -248,11 +248,12 @@ impl App {
         params: Value,
         line: usize,
         session: Option<String>,
+        options: console::RunOptions,
     ) -> Option<String> {
         if self.hidden {
             return None;
         }
-        if self.cancel_duplicate_check(service, line) {
+        if self.cancel_duplicate_check(ctx, service, line) {
             return None;
         }
         self.run_serial += 1;
@@ -266,21 +267,31 @@ impl App {
         // Completed runs are replaced only for this check; concurrent sibling
         // checks retain their own reply routing and response anchors.
         self.prune_console_runs(service, line);
-        self.execute(ctx, service, &key, params, line);
+        self.execute(ctx, service, &key, params, line, &options);
         if let Some(run) = self.runs.get_mut(&key) {
             run.agent_session = session;
             run.title = title;
         }
         Some(key)
     }
-    pub(super) fn cancel_duplicate_check(&mut self, service: &str, line: usize) -> bool {
-        let Some(key) = self
+    /// Shift+Enter on a check that is running stops it; one waiting to repeat stops repeating.
+    pub(super) fn cancel_duplicate_check(
+        &mut self,
+        ctx: &Context<Self>,
+        service: &str,
+        line: usize,
+    ) -> bool {
+        let Some((key, running)) = self
             .console_run_entry(service, Some(line))
-            .filter(|(_, run)| run.running)
-            .map(|(key, _)| key.to_owned())
+            .filter(|(_, run)| run.active())
+            .map(|(key, run)| (key.to_owned(), run.running))
         else {
             return false;
         };
+        if !running {
+            self.finish_repeat(ctx, &key, "Repeat stopped");
+            return true;
+        }
         let run = self.runs.get_mut(&key).unwrap();
         let message = "Repeated run rejected: this check was already running. Cancellation was requested; no new request was started.";
         let stopped = run
@@ -312,7 +323,7 @@ impl App {
         let owner = format!("console:{service}");
         self.runs.retain(|_, run| {
             run.editor != owner
-                || run.running
+                || run.active()
                 || (if let Some(anchor) = &run.anchor {
                     crate::browser::editor::anchor_line(&owner, anchor)
                 } else {
@@ -350,6 +361,7 @@ impl App {
         key: &str,
         params: Value,
         line: usize,
+        options: &console::RunOptions,
     ) {
         if self.runs.get(key).is_some_and(|r| r.running) {
             self.notice = Some(Notice::new(
@@ -370,14 +382,10 @@ impl App {
                 started,
                 debug: json!({"operation":"request","service":service,"params":params,"started":started,"state":"running"}),
                 anchor: crate::browser::editor::anchor(&format!("console:{service}"), line),
+                format: options.format,
                 ..Default::default()
             },
         );
-        let k = key.to_string();
-        let s = service.to_string();
-        let callback = ctx
-            .link()
-            .callback(move |r| Msg::Reply(k.clone(), s.clone(), r));
         let mut message = json!({"service":service,"params":params});
         if let Some(check) = self
             .checks
@@ -396,7 +404,33 @@ impl App {
             message["history"] = json!({"checkId":check.id,"sessionId":self.workspace_id,
                 "title":source.lines().nth(line).unwrap_or("#check"),"createdAt":check.created_at,
                 "source":source.lines().skip(line).take(block.end-line).collect::<Vec<_>>().join("\n")});
+            if options.repeat.is_some() {
+                message["history"]["defer"] = json!(true);
+                message["history"]["startedAt"] = json!(started as u64);
+            }
         }
+        if let Some(every) = options.repeat {
+            let source = self.check_source(service, Some(line)).unwrap_or_default();
+            self.runs.get_mut(key).unwrap().repeat = Some(Repeat {
+                every,
+                until_changed: options.until_changed,
+                count: 0,
+                changed: false,
+                timer: None,
+                message: message.clone(),
+                last: None,
+                source,
+                edited: false,
+            });
+        }
+        self.send_run(ctx, service, key, message);
+    }
+    fn send_run(&mut self, ctx: &Context<Self>, service: &str, key: &str, message: Value) {
+        let k = key.to_string();
+        let s = service.to_string();
+        let callback = ctx
+            .link()
+            .callback(move |r| Msg::Reply(k.clone(), s.clone(), r));
         let id = self.transport.request(
             message,
             crate::services::view(service) == View::Stream,
@@ -404,8 +438,182 @@ impl App {
         );
         self.runs.get_mut(key).unwrap().stream = Some(id);
     }
-    pub(super) fn client_error(&mut self, service: &str, message: String, line: usize) {
-        if self.cancel_duplicate_check(service, line) {
+    /// The request text of the check at `line`.
+    fn check_source(&self, service: &str, line: Option<usize>) -> Option<String> {
+        crate::document::request_at(
+            self.docs.get(service)?,
+            line?,
+            self.response_regions
+                .get(service)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]),
+        )
+        .filter(|block| Some(block.start) == line)
+        .map(|block| block.text)
+    }
+    /// Whether the check of a repeating run is gone or its request text changed.
+    fn repeat_edited(&self, run: &Run) -> bool {
+        let Some(repeat) = &run.repeat else {
+            return false;
+        };
+        let service = run.editor.trim_start_matches("console:");
+        let line = run
+            .anchor
+            .as_ref()
+            .and_then(|anchor| crate::browser::editor::anchor_line(&run.editor, anchor));
+        repeat.edited || self.check_source(service, line).as_ref() != Some(&repeat.source)
+    }
+    /// An edit of a repeating check ends its repeat; a run in flight finishes first.
+    pub(super) fn stop_edited_repeats(&mut self, ctx: &Context<Self>, service: &str) {
+        let owner = format!("console:{service}");
+        let edited: Vec<_> = self
+            .runs
+            .iter()
+            .filter(|(_, run)| run.editor == owner && self.repeat_edited(run))
+            .map(|(key, run)| (key.clone(), run.running))
+            .collect();
+        for (key, running) in edited {
+            if running {
+                if let Some(repeat) = self.runs.get_mut(&key).and_then(|run| run.repeat.as_mut()) {
+                    repeat.edited = true;
+                }
+            } else {
+                self.finish_repeat(ctx, &key, "Check edited");
+            }
+        }
+    }
+    /// After a run of a repeating check: stop, or wait and run again.
+    pub(super) fn continue_repeat(&mut self, ctx: &Context<Self>, key: &str) {
+        let hidden = self.hidden;
+        let edited = self
+            .runs
+            .get(key)
+            .is_some_and(|run| self.repeat_edited(run));
+        let Some(run) = self.runs.get_mut(key) else {
+            return;
+        };
+        let Some(repeat) = run.repeat.as_mut() else {
+            return;
+        };
+        if run.running || repeat.timer.is_some() {
+            return;
+        }
+        let stop = if run.stopping || hidden || run.duplicate_error.is_some() {
+            Some("Repeat stopped")
+        } else if edited {
+            Some("Check edited")
+        } else if repeat.until_changed && repeat.changed {
+            Some("Response changed")
+        } else {
+            None
+        };
+        if let Some(reason) = stop {
+            self.finish_repeat(ctx, key, reason);
+            return;
+        }
+        let link = ctx.link().clone();
+        let next = key.to_owned();
+        let callback = Closure::once_into_js(move || link.send_message(Msg::RepeatRun(next)));
+        match window().set_timeout_with_callback_and_timeout_and_arguments_0(
+            callback.unchecked_ref(),
+            repeat.every as i32,
+        ) {
+            Ok(id) => repeat.timer = Some(id),
+            Err(e) => {
+                let reason = format!("Repeat failed: {}", error(e));
+                self.finish_repeat(ctx, key, &reason);
+            }
+        }
+    }
+    /// The next run of a repeating check, with the request of its first run.
+    pub(super) fn repeat_run(&mut self, ctx: &Context<Self>, key: &str) {
+        let hidden = self.hidden;
+        let edited = self
+            .runs
+            .get(key)
+            .is_some_and(|run| self.repeat_edited(run));
+        let Some(run) = self.runs.get_mut(key) else {
+            return;
+        };
+        let Some(repeat) = run.repeat.as_mut() else {
+            return;
+        };
+        repeat.timer = None;
+        let message = repeat.message.clone();
+        let line = run
+            .anchor
+            .as_ref()
+            .and_then(|anchor| crate::browser::editor::anchor_line(&run.editor, anchor));
+        if hidden || line.is_none() {
+            self.finish_repeat(ctx, key, "Repeat stopped");
+            return;
+        }
+        if edited {
+            self.finish_repeat(ctx, key, "Check edited");
+            return;
+        }
+        let started = js_sys::Date::now();
+        run.line = line;
+        run.running = true;
+        run.stopping = false;
+        run.status = "Running…".into();
+        run.started = started;
+        run.result = Value::Null;
+        run.stdout.clear();
+        run.stderr.clear();
+        run.debug = json!({"operation":"request","service":message["service"],
+            "params":message["params"],"started":started,"state":"running"});
+        let service = run.editor.trim_start_matches("console:").to_owned();
+        self.send_run(ctx, &service, key, message);
+    }
+    /// Ends a repeat that is not running, and saves its last run to History.
+    pub(super) fn finish_repeat(&mut self, ctx: &Context<Self>, key: &str, reason: &str) {
+        let Some(run) = self.runs.get_mut(key) else {
+            return;
+        };
+        let Some(mut repeat) = run.repeat.take() else {
+            return;
+        };
+        if let Some(id) = repeat.timer.take() {
+            window().clear_timeout_with_handle(id);
+        }
+        let runs = if repeat.count == 1 { "run" } else { "runs" };
+        run.status = format!("{} · {reason} after {} {runs}", run.status, repeat.count);
+        if repeat.count > 0 && repeat.message.get("history").is_some() {
+            self.transport.request(
+                json!({"service":"history","op":"commit","checkId":repeat.message["history"]["checkId"]}),
+                false,
+                ctx.link().callback(Msg::RepeatSaved),
+            );
+        }
+    }
+    pub(super) fn repeat_saved(&mut self, reply: Reply) {
+        let error = match reply {
+            Reply::Result(value) if value["saved"] == true => None,
+            Reply::Result(value) if value["empty"] == true => return,
+            Reply::Result(value) | Reply::Exit(value) | Reply::Error(value) => Some(
+                value["error"]
+                    .as_str()
+                    .unwrap_or("History could not be saved")
+                    .to_owned(),
+            ),
+            Reply::Data(_) => return,
+        };
+        self.history_revision = self.history_revision.wrapping_add(1);
+        if let Some(error) = error {
+            self.history_error = Some(error);
+            self.history_error_seen =
+                self.console_panel == Some(ConsolePanel::History) && !self.hidden;
+        }
+    }
+    pub(super) fn client_error(
+        &mut self,
+        ctx: &Context<Self>,
+        service: &str,
+        message: String,
+        line: usize,
+    ) {
+        if self.cancel_duplicate_check(ctx, service, line) {
             return;
         }
         self.prune_console_runs(service, line);
@@ -436,6 +644,7 @@ impl App {
     pub(super) fn receive(&mut self, key: &str, service: &str, reply: Reply) {
         if let Reply::Result(value) | Reply::Exit(value) | Reply::Error(value) = &reply
             && value.get("history").is_some()
+            && value["history"]["deferred"] != true
         {
             self.history_revision = self.history_revision.wrapping_add(1);
             if value["history"]["saved"] == false {
@@ -469,6 +678,9 @@ impl App {
                 }
             }
             Reply::Result(result) | Reply::Exit(result) => {
+                if let Some(repeat) = run.repeat.as_mut() {
+                    repeat.count += 1;
+                }
                 run.running = false;
                 run.stream = None;
                 run.status = if result["cancelled"] == true {
@@ -486,6 +698,9 @@ impl App {
                 run.result = result;
             }
             Reply::Error(e) => {
+                if let Some(repeat) = run.repeat.as_mut() {
+                    repeat.count += 1;
+                }
                 run.running = false;
                 run.stream = None;
                 run.status = format!("{} · ERROR · {}", time(), err_text(&e));
@@ -503,10 +718,11 @@ impl App {
             run.line
         };
         if let Some(line) = response_line {
-            let body = format::check_response(
+            let body = format::formatted_response(
                 service,
                 &run.result,
                 run.vertical,
+                run.format,
                 &run.stdout,
                 &run.stderr,
             );
@@ -515,7 +731,16 @@ impl App {
             } else {
                 format::outcome(&run.result)
             };
-            let response_status = format!("{} · {outcome}", time());
+            let mut response_status = format!("{} · {outcome}", time());
+            if let Some(repeat) = run.repeat.as_mut() {
+                let count = repeat.count + u32::from(run.running);
+                response_status.push_str(&format!(" · Run {count}"));
+                if !run.running {
+                    repeat.changed = repeat.last.as_ref().is_some_and(|last| *last != body);
+                    repeat.last = Some(body.clone());
+                }
+            }
+            let json = run.format == Some(console::Format::Json);
             let doc = self.docs.entry(service.into()).or_default();
             let preserve_after = crate::document::check_lines(
                 doc,
@@ -548,7 +773,10 @@ impl App {
                 && crate::services::view(service) == View::Grid
                 && run.result["columns"].is_array()
             {
-                region.table = Some(crate::tables::Metadata::from_result(&run.result));
+                region.table = Some(crate::tables::Metadata {
+                    json,
+                    ..crate::tables::Metadata::from_result(&run.result)
+                });
             }
             crate::checks::remap_text(
                 &old_doc,
@@ -705,32 +933,14 @@ impl App {
         for marker in console::markers(service) {
             hints.push((format!("#{marker}"), String::new()));
         }
-        if crate::services::has_section(service, "headers") && !self.hints.contains_key(service) {
-            for header in [
-                "Accept",
-                "Authorization",
-                "Content-Type",
-                "User-Agent",
-                "Cookie",
-                "X-Request-Id",
-            ] {
-                hints.push((format!("{header}: "), "Header".into()));
-            }
-        }
         if let Some(text) = self.hints.get(service) {
-            for line in text
-                .lines()
-                .map(str::trim)
-                .filter(|l| !l.is_empty() && !l.starts_with('#'))
-            {
-                hints.push((line.into(), "Saved hint".into()));
-            }
+            hints.extend(crate::completion::saved_hints(text));
         }
         if let Some(value) = self.discovery.get(service) {
             collect_discovery(value, "", &mut hints);
         }
         let mut seen = BTreeSet::new();
-        hints.retain(|(s, _)| seen.insert(s.clone()));
+        hints.retain(|hint| seen.insert(hint.clone()));
         hints
     }
     pub(super) fn console_tabs(&self, ctx: &Context<Self>) -> Html {
@@ -793,8 +1003,20 @@ impl App {
         } else {
             (
                 run.map(|run| {
+                    let repeat = run
+                        .repeat
+                        .as_ref()
+                        .filter(|_| !run.running)
+                        .map(|repeat| {
+                            format!(
+                                " · Repeat: run {} done, next in {}",
+                                repeat.count,
+                                seconds(repeat.every)
+                            )
+                        })
+                        .unwrap_or_default();
                     format!(
-                        "Request · {} · {}",
+                        "Request · {}{repeat} · {}",
                         if run.stopping && run.running {
                             "Stopping…"
                         } else {
@@ -806,7 +1028,7 @@ impl App {
                 .unwrap_or_default(),
                 run.map(|run| run.debug.clone())
                     .unwrap_or(json!({"note":"No debug info yet - run a request first."})),
-                run.is_some_and(|run| run.running),
+                run.is_some_and(Run::active),
                 run.map(|run| run.started),
             )
         };
@@ -1032,5 +1254,13 @@ impl App {
                 <div class="console-hints-panel-actions"><button onclick={ctx.link().callback(|_|Msg::CloseExport)}>{"Close"}</button></div>
             </div></div>}
         </div>}
+    }
+}
+/// `1500` → `1.5s`.
+fn seconds(ms: u32) -> String {
+    if ms.is_multiple_of(1000) {
+        format!("{}s", ms / 1000)
+    } else {
+        format!("{}s", f64::from(ms) / 1000.0)
     }
 }

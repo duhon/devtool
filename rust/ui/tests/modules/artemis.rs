@@ -97,8 +97,10 @@ fn action_offers_commands_first_then_clauses_never_headers() {
     assert!(!clauses.iter().any(|text| text.contains(':')));
     let body = texts("#check q\n#action\nSEND /q\n#body\nA", &hints);
     assert!(
-        !body.iter().any(|text| text.starts_with("Authorization")),
-        "Headers stay in header sections: {body:?}"
+        !body
+            .iter()
+            .any(|text| text.starts_with("Authorization") || text.contains("://")),
+        "Headers and addresses stay in their sections: {body:?}"
     );
 }
 

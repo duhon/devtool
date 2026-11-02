@@ -2,7 +2,37 @@
 //! UI-behaviour tests.
 
 use serde_json::json;
-use services_ui::format::{MAX_RESPONSE_CHARS, console_response, duration, outcome};
+use services_ui::console::Format;
+use services_ui::format::{
+    MAX_RESPONSE_CHARS, check_response, console_response, duration, formatted_response, outcome,
+};
+
+#[test]
+fn format_overrides_the_table_layout_but_never_hides_an_error() {
+    let rows = json!({"columns":["id"],"rows":[{"id":1}]});
+    let shown = |vertical, format| formatted_response("mysql", &rows, vertical, format, "", "");
+    assert_eq!(
+        shown(true, Some(Format::Table)),
+        check_response("mysql", &rows, false, "", "")
+    );
+    assert_eq!(
+        shown(false, Some(Format::Vertical)),
+        check_response("mysql", &rows, true, "", "")
+    );
+    assert_eq!(
+        shown(true, None),
+        check_response("mysql", &rows, true, "", "")
+    );
+    assert_eq!(
+        shown(false, Some(Format::Json)),
+        "[\n  {\n    \"id\": 1\n  }\n]"
+    );
+    let failed = json!({"columns":["id"],"rows":[],"error":"denied"});
+    assert_eq!(
+        formatted_response("mysql", &failed, false, Some(Format::Json), "", ""),
+        "denied"
+    );
+}
 
 #[test]
 fn long_responses_are_capped_without_splitting_unicode() {

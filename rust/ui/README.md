@@ -70,6 +70,12 @@ Shared parsing/section catalogs live in `services-contracts::templates`. Complet
 offers Splunk's `options` block instead of separate `from`, `to`, `app`, and `count`
 sections. Separate `#from`, `#to`, `#app`, and `#count` sections are rejected;
 their parameters belong only in `#options`, including in templates.
+Every service has `#options`: `Manifest::add_console_options` (`services-contracts`)
+adds the section and its hints to each manifest. Its `Repeat`, `Until` and `Format` keys
+belong to the Console (`console::parse_run`) and are removed before the module request.
+Repeat runs again after each response until Stop, an edit of the check or a hidden panel;
+History saves the last run once, through a deferred snapshot and a `commit` op. Format
+changes only the Console display of table responses.
 Completion inserts literal bodies with one undo step, normalizing inline `#section @name`
 and replacing `#check @name` with the entire supplied check. Check templates
 without their own check header receive `#check <description>` (falling back to

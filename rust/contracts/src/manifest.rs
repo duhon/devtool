@@ -176,7 +176,60 @@ impl View {
     }
 }
 
+/// `#options` keys the console handles itself; modules never receive them.
+pub const CONSOLE_OPTIONS: [&str; 3] = ["repeat", "until", "format"];
+
 impl Manifest {
+    /// Every console has `#options` for the console's own keys (`Repeat`, `Until`, `Format`):
+    /// a module without the section gets one before its payload, a module's own section
+    /// gets their hints after its own.
+    pub fn add_console_options(&mut self) {
+        let console = &mut self.console;
+        if console.sections.is_empty() {
+            return;
+        }
+        let mut hints = vec![
+            (
+                "Repeat: 5",
+                "Run again N seconds after each response, until Stop",
+            ),
+            ("Until: changed", "Repeat: stop when the response changes"),
+        ];
+        if console.response == View::Grid {
+            hints.extend([
+                ("Format: table", "Rows and columns"),
+                ("Format: vertical", "One block per row"),
+                ("Format: json", "An array of row objects"),
+            ]);
+        }
+        let hints = hints.into_iter().map(|(text, detail)| Hint {
+            text: text.into(),
+            detail: detail.into(),
+        });
+        if let Some(section) = console.sections.iter_mut().find(|s| s.name == "options") {
+            for hint in hints {
+                if !section.hints.contains(&hint) {
+                    section.hints.push(hint);
+                }
+            }
+            return;
+        }
+        let at = console
+            .sections
+            .iter()
+            .position(|section| section.name == console.payload)
+            .unwrap_or(console.sections.len());
+        console.sections.insert(
+            at,
+            Section {
+                name: "options".into(),
+                language: "headers".into(),
+                hints: hints.collect(),
+                ..Default::default()
+            },
+        );
+    }
+
     pub fn section(&self, name: &str) -> Option<&Section> {
         self.console
             .sections

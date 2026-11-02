@@ -45,6 +45,32 @@ struct Run {
     anchor: Option<wasm_bindgen::JsValue>,
     signal: crate::activity::Signal,
     duplicate_error: Option<String>,
+    /// `Format:` of the check; only the console's display uses it.
+    format: Option<console::Format>,
+    repeat: Option<Repeat>,
+}
+impl Run {
+    /// Running, or waiting for the next run of a repeat.
+    fn active(&self) -> bool {
+        self.running || self.repeat.is_some()
+    }
+}
+/// A check that runs again after each response (`Repeat:` in `#options`).
+struct Repeat {
+    every: u32,
+    until_changed: bool,
+    /// Finished runs.
+    count: u32,
+    /// Whether the last response differs from the one before it.
+    changed: bool,
+    timer: Option<i32>,
+    /// What every run sends: the first run's request and History context.
+    message: Value,
+    last: Option<String>,
+    /// The check's request text; an edit of it ends the repeat.
+    source: String,
+    /// The check was edited while a run was in flight; the repeat ends after it.
+    edited: bool,
 }
 #[derive(Clone, Default)]
 struct CheckOwner {
@@ -239,6 +265,10 @@ pub enum Msg {
     ConsoleText(String),
     ConsoleEdited(String, crate::document::DocumentEdit),
     ConsoleRun(String, usize),
+    /// The wait of a repeating check is over.
+    RepeatRun(String),
+    /// History answered the save of a finished repeat.
+    RepeatSaved(Reply),
     Reply(String, String, Reply),
     Connection(Option<String>),
     /// Native requests started or finished; the Sessions guard must be re-rendered.
@@ -889,12 +919,15 @@ impl Component for App {
                 );
                 self.docs.insert(self.console_service.clone(), text);
                 self.persist_console();
+                let service = self.console_service.clone();
+                self.stop_edited_repeats(ctx, &service);
             }
             Msg::ConsoleEdited(service, edit) => {
                 self.checks.insert(service.clone(), edit.checks);
                 self.docs.insert(service.clone(), edit.text);
-                self.response_regions.insert(service, edit.regions);
+                self.response_regions.insert(service.clone(), edit.regions);
                 self.persist_console();
+                self.stop_edited_repeats(ctx, &service);
             }
             Msg::ConsoleRun(text, line) => {
                 if self.hidden {
@@ -914,6 +947,7 @@ impl Component for App {
                 );
                 self.docs.insert(service.clone(), text.clone());
                 self.persist_console();
+                self.stop_edited_repeats(ctx, &service);
                 match crate::document::request_at(
                     &text,
                     line,
@@ -922,11 +956,18 @@ impl Component for App {
                         .map(Vec::as_slice)
                         .unwrap_or(&[]),
                 ) {
-                    Some(block) => match console::parse(&service, &block.text) {
-                        Ok(params) => {
-                            self.execute_console(ctx, &service, params, block.start, None);
+                    Some(block) => match console::parse_run(&service, &block.text) {
+                        Ok((params, options)) => {
+                            self.execute_console(
+                                ctx,
+                                &service,
+                                params,
+                                block.start,
+                                None,
+                                options,
+                            );
                         }
-                        Err(e) => self.client_error(&service, e, block.start),
+                        Err(e) => self.client_error(ctx, &service, e, block.start),
                     },
                     None => {
                         self.notice = Some(Notice::new(
@@ -935,8 +976,11 @@ impl Component for App {
                     }
                 }
             }
+            Msg::RepeatRun(key) => self.repeat_run(ctx, &key),
+            Msg::RepeatSaved(reply) => self.repeat_saved(reply),
             Msg::Reply(key, service, reply) => {
                 self.receive(&key, &service, reply);
+                self.continue_repeat(ctx, &key);
                 if self
                     .agent_run
                     .as_ref()
@@ -1620,6 +1664,15 @@ impl Component for App {
             }
             Msg::ExportText(text) => self.export_text = Some(text),
             Msg::Stop => {
+                let service = self.console_service.clone();
+                if let Some(key) = self
+                    .console_run_entry(&service, self.active_console_line(&service))
+                    .filter(|(_, run)| !run.running && run.repeat.is_some())
+                    .map(|(key, _)| key.to_owned())
+                {
+                    self.finish_repeat(ctx, &key, "Repeat stopped");
+                    return true;
+                }
                 let (run, discovery) = self.selected_status(&self.console_service);
                 let id = if let Some(run) = run {
                     run.running.then_some(run.stream).flatten()
@@ -1668,6 +1721,15 @@ impl Component for App {
                     for run in self.runs.values_mut().filter(|run| run.running) {
                         run.stopping = true;
                     }
+                    let waiting: Vec<_> = self
+                        .runs
+                        .iter()
+                        .filter(|(_, run)| !run.running && run.repeat.is_some())
+                        .map(|(key, _)| key.clone())
+                        .collect();
+                    for key in waiting {
+                        self.finish_repeat(ctx, &key, "Repeat stopped: panel hidden");
+                    }
                     if let Err(error) = self.transport.stop_all() {
                         self.notice = Some(Notice::new(format!("Stop failed: {error}")));
                     }
@@ -1706,6 +1768,11 @@ impl Component for App {
     fn destroy(&mut self, _: &Context<Self>) {
         for (_, id) in std::mem::take(&mut self.hints_timers) {
             window().clear_timeout_with_handle(id);
+        }
+        for repeat in self.runs.values_mut().filter_map(|run| run.repeat.as_mut()) {
+            if let Some(id) = repeat.timer.take() {
+                window().clear_timeout_with_handle(id);
+            }
         }
     }
 }
@@ -2222,6 +2289,7 @@ impl App {
                     params,
                     line,
                     Some(pending.request.session.clone()),
+                    console::RunOptions::default(),
                 ) {
                     pending.operation = key;
                     self.agent_run = Some(pending);

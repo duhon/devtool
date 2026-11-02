@@ -2,7 +2,7 @@
 //! headers, JSON snippets and UTF-16 offsets. UI-behaviour tests.
 
 use serde_json::{Value, json};
-use services_ui::completion::{prepare_insertion, suggest};
+use services_ui::completion::{prepare_insertion, saved_hints, suggest};
 use services_ui::console::{self, fuzzy_match};
 use services_ui::services;
 
@@ -449,4 +449,56 @@ fn fuzzy_saved_headers_are_isolated_and_used_names_are_hidden() {
         &Value::Null,
     );
     assert!(r.candidates.is_empty());
+}
+
+#[test]
+fn saved_hints_are_offered_only_in_their_section() {
+    let hints = saved_hints(
+        "Authorization: Bearer t\nhttp://api.test\n#body\n{\"query\":{\"match_all\":{}}}\n#headers\nX-Tenant: a\n#endpoint\nGET https://saved.test/x",
+    );
+    let at = |field: &str| {
+        suggest("rest", field, "", 0, 0, &hints, &Value::Null)
+            .candidates
+            .into_iter()
+            .map(|c| (c.text, c.detail))
+            .collect::<Vec<_>>()
+    };
+    let saved = |text: &str| (text.to_owned(), "Saved hint".to_owned());
+    let headers = at("headers");
+    assert!(headers.contains(&saved("X-Tenant: a")), "{headers:?}");
+    assert!(headers.contains(&saved("Authorization: Bearer t")));
+    assert!(!headers.iter().any(|(text, _)| text.contains("query")));
+    let body = at("body");
+    assert!(
+        body.contains(&saved("{\"query\":{\"match_all\":{}}}")),
+        "{body:?}"
+    );
+    assert!(
+        !body
+            .iter()
+            .any(|(text, _)| text.contains("://") || text.contains(": "))
+    );
+    let endpoint = at("endpoint");
+    assert!(
+        endpoint.contains(&saved("GET https://saved.test/x")),
+        "{endpoint:?}"
+    );
+    assert!(endpoint.contains(&saved("http://api.test")));
+    assert!(!endpoint.iter().any(|(text, _)| text.contains("query")));
+}
+
+#[test]
+fn declared_section_hints_merge_with_saved_lines() {
+    let hints = saved_hints("Authorization: Basic eA==\n#options\nCount: 100");
+    let options: Vec<_> = suggest("splunk", "options", "", 0, 0, &hints, &Value::Null)
+        .candidates
+        .into_iter()
+        .map(|c| c.text)
+        .collect();
+    assert_eq!(options[0], "From: -24h");
+    assert!(options.contains(&"Count: 30".into()));
+    assert!(options.contains(&"Count: 100".into()));
+    assert!(!options.iter().any(|text| text.starts_with("Authorization")));
+    let headers = suggest("splunk", "headers", "", 0, 0, &hints, &Value::Null).candidates;
+    assert_eq!(headers[0].text, "Authorization: Basic eA==");
 }

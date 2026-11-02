@@ -2865,10 +2865,11 @@ fn fold_range(cm: &JsValue, pos: &JsValue) -> Result<JsValue, JsValue> {
             if first.starts_with('|')
                 || !first.contains(['{', '['])
                 || !region.table.as_ref().is_some_and(|table| {
-                    table
-                        .types
-                        .values()
-                        .any(|kind| *kind == services_contracts::columns::Kind::Json)
+                    table.json
+                        || table
+                            .types
+                            .values()
+                            .any(|kind| *kind == services_contracts::columns::Kind::Json)
                 })
             {
                 return Ok(JsValue::UNDEFINED);

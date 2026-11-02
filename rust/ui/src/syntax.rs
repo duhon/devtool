@@ -140,6 +140,12 @@ fn table_token(
     use services_contracts::columns::Kind;
     let rest = &text[offsets[pos]..];
     let remaining = chars.len() - pos;
+    if state.table.json {
+        if state.table_json.is_empty() {
+            state.table_json.push(Default::default());
+        }
+        return crate::tables::json_token(rest, &mut state.table_json[0]);
+    }
     if pos == 0
         && text.starts_with('+')
         && text.trim_end().ends_with('+')

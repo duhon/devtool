@@ -1,5 +1,19 @@
 # Release notes
 
+## 3.5.0
+
+- Every service has `#options` with three Console keys. `Repeat: 5` runs the check
+  again 5 seconds after each response; `Until: changed` stops it once the response
+  differs from the previous one. A repeat also stops on Stop, Shift+Enter on the check,
+  an edit of the check or a hidden panel. History keeps one entry per repeat: its last
+  run.
+- `Format: table`, `vertical` or `json` in `#options` of MySQL, Splunk and Artemis
+  checks chooses how the Console shows the rows; `json` shows them as an array of
+  objects.
+- Lines saved under a `#section` line of Hints are offered only in that section, and
+  they are added to the module's own suggestions for it. Completion offers only what
+  Hints, the module and discovery provide, with no hidden built-in list.
+
 ## 3.4.0
 
 - The Artemis module 4.0.0 has a new request format: `#endpoint` is the broker,

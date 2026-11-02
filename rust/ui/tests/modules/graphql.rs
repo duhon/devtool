@@ -65,7 +65,7 @@ fn completed_graphql_operations_offer_separators_without_polluting_field_hints()
                 .iter()
                 .map(|candidate| candidate.text.as_str())
                 .collect::<Vec<_>>(),
-            ["#check", "#headers", "#variables"]
+            ["#check", "#headers", "#variables", "#options"]
         );
         assert!(result.automatic);
     }

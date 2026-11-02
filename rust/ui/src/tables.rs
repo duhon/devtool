@@ -10,6 +10,9 @@ pub struct Metadata {
     pub types: BTreeMap<String, Kind>,
     #[serde(default = "one")]
     pub header_lines: usize,
+    /// The rows are shown as JSON (`Format: json`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub json: bool,
 }
 fn one() -> usize {
     1
@@ -40,6 +43,7 @@ impl Metadata {
             columns,
             types: serde_json::from_value(result["columnTypes"].clone()).unwrap_or_default(),
             header_lines,
+            json: false,
         }
     }
 }
@@ -83,6 +87,34 @@ fn chunks(text: &str, width: usize) -> Vec<&str> {
     }
     result.push(&text[start..]);
     result
+}
+
+/// The rows as a JSON array of objects in column order; a JSON column holds its parsed value.
+pub fn json(result: &Value) -> String {
+    let columns = Metadata::from_result(result).columns;
+    let rows = result["rows"].as_array().map(Vec::as_slice).unwrap_or(&[]);
+    let rows: Vec<Value> = if columns.is_empty() {
+        rows.to_vec()
+    } else {
+        rows.iter()
+            .map(|row| {
+                Value::Object(
+                    columns
+                        .iter()
+                        .map(|name| {
+                            let value = &row[name];
+                            let parsed = (kind(result, name) == Kind::Json)
+                                .then(|| value.as_str())
+                                .flatten()
+                                .and_then(|text| serde_json::from_str(text).ok());
+                            (name.clone(), parsed.unwrap_or_else(|| value.clone()))
+                        })
+                        .collect(),
+                )
+            })
+            .collect()
+    };
+    serde_json::to_string_pretty(&rows).expect("JSON values serialize")
 }
 
 pub fn render(result: &Value, vertical: bool) -> String {

@@ -136,6 +136,7 @@ fn manifest(module: &services_module_api::proto::module::Manifest) -> Result<Man
     manifest.execute = module.execute;
     manifest.discover = module.discover;
     manifest.stream = module.stream;
+    manifest.add_console_options();
     Ok(manifest)
 }
 
