@@ -76,14 +76,14 @@ fn every_service_console_parses_into_its_request_shape() {
 fn console_options_run_the_check_and_never_reach_the_module() {
     let (params, options) = parse_run(
         "rest",
-        "#endpoint\nGET https://a\n#options\nrepeat: 1.5\nUntil: Changed",
+        "#endpoint\nGET https://a\n#options\nrepeat: 2m\nRepeat-Until: Changed",
     )
     .unwrap();
     assert_eq!(params, parse("rest", "#endpoint\nGET https://a").unwrap());
     assert_eq!(
         options,
         RunOptions {
-            repeat: Some(1500),
+            repeat: Some(120_000),
             until_changed: true,
             format: None
         }
@@ -91,7 +91,7 @@ fn console_options_run_the_check_and_never_reach_the_module() {
     // A module with its own options keeps them; the console's are taken out first.
     let (params, options) = parse_run(
         "artemis",
-        "#endpoint\nhttp://broker:8161\n#action\nSEND /orders\n#options\nRepeat: 2\nPersistent: false\n#body\n{}",
+        "#endpoint\nhttp://broker:8161\n#action\nSEND /orders\n#options\nRepeat: 2s\nPersistent: false\n#body\n{}",
     )
     .unwrap();
     assert_eq!(params["persistent"], "false");
@@ -107,14 +107,21 @@ fn console_options_run_the_check_and_never_reach_the_module() {
     );
     assert_eq!(options.format, Some(Format::Json));
     for (service, options, error) in [
-        ("rest", "Until: changed", "Until: changed needs Repeat: N"),
-        ("rest", "Repeat: 0", "Repeat takes seconds from 1 to 86400"),
+        ("rest", "Repeat-Until: changed", "Repeat-Until needs Repeat"),
+        // A time has its unit: s, m or h, 1s to 24h.
+        ("rest", "Repeat: 5", "Repeat takes a time from 1s to 24h"),
+        ("rest", "Repeat: 25h", "Repeat takes a time from 1s to 24h"),
+        ("rest", "Repeat: 1.5s", "Repeat takes a time from 1s to 24h"),
         (
             "rest",
-            "Repeat: soon",
-            "Repeat takes seconds from 1 to 86400",
+            "Repeat: 5s\nRepeat-Until: never",
+            "Repeat-Until takes \"changed\"",
         ),
-        ("rest", "Repeat: 5\nUntil: never", "Until takes \"changed\""),
+        (
+            "rest",
+            "Repeat: 5s\nUntil: changed",
+            "Unknown option \"Until\"; REST takes Repeat and Repeat-Until",
+        ),
         ("rest", "Format: json", "Format applies to table responses"),
         ("rest", "X-Debug: 1", "Unknown option \"X-Debug\""),
         (

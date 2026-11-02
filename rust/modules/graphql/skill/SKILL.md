@@ -1,6 +1,6 @@
 ---
 name: module-graphql
-description: GraphQL checks in the Services DevTools Console: #endpoint, #headers, #query and #variables. Load before writing, editing or explaining GraphQL requests.
+description: "GraphQL checks in the Services DevTools Console: #endpoint, #headers, #query and #variables. Load before writing, editing or explaining GraphQL requests."
 ---
 
 # GraphQL service

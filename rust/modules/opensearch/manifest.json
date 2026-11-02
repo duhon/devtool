@@ -1,0 +1,25 @@
+{
+  "id": "opensearch",
+  "name": "OpenSearch",
+  "description": "OpenSearch HTTP API: search, documents, indices, bulk and multi-search.",
+  "params": [
+    {"name": "method", "flag": "method", "alias": "m", "positional": true, "type": "string", "required": true, "default": "GET"},
+    {"name": "url", "flag": "endpoint", "alias": "e", "positional": true, "type": "string", "required": true},
+    {"name": "headers", "flag": "headers", "alias": "H", "type": "json"},
+    {"name": "body", "flag": "body", "alias": "b", "type": "string"}
+  ],
+  "console": {
+    "order": 8,
+    "sections": [
+      {"name": "endpoint", "shape": "line", "language": "http", "param": "url", "connection": true, "hints": [{"text": "http://localhost:9200/_cluster/health"}, {"text": "http://localhost:9200/_cat/indices?format=json"}, {"text": "http://localhost:9200/_search"}, {"text": "http://localhost:9200/_bulk"}, {"text": "http://localhost:9200/_msearch"}]},
+      {"name": "headers", "shape": "pairs", "language": "headers", "param": "headers", "connection": true, "hints": [{"text": "Authorization: "}, {"text": "Accept: application/json"}, {"text": "Content-Type: application/json"}, {"text": "Content-Type: application/x-ndjson"}]},
+      {"name": "body", "shape": "block", "language": "json", "param": "body"}
+    ],
+    "payload": "body",
+    "response": "body-headers",
+    "errorBody": true,
+    "discovery": {"kind": "openapi", "schemes": ["http", "https"]},
+    "keywords": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
+    "hints": "#endpoint\nhttp://localhost:9200/_cluster/health\nhttp://localhost:9200/_cat/indices?format=json\nhttp://localhost:9200/_search\nhttp://localhost:9200/_bulk\nhttp://localhost:9200/_msearch\n\n#headers\nAuthorization:\nContent-Type: application/json\nContent-Type: application/x-ndjson\n\n#body\n{\"query\":{\"match_all\":{}}}\n"
+  }
+}

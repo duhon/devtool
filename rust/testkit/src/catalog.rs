@@ -77,6 +77,7 @@ pub const MODULES: &[ModuleSpec] = &[
         ..service("terminal", "Terminal", "endpoint", false)
     },
     service("artemis", "Artemis", "url", true),
+    service("opensearch", "OpenSearch", "url", true),
     panel("vars", "Variables", &[("list", "{}")]),
     panel("dictionary", "Dictionary", &[("list", "{}")]),
     panel("templates", "Templates", &[("get", "{}")]),

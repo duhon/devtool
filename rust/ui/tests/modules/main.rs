@@ -11,6 +11,7 @@ mod graphql;
 mod grpc;
 mod history;
 mod mysql;
+mod opensearch;
 mod rest;
 mod sessions;
 mod splunk;

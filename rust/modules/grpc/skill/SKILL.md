@@ -1,6 +1,6 @@
 ---
 name: module-grpc
-description: gRPC checks in the Services DevTools Console: #endpoint, metadata #headers, #proto and the #message JSON. Load before writing, editing or explaining gRPC requests.
+description: "gRPC checks in the Services DevTools Console: #endpoint, metadata #headers, #proto and the #message JSON. Load before writing, editing or explaining gRPC requests."
 ---
 
 # gRPC service

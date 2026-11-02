@@ -64,7 +64,8 @@
     await settings();
     assert(testid('agent-model-input').value === 'Copilot Fusion', 'An unconfigured client must default to Copilot Fusion');
     assert(testid('agent-model-category').textContent === 'Automatic', 'Fusion must be identified as the automatic router');
-    assert(testid('agent-reasoning').disabled, 'Fusion must manage Reasoning automatically');
+    assert(testid('agent-reasoning').disabled && testid('agent-reasoning-value').textContent === 'Not supported',
+      'Fusion must manage Reasoning automatically');
     const field = testid('agent-model-input');
     field.focus();
     await wait(() => document.querySelector('[data-testid="agent-model-options"]'));
@@ -82,12 +83,16 @@
     assert(localStorage.getItem('servicesConsole.agentOptions') === originalOptions, 'Typing a search must not save an invalid model');
     await key('Escape');
     await selectModel('powerful', 'Sample Powerful', 'Powerful');
-    const reasoning = testid('agent-reasoning');
-    assert([...reasoning.options].map(option => option.value).join(',') === ',low,high',
-      'Reasoning must offer only the selected model levels');
-    reasoning.value = 'high';
-    reasoning.dispatchEvent(new Event('change', {bubbles:true}));
-    await wait(() => JSON.parse(localStorage.getItem('servicesConsole.agentOptions')).reasoningEffort === 'high');
+    const reasoning = () => testid('agent-reasoning');
+    const levels = () => [...document.querySelectorAll('[data-testid="agent-reasoning-level"]')].map(level => level.textContent).join(',');
+    const reasoningValue = () => testid('agent-reasoning-value').textContent;
+    const stored = () => JSON.parse(localStorage.getItem('servicesConsole.agentOptions'));
+    assert(levels() === 'low,high' && reasoning().max === '1',
+      `The Reasoning slider must have one step per model level: ${levels()}`);
+    assert(reasoning().getAttribute('aria-valuetext') === 'high' && reasoningValue() === 'high · default',
+      `A new model must show its default Reasoning: ${reasoningValue()}`);
+    input(reasoning(), '0');
+    await wait(() => stored().reasoningEffort === 'low' && reasoningValue() === 'low');
     assert(testid('settings-update-status').textContent.includes('New Agent chat settings')
       && !testid('settings-panel').querySelector('[role="alert"]'), 'Settings results belong in the shared footer');
     await agent();
@@ -95,18 +100,24 @@
     assert(old.model === 'auto' && old.reasoningEffort === null, 'Existing chats must not adopt new defaults');
     const powerfulChat = await newChat();
     const powerful = await configuration();
-    assert(powerful.model === 'sample-powerful' && powerful.reasoningEffort === 'high',
+    assert(powerful.model === 'sample-powerful' && powerful.reasoningEffort === 'low',
       `The SDK must receive the selected model and reasoning: ${JSON.stringify(powerful)}`);
     const saved = JSON.parse(localStorage.getItem(`servicesConsole.agentSession.${powerfulChat}`));
-    assert(saved.options.model === 'sample-powerful' && saved.options.reasoningEffort === 'high',
+    assert(saved.options.model === 'sample-powerful' && saved.options.reasoningEffort === 'low',
       'A chat must persist its captured defaults');
     await settings();
-    assert(field.value === 'Sample Powerful' && reasoning.value === 'high', 'Reopening Settings must retain choices');
+    assert(field.value === 'Sample Powerful' && reasoning().value === '0' && reasoningValue() === 'low',
+      'Reopening Settings must retain choices');
+    await click(document.querySelector('[data-testid="agent-reasoning-level"]:last-child'));
+    await wait(() => stored().model === 'sample-powerful' && stored().reasoningEffort === null
+      && reasoning().value === '1' && reasoningValue() === 'high · default',
+      () => `Choosing the model default must follow the model again: ${JSON.stringify(stored())}; ${reasoningValue()}`);
     await selectModel('light', 'Sample Light', 'Lightweight');
-    assert(reasoning.disabled && reasoning.value === '', 'Models without Reasoning must disable and reset the selector');
+    assert(reasoning().disabled && !levels() && reasoningValue() === 'Not supported',
+      'Models without Reasoning must disable and reset the slider');
     await agent();
     const retained = await configuration();
-    assert(retained.model === 'sample-powerful' && retained.reasoningEffort === 'high',
+    assert(retained.model === 'sample-powerful' && retained.reasoningEffort === 'low',
       'Changing defaults must not change an already-created SDK session');
     await newChat();
     const light = await configuration();

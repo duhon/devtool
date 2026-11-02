@@ -40,6 +40,28 @@ fn saved_vertical_query_renders_its_grid_vertically() {
 }
 
 #[test]
+fn saved_format_renders_history_like_the_console() {
+    let result = json!({"columns":["n"],"rows":[{"n":1}],"resultCount":1});
+    for (options, query, shown, json) in [
+        (
+            "Format: json",
+            "SELECT 1",
+            services_ui::tables::json(&result),
+            true,
+        ),
+        ("Format: vertical", "SELECT 1", table(&result, true), false),
+        ("Format: table", "SELECT 1\\G", table(&result, false), false),
+    ] {
+        let source = format!(
+            "#check saved\n#endpoint\nmysql://root@127.0.0.1/db\n#options\n{options}\n#query\n{query}\n\n#responce OK\n{result}"
+        );
+        let (text, regions) = history_document("mysql", &source, "1:00:00 PM", true).unwrap();
+        assert!(text.ends_with(&shown), "{options}: {text}");
+        assert_eq!(regions[0].table.as_ref().unwrap().json, json, "{options}");
+    }
+}
+
+#[test]
 fn history_display_handles_partial_plain_and_large_responses_without_truncating() {
     let prefix = "#check example";
     let partial = format!("{prefix}\n\n#responce OK\n{{\"debug\":");

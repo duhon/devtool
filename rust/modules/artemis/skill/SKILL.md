@@ -1,6 +1,6 @@
 ---
 name: module-artemis
-description: ActiveMQ Artemis checks in the Services DevTools Console: #endpoint, #action commands (QUEUES, ADDRESSES, CONSUMERS, BROWSE, RECEIVE, SEND, PUBLISH, PURGE, MOVE, RETRY, PAUSE, RESUME, JOLOKIA) with WHERE, LIMIT, SET and TO, #headers, #options and #body, through the broker's Jolokia console API. Load before writing, editing or explaining Artemis requests.
+description: "ActiveMQ Artemis checks in the Services DevTools Console: #endpoint, #action commands (QUEUES, ADDRESSES, CONSUMERS, BROWSE, RECEIVE, SEND, PUBLISH, PURGE, MOVE, RETRY, PAUSE, RESUME, JOLOKIA) with WHERE, LIMIT, SET and TO, #headers, #options and #body, through the broker's Jolokia console API. Load before writing, editing or explaining Artemis requests."
 ---
 
 # Artemis service

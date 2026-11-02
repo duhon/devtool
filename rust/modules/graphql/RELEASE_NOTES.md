@@ -1,5 +1,10 @@
 # GraphQL module release notes
 
+## 3.2.2
+
+- The Agent can load the module's skill, `module-graphql`. Its description was not valid
+  YAML, so Copilot skipped the skill and answered "Skill not found".
+
 ## 3.2.1
 
 - Settings → Modules shows the GraphQL module's name and description before it is

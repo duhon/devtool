@@ -1,6 +1,6 @@
 ---
 name: module-mysql
-description: MySQL checks in the Services DevTools Console: the mysql:// #endpoint, #query SQL, #options Columns-Type and how results are shown. Load before writing, editing or explaining MySQL requests.
+description: "MySQL checks in the Services DevTools Console: the mysql:// #endpoint, #query SQL, #options Columns-Type and how results are shown. Load before writing, editing or explaining MySQL requests."
 ---
 
 # MySQL service

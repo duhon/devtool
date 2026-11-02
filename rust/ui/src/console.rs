@@ -112,9 +112,10 @@ pub enum Format {
 /// The `#options` keys the console handles itself; the module never receives them.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct RunOptions {
-    /// `Repeat: N`: run again N seconds (here milliseconds) after each response, until Stop.
+    /// `Repeat: 5s` (`s`, `m` or `h`): run again that long (here in milliseconds) after each
+    /// response, until Stop.
     pub repeat: Option<u32>,
-    /// `Until: changed`: a repeat stops when the shown response changes.
+    /// `Repeat-Until: changed`: a repeat stops when the shown response changes.
     pub until_changed: bool,
     pub format: Option<Format>,
 }
@@ -144,20 +145,14 @@ fn run_options(
         let value = value.trim();
         match name.trim().to_ascii_lowercase().as_str() {
             "repeat" => {
-                let seconds = value
-                    .strip_suffix('s')
-                    .unwrap_or(value)
-                    .trim()
-                    .parse::<f64>()
-                    .ok()
-                    .filter(|seconds| (1.0..=86_400.0).contains(seconds))
-                    .ok_or_else(|| {
-                        format!("Repeat takes seconds from 1 to 86400, not {value:?}")
-                    })?;
-                options.repeat = Some((seconds * 1000.0).round() as u32);
+                options.repeat = Some(interval(value).ok_or_else(|| {
+                    format!("Repeat takes a time from 1s to 24h, like 5s, 2m or 1h, not {value:?}")
+                })?);
             }
-            "until" if value.eq_ignore_ascii_case("changed") => options.until_changed = true,
-            "until" => return Err(format!("Until takes \"changed\", not {value:?}")),
+            "repeat-until" if value.eq_ignore_ascii_case("changed") => options.until_changed = true,
+            "repeat-until" => {
+                return Err(format!("Repeat-Until takes \"changed\", not {value:?}"));
+            }
             "format" if !grid => {
                 return Err(format!(
                     "Format applies to table responses; {} answers with a body",
@@ -180,7 +175,7 @@ fn run_options(
         }
     }
     if options.until_changed && options.repeat.is_none() {
-        return Err("Until: changed needs Repeat: N".into());
+        return Err("Repeat-Until needs Repeat, like Repeat: 5s".into());
     }
     if let Some(line) = rest.first().filter(|_| !own) {
         let name = line.split_once(':').map_or(*line, |(name, _)| name).trim();
@@ -188,9 +183,9 @@ fn run_options(
             "Unknown option {name:?}; {} takes {}",
             manifest.name,
             if grid {
-                "Repeat, Until and Format"
+                "Repeat, Repeat-Until and Format"
             } else {
-                "Repeat and Until"
+                "Repeat and Repeat-Until"
             }
         ));
     }
@@ -198,6 +193,21 @@ fn run_options(
         sections.insert("options".into(), rest.join("\n"));
     }
     Ok(options)
+}
+
+/// `Repeat`'s time in milliseconds: a whole number of seconds, minutes or hours, 1s to 24h.
+fn interval(value: &str) -> Option<u32> {
+    let digits = value.find(|c: char| !c.is_ascii_digit())?;
+    let count: u32 = value[..digits].parse().ok()?;
+    let unit = match value[digits..].trim().to_ascii_lowercase().as_str() {
+        "s" => 1000,
+        "m" => 60_000,
+        "h" => 3_600_000,
+        _ => return None,
+    };
+    count
+        .checked_mul(unit)
+        .filter(|ms| (1000..=86_400_000).contains(ms))
 }
 
 pub fn parse(service: &str, source: &str) -> Result<Value, String> {

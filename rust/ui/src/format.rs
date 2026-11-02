@@ -77,7 +77,14 @@ pub fn check_response(
         console_response(service, result, vertical)
     }
 }
-/// A check response as the console shows it with `Format:`; History and the Agent keep
+/// Whether `format` shows `result` as a JSON array of rows instead of a table.
+pub fn shows_json(result: &Value, format: Option<crate::console::Format>) -> bool {
+    format == Some(crate::console::Format::Json)
+        && result["columns"].is_array()
+        && result.get("error").is_none()
+        && result["cancelled"] != true
+}
+/// A check response as the Console and History show it with `Format:`; the Agent keeps
 /// [`check_response`].
 pub fn formatted_response(
     service: &str,
@@ -88,11 +95,7 @@ pub fn formatted_response(
     stderr: &str,
 ) -> String {
     use crate::console::Format;
-    if format == Some(Format::Json)
-        && result["columns"].is_array()
-        && result.get("error").is_none()
-        && result["cancelled"] != true
-    {
+    if shows_json(result, format) {
         let json = crate::tables::json(result);
         return if result["preview"] == true {
             format!("{}\n\n{json}", services_contracts::SPLUNK_PREVIEW_WARNING)
@@ -200,12 +203,17 @@ pub fn history_document(
         if complete {
             let result: Value = serde_json::from_str(raw)
                 .map_err(|error| format!("Invalid saved {service} result: {error}"))?;
+            // A record the current module no longer parses shows its plain table.
+            let (vertical, format) = crate::console::parse_run(service, request)
+                .map(|(params, options)| (params["vertical"] == true, options.format))
+                .unwrap_or_default();
             if result["columns"].is_array() {
-                table = Some(crate::tables::Metadata::from_result(&result));
+                table = Some(crate::tables::Metadata {
+                    json: shows_json(&result, format),
+                    ..crate::tables::Metadata::from_result(&result)
+                });
             }
-            let vertical = crate::console::parse(service, request)
-                .is_ok_and(|params| params["vertical"] == true);
-            check_response(service, &result, vertical, "", "")
+            formatted_response(service, &result, vertical, format, "", "")
         } else {
             String::new()
         }

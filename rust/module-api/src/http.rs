@@ -37,6 +37,7 @@ pub fn body_text(response: &mut HttpResponse) -> String {
     unsafe { String::from_utf8_unchecked(body) }
 }
 
+/// A REST request: GET and HEAD send no body.
 pub async fn request(
     host: &Host,
     method: &str,
@@ -50,7 +51,6 @@ pub async fn request(
     let request = json!({"method":method,"url":url.as_str(),"headers":headers});
     let method =
         http::Method::from_bytes(method.as_bytes()).map_err(|e| Error::new(e.to_string()))?;
-    let secure = url.scheme() == "https";
     let body = if method != http::Method::GET && method != http::Method::HEAD {
         body.filter(|s| !s.is_empty()).map(String::into_bytes)
     } else {
@@ -61,9 +61,28 @@ pub async fn request(
         url: url.into(),
         headers: header_list(headers),
         body,
-        text: true,
         ..Default::default()
     };
+    exchange(host, call, request, started).await
+}
+
+/// Sends `call` as is, its body read as text, and answers in the console's REST response
+/// shape: status, headers, body and the request, connection and response under `debug`.
+pub async fn send(host: &Host, call: HttpRequest) -> Result<Value> {
+    let started = Instant::now();
+    let request = json!({"method":call.method,"url":call.url,"headers":header_map(&call.headers)});
+    exchange(host, call, request, started).await
+}
+
+/// `send` with `request` shown under `debug.request`, timed from `started`.
+async fn exchange(
+    host: &Host,
+    mut call: HttpRequest,
+    request: Value,
+    started: Instant,
+) -> Result<Value> {
+    call.text = true;
+    let secure = call.url.starts_with("https:");
     let sent = started.elapsed();
     let mut response = match host.http(&call).await {
         Ok(response) => response,

@@ -6,76 +6,8 @@ use std::path::Path;
 /// The skill file of a skill folder.
 pub const FILE: &str = "SKILL.md";
 
-/// Reads `name` and `description` from the YAML frontmatter, including `>`/`|` block text.
-pub fn frontmatter(text: &str) -> Result<(String, String), String> {
-    let mut lines = text.strip_prefix('\u{feff}').unwrap_or(text).lines();
-    if lines.next().map(str::trim_end) != Some("---") {
-        return Err("SKILL.md must start with --- frontmatter".into());
-    }
-    let (mut name, mut description) = (None::<String>, None::<String>);
-    let mut block: Option<&str> = None;
-    let mut closed = false;
-    for line in lines {
-        if line.trim_end() == "---" {
-            closed = true;
-            break;
-        }
-        if let Some(key) = block
-            && line.starts_with([' ', '\t'])
-        {
-            let target = if key == "name" {
-                &mut name
-            } else {
-                &mut description
-            };
-            let text = target.get_or_insert_with(String::new);
-            if !text.is_empty() {
-                text.push(' ');
-            }
-            text.push_str(line.trim());
-            continue;
-        }
-        block = None;
-        let Some((key, value)) = line.split_once(':') else {
-            continue;
-        };
-        let key = match key {
-            "name" => "name",
-            "description" => "description",
-            _ => continue,
-        };
-        let value = value.trim();
-        if matches!(value, "" | ">" | "|" | ">-" | "|-" | ">+" | "|+") {
-            block = Some(key);
-            continue;
-        }
-        let value = value
-            .strip_prefix('"')
-            .and_then(|value| value.strip_suffix('"'))
-            .or_else(|| {
-                value
-                    .strip_prefix('\'')
-                    .and_then(|value| value.strip_suffix('\''))
-            })
-            .unwrap_or(value)
-            .to_owned();
-        *(if key == "name" {
-            &mut name
-        } else {
-            &mut description
-        }) = Some(value);
-    }
-    if !closed {
-        return Err("SKILL.md frontmatter is not closed with ---".into());
-    }
-    let name = name
-        .filter(|name| !name.trim().is_empty())
-        .ok_or("SKILL.md frontmatter has no name")?;
-    let description = description
-        .filter(|description| !description.trim().is_empty())
-        .ok_or("SKILL.md frontmatter has no description")?;
-    Ok((name, description))
-}
+/// Reads `name` and `description` from the YAML frontmatter.
+pub use services_contracts::package::skill_frontmatter as frontmatter;
 
 /// The skill text with frontmatter `name` set to `name`; the rest stays as written.
 pub fn rename(text: &str, name: &str) -> Result<String, String> {
@@ -144,18 +76,6 @@ pub fn prepare_package(package: &Path, id: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn frontmatter_requires_a_closed_header_with_name_and_description() {
-        assert!(frontmatter("name: x\n").is_err());
-        assert!(frontmatter("---\nname: x\ndescription: y\n").is_err());
-        assert_eq!(
-            frontmatter(
-                "---\nname: x\ndescription: |\n  line one\n  line two\nlicense: MIT\n---\n"
-            ),
-            Ok(("x".into(), "line one line two".into()))
-        );
-    }
 
     #[test]
     fn renaming_changes_only_the_frontmatter_name() {

@@ -24,7 +24,7 @@ Console context is provided automatically for each message; there is no sharing
 checkbox or separate context-access approval. Enter sends a chat message;
 Shift+Enter adds a line. There is no Send button or composer placeholder.
 Settings → Agent contains a searchable Copilot model input with the model's category
-and a Reasoning selector populated from that model's supported levels. These
+and a Reasoning slider with one step per level the model supports. These
 defaults apply only to newly created Agent chats; existing chats retain their
 model and Reasoning, including after reload.
 Without saved preferences, new chats use Copilot Fusion, which manages Reasoning

@@ -1,6 +1,6 @@
 ---
 name: module-rest
-description: REST checks in the Services DevTools Console: METHOD and URL under #endpoint, #headers and #body. Load before writing, editing or explaining REST requests.
+description: "REST checks in the Services DevTools Console: METHOD and URL under #endpoint, #headers and #body. Load before writing, editing or explaining REST requests."
 ---
 
 # REST service

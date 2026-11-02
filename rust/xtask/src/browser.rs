@@ -906,7 +906,7 @@ fn scenarios() -> Vec<Scenario> {
             "agent-resume",
             Agent,
             60,
-            "A new window restores a saved chat (name, draft, closed tabs) and resumes its SDK session; the # chat list across sessions",
+            "A new window restores a saved chat (name, draft, closed tabs) and resumes its SDK session; the # chat list across sessions; saved Agent Reasoning",
             Kind::Script {
                 setup: Setup::Reopen(include_str!("browser-agent-resume-setup.js")),
                 script: include_str!("browser-agent-resume.js"),
@@ -1200,6 +1200,7 @@ fn seed_data(data: &Path, fixture_port: u16) -> Result<Vec<(PathBuf, String)>> {
                 ("grpc", "grpc://grpc.fixture.invalid:9000"),
                 ("splunk", "https://splunk.fixture.invalid"),
                 ("artemis", "http://artemis.fixture.invalid:8161"),
+                ("opensearch", "http://opensearch.fixture.invalid:9200"),
             ]
             .into_iter()
             .map(|(service, url)| format!("## {service}\n#endpoint\n{url}\n"))

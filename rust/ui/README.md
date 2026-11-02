@@ -71,11 +71,14 @@ offers Splunk's `options` block instead of separate `from`, `to`, `app`, and `co
 sections. Separate `#from`, `#to`, `#app`, and `#count` sections are rejected;
 their parameters belong only in `#options`, including in templates.
 Every service has `#options`: `Manifest::add_console_options` (`services-contracts`)
-adds the section and its hints to each manifest. Its `Repeat`, `Until` and `Format` keys
-belong to the Console (`console::parse_run`) and are removed before the module request.
-Repeat runs again after each response until Stop, an edit of the check or a hidden panel;
+adds the section and its hints to each manifest. Its `Repeat`, `Repeat-Until` and `Format`
+keys belong to the Console (`console::parse_run`) and are removed before the module request.
+`Repeat: 5s` (`s`, `m` or `h`, 1s to 24h) runs again after each response until Stop, an edit
+of the check or a hidden panel, or with `Repeat-Until: changed` until the response changes;
+completion offers Repeat-Until only under a Repeat line;
 History saves the last run once, through a deferred snapshot and a `commit` op. Format
-changes only the Console display of table responses.
+changes only how table responses are shown: the Console and History (`format::history_document`)
+read it from the check; the saved result stays the same.
 Completion inserts literal bodies with one undo step, normalizing inline `#section @name`
 and replacing `#check @name` with the entire supplied check. Check templates
 without their own check header receive `#check <description>` (falling back to
@@ -259,17 +262,20 @@ Hidden tabs stay mounted, so checks and drafts survive switching.
 
 Settings → Agent loads the Copilot model catalog through the native SDK once per DevTools
 window; reopen DevTools to pick up catalog changes. The model input
-filters suggestions by name, ID and published capability category; Reasoning
-lists only that model's supported levels. Without saved preferences, new chats
+filters suggestions by name, ID and published capability category; the Reasoning
+slider has one step per level the model supports and marks the model default.
+Choosing the default level stores no level, so new chats follow the model's
+default. Without saved preferences, new chats
 use Copilot Fusion (the SDK's `auto` router), which manages Reasoning itself.
 Choices persist locally and are captured when a new chat is created. Existing
 chats and resumed SDK sessions retain their original model and reasoning settings.
 
 Every following Agent reply, in new and existing chats, gets the skills of each
 installed module (`skills/module-<id>/`) and of each applied source
-(`skills/<slug>-<name>/`). Skills that could not be read (frontmatter needs
-`name` and `description`) are a warning in the Agent status and are listed in its
-debug (`skillProblems`). The host hands their folders to the SDK as skill directories
+(`skills/<slug>-<name>/`). Skills that could not be read (frontmatter must be
+valid YAML with `name` and `description`; Copilot skips any other) are a warning
+in the Agent status and are listed in its debug (`skillProblems`). The host
+hands their folders to the SDK as skill directories
 with the built-in `skill` tool; no other skills (personal `~/.copilot/skills` or
 bundled ones) are loaded. The root `services-console` skill is compiled in and
 can't be replaced. A skill only supplies its `SKILL.md` instructions: the Agent

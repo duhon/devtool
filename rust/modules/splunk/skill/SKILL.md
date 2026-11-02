@@ -1,6 +1,6 @@
 ---
 name: module-splunk
-description: Splunk searches in the Services DevTools Console: #endpoint, #search SPL, #options (From, To, Count, Preview, Offset, Columns-Type, Columns-Size), the rate limit and preview results. Load before writing, editing or explaining Splunk requests.
+description: "Splunk searches in the Services DevTools Console: #endpoint, #search SPL, #options (From, To, Count, Preview, Offset, Columns-Type, Columns-Size), the rate limit and preview results. Load before writing, editing or explaining Splunk requests."
 ---
 
 # Splunk service

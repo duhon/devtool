@@ -149,5 +149,13 @@
   await wait(() => row(moved)?.dataset.state === 'closed' && closedIds().includes(moved), 'Close works across sessions');
   await click(testid('agent-sessions').querySelector('[data-session-id]'));
   await wait(() => document.querySelector('[data-testid="agent-composer"]'), 'Selecting a chat leaves the chat list');
+
+  // Agent settings saved in an earlier window show the saved Reasoning once the model catalog loads.
+  await testDriver.settingsTab('agent');
+  await wait(() => testid('agent-model-input')?.value === 'Sample Powerful' && !testid('agent-reasoning').disabled,
+    () => `Saved Agent settings did not load: ${testid('agent-model-input')?.value}`);
+  assert(testid('agent-reasoning').value === '0' && testid('agent-reasoning').getAttribute('aria-valuetext') === 'low'
+    && testid('agent-reasoning-value').textContent === 'low',
+    `A new window must show the saved Reasoning: ${testid('agent-reasoning').value}; ${testid('agent-reasoning-value').textContent}`);
   return true;
 })()

@@ -422,7 +422,10 @@ pub fn suggest(
             candidates
                 .into_iter()
                 .filter(|(s, _)| {
-                    !used.contains(&s.split(':').next().unwrap_or("").to_ascii_lowercase())
+                    let key = s.split(':').next().unwrap_or("").to_ascii_lowercase();
+                    // Repeat-Until only means something under a Repeat.
+                    !used.contains(&key)
+                        && (marker != "options" || key != "repeat-until" || used.contains("repeat"))
                 })
                 .collect(),
         );

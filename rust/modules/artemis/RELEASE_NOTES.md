@@ -1,5 +1,10 @@
 # Artemis module release notes
 
+## 4.0.1
+
+- The Agent can load the module's skill, `module-artemis`. Its description was not valid
+  YAML, so Copilot skipped the skill and answered "Skill not found".
+
 ## 4.0.0
 
 - A new request format. `#endpoint` is only the broker: its web console URL

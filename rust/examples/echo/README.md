@@ -119,9 +119,11 @@ module, `<id>-<version>-<platform>.module.tgz`. It is a gzip'd tar with
 `RELEASE_NOTES.md` and `skills/module-<id>/` at its root and nothing else
 (regular files, at most 512 MiB unpacked). In a module's folder the skill is
 `skill/SKILL.md` and the version and `minCore` are in `Cargo.toml`
-(`[package.metadata.services] min-core`); `package` names the skill and checks
-that the notes start with the version. The panel sends a chosen file to the host in one
-message, so it must stay under about 48 MiB.
+(`[package.metadata.services] min-core`); `package` names the skill, checks that
+its frontmatter is valid YAML with `name: module-<id>` and a `description` (put a
+value that has `: ` in it in quotes) and that the notes start with the version.
+The panel sends a chosen file to the host in one message, so it must stay under
+about 48 MiB.
 
 Outside this repository, depend on `services-module-api` and
 `services-module-ui` from this repository (a git dependency), then:

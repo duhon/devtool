@@ -26,6 +26,7 @@ services-module-mysql-ui = { path = "../modules/mysql/ui" }
 services-module-splunk-ui = { path = "../modules/splunk/ui" }
 services-module-terminal-ui = { path = "../modules/terminal/ui" }
 services-module-artemis-ui = { path = "../modules/artemis/ui" }
+services-module-opensearch-ui = { path = "../modules/opensearch/ui" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 base64 = "0.22"
@@ -44,3 +45,7 @@ web-sys = { version = "0.3", features = [
   "IdbFactory", "IdbOpenDbRequest", "IdbDatabase", "IdbObjectStore",
   "IdbRequest", "IdbTransaction", "IdbTransactionMode", "DomException"
 ] }
+
+[dev-dependencies]
+# The OpenSearch tests complete from the module's real discovery schema.
+services-module-opensearch = { path = "../modules/opensearch" }

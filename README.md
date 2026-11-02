@@ -1,10 +1,10 @@
 # Services DevTools
 
 A Chrome DevTools panel for developers who work with backend services. Send
-REST, GraphQL and gRPC requests, run MySQL queries, search Splunk, look into
-ActiveMQ Artemis queues and messages, and run terminal commands right next
-to the page you are debugging, with shared variables, saved checks, templates
-and request history in one place.
+REST, GraphQL, gRPC and OpenSearch requests, run MySQL queries, search Splunk,
+look into ActiveMQ Artemis queues and messages, and run terminal commands right
+next to the page you are debugging, with shared variables, saved checks,
+templates and request history in one place.
 macOS 13.5+ on Apple Silicon.
 
 ![Services DevTools demo](docs/demo.gif)

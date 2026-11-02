@@ -91,8 +91,7 @@ fn suggests_only_options_and_its_parameter_keys() {
             "Offset: 0",
             "Columns-Type: ",
             "Columns-Size: ",
-            "Repeat: 5",
-            "Until: changed",
+            "Repeat: 5s",
             "Format: table",
             "Format: vertical",
             "Format: json"

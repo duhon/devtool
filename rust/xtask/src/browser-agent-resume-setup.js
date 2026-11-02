@@ -48,5 +48,6 @@
   const record = saved();
   record.messages.push({ id: 'legacy-empty', role: 'assistant', text: ' \n ' });
   localStorage.setItem(`servicesConsole.agentSession.${chat}`, JSON.stringify(record));
+  localStorage.setItem('servicesConsole.agentOptions', JSON.stringify({ model: 'sample-powerful', reasoningEffort: 'low' }));
   return true;
 })()

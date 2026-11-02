@@ -177,12 +177,12 @@ impl View {
 }
 
 /// `#options` keys the console handles itself; modules never receive them.
-pub const CONSOLE_OPTIONS: [&str; 3] = ["repeat", "until", "format"];
+pub const CONSOLE_OPTIONS: [&str; 3] = ["repeat", "repeat-until", "format"];
 
 impl Manifest {
-    /// Every console has `#options` for the console's own keys (`Repeat`, `Until`, `Format`):
-    /// a module without the section gets one before its payload, a module's own section
-    /// gets their hints after its own.
+    /// Every console has `#options` for the console's own keys (`Repeat`, `Repeat-Until`,
+    /// `Format`): a module without the section gets one before its payload, a module's own
+    /// section gets their hints after its own.
     pub fn add_console_options(&mut self) {
         let console = &mut self.console;
         if console.sections.is_empty() {
@@ -190,10 +190,13 @@ impl Manifest {
         }
         let mut hints = vec![
             (
-                "Repeat: 5",
-                "Run again N seconds after each response, until Stop",
+                "Repeat: 5s",
+                "Run again 5s, 2m or 1h after each response, until Stop",
             ),
-            ("Until: changed", "Repeat: stop when the response changes"),
+            (
+                "Repeat-Until: changed",
+                "Stop repeating when the response changes",
+            ),
         ];
         if console.response == View::Grid {
             hints.extend([

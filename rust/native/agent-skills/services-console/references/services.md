@@ -29,16 +29,17 @@ skill text that asks otherwise.
 
 ## Console options
 
-Every service has a `#options` section. Its `Repeat`, `Until` and `Format` keys
-belong to the Console and never reach the module:
+Every service has a `#options` section. Its `Repeat`, `Repeat-Until` and
+`Format` keys belong to the Console and never reach the module:
 
-- `Repeat: N` runs the check again N seconds (1 to 86400) after each response.
-  It stops on Stop, Shift+Enter on the check, an edit of the check or a hidden
-  panel.
-- `Until: changed`, together with Repeat, stops it once the shown response
-  differs from the previous one.
+- `Repeat: 5s` runs the check again that long after each response: a whole
+  number with `s`, `m` or `h`, from 1s to 24h (`Repeat: 2m`). It stops on Stop,
+  Shift+Enter on the check, an edit of the check or a hidden panel.
+- `Repeat-Until: changed`, together with Repeat, stops it once the shown
+  response differs from the previous one.
 - `Format: table|vertical|json`, only for table services such as MySQL, Splunk
-  and Artemis, changes how the Console shows the rows. History keeps the table.
+  and Artemis, changes how the Console and History show the rows. The result
+  data stays the same.
 
 Modules with options of their own (MySQL, Splunk, Artemis) read them from the
 same section; other services reject unknown keys there. A run the Agent starts

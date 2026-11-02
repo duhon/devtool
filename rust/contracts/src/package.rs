@@ -51,6 +51,53 @@ pub fn skill_name(id: &str) -> String {
     format!("module-{}", id.replace('_', "-"))
 }
 
+/// Reads `name` and `description` of a `SKILL.md`: the frontmatter between its `---` lines
+/// must be valid YAML with both as text. The Agent's runtime silently skips a skill whose
+/// frontmatter is not, for example a plain value with `: ` in it.
+#[cfg(feature = "archive")]
+pub fn skill_frontmatter(text: &str) -> Result<(String, String), String> {
+    let mut lines = text.strip_prefix('\u{feff}').unwrap_or(text).lines();
+    if lines.next().map(str::trim_end) != Some("---") {
+        return Err("SKILL.md must start with --- frontmatter".into());
+    }
+    // Keeps the opening `---` so that YAML error lines are the file's lines.
+    let mut header = String::from("---\n");
+    let mut closed = false;
+    for line in lines {
+        if line.trim_end() == "---" {
+            closed = true;
+            break;
+        }
+        header.push_str(line);
+        header.push('\n');
+    }
+    if !closed {
+        return Err("SKILL.md frontmatter is not closed with ---".into());
+    }
+    let documents = yaml_rust2::YamlLoader::load_from_str(&header).map_err(|e| {
+        let hint = if e.info().starts_with("mapping values are not allowed") {
+            "; put a value that has \": \" in it in quotes"
+        } else {
+            ""
+        };
+        format!(
+            "SKILL.md frontmatter is not valid YAML: {} on line {}{hint}",
+            e.info(),
+            e.marker().line()
+        )
+    })?;
+    let field = |key: &str| {
+        documents
+            .first()
+            .and_then(|document| document[key].as_str())
+            .map(|value| value.split_whitespace().collect::<Vec<_>>().join(" "))
+            .filter(|value| !value.is_empty())
+    };
+    let name = field("name").ok_or("SKILL.md frontmatter has no name")?;
+    let description = field("description").ok_or("SKILL.md frontmatter has no description")?;
+    Ok((name, description))
+}
+
 /// The id the application itself has among the modules in Settings → Modules: sources offer
 /// it like a module (`devtool-v<version>` releases), and it is installed by the updater.
 pub const APPLICATION_ID: &str = "app";
@@ -441,6 +488,35 @@ mod tests {
         assert!(Package::read(&dir).unwrap_err().contains("X.Y.Z"));
         std::fs::remove_dir_all(&dir).unwrap();
         assert!(Package::read(&dir).is_err());
+    }
+
+    #[cfg(feature = "archive")]
+    #[test]
+    fn a_skill_frontmatter_is_yaml_with_a_name_and_a_description() {
+        assert!(skill_frontmatter("name: x\n").is_err());
+        assert!(skill_frontmatter("---\nname: x\ndescription: y\n").is_err());
+        assert_eq!(
+            skill_frontmatter(
+                "\u{feff}---\r\nname: x\r\ndescription: |\r\n  line one\r\n  line two\r\nlicense: MIT\r\n---\r\n# x: y\r\n"
+            ),
+            Ok(("x".into(), "line one line two".into()))
+        );
+        assert_eq!(
+            skill_frontmatter("---\nname: x\ndescription: \"REST checks: #endpoint\"\n---\n"),
+            Ok(("x".into(), "REST checks: #endpoint".into()))
+        );
+        assert_eq!(
+            skill_frontmatter("---\nname: x\ndescription: REST checks: #endpoint\n---\n"),
+            Err("SKILL.md frontmatter is not valid YAML: mapping values are not allowed in this context on line 3; put a value that has \": \" in it in quotes".into())
+        );
+        assert_eq!(
+            skill_frontmatter("---\n- name: x\n---\n"),
+            Err("SKILL.md frontmatter has no name".into())
+        );
+        assert_eq!(
+            skill_frontmatter("---\nname: x\ndescription: 7\n---\n"),
+            Err("SKILL.md frontmatter has no description".into())
+        );
     }
 
     #[cfg(feature = "archive")]

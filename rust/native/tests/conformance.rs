@@ -83,6 +83,21 @@ fn every_manifest_is_unambiguous_and_its_console_is_self_consistent() {
     }
 }
 
+/// The Agent's runtime silently skips a skill whose frontmatter is not valid YAML.
+#[test]
+fn every_module_brings_a_skill_the_agent_can_load() {
+    use services_contracts::package::{skill_frontmatter, skill_name};
+    let modules = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../modules");
+    for module in services() {
+        let file = modules.join(module.name).join("skill/SKILL.md");
+        let text =
+            std::fs::read_to_string(&file).unwrap_or_else(|e| panic!("{}: {e}", file.display()));
+        let (name, _) =
+            skill_frontmatter(&text).unwrap_or_else(|e| panic!("{}: {e}", file.display()));
+        assert_eq!(name, skill_name(module.name), "{}", file.display());
+    }
+}
+
 #[tokio::test]
 async fn a_service_without_saved_hints_gets_its_manifest_defaults() {
     let host = Host::new();
@@ -224,12 +239,12 @@ async fn every_request_gets_an_envelope_echoing_its_id() {
 #[tokio::test]
 async fn requests_for_a_missing_module_fail_clearly() {
     let host = Host::new();
-    let reply = host.call("opensearch", json!({})).await;
-    assert_eq!(reply.error(), "Unknown service \"opensearch\"");
-    let discovery = host.discover("opensearch", json!({})).await;
+    let reply = host.call("kafka", json!({})).await;
+    assert_eq!(reply.error(), "Unknown service \"kafka\"");
+    let discovery = host.discover("kafka", json!({})).await;
     assert_eq!(
         discovery.discovery_error().unwrap_or_default(),
-        "Unknown service \"opensearch\""
+        "Unknown service \"kafka\""
     );
 }
 

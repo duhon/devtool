@@ -1,5 +1,24 @@
 # Release notes
 
+## 3.6.0
+
+- `Repeat` in `#options` takes a time with its unit: `Repeat: 5s`, `2m` or `1h`, from 1
+  second to 24 hours. A bare number such as `Repeat: 5` is an error with an example.
+  `Repeat-Until: changed` replaces `Until: changed`, and completion offers it only under
+  a `Repeat` line. The Console status shows the interval in its unit: "next in 2m".
+- History shows a check's response the way its `Format` asked for: `vertical` rows or a
+  JSON array, as in the Console. Before, History always showed a table.
+- Settings → Agent shows the saved Reasoning after a restart; before, it showed the
+  model's highest level while chats used the saved one. Reasoning is now a slider with
+  one step per level the model supports.
+- OpenSearch is a standard module: install it from the Standard source in Settings →
+  Modules. Version 1.0.0 replaces the separate OpenSearch 0.1.x package, and saved
+  checks and Hints stay.
+- The Agent now loads the skills of the standard modules: their descriptions were not
+  valid YAML, so Copilot skipped them and answered "Skill not found". Update the modules
+  in Settings → Modules (Artemis 4.0.1, the others 3.2.2). A module or source whose skill
+  frontmatter is not valid YAML is now refused with the line of the error.
+
 ## 3.5.0
 
 - Every service has `#options` with three Console keys. `Repeat: 5` runs the check

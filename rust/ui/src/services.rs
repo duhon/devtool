@@ -24,7 +24,7 @@ pub fn attach(id: &str, ui: &'static dyn ServiceUi) {
 
 /// Packaged modules linked natively, so tests run their console parts without a browser.
 #[cfg(not(target_arch = "wasm32"))]
-fn linked() -> [(&'static str, &'static dyn ServiceUi); 7] {
+fn linked() -> [(&'static str, &'static dyn ServiceUi); 8] {
     [
         (
             services_module_rest_ui::MANIFEST,
@@ -53,6 +53,10 @@ fn linked() -> [(&'static str, &'static dyn ServiceUi); 7] {
         (
             services_module_artemis_ui::MANIFEST,
             &services_module_artemis_ui::Artemis,
+        ),
+        (
+            services_module_opensearch_ui::MANIFEST,
+            &services_module_opensearch_ui::OpenSearch,
         ),
     ]
 }

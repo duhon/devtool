@@ -488,6 +488,30 @@ fn saved_hints_are_offered_only_in_their_section() {
 }
 
 #[test]
+fn repeat_until_is_offered_under_a_repeat() {
+    let options = |lines: &str| -> Vec<String> {
+        let source = format!("#check a\n#endpoint\nGET https://a\n#options\n{lines}");
+        let line = source.lines().count();
+        suggest(
+            "rest",
+            "",
+            &format!("{source}\n"),
+            line,
+            0,
+            &[],
+            &Value::Null,
+        )
+        .candidates
+        .into_iter()
+        .map(|candidate| candidate.text)
+        .filter(|text| !text.starts_with('#'))
+        .collect()
+    };
+    assert_eq!(options("X-Debug: 1"), ["Repeat: 5s"]);
+    assert_eq!(options("Repeat: 1m"), ["Repeat-Until: changed"]);
+}
+
+#[test]
 fn declared_section_hints_merge_with_saved_lines() {
     let hints = saved_hints("Authorization: Basic eA==\n#options\nCount: 100");
     let options: Vec<_> = suggest("splunk", "options", "", 0, 0, &hints, &Value::Null)

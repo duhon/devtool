@@ -240,9 +240,10 @@ fn build_packages(
             let name = services_contracts::package::skill_name(&package.id);
             let text = fs::read_to_string(skill.join("SKILL.md"))
                 .with_context(|| format!("{} has no SKILL.md", skill.display()))?;
+            let (found, _) = services_contracts::package::skill_frontmatter(&text)
+                .map_err(|e| anyhow::anyhow!("{}: {e}", skill.join("SKILL.md").display()))?;
             ensure!(
-                text.lines()
-                    .any(|line| line.trim_end() == format!("name: {name}")),
+                found == name,
                 "{} must be named {name} in its frontmatter",
                 skill.join("SKILL.md").display()
             );

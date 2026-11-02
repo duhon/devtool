@@ -7,7 +7,7 @@ use super::{
 use serde_json::json;
 use services_contracts::agent::{Catalog, FUSION_MODEL_ID, FUSION_MODEL_NAME, Model, Options};
 use std::rc::Rc;
-use web_sys::{HtmlInputElement, HtmlSelectElement};
+use web_sys::HtmlInputElement;
 use yew::prelude::*;
 
 const STORAGE_KEY: &str = "servicesConsole.agentOptions";
@@ -48,7 +48,7 @@ pub enum Msg {
     Close,
     Move(bool),
     Choose(String),
-    Reasoning(String),
+    Reasoning(usize),
 }
 
 pub struct AgentSettings {
@@ -61,6 +61,7 @@ pub struct AgentSettings {
     loading: bool,
     started: f64,
     input: NodeRef,
+    reasoning: NodeRef,
 }
 
 fn category(model: &Model) -> &str {
@@ -82,6 +83,33 @@ impl AgentSettings {
             .as_ref()
             .or(catalog.current.model.as_ref())?;
         catalog.models.iter().find(|model| &model.id == id)
+    }
+
+    fn efforts(&self) -> &[String] {
+        self.current()
+            .map(|model| model.reasoning_efforts.as_slice())
+            .unwrap_or_default()
+    }
+
+    fn default_effort(&self) -> Option<&str> {
+        self.catalog
+            .as_ref()
+            .filter(|_| self.options.model.is_none())
+            .and_then(|catalog| catalog.current.reasoning_effort.as_deref())
+            .or_else(|| {
+                self.current()
+                    .and_then(|model| model.default_reasoning_effort.as_deref())
+            })
+    }
+
+    /// The slider position: the saved level, otherwise the level new chats get by default.
+    fn reasoning_level(&self) -> Option<usize> {
+        let efforts = self.efforts();
+        self.options
+            .reasoning_effort
+            .as_deref()
+            .or(self.default_effort())
+            .and_then(|effort| efforts.iter().position(|level| level == effort))
     }
 
     fn label(&self) -> String {
@@ -182,6 +210,7 @@ impl Component for AgentSettings {
             loading: false,
             started: 0.0,
             input: NodeRef::default(),
+            reasoning: NodeRef::default(),
         };
         settings.query = settings.label();
         settings
@@ -270,19 +299,20 @@ impl Component for AgentSettings {
                     },
                 );
             }
-            Msg::Reasoning(effort) => {
-                let model = self.options.model.clone().or_else(|| {
-                    self.catalog
-                        .as_ref()
-                        .and_then(|catalog| catalog.current.model.clone())
-                });
-                self.save(
-                    ctx,
-                    Options {
-                        model,
-                        reasoning_effort: (!effort.is_empty()).then_some(effort),
-                    },
-                );
+            Msg::Reasoning(level) => {
+                let Some(model) = self.current() else {
+                    return false;
+                };
+                let Some(effort) = model.reasoning_efforts.get(level).cloned() else {
+                    return false;
+                };
+                // Choosing the model's own default stores no level, so new chats keep following the model.
+                let options = Options {
+                    model: Some(model.id.clone()),
+                    reasoning_effort: (model.default_reasoning_effort.as_ref() != Some(&effort))
+                        .then_some(effort),
+                };
+                self.save(ctx, options);
             }
         }
         true
@@ -293,15 +323,24 @@ impl Component for AgentSettings {
         let open = self.open && !self.loading && self.catalog.is_some();
         let selected = matches.get(self.selected).map(|model| model.id.clone());
         let current = self.current();
-        let efforts = current
-            .map(|model| model.reasoning_efforts.as_slice())
-            .unwrap_or_default();
-        let default_effort = self
-            .catalog
-            .as_ref()
-            .filter(|_| self.options.model.is_none())
-            .and_then(|catalog| catalog.current.reasoning_effort.as_deref())
-            .or_else(|| current.and_then(|model| model.default_reasoning_effort.as_deref()));
+        let efforts = self.efforts();
+        let default_effort = self.default_effort();
+        let level = self.reasoning_level();
+        let disabled = self.loading || efforts.is_empty();
+        let position = |index: usize| {
+            if efforts.len() < 2 {
+                0.0
+            } else {
+                index as f64 * 100.0 / (efforts.len() - 1) as f64
+            }
+        };
+        let thumb = level.map(position).unwrap_or_default();
+        let value = match level {
+            Some(index) => efforts[index].clone(),
+            None if efforts.is_empty() => "Not supported".into(),
+            None => "Default".into(),
+        };
+        let is_default = level.is_some_and(|index| Some(efforts[index].as_str()) == default_effort);
         let active = open
             .then(|| selected.clone())
             .flatten()
@@ -355,15 +394,55 @@ impl Component for AgentSettings {
                         </div>
                     }
                 </div>
-                <label for="agent-reasoning">{"Reasoning"}</label>
-                <select id="agent-reasoning" data-testid="agent-reasoning"
-                    disabled={self.loading || efforts.is_empty()}
-                    value={self.options.reasoning_effort.clone().unwrap_or_default()}
-                    onchange={ctx.link().callback(|event:Event|Msg::Reasoning(event.target_unchecked_into::<HtmlSelectElement>().value()))}>
-                    <option value="">{if efforts.is_empty() {"Not supported".to_owned()} else {default_effort.map(|effort|format!("Default ({effort})")).unwrap_or_else(||"Default".into())}}</option>
-                    {for efforts.iter().map(|effort|html!{<option value={effort.clone()}>{effort}</option>})}
-                </select>
+                <div class="agent-reasoning-head">
+                    <label for="agent-reasoning">{"Reasoning"}</label>
+                    <span class={classes!("agent-reasoning-value",disabled.then_some("disabled"))} data-testid="agent-reasoning-value">
+                        {&value}
+                        if is_default {<small>{" · default"}</small>}
+                    </span>
+                </div>
+                <div class={classes!("agent-reasoning",disabled.then_some("disabled"))}>
+                    <div class="agent-reasoning-track">
+                        <div class="agent-reasoning-fill" style={format!("width:{thumb}%")}></div>
+                        {for efforts.iter().enumerate().map(|(index,_)|html!{
+                            <div class={classes!("agent-reasoning-tick",level.is_some_and(|level|index<=level).then_some("on"))}
+                                style={format!("left:{}%",position(index))}></div>
+                        })}
+                        if let Some(index)=default_effort.and_then(|effort|efforts.iter().position(|level|level==effort)) {
+                            <div class="agent-reasoning-default" title="Model default" style={format!("left:{}%",position(index))}></div>
+                        }
+                        if level.is_some() || efforts.is_empty() {
+                            <div class="agent-reasoning-thumb" style={format!("left:{thumb}%")}></div>
+                        }
+                    </div>
+                    <input id="agent-reasoning" data-testid="agent-reasoning" type="range" ref={self.reasoning.clone()}
+                        min="0" max={efforts.len().saturating_sub(1).to_string()} step="1"
+                        value={level.unwrap_or_default().to_string()} aria-valuetext={value.clone()} {disabled}
+                        oninput={ctx.link().batch_callback(|event:InputEvent|event.target_unchecked_into::<HtmlInputElement>().value().parse().ok().map(Msg::Reasoning))}/>
+                </div>
+                if !efforts.is_empty() {
+                    <div class="agent-reasoning-levels">
+                        {for efforts.iter().enumerate().map(|(index,effort)|{
+                            let place=if index==0 {"left:-7px".to_owned()} else if index+1==efforts.len() {"right:-7px".to_owned()} else {format!("left:{}%;transform:translateX(-50%)",position(index))};
+                            html!{
+                                <button type="button" tabindex="-1" data-testid="agent-reasoning-level"
+                                    class={classes!("agent-reasoning-level",(level==Some(index)).then_some("selected"))}
+                                    style={place} {disabled} onclick={ctx.link().callback(move |_|Msg::Reasoning(index))}>{effort}</button>
+                            }
+                        })}
+                    </div>
+                }
             </div>
+        }
+    }
+
+    // Yew sets `value` before late-loaded levels change the range, so align the control with the saved level.
+    fn rendered(&mut self, _ctx: &Context<Self>, _first_render: bool) {
+        if let Some(input) = self.reasoning.cast::<HtmlInputElement>() {
+            let value = self.reasoning_level().unwrap_or_default().to_string();
+            if input.value() != value {
+                input.set_value(&value);
+            }
         }
     }
 }

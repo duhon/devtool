@@ -740,7 +740,7 @@ impl App {
                     repeat.last = Some(body.clone());
                 }
             }
-            let json = run.format == Some(console::Format::Json);
+            let json = format::shows_json(&run.result, run.format);
             let doc = self.docs.entry(service.into()).or_default();
             let preserve_after = crate::document::check_lines(
                 doc,
@@ -1011,7 +1011,7 @@ impl App {
                             format!(
                                 " · Repeat: run {} done, next in {}",
                                 repeat.count,
-                                seconds(repeat.every)
+                                interval(repeat.every)
                             )
                         })
                         .unwrap_or_default();
@@ -1256,11 +1256,11 @@ impl App {
         </div>}
     }
 }
-/// `1500` → `1.5s`.
-fn seconds(ms: u32) -> String {
-    if ms.is_multiple_of(1000) {
-        format!("{}s", ms / 1000)
-    } else {
-        format!("{}s", f64::from(ms) / 1000.0)
+/// A repeat's time the way `Repeat:` takes it: 5s, 2m or 1h.
+fn interval(ms: u32) -> String {
+    match ms / 1000 {
+        seconds if seconds.is_multiple_of(3600) => format!("{}h", seconds / 3600),
+        seconds if seconds.is_multiple_of(60) => format!("{}m", seconds / 60),
+        seconds => format!("{seconds}s"),
     }
 }

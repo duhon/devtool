@@ -10,7 +10,14 @@ fn the_built_in_modules_seed_the_tabs_labels_and_order() {
     assert_eq!(
         services::ids(),
         [
-            "rest", "mysql", "graphql", "grpc", "splunk", "terminal", "artemis"
+            "rest",
+            "mysql",
+            "graphql",
+            "grpc",
+            "splunk",
+            "terminal",
+            "artemis",
+            "opensearch"
         ]
     );
     let labels: Vec<_> = services::ids()
@@ -20,14 +27,28 @@ fn the_built_in_modules_seed_the_tabs_labels_and_order() {
     assert_eq!(
         labels,
         [
-            "REST", "MySQL", "GraphQL", "gRPC", "Splunk", "Terminal", "Artemis"
+            "REST",
+            "MySQL",
+            "GraphQL",
+            "gRPC",
+            "Splunk",
+            "Terminal",
+            "Artemis",
+            "OpenSearch"
         ]
     );
     assert_eq!(services::label("unknown"), "unknown");
     assert_eq!(
         services::default_order(),
         [
-            "rest", "mysql", "graphql", "grpc", "splunk", "terminal", "artemis"
+            "rest",
+            "mysql",
+            "graphql",
+            "grpc",
+            "splunk",
+            "terminal",
+            "artemis",
+            "opensearch"
         ]
     );
     assert_eq!(services::default_service(), "rest");
@@ -50,6 +71,7 @@ fn sections_and_new_documents_come_from_the_manifests() {
         ),
         ("splunk", &["endpoint", "headers", "options", "search"]),
         ("terminal", &["endpoint", "options", "command", "env"]),
+        ("opensearch", &["endpoint", "headers", "options", "body"]),
     ] {
         assert_eq!(console::markers(service), sections, "{service}");
         let mut template = vec!["check"];
