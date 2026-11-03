@@ -75,8 +75,10 @@
 
   // A side panel searches its own editor.
   await click(testid('console-variables-toggle'));
+  // The editor appears once the Variables profiles have loaded.
+  await wait(()=>visible(document.querySelector('[data-testid="console-variables-editor"]')),
+    'Variables editor is not visible');
   const variables=cm('console-variables-editor');
-  await wait(()=>visible(variables.getWrapperElement()),'Variables editor is not visible');
   variables.focus();
   await key('Mod+F');
   await wait(()=>bar()&&variables.getWrapperElement().contains(bar()),'Mod+F must open the find bar in Variables');
