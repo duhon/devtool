@@ -1,5 +1,19 @@
 # Release notes
 
+## 3.7.0
+
+- Find and Replace in every editor. ⌘F (Ctrl+F) opens a find bar in the editor of the
+  panel holding focus: the Console, Variables, Dictionary, Templates, Hints, History or
+  Export. The bar names that editor ("Find in Console · REST") and searches only it.
+  DevTools no longer opens its own search bar for these keys.
+- ⌥⌘F (Ctrl+H) adds Replace. Enter, ⇧Enter, ⌘G, ⇧⌘G and F3 move between matches;
+  ⌥C, ⌥W and ⌥R toggle Match Case, Whole Word and Regular Expression; Escape closes.
+  A regular expression replacement takes `$1` and `$<name>`.
+- Replace and Replace All never change Console responses: Replace All reports how many
+  matches it left there, and one Undo reverts it. Read-only editors offer Find only.
+- Large Console documents stay fast: 20,000 replacements take under half a second, and
+  so does their Undo.
+
 ## 3.6.0
 
 - `Repeat` in `#options` takes a time with its unit: `Repeat: 5s`, `2m` or `1h`, from 1

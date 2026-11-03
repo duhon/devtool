@@ -169,6 +169,96 @@ fn editing_fixture() -> EditHistory {
     history
 }
 
+/// Applies line edits to the fixture as one editor batch and one edit at a time.
+fn batch_and_single(
+    edits: &[(usize, usize, usize, &str)],
+) -> (Vec<String>, DocumentEdit, DocumentEdit) {
+    let mut batch = editing_fixture();
+    let mut single = editing_fixture();
+    single.synchronize_checks(batch.checks(), 1);
+    let ids = batch
+        .checks()
+        .iter()
+        .map(|check| check.id.clone())
+        .collect();
+    let mut lines: Vec<String> = batch.text().split('\n').map(str::to_owned).collect();
+    let changes: Vec<_> = edits
+        .iter()
+        .map(|&(line, from, to, text)| {
+            let removed = lines[line][from..to].to_owned();
+            lines[line].replace_range(from..to, text);
+            TextChange {
+                from: Position { line, ch: from },
+                to: Position { line, ch: to },
+                text: vec![text.into()],
+                removed: vec![removed],
+                origin: Some("*replace".into()),
+            }
+        })
+        .collect();
+    let batched = batch
+        .apply(lines.join("\n"), &changes, 2, &mut None)
+        .unwrap();
+    let last = edits
+        .iter()
+        .map(|&(line, from, to, text)| {
+            edit(
+                &mut single,
+                (line, from),
+                (line, to),
+                text,
+                "*replace",
+                2,
+                &mut None,
+            )
+        })
+        .last()
+        .unwrap();
+    (ids, batched, last)
+}
+
+#[test]
+fn line_edit_batches_match_edits_applied_one_by_one() {
+    let text = editing_fixture().text().to_owned();
+    // Replace All order: last match first, a check title among them.
+    let mut edits: Vec<_> = text
+        .split('\n')
+        .enumerate()
+        .filter_map(|(line, content)| {
+            content
+                .find("fixture")
+                .map(|at| (line, at, at + 7, "pin"))
+                .or((content == "#check second").then_some((line, 7, 13, "two")))
+        })
+        .collect();
+    edits.reverse();
+    let (ids, batched, single) = batch_and_single(&edits);
+    assert!(batched.text.contains("GET https://pin.invalid/moved"));
+    assert!(batched.text.contains("#check two\n"));
+    assert_eq!(batched.text, single.text);
+    assert_eq!(batched.regions, single.regions);
+    assert_eq!(batched.checks, single.checks);
+    assert_eq!(
+        batched
+            .checks
+            .iter()
+            .map(|check| &check.id)
+            .collect::<Vec<_>>(),
+        ids.iter().collect::<Vec<_>>()
+    );
+    assert_eq!(batched.checks[1].title, "two");
+    // A line that becomes a check takes the step-by-step path and gains its own identity.
+    let endpoint = text
+        .split('\n')
+        .position(|line| line == "#endpoint")
+        .unwrap();
+    let (_, batched, single) = batch_and_single(&[(endpoint, 0, 9, "#check new"), edits[0]]);
+    assert_eq!(batched.text, single.text);
+    assert_eq!(batched.regions, single.regions);
+    assert_eq!(batched.checks.len(), single.checks.len());
+    assert_eq!(batched.checks.len(), ids.len() + 1);
+}
+
 #[test]
 fn separate_newlines_preserve_check_identity_and_exact_clipboard_matching() {
     let mut history = editing_fixture();

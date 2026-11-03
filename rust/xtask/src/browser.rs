@@ -803,6 +803,13 @@ fn scenarios() -> Vec<Scenario> {
             script(include_str!("browser-templates.js")),
         ),
         scenario(
+            "find",
+            Core,
+            60,
+            "Find and Replace in the focused editor: scope, navigation, options, Replace All outside responses, one undo, large documents",
+            script(include_str!("browser-find.js")),
+        ),
+        scenario(
             "layout",
             Core,
             60,

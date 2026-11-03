@@ -11,6 +11,7 @@ mod completion;
 mod console;
 mod discovery;
 mod document;
+mod find;
 mod format;
 mod logfmt;
 mod services;

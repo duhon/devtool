@@ -204,11 +204,18 @@
       ArrowLeft: ['ArrowLeft', 'ArrowLeft', 37, ''],
       Home: ['Home', 'Home', 36, ''],
       End: ['End', 'End', 35, ''],
+      F3: ['F3', 'F3', 114, ''],
     };
+    if (/^[A-Z]$/.test(raw)) {
+      const letter = parts.includes('Shift') ? raw : raw.toLowerCase();
+      keys[raw] = [letter, `Key${raw}`, raw.charCodeAt(0), letter];
+    }
     assert(keys[raw], `Unknown test key: ${name}`);
     const [value, code, windowsVirtualKeyCode, text] = keys[raw];
+    // Mod is the platform's primary shortcut modifier: Command on macOS, Control elsewhere.
+    const mod = parts.includes('Mod') ? (/Mac/.test(navigator.platform) ? 4 : 2) : 0;
     const modifiers = (parts.includes('Control') ? 2 : 0) | (parts.includes('Alt') ? 1 : 0)
-      | (parts.includes('Shift') ? 8 : 0);
+      | (parts.includes('Meta') ? 4 : 0) | (parts.includes('Shift') ? 8 : 0) | mod;
     const params = { key: value, code, windowsVirtualKeyCode, modifiers };
     await input('Input.dispatchKeyEvent', { ...params, type: 'keyDown', text: modifiers && name !== 'Shift+Enter' ? '' : text });
     await input('Input.dispatchKeyEvent', { ...params, type: 'keyUp' });

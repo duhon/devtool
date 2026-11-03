@@ -1535,3 +1535,134 @@
   order: -1;
   flex: 1;
 }
+
+/* Find bar: drawn inside the editor it searches. */
+.console-find-target {
+  outline: 1px solid #3574f0;
+  outline-offset: -1px;
+}
+
+.console-find {
+  position: absolute;
+  top: 4px;
+  right: 16px;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  box-sizing: border-box;
+  width: 440px;
+  max-width: calc(100% - 24px);
+  padding: 4px 6px 6px;
+  font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #dfe1e5;
+  background: #2b2d30;
+  border: 1px solid #43454a;
+  border-radius: 6px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+  cursor: default;
+}
+
+.console-find-scope {
+  overflow: hidden;
+  color: #868a91;
+  font-size: 11px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.console-find-scope strong {
+  color: #a8adbd;
+  font-weight: 600;
+}
+
+.console-find-row {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.console-find-replace {
+  padding-left: 22px;
+}
+
+.console-find-input {
+  flex: 1;
+  min-width: 80px;
+  height: 22px;
+  box-sizing: border-box;
+  padding: 2px 6px;
+  font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: #dfe1e5;
+  background: #1e1f22;
+  border: 1px solid #43454a;
+  border-radius: 4px;
+  outline: none;
+}
+
+.console-find-input:focus {
+  border-color: #3574f0;
+}
+
+.console-find button {
+  height: 22px;
+  padding: 0 7px;
+  font: inherit;
+  line-height: 20px;
+}
+
+.console-find .console-find-option,
+.console-find .console-find-icon,
+.console-find .console-find-expand {
+  min-width: 22px;
+  padding: 0 4px;
+  color: #a8adbd;
+  background: transparent;
+  border-color: transparent;
+}
+
+.console-find .console-find-option {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.console-find .console-find-option:hover,
+.console-find .console-find-icon:hover:not(:disabled),
+.console-find .console-find-expand:hover {
+  color: #dfe1e5;
+  background: #393b40;
+}
+
+.console-find .console-find-option.active {
+  color: #fff;
+  background: rgba(53, 116, 240, 0.35);
+  border-color: #3574f0;
+}
+
+.console-find button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.console-find-count {
+  min-width: 64px;
+  padding: 0 4px;
+  overflow: hidden;
+  color: #a8adbd;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  text-align: center;
+}
+
+.console-find-count.is-error {
+  color: #ff8980;
+}
+
+.cm-find-match {
+  background: rgba(255, 196, 0, 0.22);
+  border-radius: 2px;
+}
+
+.cm-find-current {
+  background: rgba(255, 140, 0, 0.55);
+  outline: 1px solid #ffb84d;
+}

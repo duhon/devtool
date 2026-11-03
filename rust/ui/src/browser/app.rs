@@ -1744,6 +1744,7 @@ impl Component for App {
         html! {<>
             <style>{include_str!("../../assets/console.css")}</style>
             <style>{include_str!("ui.css")}</style>
+            <super::find::FindBar/>
             <div data-testid="native-status" role="status" hidden={self.connection.is_none()}><button title={self.connection.clone().unwrap_or_default()} onclick={ctx.link().callback(|_|Msg::Retry)}>{"Retry connection"}</button></div>
             if let Some(notice)=&self.notice{<div class="banner banner-error" role="alert" data-testid="app-notice">{&notice.text}<button onclick={ctx.link().callback(|_|Msg::ClearNotice)}>{"Dismiss"}</button></div>}
             if self.updates.busy() {

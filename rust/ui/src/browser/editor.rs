@@ -50,6 +50,9 @@ pub struct Props {
     pub console: bool,
     #[prop_or_default]
     pub testid: String,
+    /// Names the editor in the find bar, e.g. "Console · REST".
+    #[prop_or_default]
+    pub label: String,
     #[prop_or_default]
     pub service: String,
     #[prop_or_default]
@@ -296,6 +299,11 @@ impl Component for Editor {
                             format!("{}-editor", ctx.props().testid).into(),
                         ],
                     );
+                    let _ = call(
+                        &wrapper,
+                        "setAttribute",
+                        &["data-find-label".into(), ctx.props().label.as_str().into()],
+                    );
                     if ctx.props().console {
                         let _ = call(
                             &get(&wrapper, "classList"),
@@ -340,7 +348,12 @@ impl Component for Editor {
                         web_sys::console::error_1(&e);
                     }
                 });
-                if let Err(e) = call(&instance, "on", &["change".into(), change.as_ref().clone()]) {
+                // Once per operation: Replace All makes thousands of changes in one.
+                if let Err(e) = call(
+                    &instance,
+                    "on",
+                    &["changes".into(), change.as_ref().clone()],
+                ) {
                     web_sys::console::error_1(&e);
                 }
                 self.closures.push(change);
@@ -408,7 +421,13 @@ impl Component for Editor {
                     let history = self.edit_history.clone();
                     let copied = instance.clone();
                     let link = ctx.link().clone();
-                    let copy = Closure::<dyn FnMut(JsValue)>::new(move |_| {
+                    let copy = Closure::<dyn FnMut(JsValue)>::new(move |event: JsValue| {
+                        // Copying in the find bar copies its input, not the editor selection.
+                        if call(&get(&event, "target"), "closest", &[".console-find".into()])
+                            .is_ok_and(|bar| !bar.is_null())
+                        {
+                            return;
+                        }
                         let result = (|| -> Result<crate::document::ClipboardFragment, String> {
                             let from = call(&copied, "getCursor", &["from".into()])
                                 .map_err(super::error)?;
@@ -703,8 +722,16 @@ impl Component for Editor {
                 self.closures.push(mouse);
                 let hints = self.hints.clone();
                 let tooltip = self.variable_tooltip.clone();
+                let tooltip_hover = self.variable_tooltip.clone();
                 let hovered = instance.clone();
                 let hover = Closure::<dyn FnMut(JsValue)>::new(move |event: JsValue| {
+                    // The find bar covers the text under the pointer.
+                    if call(&get(&event, "target"), "closest", &[".console-find".into()])
+                        .is_ok_and(|bar| !bar.is_null())
+                    {
+                        hide_variable_tooltip(&tooltip_hover);
+                        return;
+                    }
                     let result = event
                         .dyn_into::<web_sys::MouseEvent>()
                         .map_err(|_| JsValue::from_str("Variable hover is not a mouse event"))
@@ -821,6 +848,15 @@ impl Component for Editor {
                 )
             {
                 ctx.props().onerror.emit(super::error(error));
+            }
+            if old.label != ctx.props().label
+                && let Ok(wrapper) = call(instance, "getWrapperElement", &[])
+            {
+                let _ = call(
+                    &wrapper,
+                    "setAttribute",
+                    &["data-find-label".into(), ctx.props().label.as_str().into()],
+                );
             }
             if old.regions != ctx.props().regions {
                 let _ = call(
@@ -1105,6 +1141,12 @@ impl Component for Editor {
             }
         }
         if let Some(i) = self.instance.take() {
+            // Lets the find bar drop its highlights before the document is cached.
+            let _ = call(
+                &get(&js_sys::global(), "CodeMirror"),
+                "signal",
+                &[i.clone(), "servicesDestroy".into(), i.clone()],
+            );
             if let Err(e) = clear_marks(&i, "__servicesObjectMarks") {
                 web_sys::console::error_1(&e);
             }

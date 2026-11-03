@@ -800,7 +800,8 @@ impl Component for ConsoleVariables {
             <div class="console-variables" hidden={!ctx.props().visible}>
             if self.vars["profiles"].get(&self.profile).is_some() {
                 <Editor key={format!("console-profile:{}",self.profile)} cache_key={format!("console-profile:{}",self.profile)}
-                testid={if ctx.props().dictionary {"console-dictionary"}else{"console-variables"}} service="vars" field="variables" mode="headers" readonly={self.profile=="env"}
+                testid={if ctx.props().dictionary {"console-dictionary"}else{"console-variables"}}
+                label={format!("{} · {}",if ctx.props().dictionary {"Dictionary"}else{"Variables"},self.profile)} service="vars" field="variables" mode="headers" readonly={self.profile=="env"}
                 value={self.drafts.get(&self.profile).or_else(||self.texts.get(&self.profile)).cloned().unwrap_or_else(||profiles::format(&self.vars["profiles"][&self.profile]))}
                 hints={profiles::hints(self.vars.get("context").unwrap_or(&self.vars))} onchange={ctx.link().callback(Msg::Text)}
                 onerror={ctx.link().callback(Msg::EditorError)}

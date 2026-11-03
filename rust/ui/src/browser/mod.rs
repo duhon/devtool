@@ -5,6 +5,7 @@ mod app;
 mod check_rail;
 mod console_variables;
 mod editor;
+mod find;
 mod history;
 mod module_settings;
 mod module_ui;

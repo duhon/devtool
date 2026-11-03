@@ -188,6 +188,34 @@ and undo generations. A check inserted into output splits its owned ranges:
 the new request is executable, while literal markers in the old output remain
 output. Generation snapshots contain only range metadata, not document copies.
 
+## Find and Replace
+
+`browser/find.rs` is one find bar for every editor; `find.rs` holds its pure
+logic (pattern, UTF-16 offsets, response ranges, replacement templates). A
+shortcut opens it in the editor of the panel holding focus: the focused editor,
+the open side panel's editor (Variables, Dictionary, Templates, Hints, History),
+the Export dialog, else the Console. The bar is drawn inside that editor, which
+is outlined, and names it ("Find in Console · REST"); it never searches another
+editor. The window listens in the capture phase, so DevTools doesn't open its
+own search bar for these keys:
+
+| Keys (Ctrl on Windows/Linux) | Action |
+| --- | --- |
+| ⌘F | Find; a single-line selection becomes the query |
+| ⌥⌘F (also Ctrl+H) | Find and Replace |
+| Enter / ⇧Enter, ⌘G / ⇧⌘G, F3 / ⇧F3 | Next / previous match |
+| ⌥C / ⌥W / ⌥R | Match Case / Whole Word / Regular Expression |
+| Enter / ⌘Enter in Replace | Replace / Replace All |
+| Escape | Close (after an open completion list) |
+
+Typing searches on from the current match. Counting stops at 10,000 matches,
+and only the matches on the visible lines are highlighted. Regular expressions
+are JavaScript ones; the replacement takes `$&`, `$1`, `$<name>`, `$$`, `\n`
+and `\t`. Replace skips Console responses; Replace All reports how many it left
+there and is one Undo step. Read-only editors have no Replace. A batch of
+same-line edits outside responses that keeps every check line a check (Replace
+All and its Undo) is applied to the Console edit history in one pass.
+
 ## Embedded Agent
 
 The Console-only Agent panel uses Copilot through the native companion. Its chat-session tabs occupy the shared
@@ -335,7 +363,8 @@ filesystem, browser or external MCP tools are exposed.
 Browser acceptance selectors: `console-editor-editor`, `console-service-rest`
 (and the other Console languages), `console-variables-toggle`,
 `console-dictionary-toggle`, `console-variables-editor`,
-`console-dictionary-editor`, `console-tool-panel`, `native-status`.
+`console-dictionary-editor`, `console-tool-panel`, `native-status`, and the
+find bar's `find-bar`, `find-scope`, `find-query`, `find-count`, `find-replacement`.
 The editor test ID is on the CodeMirror wrapper; integrations can use its
 CodeMirror instance API or the editor's keyboard input.
 

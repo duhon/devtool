@@ -1091,7 +1091,7 @@ impl App {
                     onselect={ctx.link().callback(Msg::Check)} onerror={ctx.link().callback(Msg::EditorError)}/>
                 <div class="console-workspace-body">
                     <div class="console-editor-host">
-                        <Editor key={format!("console:{service}")} cache_key={format!("console:{service}")} testid="console-editor" service={service.clone()} {regions} {discovery} value={document} mode={format!("console-{service}")} console={true} checks={self.checks.get(service).cloned().unwrap_or_default()} check_scope={format!("{}:{service}",self.workspace_id)} hints={self.completions(service)} onchange={ctx.link().callback(Msg::ConsoleText)} onedit={ctx.link().callback(move |edit|Msg::ConsoleEdited(edited_service.clone(),edit))} onrun={ctx.link().callback(|(s,l)|Msg::ConsoleRun(s,l))} ondiscover={ctx.link().callback(|_|Msg::Discover)} onauto={ctx.link().callback(move |endpoint|Msg::AutoDiscover(owner.clone(), endpoint))} onscroll={ctx.link().callback(move |viewport|Msg::Scroll(scroll_service.clone(),viewport))} {scroll_target} onerror={ctx.link().callback(Msg::EditorError)}
+                        <Editor key={format!("console:{service}")} cache_key={format!("console:{service}")} testid="console-editor" label={format!("Console · {}",crate::services::label(service))} service={service.clone()} {regions} {discovery} value={document} mode={format!("console-{service}")} console={true} checks={self.checks.get(service).cloned().unwrap_or_default()} check_scope={format!("{}:{service}",self.workspace_id)} hints={self.completions(service)} onchange={ctx.link().callback(Msg::ConsoleText)} onedit={ctx.link().callback(move |edit|Msg::ConsoleEdited(edited_service.clone(),edit))} onrun={ctx.link().callback(|(s,l)|Msg::ConsoleRun(s,l))} ondiscover={ctx.link().callback(|_|Msg::Discover)} onauto={ctx.link().callback(move |endpoint|Msg::AutoDiscover(owner.clone(), endpoint))} onscroll={ctx.link().callback(move |viewport|Msg::Scroll(scroll_service.clone(),viewport))} {scroll_target} onerror={ctx.link().callback(Msg::EditorError)}
                             templates={self.template_entries(service)}
                             agent_edit={self.agent_edit.as_ref().filter(|edit|&edit.command.service==service).map(|edit|edit.command.clone())}
                             onagentedit={ctx.link().callback(|(serial,result)|Msg::AgentEdited(serial,result))}/>
@@ -1146,7 +1146,7 @@ impl App {
                         }
                         if self.console_panel==Some(ConsolePanel::Hints) {
                             <div class="console-hints-editor">
-                                <Editor key={format!("hints:{service}")} cache_key={format!("hints:{service}")} testid="console-hints" service="hints" field={service.clone()}
+                                <Editor key={format!("hints:{service}")} cache_key={format!("hints:{service}")} testid="console-hints" label={format!("Hints · {}",crate::services::label(service))} service="hints" field={service.clone()}
                                     value={self.hints_drafts.get(service).or_else(||self.hints.get(service)).cloned().unwrap_or_default()} mode="headers" onchange={ctx.link().callback(Msg::HintsText)} onerror={ctx.link().callback(Msg::EditorError)}/>
                             </div>
                         }
@@ -1250,7 +1250,7 @@ impl App {
             </div>
             if let Some(command)=&self.export_text{<div class="console-hints-overlay"><div class="console-hints-panel">
                 <div class="console-hints-panel-header">{"Export - copy this command"}</div>
-                <Editor key="export" value={command.clone()} mode="shell" onchange={ctx.link().callback(Msg::ExportText)}/>
+                <Editor key="export" label="Export" value={command.clone()} mode="shell" onchange={ctx.link().callback(Msg::ExportText)}/>
                 <div class="console-hints-panel-actions"><button onclick={ctx.link().callback(|_|Msg::CloseExport)}>{"Close"}</button></div>
             </div></div>}
         </div>}

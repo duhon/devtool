@@ -520,7 +520,7 @@ impl Component for Templates {
             {heading}{footer}
             <div class="console-hints-editor" data-testid="templates-panel" hidden={!ctx.props().visible}>
                 {for self.error.iter().chain(self.load_error.iter()).map(|error|html!{<div class="agent-error" role="alert">{error}</div>})}
-                <Editor key={format!("templates:{key}")} cache_key={format!("templates:{key}")} testid="templates-editor"
+                <Editor key={format!("templates:{key}")} cache_key={format!("templates:{key}")} testid="templates-editor" label={format!("Templates · {section}")}
                     service="templates" field="definitions"
                     value={self.text(&key).to_owned()} mode={format!("console-{service}")} template_section={section.to_owned()}
                     readonly={!self.loaded || self.loading}

@@ -5,6 +5,7 @@ pub mod completion;
 pub mod console;
 pub mod discovery;
 pub mod document;
+pub mod find;
 pub mod format;
 mod graphql_completion;
 /// GraphQL editor structure used by the browser editor: operation folding

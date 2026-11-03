@@ -406,7 +406,7 @@ impl Component for History {
                     }
                 </div>
                 if self.selected.is_some() {
-                    <Editor testid="history-editor" value={self.display_text.clone()} readonly={true} service="history" field="snapshot"
+                    <Editor testid="history-editor" label="History" value={self.display_text.clone()} readonly={true} service="history" field="snapshot"
                         regions={self.regions.clone()}
                         mode={format!("console-{}",ctx.props().service)} onchange={Callback::noop()}
                         onerror={ctx.link().callback(Msg::Error)}/>

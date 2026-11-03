@@ -111,65 +111,77 @@ impl EditHistory {
         let mut checks = self.checks.clone();
         normalize_regions(&source, &mut regions);
         let mut copied = clipboard.clone();
-        for change in changes {
-            let from = offset(&source, &change.from)?;
-            let to = offset(&source, &change.to)?;
-            if from > to || source[from..to] != change.removed.join("\n") {
-                return Err("Editor change does not match the current Console document".into());
-            }
-            if change.origin.as_deref() == Some("cut") {
-                let mut fragment = clipboard_fragment(&source, &regions, &change.from, &change.to)?;
-                fragment.checks = checks
-                    .iter()
-                    .filter(|check| {
-                        check.line >= change.from.line
-                            && (check.line > change.from.line || change.from.ch == 0)
-                            && check.line < change.to.line
-                    })
-                    .cloned()
-                    .map(|mut check| {
-                        check.line -= change.from.line;
-                        check
-                    })
-                    .collect();
-                fragment.scope = self.scope.clone();
-                fragment.moved = true;
-                copied = Some(fragment);
-            }
-            let inserted = change.text.join("\n");
-            let next = format!("{}{}{}", &source[..from], inserted, &source[to..]);
-            if change.origin.as_deref() == Some("setValue") {
-                regions.clear();
-                checks.clear();
-            } else {
-                crate::checks::remap(&source, &next, from, to, inserted.len(), &mut checks);
-                remap_change(&source, &next, change, from, to, &mut regions);
-                if change.origin.as_deref() == Some("paste")
-                    && let Some(fragment) = &copied
-                    && fragment.text == inserted
-                {
-                    regions.extend(fragment.regions.iter().map(|region| ResponseRegion {
-                        request: region.request + change.from.line,
-                        header: region.header + change.from.line,
-                        end: region.end + change.from.line,
-                        table: region.table.clone(),
-                    }));
-                    if fragment.moved && fragment.scope == self.scope {
-                        checks.extend(fragment.checks.iter().cloned().map(|mut check| {
-                            check.line += change.from.line;
-                            check
-                        }));
-                    }
-                }
-                crate::checks::normalize(&next, &regions, &mut checks);
-                if change.origin.as_deref() == Some("paste")
-                    && let Some(fragment) = &mut copied
-                {
-                    fragment.moved = false;
-                }
-                normalize_regions(&next, &mut regions);
-            }
+        let inline = if changes.len() > 1 {
+            inline_edits(&source, &regions, changes)?
+        } else {
+            None
+        };
+        if let Some(next) = inline {
+            crate::checks::normalize(&next, &regions, &mut checks);
+            normalize_regions(&next, &mut regions);
             source = next;
+        } else {
+            for change in changes {
+                let from = offset(&source, &change.from)?;
+                let to = offset(&source, &change.to)?;
+                if from > to || source[from..to] != change.removed.join("\n") {
+                    return Err("Editor change does not match the current Console document".into());
+                }
+                if change.origin.as_deref() == Some("cut") {
+                    let mut fragment =
+                        clipboard_fragment(&source, &regions, &change.from, &change.to)?;
+                    fragment.checks = checks
+                        .iter()
+                        .filter(|check| {
+                            check.line >= change.from.line
+                                && (check.line > change.from.line || change.from.ch == 0)
+                                && check.line < change.to.line
+                        })
+                        .cloned()
+                        .map(|mut check| {
+                            check.line -= change.from.line;
+                            check
+                        })
+                        .collect();
+                    fragment.scope = self.scope.clone();
+                    fragment.moved = true;
+                    copied = Some(fragment);
+                }
+                let inserted = change.text.join("\n");
+                let next = format!("{}{}{}", &source[..from], inserted, &source[to..]);
+                if change.origin.as_deref() == Some("setValue") {
+                    regions.clear();
+                    checks.clear();
+                } else {
+                    crate::checks::remap(&source, &next, from, to, inserted.len(), &mut checks);
+                    remap_change(&source, &next, change, from, to, &mut regions);
+                    if change.origin.as_deref() == Some("paste")
+                        && let Some(fragment) = &copied
+                        && fragment.text == inserted
+                    {
+                        regions.extend(fragment.regions.iter().map(|region| ResponseRegion {
+                            request: region.request + change.from.line,
+                            header: region.header + change.from.line,
+                            end: region.end + change.from.line,
+                            table: region.table.clone(),
+                        }));
+                        if fragment.moved && fragment.scope == self.scope {
+                            checks.extend(fragment.checks.iter().cloned().map(|mut check| {
+                                check.line += change.from.line;
+                                check
+                            }));
+                        }
+                    }
+                    crate::checks::normalize(&next, &regions, &mut checks);
+                    if change.origin.as_deref() == Some("paste")
+                        && let Some(fragment) = &mut copied
+                    {
+                        fragment.moved = false;
+                    }
+                    normalize_regions(&next, &mut regions);
+                }
+                source = next;
+            }
         }
         if source != text {
             return Err("Editor changes did not produce the reported Console document".into());
@@ -216,6 +228,59 @@ fn offset(source: &str, position: &Position) -> Result<usize, String> {
         start += text.len() + 1;
     }
     Err("Invalid line in Console edit".into())
+}
+/// Byte offset of a UTF-16 column within one line.
+fn column(text: &str, ch: usize) -> Result<usize, String> {
+    let mut utf16 = 0;
+    for (byte, character) in text.char_indices() {
+        if utf16 == ch {
+            return Ok(byte);
+        }
+        utf16 += character.len_utf16();
+    }
+    if utf16 == ch {
+        Ok(text.len())
+    } else {
+        Err("Invalid UTF-16 position in Console edit".into())
+    }
+}
+/// Applies a batch of edits in one pass when none can move a line, a response or a check:
+/// each stays within one line outside responses and keeps that line a check or not.
+/// Replace All and its undo send thousands of such edits; replaying them one by one is quadratic.
+fn inline_edits(
+    source: &str,
+    regions: &[ResponseRegion],
+    changes: &[TextChange],
+) -> Result<Option<String>, String> {
+    let inline = changes.iter().all(|change| {
+        change.from.line == change.to.line
+            && change.removed.len() == 1
+            && change.text.len() == 1
+            && !matches!(change.origin.as_deref(), Some("cut" | "paste" | "setValue"))
+            && !regions
+                .iter()
+                .any(|region| change.from.line >= region.header && change.from.line < region.end)
+    });
+    if !inline {
+        return Ok(None);
+    }
+    let mut lines: Vec<String> = source.split('\n').map(str::to_owned).collect();
+    for change in changes {
+        let line = lines
+            .get_mut(change.from.line)
+            .ok_or("Invalid line in Console edit")?;
+        let from = column(line, change.from.ch)?;
+        let to = column(line, change.to.ch)?;
+        if from > to || line[from..to] != change.removed[0] {
+            return Err("Editor change does not match the current Console document".into());
+        }
+        let check = crate::console::is_check(line);
+        line.replace_range(from..to, &change.text[0]);
+        if crate::console::is_check(line) != check {
+            return Ok(None);
+        }
+    }
+    Ok(Some(lines.join("\n")))
 }
 fn line_offsets(source: &str) -> Vec<usize> {
     std::iter::once(0)
