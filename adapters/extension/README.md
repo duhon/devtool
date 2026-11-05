@@ -40,9 +40,8 @@ chrome-extension://ckicpgdfkgcmgnclbfbcbkillcpaffnb/panel.html
 
 `rust/ui/` owns application state, the Console, its Variables/Dictionary
 panels and the browser transport bindings. `src/panel.js` only loads the generated
-WASM module; `devtools.js` registers the Chrome panel. Vendored CodeMirror
-is an editor dependency, not a parallel JavaScript application.
-Styles and editor dependencies live in `rust/ui/assets/`; no legacy web
+WASM module; `devtools.js` registers the Chrome panel. The text editor is
+part of the WASM module. Styles live in `rust/ui/assets/`; no legacy web
 application or Node build script is used.
 
 `rust/native/` owns request execution. Native Messaging retains the

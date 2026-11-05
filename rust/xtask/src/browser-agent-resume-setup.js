@@ -1,12 +1,12 @@
 (async () => {
   // Setup for agent-resume: creates through the UI the saved chat a later Console window must restore
   // (a live SDK session with an edit, an inline name, a draft, a closed tab and an empty legacy entry).
-  const { assert, wait, click, doubleClick, testid, cm, openConsole, setSource, key } = testDriver;
+  const { assert, wait, click, doubleClick, testid, editorOf, openConsole, setSource, key } = testDriver;
   await openConsole();
   await click(testid('console-service-rest'));
   await click(testid('console-agent-toggle'));
   const textarea = await wait(() => document.querySelector('[data-testid="agent-composer"]'), 'Agent composer');
-  setSource(cm('console-editor'), `#check Agent resume\n#endpoint\nGET ${fixtureUrl}/agent-before\n`);
+  setSource(editorOf('console-editor'), `#check Agent resume\n#endpoint\nGET ${fixtureUrl}/agent-before\n`);
   const input = text => {
     textarea.value = text;
     textarea.dispatchEvent(new InputEvent('input', { bubbles: true }));

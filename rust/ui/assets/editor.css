@@ -1,0 +1,246 @@
+/* The Yew editor (browser/editor/view.rs, render.rs). Inside `.editor-scroll`, layers stack as:
+   line backgrounds and selection (1), text and placeholder (2), caret (3), gutters (4). */
+
+.editor, .theme-dracula {
+  --editor-bg: #282a36;
+  --editor-fg: #f8f8f2;
+  --editor-gutter-fg: #6d8a88;
+  --editor-caret: #f8f8f0;
+  --editor-selection: rgba(255, 255, 255, .1);
+  --editor-fold: #8be9fd;
+  --editor-comment: #6272a4;
+  --editor-yellow: #f1fa8c;
+  --editor-purple: #bd93f9;
+  --editor-green: #50fa7b;
+  --editor-white: white;
+  --editor-pink: #ff79c6;
+  --editor-cyan: #66d9ef;
+  --editor-orange: #ffb86c;
+  --editor-function: #8be9fd;
+  --editor-dim: #6b6d70;
+  --editor-red: #ff5555;
+  --editor-field: #4f8ff7;
+}
+
+.editor {
+  position: relative;
+  overflow: clip;
+  height: 300px;
+  font-family: monospace;
+  direction: ltr;
+  background: var(--editor-bg);
+  color: var(--editor-fg);
+}
+
+.editor-scroll {
+  position: relative;
+  z-index: 0;
+  height: 100%;
+  overflow: auto;
+  overflow-anchor: none;
+  outline: none;
+  cursor: text;
+}
+
+.editor-sizer { position: relative; }
+
+.editor-gutters {
+  position: sticky;
+  left: 0;
+  z-index: 4;
+  background: var(--editor-bg);
+  white-space: nowrap;
+}
+
+.editor-gutter-rows {
+  position: absolute;
+  left: 0;
+}
+
+.editor-gutter-wrapper {
+  display: flex;
+  height: var(--line-height);
+  line-height: var(--line-height);
+}
+
+.editor-gutter-elt {
+  flex-shrink: 0;
+  box-sizing: border-box;
+  cursor: default;
+}
+
+.editor-linenumber {
+  padding: 0 3px 0 5px;
+  text-align: right;
+  color: var(--editor-gutter-fg);
+  white-space: nowrap;
+}
+
+.editor-code {
+  position: absolute;
+  right: 0;
+  user-select: none;
+}
+
+.editor-code > div {
+  position: relative;
+  height: var(--line-height);
+}
+
+.editor pre.editor-line, .editor pre.editor-line-like {
+  position: relative;
+  z-index: 2;
+  height: var(--line-height);
+  margin: 0;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font: inherit;
+  line-height: inherit;
+  color: inherit;
+  white-space: pre;
+  overflow-wrap: normal;
+  overflow: visible;
+}
+
+.editor-linebackground {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+
+.editor-selection-layer {
+  position: absolute;
+  top: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.editor-selected {
+  position: absolute;
+  background: var(--editor-selection);
+}
+
+.editor-cursors {
+  position: absolute;
+  top: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.editor-cursor {
+  position: absolute;
+  width: 0;
+  border-left: 1px solid var(--editor-caret);
+  animation: editor-caret-blink 1.06s steps(1) infinite;
+}
+
+@keyframes editor-caret-blink {
+  50% { visibility: hidden; }
+}
+
+.editor-measure {
+  position: absolute;
+  width: 100%;
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+}
+
+.editor .editor-measure > pre.editor-line-like {
+  display: inline-block;
+  height: auto;
+}
+
+/* Receives keyboard and IME input: focusable but invisible, and too small to scroll anything. */
+.editor-input {
+  position: absolute;
+  width: 1px;
+  height: 1em;
+  overflow: hidden;
+  opacity: 0;
+}
+
+.editor-input textarea {
+  display: block;
+  width: 1px;
+  height: 1em;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  outline: none;
+  resize: none;
+  overflow: hidden;
+  white-space: pre;
+  font: inherit;
+  color: transparent;
+  caret-color: transparent;
+  background: transparent;
+}
+
+.editor pre.editor-placeholder {
+  position: absolute;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.editor-widget { display: inline-block; }
+
+.editor-foldmarker {
+  display: inline-block;
+  color: var(--editor-fold);
+  text-align: center;
+  cursor: pointer;
+}
+
+.editor-hints {
+  position: fixed;
+  z-index: 10;
+  max-height: 20em;
+  overflow-y: auto;
+  margin: 0;
+  padding: 2px;
+  list-style: none;
+  border-radius: 3px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, .3);
+  font-size: 90%;
+}
+
+.editor-hint {
+  margin: 0;
+  padding: 0 4px;
+  border-radius: 2px;
+  white-space: pre;
+  cursor: pointer;
+}
+
+/* Tokens: `tok-<word>` for each word of a highlighter style. */
+
+.tok-header, .tok-strong { font-weight: bold; }
+.tok-em { font-style: italic; }
+.tok-link { text-decoration: underline; }
+.tok-tab { display: inline-block; text-decoration: inherit; }
+
+.theme-dracula span.tok-comment { color: var(--editor-comment); }
+.theme-dracula span.tok-string, .theme-dracula span.tok-string-2 { color: var(--editor-yellow); }
+.theme-dracula span.tok-number { color: var(--editor-purple); }
+.theme-dracula span.tok-variable { color: var(--editor-green); }
+.theme-dracula span.tok-variable-2 { color: var(--editor-white); }
+.theme-dracula span.tok-def { color: var(--editor-green); }
+.theme-dracula span.tok-operator { color: var(--editor-pink); }
+.theme-dracula span.tok-keyword { color: var(--editor-pink); }
+.theme-dracula span.tok-atom { color: var(--editor-purple); }
+.theme-dracula span.tok-meta { color: var(--editor-fg); }
+.theme-dracula span.tok-tag { color: var(--editor-pink); }
+.theme-dracula span.tok-attribute { color: var(--editor-green); }
+.theme-dracula span.tok-qualifier { color: var(--editor-green); }
+.theme-dracula span.tok-property { color: var(--editor-cyan); }
+.theme-dracula span.tok-builtin { color: var(--editor-green); }
+.theme-dracula span.tok-variable-3, .theme-dracula span.tok-type { color: var(--editor-orange); }
+.theme-dracula span.tok-sql-function { color: var(--editor-function); }
+.theme-dracula span.tok-mysql-table-border { color: var(--editor-dim); }
+.theme-dracula span.tok-error, .tok-invalidchar { color: var(--editor-red); }
+
+/* A mark over a `property` token, so it must follow the theme. */
+.theme-dracula span.tok-graphql-object-field { color: var(--editor-field); }

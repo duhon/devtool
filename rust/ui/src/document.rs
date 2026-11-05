@@ -2,7 +2,7 @@ use crate::console::RequestBlock;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub struct Position {
     pub line: usize,
     pub ch: usize,
@@ -15,7 +15,7 @@ pub struct TextChange {
     pub removed: Vec<String>,
     pub origin: Option<String>,
 }
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct DocumentEdit {
     pub text: String,
     pub regions: Vec<ResponseRegion>,

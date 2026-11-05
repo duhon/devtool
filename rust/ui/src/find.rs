@@ -1,6 +1,6 @@
 //! Editor find bar logic that does not need a browser: the JavaScript RegExp a
 //! query compiles to, match navigation, which matches may be replaced, and
-//! replacement templates. Offsets are UTF-16 code units, as in CodeMirror.
+//! replacement templates. Offsets are UTF-16 code units, as in the editor.
 
 use crate::document::ResponseRegion;
 use std::collections::BTreeMap;
@@ -53,7 +53,7 @@ pub struct Match {
     pub end: usize,
 }
 
-/// Line start offsets of a text, mapping offsets to CodeMirror line/ch positions.
+/// Line start offsets of a text, mapping offsets to editor line/ch positions.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Lines {
     starts: Vec<usize>,

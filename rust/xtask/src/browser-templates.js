@@ -1,12 +1,12 @@
 (async () => {
-  const {assert,wait,holds,visible,click,testid,cm,setSource,key,type,openConsole,activateSession}=testDriver;
+  const {assert,wait,holds,visible,click,testid,editorOf,setSource,key,type,openConsole,activateSession}=testDriver;
   await openConsole();
   await click(testid('console-service-rest'));
   const open=async()=>{
     if(testid('console-templates-toggle').getAttribute('aria-pressed')!=='true')
       await click(testid('console-templates-toggle'));
     await wait(()=>document.querySelector('[data-testid="templates-editor"]')
-      &&cm('templates-editor').getOption('readOnly')===false,
+      &&editorOf('templates-editor').getOption('readOnly')===false,
       ()=>`Templates editor did not become editable: ${JSON.stringify({
         pressed:testid('console-templates-toggle').getAttribute('aria-pressed'),
         inert:document.querySelector('#service-views')?.inert,
@@ -24,22 +24,22 @@
   };
   const drafts=()=>JSON.parse(localStorage.getItem('servicesConsole.templateDrafts')||'{}');
   const save=async(service,section,text)=>{
-    setSource(cm('templates-editor'),text);
+    setSource(editorOf('templates-editor'),text);
     await wait(()=>drafts()[`${service}/${section}`]?.text===text,'Templates draft was not persisted');
     await wait(()=>!drafts()[`${service}/${section}`]
       &&testid('templates-status').textContent.includes('Templates saved · OK'),
       ()=>`Templates did not autosave: ${testid('templates-status').textContent}; ${document.querySelector('[data-testid="templates-panel"]').textContent}`);
   };
-  const entries=()=>cm('console-editor').state.completionActive?.data?.list||[];
+  const entries=()=>editorOf('console-editor').state.completionActive?.data?.list||[];
   const pick=async name=>{
     await wait(()=>entries().some(item=>item.displayText.startsWith(name+' — ')||item.displayText===name),
       ()=>`Missing template ${name}: ${entries().map(item=>item.displayText)}`);
     const index=entries().findIndex(item=>item.displayText.startsWith(name+' — ')||item.displayText===name);
-    const selected=cm('console-editor').state.completionActive.widget.selectedHint;
+    const selected=editorOf('console-editor').state.completionActive.widget.selectedHint;
     for(let i=0;i<Math.abs(index-selected);i++) await key(index>selected?'ArrowDown':'ArrowUp');
     await key('Enter');
   };
-  const source=cm('console-editor');
+  const source=editorOf('console-editor');
   const body='{\n  "id": 123,\n  "title": "Example Book Title",\n  "token": "{{var:TOKEN}}"\n}';
   const body2='{\n  "id": 1,\n  "title": "Example Book Title",\n}';
   const definitions=`@my_create_book bla bla comment\n${body}\n@my_create_book2 another comment\n${body2}`;
@@ -55,22 +55,22 @@
   assert([...testid('templates-sections').querySelectorAll('[role="tab"]')].map(tab=>tab.textContent).join(',')==='check,endpoint,headers,options,body',
     'REST Templates must expose exactly its own section tabs');
   await select('body');
-  if(location.protocol==='http:') assert(cm('templates-editor').getValue().includes('@my_create_book'),
+  if(location.protocol==='http:') assert(editorOf('templates-editor').getValue().includes('@my_create_book'),
     'HTTP must load global templates previously saved through native messaging');
   await save('rest','body',definitions);
   assert(JSON.stringify(drafts()['removed-module/check'])===JSON.stringify(unloaded),
     'Saving another draft must keep the draft of an unloaded module until it is installed again');
   const tokens=(editor,line)=>editor.getLineTokens(line,true).map(token=>[token.string,token.type]);
-  assert(cm('templates-editor').getOption('mode').name==='services-console-rest',
+  assert(editorOf('templates-editor').getOption('mode').name==='services-console-rest',
     'REST templates must use the same syntax mode as the main REST Console');
-  assert(cm('templates-editor').getLineTokens(0,true).every(token=>token.type?.includes('comment')),
+  assert(editorOf('templates-editor').getLineTokens(0,true).every(token=>token.type?.includes('comment')),
     'Template definition headers must be styled separately from their body');
   setSource(source,'#check Highlight\n#body\n'+body);
   await wait(()=>(source.getOption('servicesResponses')||[]).length===0,
     'Replacing a complete check must clear old response ownership before checking its syntax');
-  assert(JSON.stringify(tokens(cm('templates-editor'),2))===JSON.stringify(tokens(source,3)),
+  assert(JSON.stringify(tokens(editorOf('templates-editor'),2))===JSON.stringify(tokens(source,3)),
     `REST body templates must use the exact main Console JSON token styles: ${JSON.stringify({
-      template:tokens(cm('templates-editor'),2),main:tokens(source,3),
+      template:tokens(editorOf('templates-editor'),2),main:tokens(source,3),
       mode:source.getOption('mode'),regions:source.getOption('servicesResponses'),
       text:source.getValue(),
     })}`);
@@ -143,27 +143,27 @@
   await wait(()=>document.querySelector('[data-testid="templates-section-query"]'));
   await select('query');
   await save('mysql','query','@my_create_book SQL query\nSELECT 123 AS id;');
-  setSource(cm('console-editor'),'#check SQL\n#query ');
+  setSource(editorOf('console-editor'),'#check SQL\n#query ');
   await type('@');
   await pick('@my_create_book');
-  assert(cm('console-editor').getValue()==='#check SQL\n#query\nSELECT 123 AS id;',
+  assert(editorOf('console-editor').getValue()==='#check SQL\n#query\nSELECT 123 AS id;',
     'Same template name must resolve independently for each service/section');
-  assert(cm('templates-editor').getOption('mode').name==='services-console-mysql',
+  assert(editorOf('templates-editor').getOption('mode').name==='services-console-mysql',
     'MySQL templates must switch to the MySQL Console syntax mode');
-  assert(JSON.stringify(tokens(cm('templates-editor'),1))===JSON.stringify(tokens(cm('console-editor'),2)),
+  assert(JSON.stringify(tokens(editorOf('templates-editor'),1))===JSON.stringify(tokens(editorOf('console-editor'),2)),
     'MySQL templates must use the exact main Console SQL token styles');
   await click(testid('console-service-splunk'));
   await wait(()=>document.querySelector('[data-testid="templates-section-options"]'));
   assert([...testid('templates-sections').querySelectorAll('[role="tab"]')].map(tab=>tab.textContent).join(',')==='check,endpoint,headers,options,search',
     'Splunk Templates must not duplicate options as empty from/to/app/count tabs');
-  setSource(cm('console-editor'),'#check Splunk sections\n#');
+  setSource(editorOf('console-editor'),'#check Splunk sections\n#');
   await key('Control+Space');
   await wait(()=>entries().some(item=>item.text==='#options'));
   assert(entries().map(item=>item.text).join(',')==='#endpoint,#headers,#options,#search,#check',
     'Splunk section completion must offer only canonical sections');
   await key('Escape');
   for(const section of ['from','to','app','count']) {
-    const splunk=cm('console-editor');
+    const splunk=editorOf('console-editor');
     setSource(splunk,`#check Removed ${section}\n#endpoint\nhttps://splunk.fixture\n#search\nindex=main\n#${section}\nvalue`);
     splunk.setCursor(6,5);splunk.focus();
     await key('Shift+Enter');
@@ -174,19 +174,19 @@
   }
   await click(testid('console-service-rest'));
   await select('body');
-  assert(cm('templates-editor').getValue()===definitions,'Switching services must restore the selected section library');
+  assert(editorOf('templates-editor').getValue()===definitions,'Switching services must restore the selected section library');
   const session=Number(testid('console-session-name').dataset.sessionId);
   await activateSession(0);
   await click(testid('console-service-rest'));
   await open();await select('body');
-  assert(cm('templates-editor').getValue()===definitions,'Temporary session must share global templates');
+  assert(editorOf('templates-editor').getValue()===definitions,'Temporary session must share global templates');
   const globalText=definitions+'\n@from_temporary Global\n{"global":true}';
   await save('rest','body',globalText);
   await activateSession(session);
   await click(testid('console-service-rest'));
   await open();await select('body');
-  assert(cm('templates-editor').getValue()===globalText,'Templates edited in temporary session must persist in the named session');
-  const templateEditor=cm('templates-editor');
+  assert(editorOf('templates-editor').getValue()===globalText,'Templates edited in temporary session must persist in the named session');
+  const templateEditor=editorOf('templates-editor');
   const assertExclusivePanel=()=>{
     const panel=testid('console-tool-panel');
     assert([...panel.children].filter(visible).length===1,
@@ -205,7 +205,7 @@
   assert(drafts()['rest/body'].text.includes('@dup'),'Hidden template errors must retain the invalid draft');
   await open();
   await wait(()=>testid('templates-status').textContent.includes('duplicate template'));
-  assert(cm('templates-editor').getValue()==='@dup\nfirst\n@dup\nsecond','Reopening must retain invalid global drafts');
+  assert(editorOf('templates-editor').getValue()==='@dup\nfirst\n@dup\nsecond','Reopening must retain invalid global drafts');
   for(const tool of ['sessions','hints','variables','dictionary','agent']) {
     await click(testid(`console-${tool}-toggle`));
     await wait(()=>testid(`console-${tool}-toggle`).getAttribute('aria-pressed')==='true');
@@ -214,11 +214,11 @@
       `${tool} must replace Templates even when its draft has validation errors`);
     await open();
     assertExclusivePanel();
-    assert(cm('templates-editor').getValue()==='@dup\nfirst\n@dup\nsecond',
+    assert(editorOf('templates-editor').getValue()==='@dup\nfirst\n@dup\nsecond',
       'Right-panel switching must preserve the invalid template draft');
   }
   await click(testid('templates-discard'));
-  await wait(()=>cm('templates-editor').getValue()===globalText && !drafts()['rest/body']);
+  await wait(()=>editorOf('templates-editor').getValue()===globalText && !drafts()['rest/body']);
   assert(!JSON.stringify(await testDriver.sessionLibrary()).includes('bla bla comment'),
     'Template definitions/descriptions must not be copied into Console session snapshots');
   await click(testid('console-templates-toggle'));

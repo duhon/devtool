@@ -1,7 +1,7 @@
 use super::{
     agent_panel::{Activity, AgentPanel, Approval, WorkspaceRequest},
     console_variables::{ConsoleVariables, PanelEvent},
-    editor::Editor,
+    editor::{self, Handle},
     error,
     transport::{Reply, Transport},
     updates::{self, Phase as UpdatePhase},
@@ -9,10 +9,15 @@ use super::{
     window,
 };
 use crate::activity::Indicator;
+use crate::editor::{
+    Anchor,
+    session::{Context as EditorContext, Event as EditorEvent, Msg as EditorMsg, Setup},
+};
 use crate::{console, format, profiles, storage};
 use serde_json::{Value, json};
 use services_contracts::manifest::{DiscoveryKind, View};
 use std::{
+    cell::RefCell,
     collections::{BTreeMap, BTreeSet},
     rc::Rc,
 };
@@ -42,7 +47,7 @@ struct Run {
     line: Option<usize>,
     vertical: bool,
     started: f64,
-    anchor: Option<wasm_bindgen::JsValue>,
+    anchor: Option<Anchor>,
     signal: crate::activity::Signal,
     duplicate_error: Option<String>,
     /// `Format:` of the check; only the console's display uses it.
@@ -75,14 +80,14 @@ struct Repeat {
 #[derive(Clone, Default)]
 struct CheckOwner {
     line: Option<usize>,
-    anchor: Option<wasm_bindgen::JsValue>,
+    anchor: Option<Anchor>,
 }
 impl CheckOwner {
-    fn check_line(&self, service: &str) -> Option<usize> {
-        if let Some(anchor) = &self.anchor {
-            super::editor::anchor_line(&format!("console:{service}"), anchor)
-        } else {
-            self.line
+    /// The line of the check in `editor`, the console editor of its service.
+    fn check_line(&self, editor: &Handle) -> Option<usize> {
+        match self.anchor {
+            Some(anchor) => editor.read(|session| session.anchor_line(anchor)),
+            None => self.line,
         }
     }
 }
@@ -200,8 +205,8 @@ struct AgentRun {
     started: bool,
 }
 impl DiscoveryStatus {
-    fn check_line(&self, service: &str) -> Option<usize> {
-        self.owner.check_line(service)
+    fn check_line(&self, editor: &Handle) -> Option<usize> {
+        self.owner.check_line(editor)
     }
 
     fn finish(&mut self, result: &Value, failed: bool) {
@@ -264,6 +269,10 @@ pub enum Msg {
     ConsoleService(String),
     ConsoleText(String),
     ConsoleEdited(String, crate::document::DocumentEdit),
+    /// A message of the console editor of a service.
+    ConsoleEditor(String, EditorMsg),
+    HintsEditor(String, EditorMsg),
+    ExportEditor(EditorMsg),
     ConsoleRun(String, usize),
     /// The wait of a repeating check is over.
     RepeatRun(String),
@@ -301,7 +310,6 @@ pub enum Msg {
     Imported(String, Result<String, String>),
     ClipboardError(String, String),
     Export,
-    ExportText(String),
     Stop,
     Visibility(bool),
     AgentActivity(Vec<Activity>),
@@ -311,6 +319,7 @@ pub enum Msg {
 }
 pub struct App {
     sessions: super::sessions::Shared,
+    session_id: u64,
     session_name: String,
     session_status: OperationStatus,
     session_loading: bool,
@@ -383,8 +392,9 @@ pub struct App {
     run_serial: u64,
     hidden: bool,
     viewports: BTreeMap<String, crate::document::CheckViewport>,
-    check_target: Option<(String, usize, u64)>,
-    check_serial: u64,
+    /// The console and hints editors by `console:{service}` and `hints:{service}`.
+    editors: RefCell<BTreeMap<String, Handle>>,
+    export_editor: RefCell<Option<Handle>>,
     panel_status: BTreeMap<String, OperationStatus>,
     agent_stop_error: Option<crate::browser::agent_panel::StopError>,
     hints_drafts: BTreeMap<String, String>,
@@ -401,7 +411,6 @@ impl Component for App {
     type Message = Msg;
     type Properties = super::sessions::AppProps;
     fn create(ctx: &Context<Self>) -> Self {
-        super::editor::set_workspace(ctx.props().session_id);
         let sessions = ctx.props().sessions.clone();
         let snapshot = sessions.borrow().library.snapshot().clone();
         let transport = Transport::new(
@@ -433,6 +442,7 @@ impl Component for App {
         }
         let mut app = Self {
             sessions,
+            session_id: ctx.props().session_id,
             session_name: String::new(),
             session_status: snapshot_status(&ctx.props().sessions.borrow().error),
             session_loading: false,
@@ -496,8 +506,8 @@ impl Component for App {
             run_serial: 0,
             hidden: false,
             viewports: BTreeMap::new(),
-            check_target: None,
-            check_serial: 0,
+            editors: RefCell::default(),
+            export_editor: RefCell::default(),
             panel_status: BTreeMap::new(),
             agent_stop_error: None,
             hints_drafts: snapshot.hints_drafts,
@@ -671,6 +681,10 @@ impl Component for App {
                 }
             }
             Msg::ForgetModule(service) => {
+                let mut editors = self.editors.borrow_mut();
+                editors.remove(&format!("console:{service}"));
+                editors.remove(&format!("hints:{service}"));
+                drop(editors);
                 self.docs.remove(&service);
                 self.response_regions.remove(&service);
                 self.checks.remove(&service);
@@ -929,6 +943,28 @@ impl Component for App {
                 self.persist_console();
                 self.stop_edited_repeats(ctx, &service);
             }
+            Msg::ConsoleEditor(service, msg) => {
+                let events = self.console_editor(&service).update(msg);
+                return self.console_events(ctx, &service, events);
+            }
+            Msg::HintsEditor(service, msg) => {
+                let mut render = false;
+                for event in self.hints_editor(&service).update(msg) {
+                    if let EditorEvent::Changed(text) = event {
+                        render |= Component::update(self, ctx, Msg::HintsText(text));
+                    }
+                }
+                return render;
+            }
+            Msg::ExportEditor(msg) => {
+                let editor = self.export_editor.borrow().clone();
+                for event in editor.map(|editor| editor.update(msg)).unwrap_or_default() {
+                    if let EditorEvent::Changed(text) = event {
+                        self.export_text = Some(text);
+                    }
+                }
+                return false;
+            }
             Msg::ConsoleRun(text, line) => {
                 if self.hidden {
                     return false;
@@ -1054,8 +1090,8 @@ impl Component for App {
                 return active != self.active_console_line(&service);
             }
             Msg::Check(line) => {
-                self.check_serial = self.check_serial.wrapping_add(1);
-                self.check_target = Some((self.console_service.clone(), line, self.check_serial));
+                self.console_editor(&self.console_service)
+                    .with(|session| session.scroll_to_line(line));
                 self.viewports.insert(
                     self.console_service.clone(),
                     crate::document::CheckViewport {
@@ -1662,7 +1698,6 @@ impl Component for App {
                     }
                 }
             }
-            Msg::ExportText(text) => self.export_text = Some(text),
             Msg::Stop => {
                 let service = self.console_service.clone();
                 if let Some(key) = self
@@ -1742,6 +1777,7 @@ impl Component for App {
     }
     fn view(&self, ctx: &Context<Self>) -> Html {
         html! {<>
+            <style>{include_str!("../../assets/editor.css")}</style>
             <style>{include_str!("../../assets/console.css")}</style>
             <style>{include_str!("ui.css")}</style>
             <super::find::FindBar/>
@@ -1762,6 +1798,7 @@ impl Component for App {
         </>}
     }
     fn rendered(&mut self, ctx: &Context<Self>, _: bool) {
+        self.sync_editors(ctx);
         let wait = self.observe_statuses();
         self.seen
             .schedule(wait, ctx.link().callback(|()| Msg::Seen));
@@ -2058,7 +2095,7 @@ impl App {
     }
     fn agent_tool(
         &mut self,
-        _ctx: &Context<Self>,
+        ctx: &Context<Self>,
         request: &WorkspaceRequest,
     ) -> Result<(), String> {
         use crate::agent_workspace::{page, string};
@@ -2174,12 +2211,20 @@ impl App {
                     Some((id.clone(), self.agent_workspace.check_line(&service, &id)?))
                 };
                 self.agent_edit = Some(AgentEdit {
-                    command,
+                    command: command.clone(),
                     request: request.clone(),
                     identity,
                 });
-                self.console_service = service;
+                self.console_service = service.clone();
                 self.persist_console();
+                let editor = self.console_editor(&service);
+                let result = editor.with(|session| session.agent_edit(&command, js_sys::Date::now()));
+                let events = editor.update(EditorMsg::Flush);
+                self.console_events(ctx, &service, events);
+                if let Some(result) = result {
+                    ctx.link()
+                        .send_message(Msg::AgentEdited(command.serial, result));
+                }
                 return Ok(());
             }
             "console_run_check" => {

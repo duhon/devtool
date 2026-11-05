@@ -2,8 +2,8 @@
 
 `services-ui` is a Rust 2024 Yew client. Application logic, the native-messaging
 transport, Console parsers/completion/formatting and Variables
-editing are authored in Rust. Only generated wasm-bindgen glue and the vendored
-CodeMirror editor/addons are JavaScript runtime dependencies.
+editing are authored in Rust, including the text editor. Only generated
+wasm-bindgen glue is a JavaScript runtime dependency.
 
 ## Integration
 
@@ -11,8 +11,7 @@ Build `cargo build -p services-ui --target wasm32-unknown-unknown --release`,
 then run wasm-bindgen 0.2.108 with `--target web --out-name services_ui`.
 Import and await the generated module's default `init()`; its WASM start
 function mounts Yew at `#app`. No additional application JavaScript is loaded.
-Keep `assets/` styles and CodeMirror CSS/scripts, including SQL,
-JavaScript, overlay, show-hint, foldcode and foldgutter. UI-specific styles are
+Keep `assets/styles.css`. UI-specific styles, including `assets/editor.css`, are
 embedded by the Rust component. CSP must allow `wasm-unsafe-eval`.
 
 The embedded Agent also exposes bounded inspected-page DOM tools in DevTools.
@@ -40,11 +39,18 @@ Page acceptance uses a separate real HTTP page and the SDK fixture. A test-only
 effects, consent, navigation, cancellation and rejection paths. This checks the
 DevTools API contract; it does not replace a real DevTools-panel lifecycle test.
 
-The main Console editor uses the local CodeMirror `native-direct` scrollbar
-model: the real scroller stays visible, with no synchronized proxy bars or
-synthetic 50px clipping gap. Preserve the paired vendor metrics changes and
-`.CodeMirror-native-direct` CSS when updating CodeMirror. Other editors retain
-its standard scrollbar model; native appearance and fading are browser-owned.
+The editor is pure Yew in the MVU style and implements only what the app uses.
+`src/editor/` is the platform-free model (text, history,
+folds, layout, highlighting, completion); `src/browser/editor/` renders it. An
+owner keeps the editor's `Handle` and passes it to `View`; the editor reports
+`Event`s to the owner. Its DOM uses `editor-*` classes, `tok-*` token classes
+and the `theme-dracula` theme, which the Console CSS and tests style. Rendered rows are components rebuilt only when
+what they show changes. The real scroller stays visible, with no proxy bars;
+native appearance and fading are browser-owned. `browser/editor/facade.rs`
+exposes a JS object on the wrapper's `editor` property
+for find and browser tests. `browser/editor/mount.rs`
+(`window.__servicesMountEditor`) is temporary: only the table-performance
+scenario uses it until that scenario is rewritten.
 
 Chrome uses `runtime.connectNative(services_contracts::HOST_NAME)`, validates
 protocol 1, and reads `runtime.lastError` synchronously on disconnect. Unary
@@ -182,7 +188,7 @@ its panel is shown again or the window regains focus. Session `var` is passed wi
 Terminal stream and combined with global Dictionary/env for backend resolution;
 it never replaces the legacy native variable file. Their replies share a merged
 completion context.
-Console user edits use CodeMirror's exact UTF-16 change ranges, rather than a
+Console user edits use the editor's exact UTF-16 change ranges, rather than a
 whole-document prefix/suffix guess. Response ownership follows cut/copy/paste
 and undo generations. A check inserted into output splits its owned ranges:
 the new request is executable, while literal markers in the old output remain
@@ -341,9 +347,9 @@ Environment values are never part of the context API.
 
 Workspace tools read the live App model rather than scraping the page.
 Check IDs and document revisions reject stale writes. Agent changes use
-CodeMirror `replaceRange`, the same UTF-16 tracking and normal Undo, rather than
+the editor's `replaceRange`, the same UTF-16 tracking and normal Undo, rather than
 rewriting storage. The words an edit changed (or the line it removed text from)
-flash for 1.2 s and fade (`cm-agent-edit`), so the user sees what the Agent did.
+flash for 1.2 s and fade (`editor-agent-edit`), so the user sees what the Agent did.
 Omitted connection directives remain local and are preserved;
 masked credentials cannot be inserted into a request.
 Check context exposes plain titles, without the directive marker. Agent
@@ -365,8 +371,8 @@ Browser acceptance selectors: `console-editor-editor`, `console-service-rest`
 `console-dictionary-toggle`, `console-variables-editor`,
 `console-dictionary-editor`, `console-tool-panel`, `native-status`, and the
 find bar's `find-bar`, `find-scope`, `find-query`, `find-count`, `find-replacement`.
-The editor test ID is on the CodeMirror wrapper; integrations can use its
-CodeMirror instance API or the editor's keyboard input.
+The editor test ID is on the editor wrapper; integrations can use its
+`editor` object or the editor's keyboard input.
 
 ## Validation
 
@@ -393,4 +399,4 @@ real Rust SDK with a deterministic local protocol peer, without model requests
 or private application data; the same scenarios also run in `test browser`.
 
 Contextual completions remain lexical/schema based rather than language-server
-analysis. CodeMirror SQL/JSON modes remain browser dependencies.
+analysis.

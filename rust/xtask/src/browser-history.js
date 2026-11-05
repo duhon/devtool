@@ -1,8 +1,8 @@
 (async()=>{
-  const {assert,wait,click,testid,cm,setSource,key,openConsole,activateSession,visible}=testDriver;
+  const {assert,wait,click,testid,editorOf,setSource,key,openConsole,activateSession,visible}=testDriver;
   await openConsole();
   await click(testid('console-service-rest'));
-  const editor=cm('console-editor');
+  const editor=editorOf('console-editor');
   setSource(editor,`#check History acceptance\n#endpoint\nPUT ${fixtureUrl}/history-fixture?value={{env:SERVICES_DEVTOOLS_ENV_PROBE}}\n#headers\nContent-Type: application/json\nAuthorization: Bearer history-secret-token\n#body\n{"text":"first","env":"{{env:SERVICES_DEVTOOLS_ENV_PROBE}}"}`);
   const current=Number(testid('console-session-name').dataset.sessionId);
   const snapshot=async()=>(await testDriver.sessionLibrary()).sessions.find(s=>s.id===current).snapshot.console;
@@ -65,7 +65,7 @@
     await click(entries()[index]);
     await wait(()=>{
       const element=document.querySelector('[data-testid="history-editor"]');
-      const snapshotEditor=element?.CodeMirror || element?.nextElementSibling?.CodeMirror;
+      const snapshotEditor=element?.editor || element?.nextElementSibling?.editor;
       return snapshotEditor?.getValue().includes('#endpoint') && !testid('history-status').classList.contains('is-running');
     });
     assert(entries()[index].dataset.entryId===id,'Opening a snapshot must retain its execution identity');
@@ -77,7 +77,7 @@
     assert(entries()[index].getAttribute('aria-current')==='true'
       && list.querySelectorAll('.history-entry.active').length===1,
       'Exactly the displayed execution must have the visible and accessible current-entry state');
-    return cm('history-editor').getValue();
+    return editorOf('history-editor').getValue();
   };
   const historyPanel=testid('history-panel'),list=testid('history-entries');
   historyPanel.style.maxHeight='400px';
@@ -106,7 +106,7 @@
     return row && row.top>=top-0.5 && row.bottom<=top+list.clientHeight+0.5
       && !testid('history-status').classList.contains('is-running');
   },'Reopening History must reveal the retained current execution');
-  assert(cm('history-editor').getValue()===oldest,'Reopening History must preserve the selected snapshot');
+  assert(editorOf('history-editor').getValue()===oldest,'Reopening History must preserve the selected snapshot');
   await click(entries()[9]);
   await wait(()=>!document.querySelector('[data-testid="history-editor"]'));
   assert(!list.querySelector('.history-entry.active') && !list.querySelector('[aria-current]'),
@@ -125,7 +125,7 @@
     'History must display JSON using the same indentation as the main check, without transport metadata');
   assert(!latest.includes('\n#effective-parameters\n') && !recordedResponse.includes('"durationMs"'),
     'History must not add effective parameters or response transport/debug wrappers');
-  assert(cm('history-editor').getOption('readOnly')===true,'History snapshots must be read-only');
+  assert(editorOf('history-editor').getOption('readOnly')===true,'History snapshots must be read-only');
   await click(entries()[0]);
   await wait(()=>!document.querySelector('[data-testid="history-editor"]'));
   assert(entries()[0].getAttribute('aria-expanded')==='false'
@@ -151,7 +151,7 @@
     && testid('history-entries').querySelectorAll('[data-testid="history-entry"]').length===0,
     'Copying a Console session must create new check identities without inheriting execution history');
   assert(!document.querySelector('[data-testid="history-editor"]'),'An empty history must not show an editor');
-  const copiedEditor=cm('console-editor');
+  const copiedEditor=editorOf('console-editor');
   await activateSession(current);
   await wait(()=>!copiedEditor.getWrapperElement().isConnected);
   await click(testid('console-service-rest'));await open();
@@ -163,7 +163,7 @@
   await open();
   assert(!visible(document.querySelector('[data-testid="templates-panel"]')),'History must exclusively own the right pane');
   await click(testid('console-service-terminal'));
-  const terminalEditor=cm('console-editor');
+  const terminalEditor=editorOf('console-editor');
   const terminalOutput='+----+-------+\n| ID | Title |\n+----+-------+\n| 1  | Ready |\n+----+-------+\n';
   setSource(terminalEditor,"#check Terminal history\n#endpoint\nsh -c\n#command\nprintf '+----+-------+\\n| ID | Title |\\n+----+-------+\\n| 1  | Ready |\\n+----+-------+\\n'; printf 'warning\\n' >&2");
   terminalEditor.setCursor(terminalEditor.lastLine(),terminalEditor.getLine(terminalEditor.lastLine()).length);
@@ -183,7 +183,7 @@
     'Terminal History must hide stream-event and completion-metadata envelopes');
   await click(testid('console-service-rest'));
   await wait(()=>document.querySelector('[data-testid="history-entries"]')?.querySelectorAll('[data-testid="history-entry"]').length===10);
-  const largeEditor=cm('console-editor');
+  const largeEditor=editorOf('console-editor');
   setSource(largeEditor,`#check Large History\n#endpoint\nGET ${fixtureUrl}/history-large-fixture`);
   largeEditor.closeHint();largeEditor.focus();largeEditor.setCursor(2,0);
   await key('Shift+Enter');

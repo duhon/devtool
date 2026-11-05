@@ -1,0 +1,7 @@
+#!/bin/bash
+# Builds the working tree as a pre-release and installs it beside the release.
+set -euo pipefail
+
+ROOT=$(CDPATH= cd -- "$(/usr/bin/dirname "${BASH_SOURCE[0]}")" && pwd -P)
+cargo run --quiet --manifest-path "$ROOT/Cargo.toml" -p xtask -- build --prerelease
+exec /bin/bash "$ROOT/dist/prerelease/install.sh" "$@"

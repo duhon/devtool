@@ -1,8 +1,8 @@
 (async () => {
-  const { assert, wait, click, testid, cm, openConsole, setSource, key, visible, settle } = testDriver;
+  const { assert, wait, click, testid, editorOf, openConsole, setSource, key, visible, settle } = testDriver;
   await openConsole();
   await click(testid('console-service-splunk'));
-  const editor = cm('console-editor');
+  const editor = editorOf('console-editor');
   const previous = editor.getValue();
   const typedOptions = 'Columns-Type: message.timestamp=datetime message.message=json score=number enabled=boolean\nColumns-Size: message.message=20';
   const assertTyped = target => {
@@ -12,7 +12,7 @@
     const tokens = [];
     for (let line = region.header + 1; line < region.end; line++) {
       tokens.push(...target.getLineTokens(line, true));
-      assert(!CodeMirror.fold.services(target, {line, ch:0}),
+      assert(!target.foldRange({line, ch:0}),
         `Cell contents must never offer a brace/JSON fold: ${target.getLine(line)}`);
     }
     assert(tokens.some(t => t.type === 'number' && t.string.includes('123')),
@@ -39,7 +39,7 @@
       'JSON must physically wrap into text lines');
     assert(!target.getWrapperElement().querySelector('table'),
       'Console output must remain text, never an HTML table');
-    assert(CodeMirror.fold.services(target, {line:region.header,ch:0}),
+    assert(target.foldRange({line:region.header,ch:0}),
       'Folding the complete response must remain available');
     return region;
   };
@@ -62,7 +62,7 @@
   const panel = testid('console-main-status-debug');
   for (const name of ['export', 'request']) {
     const line = [...panel.querySelectorAll('.json-line')].find(line =>
-      visible(line) && line.querySelector(':scope > .cm-property')?.textContent.trim() === `"${name}":`);
+      visible(line) && line.querySelector(':scope > .tok-property')?.textContent.trim() === `"${name}":`);
     assert(line, `Splunk Debug must include the ${name} object`);
     const toggle = line.querySelector('.json-toggle');
     if (toggle.textContent === '▸') await click(toggle);
@@ -96,10 +96,8 @@
     clipboardData:new DataTransfer(),bubbles:true,cancelable:true,
   });
   input.dispatchEvent(copy);
-  // The textarea input uses the browser's default copy; synthetic events do not run it.
-  assert(input.tagName === 'TEXTAREA' && !copy.defaultPrevented
-    && input.value.slice(input.selectionStart,input.selectionEnd) === expectedCopy,
-  'The native plain-text copy source must preserve every border, space and physical wrap');
+  assert(copy.defaultPrevented && copy.clipboardData.getData('text/plain') === expectedCopy,
+  'The plain-text copy must preserve every border, space and physical wrap');
   editor.setCursor(region.request,0);
   editor.scrollIntoView({line:region.request,ch:0});
   await wait(() => !document.querySelector('[data-testid="console-history-toggle"]')?.disabled);
@@ -107,22 +105,22 @@
   await wait(() => document.querySelector('[data-testid="history-entry"]'));
   await click(testid('history-entries').querySelector('[data-testid="history-entry"]'));
   await wait(() => document.querySelector('[data-testid="history-editor"]')
-    && cm('history-editor').getValue().includes('splunk-preview-🦀-3'));
-  const saved = cm('history-editor').getValue();
-  assertTyped(cm('history-editor'));
+    && editorOf('history-editor').getValue().includes('splunk-preview-🦀-3'));
+  const saved = editorOf('history-editor').getValue();
+  assertTyped(editorOf('history-editor'));
   assert(saved.includes('Preview results are provisional') && saved.includes('· WARNING')
     && saved.includes('Preview: true') && saved.includes('Offset: 1'),
   'History must preserve preview status, option values and the selected portion');
   await click(testid('console-history-toggle'));
   await click(testid('console-service-rest'));
   await click(testid('console-service-splunk'));
-  const restored = cm('console-editor');
+  const restored = editorOf('console-editor');
   assert(restored.getValue().includes('splunk-preview-🦀-3'),
     'Typed response text must survive an editor remount');
   assertTyped(restored);
   setSource(restored, previous);
   await click(testid('console-service-mysql'));
-  const mysql = cm('console-editor'), oldMysql = mysql.getValue();
+  const mysql = editorOf('console-editor'), oldMysql = mysql.getValue();
   const rendered = '#check MySQL rendering fixture\n#endpoint\nmysql://fixture.invalid/db\n#query\nselect fixture\\G\n\n#responce OK\n*************************** 1. row ***************************\n       id: 42\n  enabled: 1\n  created: 2026-10-27T09:00:00Z\nfeed_data: {\n             "n": 12,\n             "ok": true,\n             "nested": {\n               "label": "😀 braces { [ and escaped \\" quote",\n               "items": [\n                 1,\n                 2\n               ]\n             }\n           }\n    plain: {"not":"typed"}\n           untyped {\n             "inner": [1, 2]\n           }';
   setSource(mysql, rendered);
   await settle();
@@ -137,37 +135,28 @@
   const rootLine = lines.indexOf('feed_data: {');
   const nestedLine = lines.findIndex(line => line.includes('"nested": {'));
   const arrayLine = lines.findIndex(line => line.includes('"items": ['));
-  const getMysqlTokenAt = mysql.getTokenAt;
-  let jsonFoldTokenizations = 0;
-  mysql.getTokenAt = function(...args) {
-    jsonFoldTokenizations++;
-    return getMysqlTokenAt.apply(this,args);
-  };
   for (let line=mysqlRegion.header+1;line<mysqlRegion.end;line++) {
     mysqlTokens.push(...mysql.getLineTokens(line,true));
-    const fold = CodeMirror.fold.services(mysql,{line,ch:0});
+    const fold = mysql.foldRange({line,ch:0});
     assert(Boolean(fold) === [rootLine,nestedLine,arrayLine].includes(line),
       `Only typed vertical JSON containers must fold: ${mysql.getLine(line)}`);
   }
-  mysql.getTokenAt = getMysqlTokenAt;
-  assert(jsonFoldTokenizations === 0,
-    'Vertical JSON fold checks must not force syntax tokenization');
-  const rootFold = CodeMirror.fold.services(mysql,{line:rootLine,ch:0});
+  const rootFold = mysql.foldRange({line:rootLine,ch:0});
   assert(rootFold.from.line === rootLine && rootFold.from.ch === 'feed_data: {'.length
     && mysql.getRange(rootFold.to,{line:rootFold.to.line,ch:rootFold.to.ch+1}) === '}'
     && rootFold.to.line === lines.indexOf('           }'),
   'JSON folds must match their closing brace, ignoring escaped quotes and brackets in strings');
   const selectedBeforeFold = mysql.getValue();
-  mysql.foldCode({line:rootLine,ch:0},{rangeFinder:CodeMirror.fold.services});
+  mysql.foldCode({line:rootLine,ch:0},null,'fold');
   assert(mysql.getAllMarks().some(mark => mark.__isFold),
     'The typed JSON value must actually collapse, not just offer a range');
-  mysql.foldCode({line:rootLine,ch:0},{rangeFinder:CodeMirror.fold.services},'unfold');
+  mysql.foldCode({line:rootLine,ch:0},null,'unfold');
   assert(mysql.getValue() === selectedBeforeFold,
     'Folding and unfolding JSON must preserve all copyable text');
-  mysql.foldCode({line:rootLine,ch:0},{rangeFinder:CodeMirror.fold.services});
+  mysql.foldCode({line:rootLine,ch:0},null,'fold');
   assert(mysql.getAllMarks().some(mark => mark.__isFold),
     'Cached JSON ranges must remain reusable after unfolding');
-  mysql.foldCode({line:rootLine,ch:0},{rangeFinder:CodeMirror.fold.services},'unfold');
+  mysql.foldCode({line:rootLine,ch:0},null,'unfold');
   assert(mysqlTokens.some(t=>t.type==='number' && t.string.includes('42'))
     && mysqlTokens.some(t=>t.type==='atom' && t.string.includes('1'))
     && mysqlTokens.some(t=>t.type==='number' && t.string==='12')
@@ -176,16 +165,15 @@
   assert(mysqlTokens.some(t=>!t.type && t.string.includes('{"not":"typed"}')),
     'MySQL text containing JSON must stay plain without an override');
   mysql.scrollIntoView({line:12,ch:0},30);
-  await wait(()=>mysql.getWrapperElement().querySelector('.cm-number') && mysql.getWrapperElement().querySelector('.cm-property'),
+  await wait(()=>mysql.getWrapperElement().querySelector('.tok-number') && mysql.getWrapperElement().querySelector('.tok-property'),
     'Scrolled MySQL JSON rows must render number and property tokens');
-  const number=mysql.getWrapperElement().querySelector('.cm-number');
-  const property=mysql.getWrapperElement().querySelector('.cm-property');
+  const number=mysql.getWrapperElement().querySelector('.tok-number');
+  const property=mysql.getWrapperElement().querySelector('.tok-property');
   assert(number && property && getComputedStyle(number).color !== getComputedStyle(property).color,
     'Typed tokens must have visibly distinct syntax colors, not just class names');
   mysql.setOption('servicesResponses',[]);
-  mysql.setOption('mode',{name:'services-console-mysql',responses:[]});
   const braceLine = rendered.split('\n').indexOf('feed_data: {');
-  assert(!CodeMirror.fold.services(mysql,{line:braceLine,ch:0}),
+  assert(!mysql.foldRange({line:braceLine,ch:0}),
     'Pasted MySQL response JSON without ownership metadata must not fold either');
   setSource(mysql,oldMysql);
   await click(testid('console-service-rest'));

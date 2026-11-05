@@ -6,14 +6,14 @@
   flex-direction: column;
 }
 
-.console-root .CodeMirror {
+.console-root .editor {
   flex: 1 1 auto;
   min-height: 240px;
   border: 1px solid #43454a;
 }
 
-.console-root .cm-s-dracula.CodeMirror,
-.console-root .cm-s-dracula .CodeMirror-gutters {
+.console-root .theme-dracula.editor,
+.console-root .theme-dracula .editor-gutters {
   background-color: #25272a !important;
 }
 
@@ -189,7 +189,7 @@
   color: #ff8980;
 }
 
-.console-root .CodeMirror-gutter-elt {
+.console-root .editor-gutter-elt {
   box-sizing: border-box;
 }
 
@@ -956,7 +956,7 @@
   border-right: none;
 }
 
-.console-workspace-body > .console-editor-host > .CodeMirror {
+.console-workspace-body > .console-editor-host > .editor {
   border: none;
 }
 
@@ -1233,9 +1233,9 @@
   color: #f0f4ff;
   box-shadow: inset 3px 0 0 #7eb4ff;
 }
-.console-hints-editor > .CodeMirror,
-.console-history > .CodeMirror,
-.console-variables > .CodeMirror {
+.console-hints-editor > .editor,
+.console-history > .editor,
+.console-variables > .editor {
   min-height: 0;
 }
 
@@ -1358,21 +1358,21 @@
   outline: none;
 }
 
-.CodeMirror pre.CodeMirror-line.console-check-band-even {
+.editor pre.editor-line.console-check-band-even {
   --console-check-background: #2d3035;
 }
 
-.CodeMirror pre.CodeMirror-line.console-check-band-odd {
+.editor pre.editor-line.console-check-band-odd {
   --console-check-background: #25272a;
 }
 
-/* Keep check backgrounds below CodeMirror's selection, and text above it. */
-.CodeMirror pre.CodeMirror-line:is(.console-check-band-even, .console-check-band-odd) {
+/* Keep check backgrounds below the editor's selection, and text above it. */
+.editor pre.editor-line:is(.console-check-band-even, .console-check-band-odd) {
   background-color: transparent;
   z-index: auto;
 }
 
-.CodeMirror pre.CodeMirror-line:is(.console-check-band-even, .console-check-band-odd)::before {
+.editor pre.editor-line:is(.console-check-band-even, .console-check-band-odd)::before {
   content: "";
   position: absolute;
   inset: 0;
@@ -1381,16 +1381,16 @@
   background-color: var(--console-check-background);
 }
 
-.CodeMirror pre.CodeMirror-line:is(.console-check-band-even, .console-check-band-odd) > span {
+.editor pre.editor-line:is(.console-check-band-even, .console-check-band-odd) > span {
   position: relative;
   z-index: 2;
 }
 
-.CodeMirror-text-selection.cm-s-dracula .CodeMirror-selected {
+.editor-text-selection.theme-dracula .editor-selected {
   background: rgba(51, 127, 189, 0.12);
 }
 
-.CodeMirror-text-selection .CodeMirror-selection-outline {
+.editor-text-selection .editor-selection-outline {
   position: absolute;
   left: 0;
   top: 0;
@@ -1401,7 +1401,7 @@
   color: #8bcaff;
 }
 
-.CodeMirror-text-selection.cm-s-dracula ::selection {
+.editor-text-selection.theme-dracula ::selection {
   background: rgba(51, 127, 189, 0.12);
 }
 
@@ -1501,7 +1501,7 @@
   font-size: 12px;
 }
 
-.console-hints-panel .CodeMirror {
+.console-hints-panel .editor {
   height: 320px;
   border: 1px solid #43454a;
 }
@@ -1657,12 +1657,12 @@
   color: #ff8980;
 }
 
-.cm-find-match {
+.editor-find-match {
   background: rgba(255, 196, 0, 0.22);
   border-radius: 2px;
 }
 
-.cm-find-current {
+.editor-find-current {
   background: rgba(255, 140, 0, 0.55);
   outline: 1px solid #ffb84d;
 }

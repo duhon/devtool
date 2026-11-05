@@ -1,13 +1,15 @@
 use super::{
-    editor::Editor,
+    editor::{self, Handle},
     error,
     transport::{Reply, Transport},
     views::{ConsoleStatus, OperationStatus, SeenTimer, indicator},
     window,
 };
+use crate::editor::session::{Context as EditorContext, Event as EditorEvent, Msg as EditorMsg, Setup};
 use crate::profiles;
 use serde_json::{Value, json};
 use std::{
+    cell::RefCell,
     collections::{BTreeMap, BTreeSet, VecDeque},
     rc::Rc,
 };
@@ -71,7 +73,7 @@ pub enum Msg {
     CommitRename(bool),
     Drag(String),
     Drop(String),
-    EditorError(String),
+    Editor(String, EditorMsg),
     Stop,
     Seen,
     Discard,
@@ -100,6 +102,8 @@ pub struct ConsoleVariables {
     focus_rename: bool,
     statuses: BTreeMap<String, OperationStatus>,
     seen: SeenTimer,
+    /// Each profile's editor, kept while the panel lives so undo and scroll survive switching.
+    editors: RefCell<BTreeMap<String, Handle>>,
 }
 const VARIABLE_DRAFTS: &str = "servicesConsole.variableDraftsV2";
 const DICTIONARY_DRAFTS: &str = "servicesConsole.dictionaryDrafts";
@@ -132,6 +136,7 @@ impl Component for ConsoleVariables {
             focus_rename: false,
             statuses: BTreeMap::new(),
             seen: SeenTimer::default(),
+            editors: RefCell::default(),
         };
         let load = (|| -> Result<(), String> {
             let storage = window()
@@ -403,12 +408,17 @@ impl Component for ConsoleVariables {
                     );
                 }
             }
-            Msg::EditorError(message) => self.report(
-                ctx,
-                "Variables editor",
-                js_sys::Date::now(),
-                Reply::Error(json!({"error":message})),
-            ),
+            Msg::Editor(profile, msg) => {
+                let mut render = false;
+                for event in self.editor(&profile).update(msg) {
+                    if let EditorEvent::Changed(text) = event
+                        && profile == self.profile
+                    {
+                        render |= Component::update(self, ctx, Msg::Text(text));
+                    }
+                }
+                return render;
+            }
             Msg::Reply(reply) => {
                 let Some(operation) = self.active.take() else {
                     return false;
@@ -799,12 +809,10 @@ impl Component for ConsoleVariables {
             {footer}
             <div class="console-variables" hidden={!ctx.props().visible}>
             if self.vars["profiles"].get(&self.profile).is_some() {
-                <Editor key={format!("console-profile:{}",self.profile)} cache_key={format!("console-profile:{}",self.profile)}
+                <editor::View handle={self.editor(&self.profile)}
+                on={{let profile=self.profile.clone();ctx.link().callback(move|msg|Msg::Editor(profile.clone(),msg))}}
                 testid={if ctx.props().dictionary {"console-dictionary"}else{"console-variables"}}
-                label={format!("{} · {}",if ctx.props().dictionary {"Dictionary"}else{"Variables"},self.profile)} service="vars" field="variables" mode="headers" readonly={self.profile=="env"}
-                value={self.drafts.get(&self.profile).or_else(||self.texts.get(&self.profile)).cloned().unwrap_or_else(||profiles::format(&self.vars["profiles"][&self.profile]))}
-                hints={profiles::hints(self.vars.get("context").unwrap_or(&self.vars))} onchange={ctx.link().callback(Msg::Text)}
-                onerror={ctx.link().callback(Msg::EditorError)}
+                label={format!("{} · {}",if ctx.props().dictionary {"Dictionary"}else{"Variables"},self.profile)}
                 placeholder={"# comments start with #\nNAME: value\nlocale: en_US"}/>
             } else {
                 <div class="console-panel-header">{if ctx.props().dictionary {"Create a dictionary profile with +."} else {"Variables are not loaded."}}</div>
@@ -812,6 +820,7 @@ impl Component for ConsoleVariables {
         </div></>}
     }
     fn rendered(&mut self, ctx: &Context<Self>, _: bool) {
+        self.sync_editor();
         let shown = ctx.props().visible && ctx.props().foreground;
         let now = js_sys::Date::now();
         let mut wait = None;
@@ -856,6 +865,48 @@ impl Component for ConsoleVariables {
     }
 }
 impl ConsoleVariables {
+    fn text(&self, profile: &str) -> String {
+        self.drafts
+            .get(profile)
+            .or_else(|| self.texts.get(profile))
+            .cloned()
+            .unwrap_or_else(|| profiles::format(&self.vars["profiles"][profile]))
+    }
+
+    fn editor(&self, profile: &str) -> Handle {
+        self.editors
+            .borrow_mut()
+            .entry(profile.to_owned())
+            .or_insert_with(|| {
+                let setup = Setup {
+                    mode: "headers".into(),
+                    service: "vars".into(),
+                    field: "variables".into(),
+                    readonly: profile == "env",
+                    ..Setup::default()
+                };
+                Handle::new(setup, &self.text(profile))
+            })
+            .clone()
+    }
+
+    /// Shows the profile's text and the variables completion offers in its editor.
+    fn sync_editor(&self) {
+        let saved = &self.vars["profiles"];
+        self.editors
+            .borrow_mut()
+            .retain(|name, _| saved.get(name).is_some());
+        if saved.get(&self.profile).is_none() {
+            return;
+        }
+        let editor = self.editor(&self.profile);
+        editor.set_text(&self.text(&self.profile), &[]);
+        editor.set_readonly(self.profile == "env");
+        editor.set_context(EditorContext {
+            hints: profiles::hints(self.vars.get("context").unwrap_or(&self.vars)),
+            ..EditorContext::default()
+        });
+    }
     /// Dictionary: the source of the shown profile and the user's own variables in it, each
     /// of which can go back to the source's value.
     fn view_origin(&self, ctx: &Context<Self>) -> Html {

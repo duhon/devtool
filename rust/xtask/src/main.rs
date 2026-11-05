@@ -33,6 +33,34 @@ fn run(root: &Path, program: &str, args: &[&str]) -> Result<()> {
     Ok(())
 }
 
+/// `cargo build` of the shipped binaries; a pre-release build compiles them with
+/// `SERVICES_DEVTOOLS_PRERELEASE`, which gives them their own native host and folder.
+fn cargo_build(root: &Path, args: &[&str], prerelease: bool) -> Result<()> {
+    let mut command = Command::new("cargo");
+    command
+        .arg("build")
+        .args(args)
+        .current_dir(root)
+        .env("MACOSX_DEPLOYMENT_TARGET", "13.5");
+    if prerelease {
+        command.env(PRERELEASE_VARIABLE, "1");
+    } else {
+        command.env_remove(PRERELEASE_VARIABLE);
+    }
+    let status = command.status().context("Run cargo")?;
+    ensure!(
+        status.success(),
+        "cargo build {} failed: {status}",
+        args.join(" ")
+    );
+    Ok(())
+}
+
+const PRERELEASE_VARIABLE: &str = "SERVICES_DEVTOOLS_PRERELEASE";
+/// The pre-release extension's public key: its own extension ID, so Chrome loads it beside the
+/// release. Unpacked extensions need no private key.
+const PRERELEASE_KEY: &str = "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAt2UFoYoxWpoLFEj20Yk73aqUUdcR3FMePdBvlMnsB4efqbE4PpHC5u9H4sMeBTsKL71YsDVQauCCqRuPJztKgdih80C1AlezVFdmvVTjTaJngd6+aG45C7NFK+6es6RqEQ5pyYafkWo/8ZGH9bbQdw1aH8750rT3psINGf+SJd08J8YbT/xA1uTcPtVLje8UVgQ1pnpCAFA4GcGOTod8J8YI3uUHTPVhyrlBCoojNXL9LswzgcPs7Qx/CMjziKRZUMHeDP9cQx5HyW8NOfUO/XxLBQEn9QDs1+bnAmB5qtR4gj6su0ydk1BA4SYmROdgr1aAOc0aGMJrbx3lUNMUjwIDAQAB";
+
 fn target(root: &Path) -> PathBuf {
     std::env::var_os("CARGO_TARGET_DIR")
         .map(|value| root.join(value))
@@ -335,18 +363,17 @@ fn archives(root: &Path, packages: &[Package], out: &Path) -> Result<Vec<PathBuf
     Ok(files)
 }
 
-fn build_extension(root: &Path, output: &Path) -> Result<String> {
-    run(
+fn build_extension(root: &Path, output: &Path, prerelease: bool) -> Result<String> {
+    cargo_build(
         root,
-        "cargo",
         &[
-            "build",
             "--release",
             "-p",
             "services-ui",
             "--target",
             "wasm32-unknown-unknown",
         ],
+        prerelease,
     )?;
     if output.exists() {
         fs::remove_dir_all(output)?;
@@ -370,15 +397,31 @@ fn build_extension(root: &Path, output: &Path) -> Result<String> {
         ],
     )?;
     let source = root.join("adapters/extension/src");
-    for file in ["devtools.html", "devtools.js", "panel.html"] {
+    for file in ["devtools.html", "panel.html"] {
         fs::copy(source.join(file), output.join(file))?;
     }
+    let mut devtools = fs::read_to_string(source.join("devtools.js"))?;
+    if prerelease {
+        let panel = "chrome.devtools.panels.create('Services',";
+        ensure!(
+            devtools.contains(panel),
+            "devtools.js no longer creates the Services panel"
+        );
+        devtools = devtools.replace(
+            panel,
+            "chrome.devtools.panels.create('Services Pre-release',",
+        );
+    }
+    fs::write(output.join("devtools.js"), devtools)?;
     fs::copy(source.join("panel.js"), output.join("panel.js"))?;
     fs::create_dir_all(output.join("shared"))?;
     let shared = root.join("rust/ui/assets");
-    copy_tree(&shared.join("vendor"), &output.join("shared/vendor"))?;
     fs::copy(shared.join("styles.css"), output.join("shared/styles.css"))?;
     let mut manifest: Value = serde_json::from_slice(&fs::read(source.join("manifest.json"))?)?;
+    if prerelease {
+        manifest["key"] = json!(PRERELEASE_KEY);
+        manifest["name"] = json!("Services (DevTools) Pre-release");
+    }
     manifest["content_security_policy"] = json!({
         "extension_pages":"script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
     });
@@ -454,8 +497,14 @@ fn build_distribution(root: &Path, args: &[String]) -> Result<()> {
     );
     let mut repository = String::new();
     let mut branch = "distribution".to_owned();
+    let mut prerelease = false;
     let mut index = 0;
     while index < args.len() {
+        if args[index] == "--prerelease" {
+            prerelease = true;
+            index += 1;
+            continue;
+        }
         let value = args
             .get(index + 1)
             .context("Build option requires a value")?;
@@ -483,17 +532,20 @@ fn build_distribution(root: &Path, args: &[String]) -> Result<()> {
         !branch.is_empty() && branch.split('/').all(valid_component),
         "Invalid branch"
     );
-    run(
+    ensure!(
+        !prerelease || repository.is_empty(),
+        "A pre-release has no update source; drop --repository"
+    );
+    cargo_build(
         root,
-        "cargo",
         &[
-            "build",
             "--release",
             "-p",
             "services-native",
             "-p",
             "services-installer",
         ],
+        prerelease,
     )?;
     let work = tempfile::tempdir()?;
     let payload = work.path().join("ServicesDevTools");
@@ -509,11 +561,11 @@ fn build_distribution(root: &Path, args: &[String]) -> Result<()> {
         fs::remove_dir_all(&modules)?;
     }
     archives(root, &packages(root)?, &modules)?;
-    let id = build_extension(root, &payload.join("extension"))?;
+    let id = build_extension(root, &payload.join("extension"), prerelease)?;
     let manifest: Value =
         serde_json::from_slice(&fs::read(payload.join("extension/manifest.json"))?)?;
     let metadata = json!({
-        "application":"ServicesDevTools","formatVersion":1,"protocolVersion":1,
+        "application":if prerelease { "ServicesDevTools-Prerelease" } else { "ServicesDevTools" },"formatVersion":1,"protocolVersion":1,
         "platform":"darwin","arch":"arm64","minimumMacOS":"13.5","version":manifest["version"],
         "buildId":format!("{}-{}",manifest["version"].as_str().unwrap(),unique_id()),
         "extensionId":id,"runtime":"rust","repository":repository,"branch":branch,"notarized":false,
@@ -536,7 +588,11 @@ fn build_distribution(root: &Path, args: &[String]) -> Result<()> {
         .env("COPYFILE_DISABLE", "1")
         .status()?;
     ensure!(status.success(), "Create distribution archive: {status}");
-    let output = root.join("dist/distribution");
+    let output = root.join(if prerelease {
+        "dist/prerelease"
+    } else {
+        "dist/distribution"
+    });
     fs::create_dir_all(&output)?;
     let archive = output.join(archive_name);
     fs::copy(temporary_archive, &archive)?;
@@ -551,11 +607,18 @@ fn build_distribution(root: &Path, args: &[String]) -> Result<()> {
         .replace("@VERSION@", version);
     fs::write(output.join("install.sh"), installer)?;
     println!(
-        "Distribution: {}\nModule packages: {}\nLocal install: ./install.sh, then Settings → Modules",
+        "Distribution: {}\nModule packages: {}\nLocal install: {}, then Settings → Modules",
         output.display(),
-        modules.display()
+        modules.display(),
+        if prerelease {
+            "./prerelease"
+        } else {
+            "./install.sh"
+        }
     );
-    if !repository.is_empty() {
+    if prerelease {
+        println!("Pre-release: installs beside the release, with its own data and no updates.");
+    } else if !repository.is_empty() {
         println!(
             "Once GitHub release devtool-v{version} has these files:\ncurl -fsSL https://github.com/{repository}/releases/latest/download/install.sh | bash"
         );
@@ -611,7 +674,7 @@ fn main() {
     let root = root();
     let result = match args.first().map(String::as_str) {
         Some("build-extension") => {
-            build_extension(&root, &root.join("adapters/extension/dist")).map(|_| ())
+            build_extension(&root, &root.join("adapters/extension/dist"), false).map(|_| ())
         }
         Some("build") => build_distribution(&root, &args[1..]),
         Some("modules") => {
@@ -641,7 +704,7 @@ fn main() {
         }
         Some("copilot-fixture") => copilot_fixture::run(),
         _ => Err(anyhow::anyhow!(
-            "Usage: cargo run -p xtask -- build-extension | build [--repository OWNER/REPO] [--branch distribution] | modules [--release] | {PACKAGE_USAGE} | test-browser | test-agent | test-settings\n       {TEST_USAGE}"
+            "Usage: cargo run -p xtask -- build-extension | build [--repository OWNER/REPO] [--branch distribution] | build --prerelease | modules [--release] | {PACKAGE_USAGE} | test-browser | test-agent | test-settings\n       {TEST_USAGE}"
         )),
     };
     if let Err(error) = result {

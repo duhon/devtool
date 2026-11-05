@@ -1,4 +1,4 @@
-/* Shared page chrome, console tabs, CodeMirror theme overrides and JSON trees. */
+/* Shared page chrome, console tabs, editor theme overrides and JSON trees. */
 
 :root {
   color-scheme: dark;
@@ -98,79 +98,64 @@ button:hover {
 /* Left unstyled, this inherits the theme's normal (bright) text color,
    making a hint look like text you actually typed — dim it like every
    other placeholder in this design system. */
-.CodeMirror-placeholder {
+.editor-placeholder {
   color: #6b6d70 !important;
 }
 
-.CodeMirror .CodeMirror-scrollbar-filler,
-.CodeMirror .CodeMirror-gutter-filler {
-  background: transparent;
-}
-
-.CodeMirror-native-direct .CodeMirror-scroll {
-  margin-right: 0;
-  margin-bottom: 0;
-  padding-bottom: 0;
-}
-
-.cm-s-dracula.CodeMirror span.CodeMirror-matchingbracket,
-.cm-s-dracula.CodeMirror span.CodeMirror-nonmatchingbracket {
+.theme-dracula.editor span.editor-matchingbracket,
+.theme-dracula.editor span.editor-nonmatchingbracket {
   color: #ff5555 !important;
   background: rgba(255, 85, 85, 0.16);
   border-radius: 2px;
 }
 
-.cm-s-dracula span.cm-graphql-object-field {
-  color: #4f8ff7;
-}
-
-.cm-s-dracula span.cm-graphql-fragment {
+.theme-dracula span.tok-graphql-fragment {
   color: #f1fa8c;
 }
 
 /* An Agent edit flashes once and fades so the user sees what the Agent changed. */
-.CodeMirror span.cm-agent-edit,
-.CodeMirror .cm-agent-edit-line {
-  animation: cm-agent-edit 1.2s ease-out forwards;
+.editor span.editor-agent-edit,
+.editor .editor-agent-edit-line {
+  animation: editor-agent-edit 1.2s ease-out forwards;
 }
 
-@keyframes cm-agent-edit {
+@keyframes editor-agent-edit {
   0%, 25% { background-color: rgba(241, 250, 140, 0.35); }
   100% { background-color: transparent; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .CodeMirror span.cm-agent-edit,
-  .CodeMirror .cm-agent-edit-line {
+  .editor span.editor-agent-edit,
+  .editor .editor-agent-edit-line {
     animation: none;
     background-color: rgba(241, 250, 140, 0.2);
   }
 }
 
-.cm-s-dracula span.cm-graphql-type-condition {
+.theme-dracula span.tok-graphql-type-condition {
   color: #3e9c70;
 }
 
-.cm-s-dracula span.cm-rest-path-param {
+.theme-dracula span.tok-rest-path-param {
   color: #c49a6c;
 }
 
 /* A {{:VAR}}/{{env:VAR}}/{{profile:VAR}} reference (HEADERS_MODE, ENDPOINT_MODE
-   — see shared/editor.js) gets its own token type, not one of CodeMirror's
+   — see shared/editor.js) gets its own token type, not one of the
    built-in ones, specifically so this color is free to pick without
    colliding with anything the dracula theme already uses elsewhere: yellow
    (strings/JSON), purple (numbers/JSON literals), green (attributes/hosts),
    pink (schemes/keywords), cyan (properties), orange (grpc method), or the
    default off-white text. Red is the one dracula palette color the theme
    file leaves unused. */
-.cm-s-dracula span.cm-gw-placeholder {
+.theme-dracula span.tok-gw-placeholder {
   color: #ff5555;
 }
 
 /* The ":" inside {{profile:var}} specifically — a paler red than the rest
    of the placeholder, so the eye can separate "which profile" (left of the
    colon) from "which variable in it" (right of the colon) at a glance. */
-.cm-s-dracula span.cm-gw-placeholder-colon {
+.theme-dracula span.tok-gw-placeholder-colon {
   color: #ffb3b3;
 }
 
@@ -195,24 +180,23 @@ button:hover {
   pointer-events: none;
 }
 
-/* {{:VAR}} autocomplete (typing "{{" -> profile names, "{{profile:" -> that
-   profile's variables — see shared/editor.js's registerVariableHints).
-   show-hint.css ships a light theme; this overrides it to match dracula. */
-.CodeMirror-hints {
+/* {{:VAR}} autocomplete popup (typing "{{" -> profile names, "{{profile:" -> that
+   profile's variables), coloured to match dracula. */
+.editor-hints {
   background: #1e1f22;
   border: 1px solid #43454a;
   color: #dfe1e5;
   font-family: monospace;
 }
 
-.CodeMirror-hint {
+.editor-hint {
   color: #dfe1e5;
   display: flex;
   gap: 12px;
   justify-content: space-between;
 }
 
-li.CodeMirror-hint-active {
+li.editor-hint-active {
   background: #3574f0;
   color: #fff;
 }

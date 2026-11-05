@@ -79,21 +79,17 @@ pub fn accept_modules(value: &serde_json::Value) -> Result<bool, String> {
         let cached = serde_json::json!({"modules": manifests}).to_string();
         let _ = storage.set_item(MODULES, &cached);
     }
-    let changed = crate::services::install(manifests)?;
-    if changed && let Err(error) = editor::register_console_modes() {
-        web_sys::console::error_1(&error);
-    }
-    Ok(changed)
+    crate::services::install(manifests)
 }
 
 pub fn start() -> Result<(), JsValue> {
     let restored = restore_modules();
+    editor::mount::install();
     let root = window()
         .document()
         .ok_or("No document")?
         .get_element_by_id("app")
         .ok_or("Missing #app mount element")?;
-    editor::register_modes()?;
     yew::Renderer::<sessions::Host>::with_root_and_props(root, sessions::HostProps { restored })
         .render();
     Ok(())

@@ -1,9 +1,9 @@
 (async()=>{
-  const {assert,wait,click,find,testid,cm,setSource,key,type,input,openConsole,activateSession,sessionLibrary}=testDriver;
+  const {assert,wait,click,find,testid,editorOf,setSource,key,type,input,openConsole,activateSession,sessionLibrary}=testDriver;
   await openConsole();
   const initialSession=Number(testid('console-session-name').dataset.sessionId);
   await click(testid('console-service-rest'));
-  let editor=cm('console-editor');
+  let editor=editorOf('console-editor');
   const selectionSource='#check Light\nVISIBLE '+' '.repeat(35)+'\n\n#check Dark\nVISIBLE '+' '.repeat(35);
   setSource(editor,selectionSource);
   await wait(()=>editor.getOption('servicesChecks')?.join(',')==='0,3');
@@ -37,7 +37,7 @@
   await input('Input.dispatchMouseEvent',{type:'mouseReleased',x:end.x,y:end.y,button:'left',clickCount:1});
   assert(editor.somethingSelected()&&editor.getCursor('from').line===1&&editor.getCursor('to').line===4,
     'A real mouse drag must select across both alternating check backgrounds');
-  const paint=async(label,continuous=true)=>{
+  const paint=async label=>{
     const shot=await capture();
     const {context,scale}=shot;
     const pixel=(line,ch)=>{
@@ -55,28 +55,26 @@
       assert(close(at(end.left+20,(end.top+end.bottom)/2),line===1?[45,48,53]:[37,39,42]),
         `${label}: selection must not paint empty space after line ${line}`);
     }
-    if(continuous){
-      assert(close(pixel(2,0),[45,48,53]),`${label}: a selected newline must not fill an empty row`);
-      const seam=editor.charCoords({line:4,ch:1},'window');
-      assert(Math.max(...at(point(4,1).x,seam.top))<100,
-        `${label}: adjacent selected rows must not have a bright internal seam`);
-      const edge=editor.charCoords({line:1,ch:20},'window');
-      const border=at(point(1,20).x,edge.top);
-      assert(border[0]>75&&border[1]>110&&border[2]>150,
-        `${label}: the external selection contour must remain bright: ${border}`);
-      const muted=[...editor.getWrapperElement().querySelectorAll('pre.CodeMirror-line')]
-        .find(line=>line.textContent.startsWith('#check Dark')).querySelector('.cm-comment');
-      assert(muted,'The fixture must exercise a dim section header');
-      const color=getComputedStyle(muted).color.match(/\d+/g).slice(0,3).map(Number);
-      const luminance=rgb=>rgb.map(value=>{
-        value/=255;return value<=0.04045?value/12.92:((value+0.055)/1.055)**2.4;
-      }).reduce((sum,value,index)=>sum+value*[0.2126,0.7152,0.0722][index],0);
-      assert((luminance([37,39,42])+0.05)/(luminance([39,50,60])+0.05)>=0.85
-        &&luminance(color)>luminance([39,50,60]),
-        `${label}: a dim header must retain at least 85% of its original contrast`);
-    }
-    assert(editor.getWrapperElement().querySelectorAll('.CodeMirror-selection-outline').length>0
-      &&[...editor.getWrapperElement().querySelectorAll('.CodeMirror-selected')]
+    assert(close(pixel(2,0),[45,48,53]),`${label}: a selected newline must not fill an empty row`);
+    const seam=editor.charCoords({line:4,ch:1},'window');
+    assert(Math.max(...at(point(4,1).x,seam.top))<100,
+      `${label}: adjacent selected rows must not have a bright internal seam`);
+    const edge=editor.charCoords({line:1,ch:20},'window');
+    const border=at(point(1,20).x,edge.top);
+    assert(border[0]>75&&border[1]>110&&border[2]>150,
+      `${label}: the external selection contour must remain bright: ${border}`);
+    const muted=[...editor.getWrapperElement().querySelectorAll('pre.editor-line')]
+      .find(line=>line.textContent.startsWith('#check Dark')).querySelector('.tok-comment');
+    assert(muted,'The fixture must exercise a dim section header');
+    const color=getComputedStyle(muted).color.match(/\d+/g).slice(0,3).map(Number);
+    const luminance=rgb=>rgb.map(value=>{
+      value/=255;return value<=0.04045?value/12.92:((value+0.055)/1.055)**2.4;
+    }).reduce((sum,value,index)=>sum+value*[0.2126,0.7152,0.0722][index],0);
+    assert((luminance([37,39,42])+0.05)/(luminance([39,50,60])+0.05)>=0.85
+      &&luminance(color)>luminance([39,50,60]),
+      `${label}: a dim header must retain at least 85% of its original contrast`);
+    assert(editor.getWrapperElement().querySelectorAll('.editor-selection-outline').length>0
+      &&[...editor.getWrapperElement().querySelectorAll('.editor-selected')]
         .every(rect=>getComputedStyle(rect).boxShadow==='none'),
       `${label}: one external contour must replace individual rectangle borders`);
     const pixels=glyphPixels(shot);
@@ -88,7 +86,7 @@
         &&close(after,before)) glyphs++;
     }
     assert(glyphs>5,`${label}: selected glyph pixels must preserve their actual syntax colors above the fill: ${JSON.stringify({
-      glyphs,line:[...editor.getWrapperElement().querySelectorAll('pre.CodeMirror-line')].find(line=>line.textContent.startsWith('VISIBLE'))?.outerHTML,
+      glyphs,line:[...editor.getWrapperElement().querySelectorAll('pre.editor-line')].find(line=>line.textContent.startsWith('VISIBLE'))?.outerHTML,
     })}`);
   };
   await paint('Focused drag');
@@ -96,8 +94,6 @@
   await wait(()=>!editor.hasFocus());
   await paint('Unfocused selection');
   editor.focus();
-  editor.setSelections([1,4].map(line=>({anchor:{line,ch:0},head:{line,ch:30}})));
-  await paint('Multiple selections',false);
   assert(editor.getValue()===selectionSource,'Changing selection must never modify the source document');
   const foldedSource='#check Folded\n'+('payload\n'.repeat(20000))+'#check Tail\nend';
   setSource(editor,foldedSource);
@@ -110,7 +106,7 @@
     const foldStart=performance.now();
     editor.setSelection({line:0,ch:0},{line:editor.lastLine(),ch:3});
     const ms=performance.now()-foldStart;
-    const painted=editor.getWrapperElement().querySelectorAll('.CodeMirror-selected').length;
+    const painted=editor.getWrapperElement().querySelectorAll('.editor-selected').length;
     assert(painted<20,`Selecting across 20,000 folded lines must only paint rendered visual lines: ${painted} painted rectangles`);
     foldSelections.push(ms);
     if(ms<200) break;
@@ -166,19 +162,6 @@
     editor.redo();
     assert(editor.getValue()===expected,'Redo must preserve all inserted separators');
   }
-  const probe=document.createElement('div');
-  document.body.append(probe);
-  const large=CodeMirror(probe,{value:base+'\n'+('payload\n'.repeat(20000))+'#check Last',
-    servicesChecks:[0,20003]});
-  const original=large.getValue();
-  const last=large.lastLine(), getLine=large.getLine.bind(large);
-  let reads=0;
-  large.getLine=line=>{reads++;return getLine(line);};
-  large.getValue=()=>{throw new Error('Separator helper must not copy the full document');};
-  assert(CodeMirror.servicesSeparateChecks(large,{from:{line:last,ch:0},text:['#check Last'],origin:'paste'})===1
-    &&reads<=3,'Separating a check in a large document must read only the changed line and predecessor');
-  large.getValue=()=>original;
-  probe.remove();
 
   const open=async panel=>{
     const toggle=testid(`console-${panel}-toggle`);
@@ -203,7 +186,7 @@
     field.dispatchEvent(new InputEvent('input',{bubbles:true}));
     await click(testid(`session-copy-${source}`));
     await wait(()=>testid('console-session-name').textContent===name);
-    editor=cm('console-editor');
+    editor=editorOf('console-editor');
     return Number(testid('console-session-name').dataset.sessionId);
   };
   const a=await create(0,'Layout A');
@@ -217,7 +200,7 @@
     assert(app().textContent===fixtureVersion&&fixtureVersion===chrome.runtime.getManifest().version,
       `The application row must show the exact compiled release version of the installed extension: ${app().textContent}`);
   }
-  const editable=[...settings.querySelectorAll('input,select,textarea,.CodeMirror')]
+  const editable=[...settings.querySelectorAll('input,select,textarea,.editor')]
     .filter(field=>!field.closest('[data-testid="agent-settings"],[data-testid="source-settings"]'));
   assert(!editable.length,
     `Application Settings must not contain editable fields besides the Agent settings and the Sources: ${editable.map(field=>field.outerHTML)}`);

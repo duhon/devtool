@@ -2,7 +2,7 @@ use anyhow::{Context, Result, bail, ensure};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use services_contracts::{HOST_NAME, PROTOCOL_VERSION};
+use services_contracts::{APPLICATION, HOST_NAME, PROTOCOL_VERSION};
 use sha2::{Digest, Sha256};
 use std::{
     fs::{self, OpenOptions},
@@ -21,7 +21,6 @@ mod local_signing;
 pub mod quarantine;
 pub mod updates;
 
-const APPLICATION: &str = "ServicesDevTools";
 static SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 pub fn unique_id() -> String {
@@ -775,12 +774,17 @@ fn install_payload(home: &Path, payload: &Path, automatic: bool) -> Result<Locat
         remove_extension_path(&path)?;
     }
     println!(
-        "Services DevTools {version}: installation completed.\n\
+        "Services DevTools{edition} {version}: installation completed.\n\
          chrome://extensions -> Developer mode -> Load unpacked\n\
          Cmd+Shift+G, paste:\n\
          {extension}\n\
          Enter -> Select\n\
          Then add modules: Settings -> Modules",
+        edition = if services_contracts::PRERELEASE {
+            " Pre-release"
+        } else {
+            ""
+        },
         version = metadata["version"].as_str().unwrap(),
         extension = paths.base.join("extension").display(),
     );

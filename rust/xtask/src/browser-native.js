@@ -1,5 +1,5 @@
 (async () => {
-  const { assert, wait, during, holds, settle, visible, find, testid, cm, key, type, move, click, button,
+  const { assert, wait, during, holds, settle, visible, find, testid, editorOf, key, type, move, click, button,
     openConsole, setSource, commitRestUrl, candidates, pick } = testDriver;
   await wait(() => document.querySelector('[data-testid="native-status"]')?.hidden,
     'Installed companion must connect');
@@ -8,7 +8,7 @@
   for (const service of services) {
     await click(testid(`console-service-${service}`));
     await click(testid('console-editor-editor'), 80, 16);
-    const editor = cm('console-editor');
+    const editor = editorOf('console-editor');
     assert(editor.hasFocus(), `${service}: mouse click must focus empty Console`);
     await during(100, () => assert(candidates().length === 0, `${service}: mouse click must not open suggestions`));
     await key('Control+Space');
@@ -31,7 +31,7 @@
   const methods = {rest: 'GET ', opensearch: 'GET '};
   for (const service of services) {
     await click(testid(`console-service-${service}`));
-    const editor = cm('console-editor');
+    const editor = editorOf('console-editor');
     setSource(editor, `#check scope\n#endpoint\n${methods[service] || ''}`);
     await key('Control+Space');
     await wait(() => candidates().some(text => text.includes(endpoints[service] || 'bash -c')),
@@ -49,7 +49,7 @@
   // Runs one Console check and returns the text written below its #responce marker.
   const runConsole = async (service, source, done, message) => {
     await click(testid(`console-service-${service}`));
-    const editor = cm('console-editor');
+    const editor = editorOf('console-editor');
     setSource(editor, source);
     await key('Shift+Enter');
     const output = () => {
@@ -96,7 +96,7 @@
     'Terminal Debug must keep the stderr of a failed command');
   await click(testid('console-main-status'));
   await click(testid('console-service-rest'));
-  const bookEditor = cm('console-editor');
+  const bookEditor = editorOf('console-editor');
   const pasteRest = text => {
     const clipboard = new DataTransfer();
     clipboard.setData('text/plain', text);
@@ -174,7 +174,7 @@
   const consoleObject = bookEditor.state.completionActive?.data?.list.find(item => item.text === '{\n  \n}');
   assert(consoleObject?.displayText === '{} — JSON object'
     && !consoleObject.displayText.includes('\n')
-    && document.querySelector('.CodeMirror-hint')?.textContent === '{} — JSON object',
+    && document.querySelector('.editor-hint')?.textContent === '{} — JSON object',
   'REST Console must show a compact one-line object label while keeping its multiline insertion text');
   await pick(bookEditor, '{\n  \n}');
   assert(bookEditor.getCursor().ch === 2 && bookEditor.getLine(bookEditor.getCursor().line).trim() === '',
@@ -183,7 +183,7 @@
     'Real native OpenAPI discovery must automatically offer all Book fields for POST /api/v1/Books/');
   assert(bookEditor.__servicesCompletion.discovery.specUrl === `${fixtureUrl}/spec.json`,
     'Native discovery must find a schema published only at spec.json, as httpbin does');
-  assert(document.querySelector('.CodeMirror-hints')?.textContent.includes('date-time (ISO 8601)'),
+  assert(document.querySelector('.editor-hints')?.textContent.includes('date-time (ISO 8601)'),
     'The actual date menu label must retain the OpenAPI date-time format instead of reporting only string');
   await type('"');
   await wait(() => bookFields.every(field => candidates().includes(field)),
@@ -211,7 +211,7 @@
   assert(restDiscoveryCount() === bookLoaded, 'Book body editing and method changes must not repeat discovery');
   await key('Escape');
   await click(testid('console-service-rest'));
-  const magentoEditor = cm('console-editor');
+  const magentoEditor = editorOf('console-editor');
   const magentoPath = '/rest/default/V1/integration/admin/token';
   const magentoUrl = `http://{{var:magento}}${magentoPath}`;
   const magentoPrefix = endpoint =>
@@ -226,7 +226,8 @@
       const count = restDiscoveryCount();
       const keyNames = [];
       const recordKey = event => {
-        if (event.code === 'Space') keyNames.push(CodeMirror.keyName(event));
+        if (event.code === 'Space') keyNames.push([event.shiftKey && 'Shift', event.metaKey && 'Cmd',
+          event.ctrlKey && 'Ctrl', event.altKey && 'Alt', 'Space'].filter(Boolean).join('-'));
       };
       const input = magentoEditor.getInputField();
       input.addEventListener('keydown', recordKey, true);
@@ -390,16 +391,16 @@
   };
   await click(testid('console-service-rest'));
   const categoryPath = '/rest/default/V1/categories/{categoryId}/move';
-  const pathEditor = cm('console-editor');
+  const pathEditor = editorOf('console-editor');
   setSource(pathEditor, '#check move\n#endpoint\nPUT http://{{var:magento}}/rest/default/V1/categories/');
   await pick(pathEditor, categoryPath);
   const checkPathParameterColor = async (editor, line) => {
     await wait(() => editor.getLineTokens(line).some(token => token.type?.includes('rest-path-param')));
-    const parameters = [...editor.getWrapperElement().querySelectorAll('.cm-rest-path-param')];
+    const parameters = [...editor.getWrapperElement().querySelectorAll('.tok-rest-path-param')];
     assert(parameters.length === 1 && parameters[0].textContent === '{categoryId}'
       && getComputedStyle(parameters[0]).color === 'rgb(196, 154, 108)',
     'A discovered REST path parameter must be brown, including both braces');
-    const variable = editor.getWrapperElement().querySelector('.cm-gw-placeholder');
+    const variable = editor.getWrapperElement().querySelector('.tok-gw-placeholder');
     assert(variable && getComputedStyle(variable).color === 'rgb(255, 85, 85)',
       'Path parameter highlighting must not change the red profile-variable color');
     const text = editor.getLine(line);
@@ -418,9 +419,9 @@
   assert(!pathEditor.getLineTokens(4).some(token => token.type?.includes('rest-path-param')),
     'Braces inside a REST JSON body must not become URL-parameter tokens');
   assert(restDiscoveryCount() === enumLoaded, 'Highlighting and replacing path parameters must not run discovery');
-  await checkRestEnums(cm('console-editor'), magentoPrefix(enumUrl));
+  await checkRestEnums(editorOf('console-editor'), magentoPrefix(enumUrl));
   await click(testid('console-service-graphql'));
-  const discoveryEditor = cm('console-editor');
+  const discoveryEditor = editorOf('console-editor');
   const discoveryEndpoint = `${fixtureUrl}/graphql-native-discovery`;
   setSource(discoveryEditor, `#check protected-schema\n#endpoint\n${discoveryEndpoint}\n#query\n{\n  `);
   await key('Alt+Space');
@@ -448,7 +449,7 @@
   const materializationQuery = 'query ($skus: [String]) { products(skus: $skus) { sku images { url } } }';
   const materializationVariables = '{"skus":["{{var:sku}}"]}';
   await click(testid('console-service-graphql'));
-  const materializationEditor = cm('console-editor');
+  const materializationEditor = editorOf('console-editor');
   const materializationSource = `#check materialization\n#endpoint\n${fixtureUrl}/graphql-materialization\n#variables\n${materializationVariables}\n#query\n${materializationQuery}`;
   setSource(materializationEditor, materializationSource);
   await key('Shift+Enter');
@@ -464,9 +465,9 @@
   if (!visible(panelEditor('dictionary'))) await click(testid('console-dictionary-toggle'));
   await click(await wait(() => [...find('.console-panel-tabs').querySelectorAll('.tab-label')]
     .find(el => el.textContent === 'default')));
-  await wait(() => cm('console-dictionary').getValue().includes('{{second:TOKEN}}'),
+  await wait(() => editorOf('console-dictionary').getValue().includes('{{second:TOKEN}}'),
     'Variable reference fixture must be present');
-  let variables = cm('console-dictionary');
+  let variables = editorOf('console-dictionary');
   testid('console-service-rest').focus();
   const cursor = JSON.stringify(variables.getCursor());
   const lines = variables.getValue().split('\n');
@@ -529,13 +530,13 @@
   await click(testid('console-variables-toggle'));
   await wait(() => visible(panelEditor('variables')));
   await click(button(/^env /, find('.console-panel-tabs')));
-  await wait(() => cm('console-variables').getOption('readOnly') === true);
-  variables = cm('console-variables');
+  await wait(() => editorOf('console-variables').getOption('readOnly') === true);
+  variables = editorOf('console-variables');
   assert(variables.getValue().includes('HOME:'), 'env must include companion HOME');
   assert(variables.getValue().includes('SERVICES_DEVTOOLS_ENV_PROBE: companion-fixture-only'), 'env from .zprofile');
   assert(variables.getValue().includes('SERVICES_DEVTOOLS_INTERACTIVE_PROBE: interactive-fixture-only'), 'env from .zshrc');
   await click(button(/^var$/, find('.console-panel-tabs')));
-  await wait(() => cm('console-variables').getOption('readOnly') !== true);
+  await wait(() => editorOf('console-variables').getOption('readOnly') !== true);
   await click(testid('console-variables-toggle'));
   await wait(() => !visible(panelEditor('variables')), 'The tool panel must close before the shared Console checks');
   await testDriver.checkConsoleTools(`${fixtureUrl}/panel-tools`);
@@ -545,7 +546,7 @@
   frame.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;z-index:99999;background:white';
   document.body.append(frame);
   await wait(() => frame.contentWindow?.testDriver
-    && [...frame.contentDocument.querySelectorAll('.CodeMirror')].some(visible));
+    && [...frame.contentDocument.querySelectorAll('.editor')].some(visible));
   const doc = frame.contentDocument;
   const win = frame.contentWindow;
   assert(win.testDriver, 'CDP initialization must run inside the policy iframe');
@@ -560,8 +561,8 @@
   assert(denied, 'Browser clipboard must fail under Permissions Policy');
   assert(win.nativeProbe.clipboardReads === 0, 'No automatic clipboard read');
   await click(button(/^Import/, doc));
-  await wait(() => cm('console-editor', doc).getValue().includes('POST https://fixture.invalid/import'));
-  assert(cm('console-editor', doc).getValue().includes('X-Fixture: imported'), 'Import headers');
+  await wait(() => editorOf('console-editor', doc).getValue().includes('POST https://fixture.invalid/import'));
+  assert(editorOf('console-editor', doc).getValue().includes('X-Fixture: imported'), 'Import headers');
   assert(win.nativeProbe.clipboardReads === 1, 'Import reads synthetic clipboard exactly once');
   win.nativeProbe.clipboard = { text: 'not a command' };
   await click(button(/^Import/, doc));
@@ -576,7 +577,7 @@
   await click(testid('console-service-grpc', doc));
   win.nativeProbe.clipboard = { text: "grpcurl -plaintext -d '{\"fixture\":\"ok\"}' grpc.fixture.invalid:9000 fixture.Echo/Call" };
   await click(button(/^Import/, doc));
-  await wait(() => cm('console-editor', doc).getValue().includes('fixture.Echo/Call'));
+  await wait(() => editorOf('console-editor', doc).getValue().includes('fixture.Echo/Call'));
   win.nativeProbe.clipboard = { error: 'Fixture clipboard reader failed' };
   await click(button(/^Import/, doc));
   await wait(() => notice()?.textContent.includes('Fixture clipboard reader failed') && importLight() === 'error',

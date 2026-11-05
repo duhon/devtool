@@ -1,12 +1,12 @@
 (async () => {
-  const { assert, wait, holds, settle, click, doubleClick, testid, cm, openConsole, setSource, key, assertNativeScrollbars, visible } = testDriver;
+  const { assert, wait, holds, settle, click, doubleClick, testid, editorOf, openConsole, setSource, key, assertNativeScrollbars, visible } = testDriver;
   await openConsole();
   await click(testid('console-service-rest'));
   await click(testid('console-agent-toggle'));
   await wait(() => document.querySelector('[data-testid="agent-composer"]'),
     () => `Agent did not mount: ${document.querySelector('[data-testid="console-tool-panel"]')?.textContent}`);
   const source = `#check Agent acceptance\n#endpoint\nGET ${fixtureUrl}/agent-before\n\n#headers\nX-Token: {{second:TOKEN}}\n`;
-  setSource(cm('console-editor'), source);
+  setSource(editorOf('console-editor'), source);
   await settle();
   const textarea = testid('agent-composer');
   const input = text => {
@@ -133,10 +133,10 @@
     assert(agentStyle[property] === serviceStyle[property], `Agent tabs must share Console styling: ${property}`);
   await send('agent edit');
   await completed('Edited live check');
-  let editor = cm('console-editor');
+  let editor = editorOf('console-editor');
   assert(editor.getValue().includes('X-Agent: edited'), 'Agent edits must reach the live editor');
   assert(editor.getValue().includes(`${fixtureUrl}/agent-before`), 'Omitted connection directives must be preserved locally');
-  const flashed = () => [...editor.getWrapperElement().querySelectorAll('.cm-agent-edit')].map(mark => mark.textContent).join('');
+  const flashed = () => [...editor.getWrapperElement().querySelectorAll('.editor-agent-edit')].map(mark => mark.textContent).join('');
   assert(flashed() === 'X-Agent: edited', `An Agent edit must highlight only the words it changed: ${JSON.stringify(flashed())}`);
   await wait(() => !flashed(), 'The Agent edit highlight must fade away');
   editor.undo();

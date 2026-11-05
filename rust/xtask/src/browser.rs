@@ -558,12 +558,12 @@ async fn installed_reload(
         "Initial installed resource must load"
     );
     ensure!(cdp.evaluate(&page, r##"(async () => {
-      const {wait,click,testid,cm,assert}=testDriver;
+      const {wait,click,testid,editorOf,assert}=testDriver;
       // Temporary session 0 is never persisted, so the durable edit happens in imported session 1.
       await testDriver.activateSession(1);
-      await wait(()=>document.querySelector('[data-testid="console-editor"]')?.CodeMirror
-        || document.querySelector('[data-testid="console-editor"]')?.nextElementSibling?.CodeMirror);
-      cm('console-editor').setValue('#check update persistence\n');
+      await wait(()=>document.querySelector('[data-testid="console-editor"]')?.editor
+        || document.querySelector('[data-testid="console-editor"]')?.nextElementSibling?.editor);
+      editorOf('console-editor').setValue('#check update persistence\n');
       if(testid('console-sessions-toggle').getAttribute('aria-pressed')!=='true') await click(testid('console-sessions-toggle'));
       await testDriver.sessionsIdle();
       await testDriver.settingsTab('modules');
@@ -645,7 +645,7 @@ async fn installed_reload(
       testDriver.assert(testDriver.testid('console-session-name').dataset.sessionId === '0',
         'An extension update must start in empty temporary session 0');
       await testDriver.activateSession(1);
-      const editor = await testDriver.wait(() => document.querySelector('.console-editor-host .CodeMirror')?.CodeMirror);
+      const editor = await testDriver.wait(() => document.querySelector('.console-editor-host .editor')?.editor);
       const expected = JSON.parse(localStorage.getItem('__check_migration_expected'));
       const saved = (await testDriver.sessionLibrary()).sessions[0].snapshot.console;
       const services = ['rest', 'mysql', 'graphql', 'grpc', 'splunk', 'terminal'];
@@ -670,7 +670,7 @@ async fn installed_reload(
         cdp.evaluate(&reloaded, r##"(async () => {
           for (const service of ['rest', 'mysql', 'graphql', 'grpc', 'splunk', 'terminal']) {
             await testDriver.click(testDriver.testid(`console-service-${service}`));
-            const editor = testDriver.cm('console-editor');
+            const editor = testDriver.editorOf('console-editor');
             const expected = JSON.parse(localStorage.getItem('__check_migration_expected'));
             testDriver.assert(editor.getValue() === expected.document, 'Reload folding must use the migrated document');
             await testDriver.checkConsoleFolding(editor);

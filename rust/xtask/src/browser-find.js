@@ -1,5 +1,5 @@
 (async()=>{
-  const {assert,wait,click,testid,cm,setSource,key,type,openConsole,visible}=testDriver;
+  const {assert,wait,click,testid,editorOf,setSource,key,type,openConsole,visible}=testDriver;
   const bar=()=>document.querySelector('[data-testid="find-bar"]');
   const count=()=>testid('find-count').textContent;
   const query=async text=>{
@@ -9,7 +9,7 @@
   const occurrences=(text,word)=>text.split(word).length-1;
   await openConsole();
   await click(testid('console-service-rest'));
-  const editor=cm('console-editor');
+  const editor=editorOf('console-editor');
   const wrapper=editor.getWrapperElement();
   setSource(editor,`#check Find acceptance\n#endpoint\nGET ${fixtureUrl}/history-fixture?value=needle&other=needle`);
   editor.focus();editor.setCursor(2,5);
@@ -32,8 +32,8 @@
   await query('needle');
   await wait(()=>count()===`1 of ${total}`,()=>`Wrong count: ${count()} for ${total}`);
   assert(editor.getSelection()==='needle'&&editor.getCursor('from').line===2,'Typing must select the first match');
-  assert(wrapper.querySelectorAll('.cm-find-current').length===1,'The current match must be highlighted');
-  assert(wrapper.querySelectorAll('.cm-find-match').length>=total,'Every visible match must be highlighted');
+  assert(wrapper.querySelectorAll('.editor-find-current').length===1,'The current match must be highlighted');
+  assert(wrapper.querySelectorAll('.editor-find-match').length>=total,'Every visible match must be highlighted');
   await key('Enter');
   await wait(()=>count()===`2 of ${total}`,()=>`Enter did not move to the next match: ${count()}`);
   await key('Shift+Enter');
@@ -70,7 +70,7 @@
 
   await key('Escape');
   await wait(()=>!bar(),'Escape in the editor did not close the find bar');
-  assert(!wrapper.querySelector('.cm-find-match')&&!wrapper.classList.contains('console-find-target'),
+  assert(!wrapper.querySelector('.editor-find-match')&&!wrapper.classList.contains('console-find-target'),
     'Closing must clear the highlights and the outline');
 
   // A side panel searches its own editor.
@@ -78,7 +78,7 @@
   // The editor appears once the Variables profiles have loaded.
   await wait(()=>visible(document.querySelector('[data-testid="console-variables-editor"]')),
     'Variables editor is not visible');
-  const variables=cm('console-variables-editor');
+  const variables=editorOf('console-variables-editor');
   variables.focus();
   await key('Mod+F');
   await wait(()=>bar()&&variables.getWrapperElement().contains(bar()),'Mod+F must open the find bar in Variables');
@@ -98,7 +98,7 @@
   await wait(bar);
   await query('needle');
   await wait(()=>count()==='1 of 10000+',()=>`Large count: ${count()}`);
-  assert(wrapper.querySelectorAll('.cm-find-match').length<200,'Only visible matches may be highlighted');
+  assert(wrapper.querySelectorAll('.editor-find-match').length<200,'Only visible matches may be highlighted');
   assert(document.querySelector('[data-testid="find-replacement"]'),'Replace must stay expanded after closing');
   testid('find-replacement').select();
   await type('pin');

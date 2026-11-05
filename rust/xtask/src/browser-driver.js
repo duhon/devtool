@@ -124,11 +124,11 @@
     return element;
   };
   const testid = (name, doc) => find(`[data-testid="${name}"]`, doc);
-  const cm = (name, doc = document) => {
+  const editorOf = (name, doc = document) => {
     const element = doc.querySelector(`[data-testid="${name}"]`);
     assert(element, `Editor element not found: ${name}`);
-    const editor = element.CodeMirror || element.nextElementSibling?.CodeMirror;
-    assert(editor, `CodeMirror not found: ${name}`);
+    const editor = element.editor || element.nextElementSibling?.editor;
+    assert(editor, `Editor not mounted: ${name}`);
     return editor;
   };
   const sessionRecord = async (operation = 'get', win = window) => {
@@ -271,7 +271,7 @@
       await activateSession(globalThis.testDriver.session ?? 1);
       sessionInitialized=true;
     }
-    await wait(() => [...document.querySelectorAll('.console-root .CodeMirror')].some(visible));
+    await wait(() => [...document.querySelectorAll('.console-root .editor')].some(visible));
   };
   const setSource = (editor, source) => {
     editor.closeHint();
@@ -287,8 +287,8 @@
       editor.replaceRange('', {line, ch: text.length - 1}, {line, ch: text.length});
     await type('/');
   };
-  const candidates = (doc = document) => [...doc.querySelectorAll('.CodeMirror')]
-    .filter(visible).flatMap(el => (el.CodeMirror.state.completionActive?.data?.list || [])
+  const candidates = (doc = document) => [...doc.querySelectorAll('.editor')]
+    .filter(visible).flatMap(el => (el.editor.state.completionActive?.data?.list || [])
       .map(item => typeof item === 'string' ? item : item.text));
   const suggest = async (editor, expected) => {
     await wait(async () => {
@@ -343,7 +343,7 @@
     await click(testid('source-add-save'));
     if (previous && previous !== 'sources') await settingsTab(previous);
   };
-  globalThis.testDriver = { assert, sleep, seen, wait, waitFor, during, holds, settle, stable, frames, visible, find, testid, cm, key, type, move, input,
+  globalThis.testDriver = { assert, sleep, seen, wait, waitFor, during, holds, settle, stable, frames, visible, find, testid, editorOf, key, type, move, input,
     click, doubleClick, button, openConsole, activateSession, sessionsIdle, setSource, commitRestUrl, candidates, suggest, pick, pickThenEnter,
     assertNativeScrollbars, nativeTrackPaint, sessionLibrary, nativeHold, settingsTab, addFolderSource, clearSessions: () => sessionRecord('delete') };
   globalThis.testNativeHealth = () => new Promise(resolve => {

@@ -1,6 +1,6 @@
 (async () => {
-  const { assert, seen, wait, holds, stable, click, testid, cm, openConsole, setSource, key, assertSignalGeometry } = testDriver;
-  const editor = () => cm('console-editor');
+  const { assert, seen, wait, holds, stable, click, testid, editorOf, openConsole, setSource, key, assertSignalGeometry } = testDriver;
+  const editor = () => editorOf('console-editor');
   const source = () => editor().getValue();
   const status = () => document.querySelector('.console-status');
   const agentStatus = () => testid('agent-status');

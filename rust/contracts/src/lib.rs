@@ -10,7 +10,19 @@ pub mod templates;
 pub mod updates;
 
 pub const PROTOCOL_VERSION: u32 = 1;
-pub const HOST_NAME: &str = "com.chrome_extentions.host";
+/// A pre-release build (`xtask build --prerelease` sets this variable) installs beside the
+/// release, so it has its own native host and installation folder.
+pub const PRERELEASE: bool = option_env!("SERVICES_DEVTOOLS_PRERELEASE").is_some();
+pub const HOST_NAME: &str = if PRERELEASE {
+    "com.chrome_extentions.host.prerelease"
+} else {
+    "com.chrome_extentions.host"
+};
+pub const APPLICATION: &str = if PRERELEASE {
+    "ServicesDevTools-Prerelease"
+} else {
+    "ServicesDevTools"
+};
 pub const SPLUNK_TIMEOUT_SECONDS: u64 = 600;
 pub const SPLUNK_PREVIEW_WARNING: &str =
     "Preview results are provisional and may change as the search runs.";

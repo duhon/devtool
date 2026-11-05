@@ -33,7 +33,7 @@ fn queries_compile_to_literal_case_and_whole_word_patterns() {
 }
 
 #[test]
-fn line_offsets_count_utf16_units_like_codemirror() {
+fn line_offsets_count_utf16_units() {
     let lines = Lines::new("ab\nпривет 😀x\n\nend");
     assert_eq!(lines.position(0), (0, 0));
     assert_eq!(lines.position(3), (1, 0));

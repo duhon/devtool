@@ -5,6 +5,7 @@ pub mod completion;
 pub mod console;
 pub mod discovery;
 pub mod document;
+pub mod editor;
 pub mod find;
 pub mod format;
 mod graphql_completion;

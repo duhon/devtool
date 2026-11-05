@@ -1,5 +1,5 @@
 (async () => {
-  const {assert, wait, testid, click, openConsole, cm, key, setSource, addFolderSource} = testDriver;
+  const {assert, wait, testid, click, openConsole, editorOf, key, setSource, addFolderSource} = testDriver;
   await openConsole();
   const shipped = ['artemis', 'graphql', 'grpc', 'mysql', 'opensearch', 'rest', 'splunk', 'terminal'];
   const status = () => document.querySelector('[data-testid="settings-update-status"] .console-status-text')?.textContent ?? '';
@@ -25,7 +25,7 @@
   };
   const kept = '#check kept\n#endpoint\nhttps://kept.fixture.invalid\n';
   await click(tab('graphql'));
-  setSource(cm('console-editor'), kept);
+  setSource(editorOf('console-editor'), kept);
   await settings(true);
   await wait(() => listed() === shipped.join() && !status().includes('Running'),
     () => `Settings must list every shipped module: ${listed()}; ${status()}`);
@@ -93,7 +93,7 @@
   assert(listed() === shipped.join() && !row('graphql'), `Its row must now be the source's: ${listed()}`);
   await settings(false);
   await click(tab('graphql'));
-  const editor = cm('console-editor');
+  const editor = editorOf('console-editor');
   assert(editor.getValue() === kept, `The console of a removed module must come back: ${JSON.stringify(editor.getValue())}`);
   setSource(editor, `#check installed\n#endpoint\n${fixtureUrl}/graphql-materialization\n#variables\n{"skus":["{{var:sku}}"]}\n`
     + '#query\nquery ($skus: [String]) { products(skus: $skus) { sku images { url } } }');
@@ -109,7 +109,7 @@
   await wait(echoInstalled, () => `The example module must install from the source: ${status()}; ${listed()}`);
   await settings(false);
   await click(tab('echo'));
-  const echo = cm('console-editor');
+  const echo = editorOf('console-editor');
   setSource(echo, '#check echo\n#endpoint\nlocal\n#text\nsent through a module\n');
   await key('Shift+Enter');
   const echoed = () => echo.getValue().split('#responce')[1] ?? '';
@@ -137,8 +137,8 @@
   await wait(echoInstalled, () => `The example module must install again: ${status()}; ${listed()}`);
   await settings(false);
   await click(tab('echo'));
-  assert(!cm('console-editor').getValue().includes('sent through a module'),
-    `The deleted console must not come back: ${cm('console-editor').getValue().slice(0, 300)}`);
+  assert(!editorOf('console-editor').getValue().includes('sent through a module'),
+    `The deleted console must not come back: ${editorOf('console-editor').getValue().slice(0, 300)}`);
   await settings(true);
   await ask('echo', 'modules');
   await click(confirmPart('echo', 'remove-confirm', 'modules'));

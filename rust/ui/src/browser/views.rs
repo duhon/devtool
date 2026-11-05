@@ -203,7 +203,7 @@ pub fn console_status(props: &ConsoleStatusProps) -> Html {
     </>}
 }
 pub fn tree(value: &Value, depth: usize) -> Html {
-    html! {<div class="cm-s-dracula json-tree"><JsonNode value={value.clone()} {depth}/></div>}
+    html! {<div class="theme-dracula json-tree"><JsonNode value={value.clone()} {depth}/></div>}
 }
 #[derive(Properties, PartialEq)]
 struct JsonProps {
@@ -254,7 +254,7 @@ fn json_node(props: &JsonProps) -> Html {
         })
     };
     let label = props.label.as_ref().map(|label| html! {
-        <span class={if props.is_index{"json-index"}else{"cm-property"}}>{if props.is_index{format!("{label}: ")}else{format!("\"{label}\": ")}}</span>
+        <span class={if props.is_index{"json-index"}else{"tok-property"}}>{if props.is_index{format!("{label}: ")}else{format!("\"{label}\": ")}}</span>
     }).unwrap_or_default();
     let entries = match value {
         Value::Object(map) => Some(
@@ -301,11 +301,11 @@ fn json_node(props: &JsonProps) -> Html {
     }
     let leaf = match value {
         Value::String(s) => {
-            html! {<span class="cm-string" style="white-space:pre-wrap;overflow-wrap:anywhere">{serde_json::to_string(s).unwrap_or_default()}</span>}
+            html! {<span class="tok-string" style="white-space:pre-wrap;overflow-wrap:anywhere">{serde_json::to_string(s).unwrap_or_default()}</span>}
         }
-        Value::Number(n) => html! {<span class="cm-number">{n.to_string()}</span>},
-        Value::Bool(b) => html! {<span class="cm-atom">{b.to_string()}</span>},
-        Value::Null => html! {<span class="cm-atom">{"null"}</span>},
+        Value::Number(n) => html! {<span class="tok-number">{n.to_string()}</span>},
+        Value::Bool(b) => html! {<span class="tok-atom">{b.to_string()}</span>},
+        Value::Null => html! {<span class="tok-atom">{"null"}</span>},
         _ => unreachable!("containers are rendered above"),
     };
     html! {<div class="json-line">{label}{leaf}</div>}

@@ -1,7 +1,7 @@
 // The 3.0 browser performance baseline: panel open,
 // a Console REST round trip and a large response, each as median/p90 in milliseconds.
 (async () => {
-  const {assert, wait, waitFor, find, testid, cm, key, click, openConsole, setSource, visible} = testDriver;
+  const {assert, wait, waitFor, find, testid, editorOf, key, click, openConsole, setSource, visible} = testDriver;
   const stats = values => {
     const sorted = [...values].sort((a, b) => a - b);
     const at = q => sorted[Math.round((sorted.length - 1) * q)];
@@ -16,7 +16,7 @@
     const started = performance.now();
     frame.src = 'panel.html';
     document.body.appendChild(frame);
-    await waitFor(() => [...(frame.contentDocument?.querySelectorAll('.console-root .CodeMirror') || [])].some(visible),
+    await waitFor(() => [...(frame.contentDocument?.querySelectorAll('.console-root .editor') || [])].some(visible),
       {message: 'A reopened panel must show its Console', interval: 2});
     const elapsed = performance.now() - started;
     frame.remove();
@@ -26,7 +26,7 @@
   // Runs one Console check and returns the time from Shift+Enter to the finished response.
   const run = async (source, done, message) => {
     await click(testid('console-service-rest'));
-    const editor = cm('console-editor');
+    const editor = editorOf('console-editor');
     setSource(editor, source);
     const status = find('.console-status');
     const started = performance.now();

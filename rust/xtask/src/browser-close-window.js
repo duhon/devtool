@@ -1,8 +1,8 @@
 (async () => {
   // Starts two Terminal checks, a running REST check and a pending Agent approval in this window,
   // then returns the Terminal process IDs so the harness can close the window and watch them exit.
-  const { wait, click, testid, cm, openConsole, setSource, key } = testDriver;
-  const editor = () => cm('console-editor');
+  const { wait, click, testid, editorOf, openConsole, setSource, key } = testDriver;
+  const editor = () => editorOf('console-editor');
   const source = () => editor().getValue();
   const status = () => document.querySelector('.console-status');
   const checks = () => [...testid('console-check-menu').querySelectorAll('button')];

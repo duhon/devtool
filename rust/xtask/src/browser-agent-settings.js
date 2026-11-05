@@ -1,5 +1,5 @@
 (async () => {
-  const {assert, wait, testid, click, key, cm, openConsole} = testDriver;
+  const {assert, wait, testid, click, key, editorOf, openConsole} = testDriver;
   // A fresh panel: wait for the restored Console session before using its toolbar.
   await openConsole();
   if (testid('console-agent-toggle').getAttribute('aria-pressed') !== 'true')
@@ -151,16 +151,16 @@
       () => `The source's Dictionary profile must be listed: ${tabs().map(tab => tab.textContent)}`);
     await click(profile);
     await wait(() => document.querySelector('[data-testid="dictionary-origin-label"]')?.textContent === 'From source Team'
-      && cm('console-dictionary').getValue().includes('team.fixture.invalid'),
+      && editorOf('console-dictionary').getValue().includes('team.fixture.invalid'),
       () => `A source profile must name its source: ${document.querySelector('[data-testid="dictionary-origin"]')?.textContent}`);
     assert(!document.querySelector('[data-testid="dictionary-reset"]'), 'An untouched source profile has nothing to reset');
-    cm('console-dictionary').setValue(cm('console-dictionary').getValue().replace('team.fixture.invalid', 'mine.fixture.invalid'));
+    editorOf('console-dictionary').setValue(editorOf('console-dictionary').getValue().replace('team.fixture.invalid', 'mine.fixture.invalid'));
     const own = () => document.querySelector('[data-testid="dictionary-reset-variable"][data-variable="HOST"]');
     await wait(() => own() && !document.querySelector('[data-testid="dictionary-reset-variable"][data-variable="PORT"]'),
       () => `A changed variable must become the user's own: ${testid('dictionary-origin').textContent}`);
     await click(own());
-    await wait(() => !own() && cm('console-dictionary').getValue().includes('team.fixture.invalid'),
-      () => `Reset must restore the source's value: ${cm('console-dictionary').getValue()}`);
+    await wait(() => !own() && editorOf('console-dictionary').getValue().includes('team.fixture.invalid'),
+      () => `Reset must restore the source's value: ${editorOf('console-dictionary').getValue()}`);
     await click(testid('console-dictionary-toggle'));
 
     await settings();

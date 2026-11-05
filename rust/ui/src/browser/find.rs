@@ -69,7 +69,7 @@ type Listener = Closure<dyn FnMut(Event)>;
 
 struct Target {
     wrapper: Element,
-    cm: JsValue,
+    editor: JsValue,
     handlers: Vec<(&'static str, Handler)>,
 }
 
@@ -137,7 +137,7 @@ impl Component for FindBar {
             "focusin",
             Closure::new(move |event: Event| {
                 if let Some(editor) =
-                    event_element(&event).and_then(|el| closest(&el, ".CodeMirror"))
+                    event_element(&event).and_then(|el| closest(&el, ".editor"))
                 {
                     state.borrow_mut().last_editor = Some(editor);
                 }
@@ -198,10 +198,10 @@ impl Component for FindBar {
                 self.step(action == Action::Next);
             }
             Msg::Action(Action::Close) => {
-                let cm = self.target.as_ref().map(|target| target.cm.clone());
+                let editor = self.target.as_ref().map(|target| target.editor.clone());
                 self.close();
-                if let Some(cm) = cm {
-                    let _ = call(&cm, "focus", &[]);
+                if let Some(editor) = editor {
+                    let _ = call(&editor, "focus", &[]);
                 }
             }
             Msg::Query(query) => {
@@ -411,10 +411,10 @@ impl FindBar {
         };
         let from_bar = active().is_some_and(|el| closest(&el, ".console-find").is_some());
         self.attach(ctx, wrapper);
-        let Some(cm) = self.target.as_ref().map(|target| target.cm.clone()) else {
+        let Some(editor) = self.target.as_ref().map(|target| target.editor.clone()) else {
             return false;
         };
-        if !from_bar && let Some(selection) = seed(&cm) {
+        if !from_bar && let Some(selection) = seed(&editor) {
             self.query = if self.options.regex {
                 find::escape(&selection)
             } else {
@@ -457,7 +457,7 @@ impl FindBar {
             return;
         }
         self.detach();
-        let cm = get(&wrapper, "CodeMirror");
+        let editor = get(&wrapper, "editor");
         let mut handlers: Vec<(&'static str, Handler)> = Vec::new();
         let link = ctx.link().clone();
         handlers.push((
@@ -480,7 +480,7 @@ impl FindBar {
             }),
         ));
         for (name, handler) in &handlers {
-            if let Err(error) = call(&cm, "on", &[(*name).into(), handler.as_ref().clone()]) {
+            if let Err(error) = call(&editor, "on", &[(*name).into(), handler.as_ref().clone()]) {
                 web_sys::console::error_1(&error);
             }
         }
@@ -492,7 +492,7 @@ impl FindBar {
         self.shared.borrow_mut().target = Some(wrapper.clone());
         self.target = Some(Target {
             wrapper,
-            cm,
+            editor,
             handlers,
         });
         self.snapshot = None;
@@ -506,7 +506,7 @@ impl FindBar {
         if let Some(target) = self.target.take() {
             for (name, handler) in &target.handlers {
                 let _ = call(
-                    &target.cm,
+                    &target.editor,
                     "off",
                     &[(*name).into(), handler.as_ref().clone()],
                 );
@@ -525,7 +525,7 @@ impl FindBar {
 
     fn editable(&self) -> bool {
         self.target.as_ref().is_some_and(|target| {
-            !call(&target.cm, "getOption", &["readOnly".into()])
+            !call(&target.editor, "getOption", &["readOnly".into()])
                 .unwrap_or(JsValue::TRUE)
                 .is_truthy()
         })
@@ -533,8 +533,8 @@ impl FindBar {
 
     fn snapshot(&mut self) -> Option<&Snapshot> {
         if self.snapshot.is_none() {
-            let cm = &self.target.as_ref()?.cm;
-            let text = call(cm, "getValue", &[]).ok()?;
+            let editor = &self.target.as_ref()?.editor;
+            let text = call(editor, "getValue", &[]).ok()?;
             let lines = Lines::new(&text.as_string()?);
             self.snapshot = Some(Snapshot { text, lines });
         }
@@ -576,8 +576,8 @@ impl FindBar {
     }
 
     fn cursor(&mut self, side: &str) -> Option<usize> {
-        let cm = self.target.as_ref()?.cm.clone();
-        let position = call(&cm, "getCursor", &[side.into()]).ok()?;
+        let editor = self.target.as_ref()?.editor.clone();
+        let position = call(&editor, "getCursor", &[side.into()]).ok()?;
         let lines = &self.snapshot()?.lines;
         Some(lines.offset(number(&position, "line"), number(&position, "ch")))
     }
@@ -640,8 +640,8 @@ impl FindBar {
         let range = js_sys::Object::new();
         set(&range, "from", &from);
         set(&range, "to", &to);
-        let result = call(&target.cm, "setSelection", &[from, to])
-            .and_then(|_| call(&target.cm, "scrollIntoView", &[range.into(), 60.into()]));
+        let result = call(&target.editor, "setSelection", &[from, to])
+            .and_then(|_| call(&target.editor, "scrollIntoView", &[range.into(), 60.into()]));
         if let Err(error) = result {
             web_sys::console::error_1(&error);
         }
@@ -654,10 +654,10 @@ impl FindBar {
             return;
         };
         let mut shared = self.shared.borrow_mut();
-        let _ = call(&target.cm, "startOperation", &[]);
+        let _ = call(&target.editor, "startOperation", &[]);
         shared.clear_marks();
         if let (true, Some(snapshot)) = (self.open, &self.snapshot) {
-            let viewport = call(&target.cm, "getViewport", &[]).unwrap_or(JsValue::NULL);
+            let viewport = call(&target.editor, "getViewport", &[]).unwrap_or(JsValue::NULL);
             let from = snapshot.lines.start(number(&viewport, "from"));
             let to = snapshot.lines.start(number(&viewport, "to"));
             let first = self.matches.partition_point(|m| m.end <= from);
@@ -671,13 +671,13 @@ impl FindBar {
             {
                 let options = js_sys::Object::new();
                 let class = if self.current == Some(index) {
-                    "cm-find-match cm-find-current"
+                    "editor-find-match editor-find-current"
                 } else {
-                    "cm-find-match"
+                    "editor-find-match"
                 };
                 set(&options, "className", &class.into());
                 match call(
-                    &target.cm,
+                    &target.editor,
                     "markText",
                     &[
                         position(&snapshot.lines, found.start),
@@ -691,14 +691,14 @@ impl FindBar {
             }
         }
         drop(shared);
-        let _ = call(&target.cm, "endOperation", &[]);
+        let _ = call(&target.editor, "endOperation", &[]);
     }
 
     fn regions(&self) -> Vec<crate::document::ResponseRegion> {
         self.target
             .as_ref()
             .and_then(|target| {
-                let regions = call(&target.cm, "getOption", &["servicesResponses".into()]).ok()?;
+                let regions = call(&target.editor, "getOption", &["servicesResponses".into()]).ok()?;
                 serde_json::from_value(super::json(regions)).ok()
             })
             .unwrap_or_default()
@@ -738,9 +738,9 @@ impl FindBar {
             self.current = self.selected();
         }
         let regions = self.regions();
-        let (Some(regexp), Some(cm)) = (
+        let (Some(regexp), Some(editor)) = (
             self.compile(),
-            self.target.as_ref().map(|target| target.cm.clone()),
+            self.target.as_ref().map(|target| target.editor.clone()),
         ) else {
             return;
         };
@@ -774,7 +774,7 @@ impl FindBar {
         let from = position(&snapshot.lines, found.start);
         let to = position(&snapshot.lines, found.end);
         if let Err(error) = call(
-            &cm,
+            &editor,
             "replaceRange",
             &[text.as_str().into(), from, to, "*replace".into()],
         ) {
@@ -791,9 +791,9 @@ impl FindBar {
     fn replace_all(&mut self) {
         self.note = None;
         let regions = self.regions();
-        let (Some(regexp), Some(cm)) = (
+        let (Some(regexp), Some(editor)) = (
             self.compile(),
-            self.target.as_ref().map(|target| target.cm.clone()),
+            self.target.as_ref().map(|target| target.editor.clone()),
         ) else {
             return;
         };
@@ -815,11 +815,11 @@ impl FindBar {
             true
         });
         if !edits.is_empty() {
-            let _ = call(&cm, "startOperation", &[]);
+            let _ = call(&editor, "startOperation", &[]);
             // From the end, so every earlier position stays valid.
             for (found, text) in edits.iter().rev() {
                 if let Err(error) = call(
-                    &cm,
+                    &editor,
                     "replaceRange",
                     &[
                         text.as_str().into(),
@@ -831,7 +831,7 @@ impl FindBar {
                     web_sys::console::error_1(&error);
                 }
             }
-            let _ = call(&cm, "endOperation", &[]);
+            let _ = call(&editor, "endOperation", &[]);
         }
         self.snapshot = None;
         self.search();
@@ -892,14 +892,14 @@ fn option_key(event: &KeyboardEvent) -> Option<Toggle> {
     }
 }
 
-/// Escape closes the bar from the bar or its editor, after CodeMirror closes its completion list.
+/// Escape closes the bar from the bar or its editor, after the editor closes its completion list.
 fn escapes(shared: &Shared) -> bool {
     let (Some(target), Some(active)) = (&shared.target, active()) else {
         return false;
     };
     target.contains(Some(active.as_ref()))
         && !get(
-            &get(&get(target, "CodeMirror"), "state"),
+            &get(&get(target, "editor"), "state"),
             "completionActive",
         )
         .is_truthy()
@@ -935,7 +935,7 @@ fn visible(element: &Element) -> bool {
 
 /// The first visible editor inside an element.
 fn editor_in(root: &Element) -> Option<Element> {
-    let editors = call(root, "querySelectorAll", &[".CodeMirror".into()]).ok()?;
+    let editors = call(root, "querySelectorAll", &[".editor".into()]).ok()?;
     (0..number(&editors, "length") as u32)
         .filter_map(|index| {
             js_sys::Reflect::get_u32(&editors, index)
@@ -976,7 +976,7 @@ fn resolve(shared: &Shared) -> Option<Element> {
     if closest(&anchor, ".console-find").is_some() {
         return shared.target.clone().filter(visible);
     }
-    if let Some(editor) = closest(&anchor, ".CodeMirror") {
+    if let Some(editor) = closest(&anchor, ".editor") {
         return Some(editor);
     }
     if let Some(overlay) = closest(&anchor, ".console-hints-overlay") {
@@ -999,8 +999,8 @@ fn resolve(shared: &Shared) -> Option<Element> {
 }
 
 /// A single-line editor selection to search for.
-fn seed(cm: &JsValue) -> Option<String> {
-    call(cm, "getSelection", &[])
+fn seed(editor: &JsValue) -> Option<String> {
+    call(editor, "getSelection", &[])
         .ok()?
         .as_string()
         .filter(|text| !text.is_empty() && !text.contains('\n') && text.len() <= SEED)

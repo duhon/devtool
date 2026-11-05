@@ -3,6 +3,167 @@
 use super::*;
 
 impl App {
+    /// The console editor of `service`, showing its document from the first use.
+    pub(super) fn console_editor(&self, service: &str) -> Handle {
+        let key = format!("console:{service}");
+        if let Some(editor) = self.editors.borrow().get(&key) {
+            return editor.clone();
+        }
+        let setup = Setup {
+            mode: format!("console-{service}"),
+            service: service.into(),
+            console: true,
+            check_scope: format!("{}:{service}", self.workspace_id),
+            ..Setup::default()
+        };
+        let text = self.docs.get(service).map_or("", String::as_str);
+        let editor = editor::kept(&format!("{}:{key}", self.session_id), setup, text);
+        if self.console_editor_stale(service, &editor) {
+            editor.with(|session| {
+                self.sync_console_editor(service, session);
+                // Nothing has seen the editor yet.
+                session.take_events();
+            });
+        }
+        self.editors.borrow_mut().insert(key, editor.clone());
+        editor
+    }
+    pub(super) fn hints_editor(&self, service: &str) -> Handle {
+        let key = format!("hints:{service}");
+        if let Some(editor) = self.editors.borrow().get(&key) {
+            return editor.clone();
+        }
+        let setup = Setup {
+            mode: "headers".into(),
+            service: "hints".into(),
+            field: service.into(),
+            ..Setup::default()
+        };
+        let editor = editor::kept(
+            &format!("{}:{key}", self.session_id),
+            setup,
+            &self.hints_text(service),
+        );
+        self.editors.borrow_mut().insert(key, editor.clone());
+        editor
+    }
+    fn hints_text(&self, service: &str) -> String {
+        self.hints_drafts
+            .get(service)
+            .or_else(|| self.hints.get(service))
+            .cloned()
+            .unwrap_or_default()
+    }
+    fn export_editor(&self, text: &str) -> Handle {
+        self.export_editor
+            .borrow_mut()
+            .get_or_insert_with(|| {
+                let setup = Setup {
+                    mode: "shell".into(),
+                    ..Setup::default()
+                };
+                Handle::new(setup, text)
+            })
+            .clone()
+    }
+    /// The anchor of `line` in the console editor of `service`, which follows the line
+    /// through edits.
+    pub(super) fn anchor(&self, service: &str, line: usize) -> Option<Anchor> {
+        self.console_editor(service)
+            .read(|session| session.anchor(line))
+    }
+    /// The line of the `anchor` of a run of `owner` (`console:{service}`).
+    pub(super) fn anchor_line(&self, owner: &str, anchor: Anchor) -> Option<usize> {
+        self.console_editor(owner.trim_start_matches("console:"))
+            .read(|session| session.anchor_line(anchor))
+    }
+    fn console_editor_stale(&self, service: &str, editor: &Handle) -> bool {
+        editor.read(|session| {
+            !session.pending()
+                && (*session.source() != *self.docs.get(service).map_or("", String::as_str)
+                    || session.regions() != self.regions(service)
+                    || session.checks() != self.checks.get(service).map_or(&[][..], Vec::as_slice))
+        })
+    }
+    fn regions(&self, service: &str) -> &[crate::document::ResponseRegion] {
+        self.response_regions
+            .get(service)
+            .map_or(&[], Vec::as_slice)
+    }
+    /// Shows the document of `service` with its responses and checks.
+    fn sync_console_editor(&self, service: &str, session: &mut crate::editor::session::Session) {
+        self.sync_console_session(service, session, None);
+    }
+    fn sync_console_session(
+        &self,
+        service: &str,
+        session: &mut crate::editor::session::Session,
+        preserve_after: Option<usize>,
+    ) {
+        session.sync(
+            self.docs.get(service).map_or("", String::as_str),
+            self.regions(service),
+            self.checks.get(service).map_or(&[], Vec::as_slice),
+            preserve_after,
+            js_sys::Date::now(),
+        );
+    }
+    /// Brings the editors up to the documents changed outside them; their events come back
+    /// as messages.
+    pub(super) fn sync_editors(&self, ctx: &Context<Self>) {
+        let editors = self.editors.borrow().clone();
+        for (key, editor) in editors {
+            if let Some(service) = key.strip_prefix("console:") {
+                if self.console_editor_stale(service, &editor) {
+                    editor.with(|session| self.sync_console_editor(service, session));
+                }
+                if service == self.console_service {
+                    editor.set_context(EditorContext {
+                        hints: self.completions(service),
+                        templates: self.template_entries(service),
+                        discovery: self.schema(service).cloned().unwrap_or(Value::Null),
+                    });
+                }
+                if editor.pending() {
+                    ctx.link()
+                        .send_message(Msg::ConsoleEditor(service.into(), EditorMsg::Flush));
+                }
+            } else if let Some(service) = key.strip_prefix("hints:") {
+                editor.set_text(&self.hints_text(service), &[]);
+            }
+        }
+        match &self.export_text {
+            Some(text) => self.export_editor(text).set_text(text, &[]),
+            None => {
+                self.export_editor.borrow_mut().take();
+            }
+        }
+    }
+    /// Handles what the console editor of `service` reported.
+    pub(super) fn console_events(
+        &mut self,
+        ctx: &Context<Self>,
+        service: &str,
+        events: Vec<EditorEvent>,
+    ) -> bool {
+        let mut render = false;
+        for event in events {
+            let msg = match event {
+                EditorEvent::Changed(text) => Msg::ConsoleText(text),
+                EditorEvent::Edited(edit) => Msg::ConsoleEdited(service.into(), edit),
+                EditorEvent::EditError(error) => Msg::EditorError(error),
+                EditorEvent::Run { source, line } => Msg::ConsoleRun(source, line),
+                EditorEvent::Discover => Msg::Discover,
+                EditorEvent::AutoDiscover(endpoint) => {
+                    Msg::AutoDiscover(format!("console:{service}"), endpoint)
+                }
+                EditorEvent::Viewport(viewport) => Msg::Scroll(service.into(), viewport),
+                EditorEvent::Cursor(_) => continue,
+            };
+            render |= Component::update(self, ctx, msg);
+        }
+        render
+    }
     pub(super) fn active_console_line(&self, service: &str) -> Option<usize> {
         let checks: Vec<_> = self
             .checks
@@ -31,8 +192,8 @@ impl App {
             .filter(|(_, run)| {
                 run.editor == owner
                     && line.is_some()
-                    && (if let Some(anchor) = &run.anchor {
-                        crate::browser::editor::anchor_line(&owner, anchor)
+                    && (if let Some(anchor) = run.anchor {
+                        self.anchor_line(&owner, anchor)
                     } else {
                         run.line
                     }) == line
@@ -46,12 +207,13 @@ impl App {
         line: Option<usize>,
     ) -> (Option<&Run>, Option<&DiscoveryStatus>) {
         let run = self.console_run(service, line);
+        let editor = self.console_editor(service);
         let discovery = self
             .discovery_status
             .get(service)
             .into_iter()
             .chain(self.discovery_history.get(service).into_iter().flatten())
-            .filter(|status| line.is_some() && status.check_line(service) == line)
+            .filter(|status| line.is_some() && status.check_line(&editor) == line)
             .max_by(|a, b| a.started.total_cmp(&b.started));
         if run.is_some_and(Run::active)
             || discovery.is_none_or(|status| run.is_some_and(|run| run.started >= status.started))
@@ -105,6 +267,7 @@ impl App {
                 .map(|(key, _)| key.to_owned());
             (run_key, discovery.map(|status| (status.started, line)))
         };
+        let editor = self.console_editor(&service);
         let mut wait = None;
         for (key, run) in &mut self.runs {
             if run_key.as_ref() == Some(key) {
@@ -127,7 +290,7 @@ impl App {
         for (owner, status) in discoveries {
             if *owner == service
                 && discovery.is_some_and(|(started, line)| {
-                    status.started == started && status.check_line(&service) == line
+                    status.started == started && status.check_line(&editor) == line
                 })
             {
                 let state = Indicator::status(&status.text, status.request.is_some());
@@ -202,9 +365,7 @@ impl App {
         let line = self.active_console_line(service);
         CheckOwner {
             line,
-            anchor: line.and_then(|line| {
-                crate::browser::editor::anchor(&format!("console:{service}"), line)
-            }),
+            anchor: line.and_then(|line| self.anchor(service, line)),
         }
     }
     pub(super) fn set_discovery_status(
@@ -215,7 +376,8 @@ impl App {
         debug: Value,
         owner: CheckOwner,
     ) {
-        let line = owner.check_line(service);
+        let editor = self.console_editor(service);
+        let line = owner.check_line(&editor);
         let status = DiscoveryStatus {
             request: None,
             text,
@@ -229,13 +391,13 @@ impl App {
         history.retain(|previous| {
             previous.request.is_some()
                 || previous
-                    .check_line(service)
+                    .check_line(&editor)
                     .is_some_and(|previous| Some(previous) != line)
         });
         if let Some(previous) = self.discovery_status.insert(service.into(), status)
             && (previous.request.is_some()
                 || previous
-                    .check_line(service)
+                    .check_line(&editor)
                     .is_some_and(|previous| Some(previous) != line))
         {
             history.push(previous);
@@ -321,11 +483,12 @@ impl App {
     }
     pub(super) fn prune_console_runs(&mut self, service: &str, line: usize) {
         let owner = format!("console:{service}");
+        let editor = self.console_editor(service);
         self.runs.retain(|_, run| {
             run.editor != owner
                 || run.active()
-                || (if let Some(anchor) = &run.anchor {
-                    crate::browser::editor::anchor_line(&owner, anchor)
+                || (if let Some(anchor) = run.anchor {
+                    editor.read(|session| session.anchor_line(anchor))
                 } else {
                     run.line
                 })
@@ -381,7 +544,7 @@ impl App {
                 vertical,
                 started,
                 debug: json!({"operation":"request","service":service,"params":params,"started":started,"state":"running"}),
-                anchor: crate::browser::editor::anchor(&format!("console:{service}"), line),
+                anchor: self.anchor(service, line),
                 format: options.format,
                 ..Default::default()
             },
@@ -459,8 +622,7 @@ impl App {
         let service = run.editor.trim_start_matches("console:");
         let line = run
             .anchor
-            .as_ref()
-            .and_then(|anchor| crate::browser::editor::anchor_line(&run.editor, anchor));
+            .and_then(|anchor| self.anchor_line(&run.editor, anchor));
         repeat.edited || self.check_source(service, line).as_ref() != Some(&repeat.source)
     }
     /// An edit of a repeating check ends its repeat; a run in flight finishes first.
@@ -532,6 +694,10 @@ impl App {
             .runs
             .get(key)
             .is_some_and(|run| self.repeat_edited(run));
+        let line = self
+            .runs
+            .get(key)
+            .and_then(|run| self.anchor_line(&run.editor, run.anchor?));
         let Some(run) = self.runs.get_mut(key) else {
             return;
         };
@@ -540,10 +706,6 @@ impl App {
         };
         repeat.timer = None;
         let message = repeat.message.clone();
-        let line = run
-            .anchor
-            .as_ref()
-            .and_then(|anchor| crate::browser::editor::anchor_line(&run.editor, anchor));
         if hidden || line.is_none() {
             self.finish_repeat(ctx, key, "Repeat stopped");
             return;
@@ -631,7 +793,7 @@ impl App {
                     .and_then(|source| source.lines().nth(line))
                     .unwrap_or("")
                     .into(),
-                anchor: crate::browser::editor::anchor(&format!("console:{service}"), line),
+                anchor: self.anchor(service, line),
                 ..Default::default()
             },
         );
@@ -658,6 +820,7 @@ impl App {
                     self.console_panel == Some(ConsolePanel::History) && !self.hidden;
             }
         }
+        let editor = self.console_editor(service);
         let run = self.runs.entry(key.into()).or_default();
         let reply = match (reply, run.duplicate_error.as_ref()) {
             (Reply::Result(value) | Reply::Exit(value) | Reply::Error(value), Some(error)) => {
@@ -710,8 +873,7 @@ impl App {
         }
         let anchored_line = run
             .anchor
-            .as_ref()
-            .and_then(|a| crate::browser::editor::anchor_line(&run.editor, a));
+            .and_then(|anchor| editor.read(|session| session.anchor_line(anchor)));
         let response_line = if run.anchor.is_some() {
             anchored_line
         } else {
@@ -783,20 +945,8 @@ impl App {
                 doc,
                 self.checks.entry(service.into()).or_default(),
             );
-            if let Err(error) = crate::browser::editor::sync_response(
-                &format!("console:{service}"),
-                doc,
-                self.response_regions
-                    .get(service)
-                    .map(Vec::as_slice)
-                    .unwrap_or(&[]),
-                preserve_after,
-            ) {
-                let run = self.runs.get_mut(key).unwrap();
-                run.status = format!("{} · ERROR · Response display failed: {error}", time());
-                run.debug = json!({"error":format!("Response display failed: {error}"),
-                    "phase":"response-display","result":run.debug.take()});
-            }
+            // Move the anchors now: Yew may batch several replies into one render.
+            editor.with(|session| self.sync_console_session(service, session, preserve_after));
             self.persist_console();
         }
     }
@@ -984,14 +1134,12 @@ impl App {
     }
     pub(super) fn view_console(&self, ctx: &Context<Self>) -> Html {
         let service = &self.console_service;
-        let owner = format!("console:{service}");
         let edited_service = service.clone();
-        let scroll_service = service.clone();
+        let hints_service = service.clone();
         let (run, check_discovery) = self.selected_status(service);
         let state = self
             .active_console_line(service)
             .map(|line| self.check_state(service, line));
-        let discovery = self.schema(service).cloned().unwrap_or(Value::Null);
         let supported = console::transfers(service);
         let (status, debug, running, started) = if let Some(discovery) = check_discovery {
             (
@@ -1032,12 +1180,6 @@ impl App {
                 run.map(|run| run.started),
             )
         };
-        let document = self.docs.get(service).cloned().unwrap_or_default();
-        let regions = self
-            .response_regions
-            .get(service)
-            .cloned()
-            .unwrap_or_default();
         let checks: Vec<_> = self
             .checks
             .get(service)
@@ -1050,11 +1192,6 @@ impl App {
             })
             .collect();
         let active = self.active_console_line(service);
-        let scroll_target = self
-            .check_target
-            .as_ref()
-            .filter(|(s, _, _)| s == service)
-            .map(|(_, line, serial)| (*line, *serial));
         let layout = self.sessions.borrow().library.snapshot().layout.clone();
         html! {<div class="console-editors">
             <div class={classes!("console-workspace",self.console_panel.is_some().then_some("has-tools"))}>
@@ -1091,10 +1228,9 @@ impl App {
                     onselect={ctx.link().callback(Msg::Check)} onerror={ctx.link().callback(Msg::EditorError)}/>
                 <div class="console-workspace-body">
                     <div class="console-editor-host">
-                        <Editor key={format!("console:{service}")} cache_key={format!("console:{service}")} testid="console-editor" label={format!("Console · {}",crate::services::label(service))} service={service.clone()} {regions} {discovery} value={document} mode={format!("console-{service}")} console={true} checks={self.checks.get(service).cloned().unwrap_or_default()} check_scope={format!("{}:{service}",self.workspace_id)} hints={self.completions(service)} onchange={ctx.link().callback(Msg::ConsoleText)} onedit={ctx.link().callback(move |edit|Msg::ConsoleEdited(edited_service.clone(),edit))} onrun={ctx.link().callback(|(s,l)|Msg::ConsoleRun(s,l))} ondiscover={ctx.link().callback(|_|Msg::Discover)} onauto={ctx.link().callback(move |endpoint|Msg::AutoDiscover(owner.clone(), endpoint))} onscroll={ctx.link().callback(move |viewport|Msg::Scroll(scroll_service.clone(),viewport))} {scroll_target} onerror={ctx.link().callback(Msg::EditorError)}
-                            templates={self.template_entries(service)}
-                            agent_edit={self.agent_edit.as_ref().filter(|edit|&edit.command.service==service).map(|edit|edit.command.clone())}
-                            onagentedit={ctx.link().callback(|(serial,result)|Msg::AgentEdited(serial,result))}/>
+                        <editor::View key={format!("console:{service}")} handle={self.console_editor(service)}
+                            on={ctx.link().callback(move |msg|Msg::ConsoleEditor(edited_service.clone(),msg))}
+                            testid="console-editor" label={format!("Console · {}",crate::services::label(service))}/>
                     </div>
                 </div>
                 <div class="console-status-row">
@@ -1146,8 +1282,9 @@ impl App {
                         }
                         if self.console_panel==Some(ConsolePanel::Hints) {
                             <div class="console-hints-editor">
-                                <Editor key={format!("hints:{service}")} cache_key={format!("hints:{service}")} testid="console-hints" label={format!("Hints · {}",crate::services::label(service))} service="hints" field={service.clone()}
-                                    value={self.hints_drafts.get(service).or_else(||self.hints.get(service)).cloned().unwrap_or_default()} mode="headers" onchange={ctx.link().callback(Msg::HintsText)} onerror={ctx.link().callback(Msg::EditorError)}/>
+                                <editor::View key={format!("hints:{service}")} handle={self.hints_editor(service)}
+                                    on={ctx.link().callback(move |msg|Msg::HintsEditor(hints_service.clone(),msg))}
+                                    testid="console-hints" label={format!("Hints · {}",crate::services::label(service))}/>
                             </div>
                         }
                         if self.templates_visited {
@@ -1250,7 +1387,7 @@ impl App {
             </div>
             if let Some(command)=&self.export_text{<div class="console-hints-overlay"><div class="console-hints-panel">
                 <div class="console-hints-panel-header">{"Export - copy this command"}</div>
-                <Editor key="export" label="Export" value={command.clone()} mode="shell" onchange={ctx.link().callback(Msg::ExportText)}/>
+                <editor::View key="export" handle={self.export_editor(command)} on={ctx.link().callback(Msg::ExportEditor)} label="Export"/>
                 <div class="console-hints-panel-actions"><button onclick={ctx.link().callback(|_|Msg::CloseExport)}>{"Close"}</button></div>
             </div></div>}
         </div>}

@@ -1,15 +1,17 @@
 use super::{
-    editor::Editor,
+    editor::{self, Handle},
     error,
     transport::{Reply, Transport},
     views::{ConsoleStatus, OperationStatus, SeenTimer},
     window,
 };
 use crate::activity::Indicator;
+use crate::editor::session::{Event as EditorEvent, Msg as EditorMsg, Setup};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use services_contracts::templates::{self, Library};
 use std::{
+    cell::RefCell,
     collections::{BTreeMap, BTreeSet},
     rc::Rc,
 };
@@ -87,8 +89,8 @@ pub enum Msg {
     Discard,
     /// Drops the user's own templates of the section, back to the source's.
     Reset,
-    Error(String),
     Seen,
+    Editor(String, EditorMsg),
 }
 pub struct Templates {
     library: Library,
@@ -105,8 +107,28 @@ pub struct Templates {
     loading: bool,
     load_error: Option<String>,
     error: Option<String>,
+    /// Each `service/section`'s editor, so undo and scroll survive switching sections.
+    editors: RefCell<BTreeMap<String, Handle>>,
 }
 impl Templates {
+    fn editor(&self, key: &str) -> Handle {
+        self.editors
+            .borrow_mut()
+            .entry(key.to_owned())
+            .or_insert_with(|| {
+                let (service, section) = key.split_once('/').unwrap_or((key, ""));
+                let setup = Setup {
+                    mode: format!("console-{service}"),
+                    service: "templates".into(),
+                    field: "definitions".into(),
+                    template_section: section.into(),
+                    readonly: !self.loaded || self.loading,
+                    ..Setup::default()
+                };
+                Handle::new(setup, self.text(key))
+            })
+            .clone()
+    }
     fn section<'a>(&'a self, ctx: &'a Context<Self>) -> &'a str {
         self.selected
             .get(&ctx.props().owner)
@@ -178,6 +200,7 @@ impl Component for Templates {
             loading: false,
             load_error: None,
             error: None,
+            editors: RefCell::default(),
         };
         let drafts = (|| -> Result<BTreeMap<String, Draft>, String> {
             let storage = window()
@@ -436,13 +459,26 @@ impl Component for Templates {
                     ctx.link().callback(Msg::Loaded),
                 );
             }
-            Msg::Error(error) => self.error = Some(error),
             Msg::Seen => {}
+            Msg::Editor(key, msg) => {
+                let mut render = false;
+                for event in self.editor(&key).update(msg) {
+                    if let EditorEvent::Changed(text) = event
+                        && key == self.key(ctx)
+                    {
+                        render |= Component::update(self, ctx, Msg::Text(text));
+                    }
+                }
+                return render;
+            }
         }
         true
     }
     fn rendered(&mut self, ctx: &Context<Self>, _first: bool) {
         let key = self.key(ctx);
+        let editor = self.editor(&key);
+        editor.set_text(self.text(&key), &[]);
+        editor.set_readonly(!self.loaded || self.loading);
         let shown = ctx.props().visible && ctx.props().foreground;
         let now = js_sys::Date::now();
         let mut wait = None;
@@ -520,12 +556,10 @@ impl Component for Templates {
             {heading}{footer}
             <div class="console-hints-editor" data-testid="templates-panel" hidden={!ctx.props().visible}>
                 {for self.error.iter().chain(self.load_error.iter()).map(|error|html!{<div class="agent-error" role="alert">{error}</div>})}
-                <Editor key={format!("templates:{key}")} cache_key={format!("templates:{key}")} testid="templates-editor" label={format!("Templates · {section}")}
-                    service="templates" field="definitions"
-                    value={self.text(&key).to_owned()} mode={format!("console-{service}")} template_section={section.to_owned()}
-                    readonly={!self.loaded || self.loading}
-                    placeholder={if section=="check" {"@example Description\n#endpoint\n...\n"} else {"@example Description\nText to insert\n"}}
-                    onchange={ctx.link().callback(Msg::Text)} onerror={ctx.link().callback(Msg::Error)}/>
+                <editor::View handle={self.editor(&key)}
+                    on={{let key=key.clone();ctx.link().callback(move|msg|Msg::Editor(key.clone(),msg))}}
+                    testid="templates-editor" label={format!("Templates · {section}")}
+                    placeholder={if section=="check" {"@example Description\n#endpoint\n...\n"} else {"@example Description\nText to insert\n"}}/>
             </div>
         </>}
     }

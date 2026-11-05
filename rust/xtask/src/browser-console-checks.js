@@ -1,8 +1,9 @@
 // Shared Console checks reused by several scenarios; loaded after browser-driver.js on every page.
 (() => {
-  const { assert, sleep, seen, wait, waitFor, settle, visible, find, testid, cm, key, type, move, input, click, button,
+  const { assert, sleep, seen, wait, waitFor, settle, visible, find, testid, editorOf, key, type, move, input, click, button,
     openConsole, activateSession, setSource, candidates, pick, assertNativeScrollbars, nativeTrackPaint, sessionLibrary, nativeHold, holds } = testDriver;
   // Waits for Chrome's overlay scrollbar to fade on its own instead of sleeping past the fade delay.
+  const overlayScrollbars = element => element.offsetWidth === element.clientWidth;
   const trackFaded = async (element, axes, message) => {
     let last = {};
     await settle();
@@ -77,7 +78,7 @@
   const checkConsoleMoves = async () => {
     await openConsole();
     await click(testid('console-service-terminal'));
-    let editor = cm('console-editor');
+    let editor = editorOf('console-editor');
     const block = (name, command) => `#check ${name}\n#endpoint\n/bin/sh -c\n#command\n${command}`;
     setSource(editor, [
       block('move-first', "printf '%s\\n' 'first-executed' '#check literal-output' '#endpoint' 'not-a-request'"),
@@ -127,7 +128,7 @@
     await wait(() => editor.getValue() === pasted && checks().length === 3);
     await click(testid('console-service-rest'));
     await click(testid('console-service-terminal'));
-    const restored = cm('console-editor');
+    const restored = editorOf('console-editor');
     restored.undo();
     await wait(() => restored.getValue() === cut && checks().length === 2,
       'Response ownership must survive editor remounts and Undo');
@@ -235,7 +236,7 @@
     };
     await openConsole();
     await click(testid('console-service-rest'));
-    const editor = cm('console-editor');
+    const editor = editorOf('console-editor');
     const assertStatusBounds = () => {
       const root = find('.console-root').getBoundingClientRect();
       assert(root.left <= 2 && root.top <= 2
@@ -299,7 +300,7 @@
       if (heading) {
         const panel = testid('console-tool-panel');
         const headingBounds = heading.getBoundingClientRect();
-        const rightEditor = find('.CodeMirror', panel).getBoundingClientRect();
+        const rightEditor = find('.editor', panel).getBoundingClientRect();
         const mainEditor = editor.getWrapperElement().getBoundingClientRect();
         const firstTab = heading.querySelector('.tab-button').getBoundingClientRect();
         assert(heading.closest('.console-top-bar') && !panel.contains(heading)
@@ -313,7 +314,7 @@
       assert(Math.abs(body.left - status.left) < 1 && Math.abs(body.right - status.right) < 1,
         'Console status must align with the inner workspace, excluding both side menus');
       const statusStyle = getComputedStyle(find('.console-status'));
-      for (const area of document.querySelectorAll('.console-root .CodeMirror, .console-root .CodeMirror-gutters')) {
+      for (const area of document.querySelectorAll('.console-root .editor, .console-root .editor-gutters')) {
         if (visible(area)) {
           assert(getComputedStyle(area).backgroundColor === 'rgb(37, 39, 42)',
             'Every Console editor and gutter must use a slightly darker neutral shade than the menu tabs');
@@ -343,7 +344,7 @@
     editor.scrollTo(null, 0);
     await wait(() => links().length === 3 && active() === '1');
     const checkBackground = name => {
-      const line=[...editor.getWrapperElement().querySelectorAll('pre.CodeMirror-line')]
+      const line=[...editor.getWrapperElement().querySelectorAll('pre.editor-line')]
         .find(line=>line.textContent.includes(`#check ${name}`));
       assert(line,`A visible check line must be rendered: ${name}`);
       return getComputedStyle(line,'::before').backgroundColor;
@@ -351,7 +352,7 @@
     assert(checkBackground('cursor-one')===checkBackground('cursor-three')
       && checkBackground('cursor-one')!==checkBackground('cursor-two'),
       'Whole checks must alternate between two neutral backgrounds');
-    const firstEndpoint=[...editor.getWrapperElement().querySelectorAll('pre.CodeMirror-line')]
+    const firstEndpoint=[...editor.getWrapperElement().querySelectorAll('pre.editor-line')]
       .find(line=>line.textContent.includes(`GET ${endpoint}`));
     assert(getComputedStyle(firstEndpoint,'::before').backgroundColor===checkBackground('cursor-one'),
       'Request sections must keep their owning check background, not alternate by physical row');
@@ -379,7 +380,7 @@
       && editor.getLine(response.end-1)==='' && editor.getLine(response.end-2).trim()!==''
       && editor.getLine(response.end).startsWith('#check cursor-three'),
       'A response must touch its request, while the next check has exactly one empty separating line');
-    const responseHeading=[...editor.getWrapperElement().querySelectorAll('pre.CodeMirror-line')]
+    const responseHeading=[...editor.getWrapperElement().querySelectorAll('pre.editor-line')]
       .find(line=>line.textContent.startsWith('#responce'));
     assert(responseHeading && getComputedStyle(responseHeading,'::before').backgroundColor===checkBackground('cursor-two'),
       'An inserted response must keep the same background as its request');
@@ -456,13 +457,9 @@
         () => `Check jump must align even the last check: ${JSON.stringify({index, line, top:top(), scroll:editor.getScrollInfo()})}`);
       const wrapper=editor.getWrapperElement();
       assertNativeScrollbars(editor.getScrollerElement());
-      assert(editor.getOption('scrollbarStyle')==='native-direct'
-        && !wrapper.querySelector('.CodeMirror-vscrollbar,.CodeMirror-hscrollbar'),
-        'Console must use its real native scroller, not a synchronized proxy scrollbar');
-      const filler=wrapper.querySelector('.CodeMirror-scrollbar-filler');
-      assert(getComputedStyle(filler).backgroundColor==='rgba(0, 0, 0, 0)',
-        'The corner between editor scrollbars must not flash the vendor default white background');
-      if(editor.display.nativeBarWidth===0) {
+      assert(!wrapper.querySelector('.editor-vscrollbar,.editor-hscrollbar,.editor-scrollbar-filler'),
+        'Console must use its real native scroller, not a synchronized proxy scrollbar or corner filler');
+      if(overlayScrollbars(editor.getScrollerElement())) {
         await trackFaded(editor.getScrollerElement(),['vertical','horizontal'],
           `Native scrollbar paint must fade after check jump ${index} without moving the pointer`);
         const box=wrapper.getBoundingClientRect();
@@ -483,7 +480,7 @@
     await wait(()=>editor.getScrollInfo().left>0 && editor.getScrollInfo().top>0,
       'Native editor scrollbars must preserve real wheel scrolling in both directions');
     assertNativeScrollbars(editor.getScrollerElement());
-    if(editor.display.nativeBarWidth===0) {
+    if(overlayScrollbars(editor.getScrollerElement())) {
       const bar=editor.getScrollerElement();
       const b=bar.getBoundingClientRect();
       const x=b.right-5;
@@ -563,7 +560,7 @@
       status: toolStatus()?.textContent,
       tab: document.querySelector('.console-panel-tabs [role="tab"].active .tab-label')?.textContent,
       editors: document.querySelectorAll('[data-testid="console-dictionary-editor"]').length,
-      text: document.querySelector('[data-testid="console-dictionary"]') && cm('console-dictionary').getValue().slice(-160),
+      text: document.querySelector('[data-testid="console-dictionary"]') && editorOf('console-dictionary').getValue().slice(-160),
     });
     await wait(() => Math.abs(panel.closest('.console-right-pane').getBoundingClientRect().width
       - workspace.clientWidth / 2) < 1);
@@ -572,7 +569,7 @@
     assert(getComputedStyle(find('.console-toolbar')).flexDirection === 'column'
       && getComputedStyle(testid('console-check-menu')).flexDirection === 'column',
       'Both side menus must be vertical');
-    const hints = cm('console-hints');
+    const hints = editorOf('console-hints');
     assert(testid('console-hints-title').textContent === 'REST completion hints'
       && tabStyle(testid('console-hints-title')) === tabStyle(testid('console-service-rest')),
       'Hints must have a tab-styled title matching the active service tabs');
@@ -589,8 +586,8 @@
     await wait(async () => await storedHints() === changedHints,
       'Closing hints must persist the edited text in the named session');
     await click(testid('console-hints-toggle'));
-    await wait(() => cm('console-hints').getValue() === changedHints);
-    cm('console-hints').setValue('## accidental-service-boundary\ninvalid fixture');
+    await wait(() => editorOf('console-hints').getValue() === changedHints);
+    editorOf('console-hints').setValue('## accidental-service-boundary\ninvalid fixture');
     await wait(() => toolStatus().textContent.includes('ERROR')
       && toolStatus().textContent.includes('service headers'));
     assert(await storedHints() === changedHints, 'Invalid hints drafts must not replace the last valid persisted hints');
@@ -604,7 +601,7 @@
     assert(mainStatusText() === hintsMainStatus, 'Hints validation must not overwrite the main check status');
     assert(editor.getValue() === source, 'Tool errors must not modify the Console document');
     await click(testid('console-hints-toggle'));
-    await wait(() => cm('console-hints').getValue().startsWith('## accidental'));
+    await wait(() => editorOf('console-hints').getValue().startsWith('## accidental'));
     assert(toolStatus().textContent === hintsError, 'Reopening hints must retain its own error status');
     await click(testid('console-variables-toggle'));
     await wait(() => visible(document.querySelector('[data-testid="console-variables-editor"]')));
@@ -619,15 +616,15 @@
       && !document.querySelector('[data-testid="console-profile-add"]'),
       'Variables must contain only fixed var and read-only env, without profile CRUD');
     await click(writable);
-    const originalVars = cm('console-variables').getValue();
+    const originalVars = editorOf('console-variables').getValue();
     assertSignalGeometry();
-    cm('console-variables').setValue(`${originalVars}\nCONSOLE_PANEL_FIXTURE: saved`);
+    editorOf('console-variables').setValue(`${originalVars}\nCONSOLE_PANEL_FIXTURE: saved`);
     await wait(() => profileToolLight('variables') === 'running',
       'Variables must expose its pending autosave on the tool button');
     await wait(() => toolStatus().textContent.includes('Variables save · OK')
       && profileToolLight('variables') === 'ready',
       'A visible save result must be acknowledged without clearing its status');
-    cm('console-variables').setValue('missing delimiter');
+    editorOf('console-variables').setValue('missing delimiter');
     await wait(() => toolStatus().textContent.includes('ERROR')
       && toolStatus().textContent.includes('NAME: value') && profileToolLight('variables') === 'ready');
     await seen();
@@ -637,50 +634,50 @@
     assert(mainStatusText() === varsMainStatus, 'Variables validation must not overwrite the main check status');
     assert(profileToolLight('variables') === 'ready', 'Collapsing Variables must not relight an already viewed validation failure');
     await click(testid('console-variables-toggle'));
-    await wait(() => cm('console-variables').getValue() === 'missing delimiter');
+    await wait(() => editorOf('console-variables').getValue() === 'missing delimiter');
     assert(toolStatus().textContent === varsError, 'Reopening Variables must retain its own validation error');
     await click(button(/^env /, find('.console-panel-tabs')));
-    await wait(() => cm('console-variables').getOption('readOnly') === true);
+    await wait(() => editorOf('console-variables').getOption('readOnly') === true);
     assert(profileToolLight('variables') === 'ready',
       'Selecting env must not relight a viewed error belonging to var');
     await click(button(/^var$/, find('.console-panel-tabs')));
-    await wait(() => cm('console-variables').getValue() === 'missing delimiter');
-    cm('console-variables').setValue(`${originalVars}\nCONSOLE_PANEL_FIXTURE: shared`);
+    await wait(() => editorOf('console-variables').getValue() === 'missing delimiter');
+    editorOf('console-variables').setValue(`${originalVars}\nCONSOLE_PANEL_FIXTURE: shared`);
     await wait(() => toolStatus().textContent.includes('Variables save · OK'));
     await click(button(/^env /, find('.console-panel-tabs')));
-    await wait(() => cm('console-variables').getOption('readOnly') === true);
+    await wait(() => editorOf('console-variables').getOption('readOnly') === true);
     await click(testid('console-variables-toggle'));
     await click(testid('console-variables-toggle'));
     await click(button(/^var$/, find('.console-panel-tabs')));
-    await wait(() => cm('console-variables').getValue().includes('CONSOLE_PANEL_FIXTURE: shared'),
+    await wait(() => editorOf('console-variables').getValue().includes('CONSOLE_PANEL_FIXTURE: shared'),
       'Reopening Variables must reload the saved shared file');
-    cm('console-variables').setValue(`${originalVars}\nCONSOLE_PANEL_FIXTURE: {{unknown_fixture:MISSING}}`);
+    editorOf('console-variables').setValue(`${originalVars}\nCONSOLE_PANEL_FIXTURE: {{unknown_fixture:MISSING}}`);
     await click(button(/^env /, find('.console-panel-tabs')));
-    await wait(() => cm('console-variables').getOption('readOnly') === true
+    await wait(() => editorOf('console-variables').getOption('readOnly') === true
       && profileToolLight('variables') === 'error',
       'An unseen background validation failure must light Variables without assigning the error to env');
     await click(testid('console-variables-toggle'));
     await click(testid('console-variables-toggle'));
-    await wait(() => cm('console-variables').getOption('readOnly') === true
+    await wait(() => editorOf('console-variables').getOption('readOnly') === true
       && !toolStatus().classList.contains('is-running'));
     assert(profileToolLight('variables') === 'error' && !toolStatus().classList.contains('is-error'),
       'Backend validation of var must keep its aggregate error without incorrectly assigning that error to env');
     await seen();
     await click(button(/^var$/, find('.console-panel-tabs')));
-    await wait(() => cm('console-variables').getOption('readOnly') !== true
+    await wait(() => editorOf('console-variables').getOption('readOnly') !== true
       && toolStatus().textContent.includes('unknown_fixture') && profileToolLight('variables') === 'ready',
       () => `Opening the failed profile must acknowledge its signal while retaining its error status: ${profileState()}`);
     await seen();
     await click(button(/^env /, find('.console-panel-tabs')));
     await click(testid('console-variables-toggle'));
     await click(testid('console-variables-toggle'));
-    await wait(() => cm('console-variables').getOption('readOnly') === true
+    await wait(() => editorOf('console-variables').getOption('readOnly') === true
       && !toolStatus().classList.contains('is-running'));
     assert(profileToolLight('variables') === 'ready',
       'Background reload must not relight an unchanged validation failure that was already viewed');
     await click(button(/^var$/, find('.console-panel-tabs')));
-    await wait(() => cm('console-variables').getOption('readOnly') !== true);
-    cm('console-variables').setValue(originalVars);
+    await wait(() => editorOf('console-variables').getOption('readOnly') !== true);
+    editorOf('console-variables').setValue(originalVars);
     await wait(() => toolStatus().textContent.includes('Variables save · OK')
       && profileToolLight('variables') === 'ready',
       'Fixing var must clear its aggregate error without leaving a stale error on env');
@@ -693,9 +690,9 @@
       && !visible(document.querySelector('[data-testid="console-variables-editor"]')),
       'Dictionary must be a separate tool with no var or env tabs');
     const dictionaryProfile = profileTabs().find(el => el.classList.contains('active')).querySelector('.tab-label').textContent;
-    const originalDictionary = cm('console-dictionary').getValue();
+    const originalDictionary = editorOf('console-dictionary').getValue();
     assertSignalGeometry();
-    cm('console-dictionary').setValue(`${originalDictionary}\nDICTIONARY_PANEL_FIXTURE: shared`);
+    editorOf('console-dictionary').setValue(`${originalDictionary}\nDICTIONARY_PANEL_FIXTURE: shared`);
     await wait(() => profileToolLight('dictionary') === 'running',
       () => `Dictionary must expose its pending autosave independently of Variables: ${profileState()}`);
     nativeHold.release();
@@ -705,24 +702,24 @@
       && profileToolLight('dictionary') === 'ready');
     await click(testid('console-dictionary-toggle'));
     await click(testid('console-dictionary-toggle'));
-    await wait(() => cm('console-dictionary').getValue().includes('DICTIONARY_PANEL_FIXTURE: shared'),
+    await wait(() => editorOf('console-dictionary').getValue().includes('DICTIONARY_PANEL_FIXTURE: shared'),
       'Reopening Dictionary must reload the saved profile');
     const invalidDictionary = `${originalDictionary}\nDICTIONARY_PANEL_FIXTURE: {{unknown_fixture:MISSING}}`;
-    cm('console-dictionary').setValue(invalidDictionary);
+    editorOf('console-dictionary').setValue(invalidDictionary);
     await click(testid('console-variables-toggle'));
     await wait(() => visible(document.querySelector('[data-testid="console-variables-editor"]')));
     await click(button(/^var$/, find('.console-panel-tabs')));
-    assert(cm('console-variables').getValue() === originalVars,
+    assert(editorOf('console-variables').getValue() === originalVars,
       'Dictionary edits and drafts must not alter var');
     await wait(() => profileToolLight('dictionary') === 'error',
       () => `A hidden invalid Dictionary draft must light its tool as error: ${profileState()}`);
     assert(profileToolLight('dictionary') === 'error' && profileToolLight('variables') === 'ready',
       'A hidden Dictionary error must remain visible without contaminating the Variables indicator');
     await click(testid('console-dictionary-toggle'));
-    await wait(() => cm('console-dictionary').getValue() === invalidDictionary
+    await wait(() => editorOf('console-dictionary').getValue() === invalidDictionary
       && toolStatus().textContent.includes('ERROR') && profileToolLight('dictionary') === 'ready',
       'Opening Dictionary must acknowledge its failure but preserve the saved request and status');
-    cm('console-dictionary').setValue(originalDictionary);
+    editorOf('console-dictionary').setValue(originalDictionary);
     await wait(() => toolStatus().textContent.includes('Dictionary save · OK')
       && profileToolLight('dictionary') === 'ready');
     const prompt = window.prompt;
@@ -780,7 +777,7 @@
           'A completed Dictionary load must not offer a running operation to stop');
         await click(toggle());
         await click(toggle());
-        await wait(() => cm('console-dictionary', doc).getValue() === originalDictionary && state() === 'ready',
+        await wait(() => editorOf('console-dictionary', doc).getValue() === originalDictionary && state() === 'ready',
           'Reopening Dictionary without default must not relight a phantom loading operation');
       } finally {
         frame.remove();
@@ -791,11 +788,11 @@
       window.confirm = confirm;
     }
     await click(testid('console-hints-toggle'));
-    assert(cm('console-hints').getValue().startsWith('## accidental'),
+    assert(editorOf('console-hints').getValue().startsWith('## accidental'),
       'Invalid hints drafts survive tool switches');
-    cm('console-hints').setValue(originalHints);
+    editorOf('console-hints').setValue(originalHints);
     await wait(() => toolStatus().textContent.includes('Hints save · OK'));
-    cm('console-hints').setValue('{{incomplete:');
+    editorOf('console-hints').setValue('{{incomplete:');
     await wait(() => toolStatus().textContent.includes('ERROR'));
     await click(testid('console-hints-toggle'));
     setSource(editor, `#check panel-status\n#endpoint\nGET ${endpoint}\n`);
@@ -811,14 +808,14 @@
       await wait(() => frame.contentDocument?.querySelector('[data-testid="console-hints-toggle"]'));
       await activateSession(Number(testid('console-session-name').dataset.sessionId),frame.contentDocument);
       await click(testid('console-hints-toggle', frame.contentDocument));
-      await wait(() => cm('console-hints', frame.contentDocument).getValue() === '{{incomplete:',
+      await wait(() => editorOf('console-hints', frame.contentDocument).getValue() === '{{incomplete:',
         'An invalid hints draft must survive a new application instance');
     } finally {
       frame.remove();
     }
     await click(testid('console-hints-toggle'));
-    assert(cm('console-hints').getValue() === '{{incomplete:', 'A request must not discard an invalid hints draft');
-    cm('console-hints').setValue(originalHints);
+    assert(editorOf('console-hints').getValue() === '{{incomplete:', 'A request must not discard an invalid hints draft');
+    editorOf('console-hints').setValue(originalHints);
     await wait(() => toolStatus().textContent.includes('Hints save · OK'));
     await click(testid('console-hints-toggle'));
     await checkConsoleMoves();

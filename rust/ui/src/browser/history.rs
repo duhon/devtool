@@ -1,9 +1,10 @@
 use super::{
-    editor::Editor,
+    editor::{self, Handle},
     transport::{Reply, Transport},
     views::{ConsoleStatus, OperationStatus, SeenTimer},
 };
 use crate::activity::Indicator;
+use crate::editor::session::{Msg as EditorMsg, Setup};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::rc::Rc;
@@ -60,6 +61,7 @@ pub enum Msg {
     Chunk(u64, u64, Reply),
     Error(String),
     Seen,
+    Editor(EditorMsg),
 }
 pub struct History {
     entries: Vec<Entry>,
@@ -75,8 +77,28 @@ pub struct History {
     epoch: u64,
     status: OperationStatus,
     seen: SeenTimer,
+    /// The snapshot's read-only editor, for the service it highlights.
+    editor: std::cell::RefCell<Option<(String, Handle)>>,
 }
 impl History {
+    fn editor(&self, service: &str) -> Handle {
+        let mut editor = self.editor.borrow_mut();
+        if let Some((current, handle)) = editor.as_ref()
+            && current == service
+        {
+            return handle.clone();
+        }
+        let setup = Setup {
+            mode: format!("console-{service}"),
+            service: "history".into(),
+            field: "snapshot".into(),
+            readonly: true,
+            ..Setup::default()
+        };
+        let handle = Handle::new(setup, "");
+        *editor = Some((service.to_owned(), handle.clone()));
+        handle
+    }
     fn list(&mut self, ctx: &Context<Self>, append: bool) {
         if ctx.props().check_id.is_empty() {
             return;
@@ -176,6 +198,7 @@ impl Component for History {
             epoch: 0,
             status: Default::default(),
             seen: SeenTimer::default(),
+            editor: Default::default(),
         };
         if ctx.props().visible {
             this.list(ctx, false);
@@ -316,11 +339,19 @@ impl Component for History {
                 }
             }
             Msg::Error(error) => self.fail(error),
+            Msg::Editor(msg) => {
+                self.editor(&ctx.props().service).update(msg);
+                return false;
+            }
             Msg::Seen => {}
         }
         true
     }
     fn rendered(&mut self, ctx: &Context<Self>, _first: bool) {
+        if self.selected.is_some() {
+            self.editor(&ctx.props().service)
+                .set_text(&self.display_text, &self.regions);
+        }
         let visible = ctx.props().visible && ctx.props().foreground;
         if visible
             && std::mem::take(&mut self.reveal_selected)
@@ -406,10 +437,8 @@ impl Component for History {
                     }
                 </div>
                 if self.selected.is_some() {
-                    <Editor testid="history-editor" label="History" value={self.display_text.clone()} readonly={true} service="history" field="snapshot"
-                        regions={self.regions.clone()}
-                        mode={format!("console-{}",ctx.props().service)} onchange={Callback::noop()}
-                        onerror={ctx.link().callback(Msg::Error)}/>
+                    <editor::View handle={self.editor(&ctx.props().service)} on={ctx.link().callback(Msg::Editor)}
+                        testid="history-editor" label="History"/>
                 }
             </div>
         </>}

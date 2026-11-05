@@ -26,6 +26,24 @@ Sources and install them from Settings → Modules.
 Publishing: [scripts/distribution/README.md](scripts/distribution/README.md).
 Extension only: [adapters/extension/README.md](adapters/extension/README.md).
 
+### Pre-release
+
+`./prerelease` builds the working tree (`build --prerelease`, into
+`dist/prerelease/`) and installs it beside the release, for a smoke test before
+publishing. It is a separate extension ("Services (DevTools) Pre-release", panel
+"Services Pre-release") with its own native host, folder
+`~/Library/Application Support/ServicesDevTools-Prerelease` and data, and no
+in-app updates; the installed release is not touched.
+
+- First time: `./prerelease`, then Load unpacked its `extension` folder (the
+  installer prints the path).
+- Update: `./prerelease`, then **Reload** the pre-release in
+  `chrome://extensions` and reopen DevTools.
+- Modules: add `dist/` as a folder source in the pre-release's Settings →
+  Sources.
+- Remove: `~/Library/Application\ Support/ServicesDevTools-Prerelease/uninstall`,
+  then remove the extension in Chrome.
+
 CLI, without Chrome ([flags](adapters/cli/README.md)):
 
 ```sh
@@ -62,13 +80,13 @@ cargo run -p xtask -- test <type>   # one kind at a time
 - `rust/modules/<id>` — the standard modules, each released on its own with its
   version, `RELEASE_NOTES.md` and Agent skill (`skill/SKILL.md`).
 - `rust/examples/echo` — an unshipped example module and the module guide.
-- `rust/ui` — the browser UI (Yew/WebAssembly); `rust/ui/assets` — styles and
-  vendored CodeMirror.
+- `rust/ui` — the browser UI (Yew/WebAssembly), including its text editor;
+  `rust/ui/assets` — styles.
 - `rust/installer` — install, update, rollback, uninstall.
 - `rust/testkit` — test host, module catalog, wire fixtures.
 - `rust/xtask` — builds, module packages, test commands.
 - `adapters/extension/src` — Chrome manifest, HTML, minimal bootstrap.
-- `install.sh`, `dev` — root entry points.
+- `install.sh`, `prerelease`, `dev` — root entry points.
 
 ## Rules
 
