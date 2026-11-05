@@ -3,6 +3,9 @@
 Ядро без языков, модули — только wasm, Host — технический прокси. Обсуждено после 3.7.0
 (до переписывания редактора) и 04.11. Пункт 33 в `BACKLOG.md` ссылается сюда.
 
+**Главное правило: клиентов пока нет — совместимость ломаем свободно.** Без миграций,
+переходных слоёв, поддержки старых версий ABI, данных и ключей хранилища.
+
 ## Зачем
 
 - Разработчики модулей не могут сделать свой язык: подсветка и подсказки живут в ядре
@@ -128,16 +131,16 @@ dist/ docs/ dev/ scripts/ install.sh prerelease
   - Workspace: Editor, Check rail, Status bar.
   - Side panel: History, Variables, Dictionary, Templates, Hints, Agent, Sessions, Settings
     (вкладки Modules, Sources, Agent).
-  - Banner, Update overlay.
+  - Banner, Overlay (виджеты): статус Host, ошибки, экран обновления.
   - Документ: Check, Section, Options, Response.
 - Префикс `console` (наследие Active Console) убрать везде: `ConsolePanel` → `SidePanel`,
   `console_panel.rs` → `workspace.rs` и т. д.
 - Variables и Dictionary — разные панели и визуально, и в коде: два отдельных компонента
   вместо `ConsoleVariables` с флагом `dictionary`.
 - Страница App `panel.html`/`panel.js` → `services.html`/`services.js`, как вкладка
-  «Services» в DevTools. Адрес отдельной вкладки
-  `chrome-extension://<id>/panel.html` есть в README и закладках, поэтому `panel.html`
-  на одну-две версии остаётся перенаправлением на `services.html`. ID расширения не меняется.
+  «Services» в DevTools. `panel.html` удаляется сразу, без перенаправления; адрес
+  отдельной вкладки в README — `chrome-extension://<id>/services.html`. ID расширения не
+  меняется.
 - Модули Rust-кода — в стиле 2018: корень модуля `bridge.rs` рядом с папкой `bridge/`, без
   `mod.rs`. Нынешние `mod.rs` переименовываются.
 - Слово «профиль» убрать (в коде, UI, документации, скилах Agent): **Variables** —
@@ -159,9 +162,10 @@ dist/ docs/ dev/ scripts/ install.sh prerelease
 - Один экземпляр App (вкладка DevTools или отдельная вкладка) — один порт — один процесс
   Host. Окон внутри Host нет; `core/operations.rs` (окна от удалённого web-адаптера) — мёртвый
   код, удаляется. Отмена — по `Cancel(id)`, закрытый stdin отменяет всё.
-- Переменные (`{{env:X}}`, `{{profile:x}}`, `{{:x}}`) подставляет Kernel в App перед вызовом
-  драйвера; Host получает готовый запрос. Окружение для `env` Kernel берёт у Host
-  (`system.rs`). Маскировка значений в истории (сейчас `history.rs` `redactor`) — тоже в App.
+- Переменные (`{{env:X}}`, `{{profile:x}}`, `{{:x}}`) подставляются в App (панель Variables,
+  см. «Kernel и панели») перед вызовом драйвера; Host получает готовый запрос. Окружение для
+  `env` берётся у Host (`system.rs`). Маскировка значений в истории (сейчас `history.rs`
+  `redactor`) — тоже в App.
 - Host не знает форматов панелей (History, Variables, Dictionary, Templates, Hints): `files`
   даёт общие механизмы, формат и логика — у панели-модуля:
   - `files.rs` — пути в папке данных, уведомления об изменениях другим процессам Host;
@@ -231,8 +235,8 @@ host/src/
 └── system.rs          доступ к ОС: окружение login-shell, буфер обмена
 ```
 
-Открыто по Host: уровень grpc (транспорт байтами, JSON ↔ protobuf и `.proto` в модуле — или
-всё в Host).
+grpc (05.11): Host — только транспорт байтами (HTTP/2, TLS, metadata, deadline, стримы).
+`.proto`, JSON ↔ protobuf (prost-reflect) и reflection — в wasm-модуле grpc.
 
 ### Agent (04.11)
 
@@ -249,39 +253,220 @@ host/src/
   скилы источников.
 - Модули дают Agent только скилы; своих инструментов у них нет — действия идут через
   общие `console_*`.
-- Панель Agent — wasm-модуль `modules/panels/agent/`: чат, настройки (модель, Reasoning),
-  подтверждения запуска.
+- Панель Agent — wasm-модуль `modules/panels/agent/`: чат и подтверждения запуска.
+  Настройки Agent (модель, Reasoning) — в Settings, вкладка Agent.
 - Данные: `<data>/.agent/` — состояние CLI; чаты и настройки — в db (сейчас localStorage).
 
 ### App (04.11)
 
 ```
 app/
-├── extension/          manifest, background, devtools, services.html/js, мост к Host,
-│                       page-скрипты для page_*
+├── extension/          manifest.json, devtools.html/js, services.html/js
 ├── kernel/src/         без UI
-│   ├── modules.rs      загрузка wasm-модулей, MVU: update(model, msg) -> (model, cmds),
-│   │                   protobuf на границе, исполнение команд
-│   ├── requests.rs     вызовы драйверов Host, стрим, отмена
-│   ├── variables.rs    подстановка {{…}} (Variables → Dictionary → Environment), подсветка
-│   │                   поверх модуля
-│   ├── redact.rs       маскировка (история, Agent)
-│   ├── sessions.rs     вкладки, чеки, документ
-│   ├── storage.rs      kv через db Host (вместо localStorage/IndexedDB)
+│   ├── lib.rs
+│   ├── host.rs         связь с Host: connectNative, куски, отмена   ← browser/transport.rs
+│   ├── modules.rs      загрузка wasm, MVU: update(model, msg) -> (model, cmds), protobuf
+│   │                   на границе, исполнение команд  ← browser/module_ui.rs, services.rs
+│   ├── workspace.rs    текущее состояние: снимок и восстановление (раскладка, ширины,
+│   │                   документы, ответы, сессионный kv модулей)  ← sessions.rs (Snapshot),
+│   │                   browser/sessions.rs; библиотека сессий — в панели Sessions
+│   ├── document.rs     Check, Section, Options, Response, учёт чеков в редакторе
+│   │                   ← document.rs, checks.rs, editor/checks.rs, часть editor/session.rs
+│   ├── editor.rs       язык редактора: модуль сервиса + вклады панелей ({{…}} от Variables)
+│   ├── requests.rs     конвейер before_request → драйвер → after_response, стрим, Stop,
+│   │                   Repeat  ← из browser/app.rs
+│   ├── storage.rs      kv через db Host  ← storage.rs, browser/session_database.rs
 │   ├── locks.rs        Web Locks (темп Splunk и т. п.)
-│   ├── discovery.rs    кеш discovery — только в памяти
-│   ├── events.rs
-│   ├── agent.rs        список инструментов, приём вызовов
-│   └── agent/          console.rs, page.rs, redact.rs, skill/
-├── widgets/src/        editor/, find_bar, check_rail, status_bar, tree, resizer,
-│                       markdown, tabs, list, form, panel_frame
-├── shell/src/          → app.wasm: top_bar, workspace, side_panel, banner,
-│                       update_overlay, settings/ (modules, sources, agent)
-└── assets/             css
+│   ├── page.rs         выполнение кода на исследуемой странице (inspectedWindow.eval)
+│   ├── updates.rs      установка обновления App, reload, проверка второго окна
+│   │                   ← browser/updates.rs
+│   ├── events.rs       события модулям
+│   └── activity.rs     состояния и индикаторы
+├── widgets/src/        без логики приложения; CSS рядом с виджетом, цвета — только
+│   │                   var(--…) из темы Shell
+│   ├── lib.rs
+│   ├── view.rs         UI-дерево модуля → виджеты, действия → msg
+│   ├── editor.rs       View + Handle  ← browser/editor/{mod,view,handle}.rs
+│   ├── editor/         state, text, commands, history, layout, render, highlight (кеш;
+│   │                   токены от модуля), fold (механика), brackets, model (модель одного
+│   │                   редактора, ← editor/session.rs), facade; editor.css. Уходят:
+│   │                   json.rs, sql.rs → модули, mount.rs
+│   ├── find_bar.rs     ← find.rs, browser/find.rs
+│   ├── check_rail.rs, status_bar.rs, tree.rs, indicator.rs  ← browser/check_rail.rs, views.rs
+│   ├── resizer.rs      ← browser/pane_resizer.rs
+│   ├── markdown.rs     ← browser/agent_markdown.rs
+│   ├── banner.rs, overlay.rs  уведомление сверху и экран поверх окна (статус Host, ошибки,
+│   │                   обновление); когда показывать — решает Shell
+│   └── tabs.rs, list.rs, table.rs, form.rs, panel_frame.rs (новые)
+├── shell/src/          → app.wasm; точка сборки: единственная часть, знающая и Kernel, и
+│   │                   Widgets
+│   ├── lib.rs          старт: Kernel, монтирование, связывание виджетов с Kernel
+│   ├── layout.rs       + layout.css: вся раскладка (верхнее меню, рабочая область, боковая
+│   │                   панель, нижняя строка) — одна CSS-сетка
+│   └── theme.css       тема: переменные цветов и шрифтов, body
 ```
 
-Панели (History, Variables, Dictionary, Templates, Hints, Agent, Sessions) — wasm-модули в
-`modules/panels/`, не в `app/`.
+Ушли из Kernel в панели: подстановка переменных (Variables), History и маскировка
+(History), инструменты Agent, `page.js` и корневой скил (Agent), библиотека сессий (Sessions).
+
+Форматирование ответов (решено 05.11):
+- `tables.rs` (сетка результатов, JSON в ячейках) → SDK `lang/table` (mysql, splunk,
+  opensearch).
+- `logfmt.rs` → модуль Splunk.
+- `format.rs` делится: вывод ответа (включая код под Splunk) → `render` модулей,
+  `history_document` → панель History, `duration`/`status` → StatusBar.
+
+### Kernel и панели (05.11)
+
+Kernel не знает ни одной панели: даёт точки расширения, логика — в панелях-модулях.
+
+- Конвейер запроса с крючками: `before_request` — Variables подставляет переменные;
+  `after_response` — History пишет запись, маскировка — там же.
+- Подсветку и подсказки `{{…}}` поверх редактора даёт Variables как вклад в редактор.
+- Agent — панель-модуль с инструментами; Kernel даёт общий API (читать и править документ,
+  запустить чек, выполнить код на исследуемой странице).
+- Settings пользуется общими возможностями Kernel: модули, источники, обновление.
+- Kernel `workspace.rs` снимает и восстанавливает текущее состояние; панель Sessions хранит
+  библиотеку сессий (список, сохранить, переключить, переименовать) через `snapshot`/`restore`.
+  Модуль помечает свои ключи kv как сессионные — они входят в снимок.
+- Цена: больше API (крючки, порядок, возможности), вызов wasm на каждый запрос, панели видят
+  все запросы (разрешений нет).
+- API модулей — общее ядро и два расширения (вариант C): в SDK `core` (манифест, загрузка,
+  MVU `init`/`update`/`view`, Cmd: драйверы, хранилище, блокировки, статус; скил), `service`
+  (язык, построить вызов, разобрать ответ, discovery, действия Export/Import, Options) и
+  `panel` (кнопка в меню, боковая панель, крючки `before_request`/`after_response`). Вклад в
+  редактор (`highlight`, `complete`, `fold`, `diagnose`) — общий блок, доступен обоим
+  (Variables даёт `{{…}}`). Одно ABI и один загрузчик в Kernel; вид в манифесте
+  (`service` | `panel`) определяет обязательные части. Модули общаются только через Kernel.
+- Версии: одно поле `abi` в манифесте, Kernel грузит только точно совпадающее. Ломаем API
+  когда нужно; стандартные модули пересобираются и выходят вместе с App. protobuf скрыт в SDK.
+
+#### Манифест (05.11)
+
+- Статический `manifest.json` — только то, что нужно до загрузки wasm (Settings показывает
+  модуль, не запуская его). Поведение — в коде модуля через SDK.
+- В манифесте нет ничего, что интерпретирует Kernel: `params` (с полями CLI), `console`
+  (`sections`, `payload`, `response`, `errorBody`, `command`, `discovery`, `keywords`,
+  `hints`) уходят в код модуля.
+- Вид один: `service` или `panel`. Модулю нужны оба — два модуля в одном пакете.
+- Требования: драйверы и их версии, минимальная версия App, ABI; Kernel проверяет до
+  загрузки.
+- `order` — порядок вкладки или кнопки и порядок крючков (Variables раньше остальных).
+
+```json
+{ "id": "rest", "kind": "service", "name": "REST", "version": "3.7.0",
+  "description": "Send a REST request and inspect the response.",
+  "abi": 1, "app": ">=4.0", "drivers": {"http": "1"}, "order": 1 }
+```
+
+#### Cmd (05.11)
+
+Запросы модуля к Kernel, все асинхронные:
+
+| Группа | Cmd | Кому нужно |
+|---|---|---|
+| Драйверы | `call`, `stream`, `cancel` (http, grpc, mysql, process, tcp) | сервисы |
+| Хранилище | `get`, `put`, `delete`, `watch` — kv своего модуля в db | все |
+| History | `insert`, `search` | History |
+| ОС | окружение (`env`), буфер обмена | Variables, все |
+| Источники | сырые документы источников по порядку | Variables, Dictionary, Templates, Hints |
+| Документ | прочитать, вставить, заменить, выбрать чек, запустить чек | Templates, Agent |
+| Workspace | `snapshot`, `restore` | Sessions |
+| Страница | выполнить код на исследуемой странице | Agent |
+| Agent | ход диалога, Stop, регистрация инструментов | Agent |
+| Модули и App | установить, удалить, обновить; обновить App, reload | только встроенные (Settings) |
+| Служебное | блокировка, таймер, свой индикатор и статус, уведомление, лог | все |
+
+- Ответ — по метке: модуль кладёт в Cmd свой `tag`, ответ приходит `Msg::Reply { tag,
+  result }`; стрим — несколько `Reply` с тем же `tag` и `End`.
+- Модуль видит только свой kv; чужие данные напрямую не читает.
+- Разрешений нет; исключение — установка модулей и обновление App только у встроенных.
+- History — отдельные Cmd (`insert`, `search`): поиск на kv не сделать.
+
+#### Msg (05.11)
+
+| Msg | Когда |
+|---|---|
+| `Init { settings }` | старт модуля |
+| `Ui { msg, value }` | действие в своём UI: клик, ввод (`value` — текст поля) |
+| `Reply { tag, result }`, `End { tag }` | ответ на Cmd, куски стрима |
+| `Document { check, sections }` | документ сервиса изменился |
+| `Discover` | ручной discovery |
+| `Request { started / finished }` | запуск и завершение запросов |
+| `Workspace` | restore: сессия переключена |
+| `Storage { key }` | изменился ключ из `watch` |
+| `Shown`, `Hidden` | панель открыта или закрыта |
+| `Modules` | модуль установлен, удалён или обновлён |
+| `ToolCall { tag, name, args }` | Agent вызывает инструмент |
+
+- Подписки как в Elm: `subscriptions(model)` возвращает нужные события; остальные модулю не
+  приходят.
+- Подсветка и подсказки — синхронными вызовами; `Document` — с задержкой ~300 мс и только по
+  изменённому чеку (discovery, диагностика).
+- UI ↔ Msg: в `view` модуль пишет `on_click: Msg::Delete(id)`, SDK кодирует его в байты,
+  Kernel возвращает в `Ui`; автор работает со своим `enum Msg`.
+- Закрытая панель выключена: `view` не вызывается, UI размонтирован, событий и подписок нет,
+  таймеры и стримы отменяются. Работают только её синхронные крючки (`before_request`,
+  `after_response`). Черновики — в своём kv; при открытии — `Shown`, панель читает их
+  обратно. Закрытый App выгружает все модули и завершает процесс Host.
+
+#### Синхронные вызовы (05.11)
+
+Kernel вызывает модуль напрямую и сразу получает ответ:
+
+| Блок | Вызов | Когда |
+|---|---|---|
+| Редактор (оба вида) | `highlight(state, lines) -> tokens, state` | ввод, прокрутка |
+| | `complete(check, pos) -> items` | подсказки |
+| | `fold(check) -> ranges` | свёртки |
+| Сервис | `build(check) -> driver call` | Run |
+| | `render(chunk) -> response text` | ответ или кусок стрима |
+| | `export(check) -> text`, `import(text) -> check` | Export, Import |
+| Панель | `before_request(call) -> call or error` | перед драйвером |
+| | `after_response(call, response) -> cmds` | после ответа |
+
+- Синхронный вызов только читает свою модель (схема discovery для подсказок), не меняет её и
+  не отдаёт Cmd. Исключение — `after_response` возвращает Cmd (History `insert`).
+- Подсветка — построчное состояние: Kernel передаёт пачку строк с состоянием на входе и
+  продолжает, пока состояние на конце не совпадёт с кешем.
+- `diagnose` асинхронный: модуль получает `Document` и отвечает Cmd «диагностика».
+- Бюджет времени (например, 5 мс на пачку подсветки): превышение видно в Debug модуля,
+  модуль не отключается.
+- `before_request` — цепочкой по `order`; ошибка останавливает запуск с сообщением
+  («неизвестная переменная `{{:host}}`»).
+- `{{…}}` поверх языка: Kernel сводит токены сервиса и Variables, внутри `{{…}}` — токены
+  Variables.
+
+#### UI-дерево (05.11)
+
+- Узлы двух слоёв: контейнеры `PanelFrame`, `Tabs`, `List`, `Table`, `Row`, `Column`;
+  элементы `Text`, `Markdown`, `Tree`, `Input`, `Select`, `Checkbox`, `Slider`, `Button`,
+  `Indicator`, `Editor`. Своего HTML и CSS у модуля нет, только варианты вида (`primary`,
+  `danger`, `muted`); не хватает виджета — добавляем в `widgets` для всех.
+- После каждого `update` модуль отдаёт дерево целиком, Yew сравнивает; у элементов списков
+  обязательный `key`.
+- Большие списки — виртуальный `List { total, rows }`: модуль отдаёт видимое окно, при
+  прокрутке приходит `Ui` с новым диапазоном.
+- Поле ввода само хранит набираемый текст и сообщает `on_input` с задержкой или `on_change`
+  (Enter, blur); модуль задаёт значение, только когда меняет его сам.
+- `Editor { language: "<id модуля>", text, on_change }` — подсветку даёт модуль с этим id
+  (Templates показывает шаблон REST языком REST).
+- Места для UI сервиса фиксированы: форма Options, действия в верхнем меню (Export,
+  Import), Debug в StatusBar. Панель — `PanelFrame` (заголовок, тело, низ).
+
+Папок `assets/` нет: CSS и скрипты лежат рядом с кодом владельца и подключаются через
+`include_str!`. Сейчас CSS (~1770 строк) на ~46% — виджеты, ~42% — панели (Agent, Settings,
+прочие), ~8% — раскладка. Стили панелей исчезают: панели строятся из виджетов, своего CSS у
+них нет. `page-agent.js` (скрипт для `page_*` на исследуемой странице) → панель Agent; Kernel даёт
+только выполнение кода на странице (`page.rs`).
+
+Панели (History, Variables, Dictionary, Templates, Hints, Agent, Sessions, Settings) —
+wasm-модули в `modules/panels/`, не в `app/`.
+
+Settings — встроенная панель-модуль `modules/panels/settings/` (вкладки Modules, Sources,
+Agent): API как у остальных панелей, но поставляется внутри App, отдельно не удаляется и не
+обновляется — иначе сломанные модули было бы нечем чинить. Установку модулей, источники,
+обновления и список моделей Agent даёт Kernel.
 
 ## Целевое дерево (предложение)
 
@@ -290,13 +475,12 @@ devtool/
 ├── app/                          App
 │   ├── extension/                Extension                  ← adapters/extension
 │   │                             (services.html/js вместо panel.html/js)
-│   ├── kernel/                   Kernel: sessions, checks, document, requests,
-│   │                             modules (загрузка wasm), events, storage, format, tables
-│   ├── widgets/                  Widgets: editor/, find_bar, check_rail, status_bar, tree,
-│   │                             resizer, markdown, tabs, list, form, panel_frame
-│   ├── shell/                    Shell → app.wasm: top_bar, workspace, side_panel, banner,
-│   │                             update_overlay, settings/ (modules, sources, agent)
-│   └── assets/                   css
+│   ├── kernel/                   Kernel: modules (загрузка wasm), workspace, document,
+│   │                             editor, requests, storage, locks, page, updates, events
+│   ├── widgets/                  Widgets: view, editor/, find_bar, check_rail, status_bar,
+│   │                             tree, resizer, markdown, tabs, list, form, panel_frame;
+│   │                             CSS рядом с виджетом (тема — в Shell)
+│   └── shell/                    Shell → app.wasm: lib (старт, связывание), layout, theme
 ├── host/                         Host                       ← rust/native
 │   └── src/ bridge/              native messaging, framing, chunks, router, health
 │            drivers/             net, http, grpc, mysql, process, tcp
@@ -306,14 +490,13 @@ devtool/
 ├── api/
 │   ├── protocol/                 App ↔ Host                 ← rust/contracts
 │   └── sdk/                      для модулей                ← module-api + module-ui
-│       └── src/lang/             json, headers, endpoint — общие языки как библиотека
+│       └── src/lang/             json, headers, endpoint, table — общие языки как библиотека
 ├── modules/                      только wasm
 │   ├── services/                 rest, graphql, grpc, mysql, splunk, artemis, opensearch,
 │   │   └── <name>/               terminal: manifest.json, src/ (request, highlight,
 │   │                             complete, diagnose), skill/, RELEASE_NOTES.md
 │   └── panels/                   history, variables, dictionary, templates, hints, agent,
-│                                 sessions
-├── installer/
+│                                 sessions, settings (встроенная)├── installer/
 ├── tools/                        xtask, testkit, dev, scripts
 ├── examples/echo/
 ├── docs/
@@ -324,6 +507,25 @@ devtool/
 (`completion.rs`, `sql_completion.rs`, `graphql_completion.rs`, `syntax.rs`,
 `editor/sql.rs`, `editor/json.rs` — в модули и SDK).
 
+## Dev-данные (05.11)
+
+Корневая `modules/` — установленные модули dev-хоста для CLI (`xtask modules`, `./dev`,
+`SERVICES_DATA_DIR` = корень репозитория). Уходят вместе с CLI: `xtask modules`, `./dev`,
+корневая `modules/`. Модули в разработке ставятся как у пользователя: `dist/` — источник в
+Settings. Пакеты выпуска — `dist/modules/`, как сейчас.
+
+## Порядок перехода (05.11)
+
+После каждого шага сборка и тесты зелёные.
+
+1. Перенести крейты в новое дерево без изменения поведения.
+2. SDK и загрузчик wasm в Kernel.
+3. REST — первый wasm-модуль, до конца.
+4. Остальные сервисы.
+5. Панели по одной.
+6. Разделить widgets и shell, удалить монолит.
+7. Обновить документацию.
+
 ## Сделано
 
 - Шаг 0: CodeMirror заменён своим редактором на Yew (MVU) без смены архитектуры. В
@@ -331,11 +533,4 @@ devtool/
 
 ## Решить
 
-- Settings — в Shell (панель управляет модулями, поэтому сама не модуль)?
-- Куда деть собранные пакеты из корневой `modules/`: `dist/` или только ассеты релиза.
-- Контракт Kernel ↔ модуль: события и команды, типы (protobuf), версия ABI.
-- Подсветка из wasm-модуля без потери скорости (пачкой строк, состояние строки между
-  вызовами).
-- Где хранить переменные и историю.
-- Переименование ключей хранилища (`servicesConsole.*`) без потери данных пользователей.
-- Порядок перехода и обновление документации.
+- Пока ничего.
