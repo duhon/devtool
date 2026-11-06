@@ -1,26 +1,11 @@
 {
   "id": "rest",
+  "kind": "service",
   "name": "REST",
+  "version": "3.2.2",
   "description": "Send a REST request and inspect the response.",
-  "params": [
-    {"name": "method", "type": "string", "required": true, "default": "GET"},
-    {"name": "url", "type": "string", "required": true},
-    {"name": "headers", "type": "json"},
-    {"name": "body", "type": "string"}
-  ],
-  "console": {
-    "order": 1,
-    "sections": [
-      {"name": "endpoint", "shape": "line", "language": "http", "param": "url", "connection": true, "hints": [{"text": "http://"}, {"text": "https://"}]},
-      {"name": "headers", "shape": "pairs", "language": "headers", "param": "headers", "connection": true},
-      {"name": "body", "shape": "block", "language": "json", "param": "body"}
-    ],
-    "payload": "body",
-    "response": "body-headers",
-    "errorBody": true,
-    "command": "curl",
-    "discovery": {"kind": "openapi", "schemes": ["http", "https"]},
-    "keywords": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"],
-    "hints": "#endpoint\nhttp://\nhttps://\n\n#headers\nAccept: */*\nAccept-Encoding: gzip, deflate, br\nAuthorization: ****** application/json\nCookie:\nHost:\nUser-Agent:\nX-Api-Key:\nX-Forwarded-For:\nX-Requested-With: XMLHttpRequest\n"
-  }
+  "abi": 1,
+  "app": ">=3.7",
+  "drivers": {"http": "1"},
+  "order": 1
 }

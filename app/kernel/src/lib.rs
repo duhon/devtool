@@ -7,4 +7,4 @@ pub mod modules;
 #[cfg(target_arch = "wasm32")]
 pub mod wasm;
 
-pub use modules::{Effect, Instance, Loaded, Modules};
+pub use modules::{Effect, Instance, Loaded, Modules, Status};

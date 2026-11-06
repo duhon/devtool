@@ -35,8 +35,14 @@ pub fn validate_hints(text: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// The `#marker` sections of a service, in manifest order.
+/// The `#marker` sections of a service, in manifest order; a Kernel service's are what its
+/// module completes, then the console's `#options`.
 pub fn markers(service: &str) -> Vec<String> {
+    if crate::kernel::is_service(service) {
+        let mut markers = crate::kernel::markers(service);
+        markers.push("options".into());
+        return markers;
+    }
     crate::services::get(service)
         .map(|service| {
             service
@@ -50,6 +56,11 @@ pub fn markers(service: &str) -> Vec<String> {
 }
 
 pub fn is_marker(service: &str, marker: &str) -> bool {
+    if crate::kernel::is_service(service) {
+        return markers(service)
+            .iter()
+            .any(|known| known.eq_ignore_ascii_case(marker));
+    }
     crate::services::get(service).is_some_and(|service| service.section(marker).is_some())
 }
 
@@ -66,6 +77,26 @@ fn header_shaped(line: &str) -> bool {
 
 pub fn sections(service: &str, source: &str) -> BTreeMap<String, String> {
     let mut result: BTreeMap<String, String> = BTreeMap::new();
+    if crate::kernel::is_service(service) {
+        // The module owns the section shapes: a section runs to the next marker.
+        let mut current = String::from("leftover");
+        for raw in source.lines() {
+            if let Some((marker, _)) = services_kernel::document::marker(raw)
+                && is_marker(service, &marker)
+            {
+                current = marker.to_ascii_lowercase();
+                result.entry(current.clone()).or_default();
+                continue;
+            }
+            let entry = result.entry(current.clone()).or_default();
+            if !entry.is_empty() {
+                entry.push('\n');
+            }
+            entry.push_str(raw);
+        }
+        result.values_mut().for_each(|s| *s = s.trim().to_owned());
+        return result;
+    }
     let service = crate::services::get(service);
     let mut current = String::from("leftover");
     let mut single = false;
@@ -126,14 +157,28 @@ fn run_options(
     manifest: &services_contracts::manifest::Manifest,
     sections: &mut BTreeMap<String, String>,
 ) -> Result<RunOptions, String> {
-    let mut options = RunOptions::default();
     let Some(text) = sections.remove("options") else {
-        return Ok(options);
+        return Ok(RunOptions::default());
     };
     let grid = manifest.console.response == services_contracts::manifest::View::Grid;
     let own = manifest
         .section("options")
         .is_some_and(|section| section.param.is_some());
+    let (options, rest) = console_options(&text, &manifest.name, grid, own)?;
+    if !rest.is_empty() {
+        sections.insert("options".into(), rest);
+    }
+    Ok(options)
+}
+
+/// The console's keys of an `#options` text and the lines left for the module.
+fn console_options(
+    text: &str,
+    name: &str,
+    grid: bool,
+    own: bool,
+) -> Result<(RunOptions, String), String> {
+    let mut options = RunOptions::default();
     let mut rest = vec![];
     for line in text.lines() {
         let Some((name, value)) = line.split_once(':') else {
@@ -155,8 +200,7 @@ fn run_options(
             }
             "format" if !grid => {
                 return Err(format!(
-                    "Format applies to table responses; {} answers with a body",
-                    manifest.name
+                    "Format applies to table responses; {name} answers with a body"
                 ));
             }
             "format" => {
@@ -178,10 +222,12 @@ fn run_options(
         return Err("Repeat-Until needs Repeat, like Repeat: 5s".into());
     }
     if let Some(line) = rest.first().filter(|_| !own) {
-        let name = line.split_once(':').map_or(*line, |(name, _)| name).trim();
+        let option = line
+            .split_once(':')
+            .map_or(*line, |(option, _)| option)
+            .trim();
         return Err(format!(
-            "Unknown option {name:?}; {} takes {}",
-            manifest.name,
+            "Unknown option {option:?}; {name} takes {}",
             if grid {
                 "Repeat, Repeat-Until and Format"
             } else {
@@ -189,10 +235,39 @@ fn run_options(
             }
         ));
     }
-    if !rest.is_empty() {
-        sections.insert("options".into(), rest.join("\n"));
+    Ok((options, rest.join("\n")))
+}
+
+/// A Kernel service's check (the text after its `#check` line) as its module gets it, and
+/// the options the console runs it with: the console owns `#options`, so it is cut out.
+pub fn kernel_run(
+    service: &str,
+    source: &str,
+) -> Result<(services_sdk::Check, RunOptions), String> {
+    if !crate::kernel::loaded(service) {
+        return Err(crate::kernel::unavailable(service));
     }
-    Ok(options)
+    let name = crate::kernel::manifest(service)
+        .map_or_else(|| service.to_owned(), |manifest| manifest.name);
+    let mut text = Vec::new();
+    let mut options = Vec::new();
+    let mut in_options = false;
+    for line in source.lines() {
+        if let Some((marker, _)) = services_kernel::document::marker(line) {
+            in_options = marker == "options";
+            if in_options {
+                continue;
+            }
+        }
+        if in_options {
+            options.push(line);
+        } else {
+            text.push(line);
+        }
+    }
+    let (run, _) = console_options(&options.join("\n"), &name, false, false)?;
+    let check = crate::kernel::check(service, &text.join("\n"), &serde_json::json!({}));
+    Ok((check, run))
 }
 
 /// `Repeat`'s time in milliseconds: a whole number of seconds, minutes or hours, 1s to 24h.
@@ -216,6 +291,11 @@ pub fn parse(service: &str, source: &str) -> Result<Value, String> {
 
 /// The module request of a check and the options the console runs it with.
 pub fn parse_run(service: &str, source: &str) -> Result<(Value, RunOptions), String> {
+    if crate::kernel::is_service(service) {
+        let (check, options) = kernel_run(service, source)?;
+        let call = crate::kernel::with(|modules| modules.prepare(service, check))?;
+        return Ok((crate::kernel::call_value(&call), options));
+    }
     let Some(manifest) = crate::services::get(service) else {
         return Err(format!("Unsupported console service: {service}"));
     };
@@ -298,11 +378,16 @@ fn command_line(service: &str) -> Option<String> {
     crate::services::get(service)?.console.command.clone()
 }
 
+/// Kernel services always import and export (their module does).
+/// Whether `service` exports and imports checks now: a Kernel service once its module runs.
 pub fn transfers(service: &str) -> bool {
-    command_line(service).is_some()
+    crate::kernel::loaded(service) || command_line(service).is_some()
 }
 
 pub fn import(service: &str, command: &str) -> Result<String, String> {
+    if crate::kernel::is_service(service) {
+        return crate::kernel::with(|modules| modules.import(service, command.to_owned()));
+    }
     if command_line(service).is_none() {
         return Err(format!("Import isn't supported for {service}"));
     }
@@ -316,6 +401,10 @@ pub fn import(service: &str, command: &str) -> Result<String, String> {
 }
 
 pub fn export(service: &str, source: &str) -> Result<String, String> {
+    if crate::kernel::is_service(service) {
+        let (check, _) = kernel_run(service, source)?;
+        return crate::kernel::with(|modules| modules.export(service, check));
+    }
     let p = parse(service, source)?;
     if command_line(service).is_none() {
         return Err(format!("Export isn't supported for {service}"));

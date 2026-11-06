@@ -89,8 +89,78 @@ impl Runtime {
             drivers: crate::drivers::Drivers::new()?,
         })
     }
-    /// `{"service":"modules"}`: the loaded modules and the packages that failed to load;
+    /// Interim until the Variables panel module: `{"service":"vars","op":"resolve","value",
+    /// "source","title","variables"}` resolves `{{…}}` in every string of `value` with the
+    /// session `variables`; `source` and `title` come back resolved with secrets redacted,
+    /// ready for history.
+    fn resolve(&self, message: &Value) -> Result<Value> {
+        let config = [services_contracts::ParamConfig {
+            name: "value".into(),
+            kind: "text".into(),
+            required: false,
+            multi: false,
+            default: None,
+            resolve: Some("text".into()),
+            keys: Default::default(),
+        }];
+        let mut params = json!({"value": message["value"]});
+        if let Some(variables) = message.get("variables") {
+            params["__consoleVariables"] = variables.clone();
+        }
+        let (resolved, snapshot) = self.variable_store.resolve_for_history(
+            &config,
+            &params,
+            message["source"].as_str(),
+        )?;
+        let (source, secrets) = snapshot?;
+        let redactor = crate::core::history::redactor(&resolved, &source, secrets);
+        Ok(json!({
+            "value": resolved["value"],
+            "source": redactor.text(&source),
+            "title": redactor.text(message["title"].as_str().unwrap_or("")),
+        }))
+    }
+
+    /// Interim until the History panel module: `{"service":"history","op":"insert","checkId",
+    /// "sessionId","title","module","started","ended","status","text"}` saves a run;
+    /// `defer:true` keeps it back like a repeat's earlier runs.
+    async fn insert_history(&self, message: &Value) -> Result<Value> {
+        use crate::core::{error::Error, history};
+        let number = |key: &str| {
+            message[key]
+                .as_u64()
+                .ok_or_else(|| Error::new(format!("{key} must be a number")))
+        };
+        let (started, ended) = (number("started")?, number("ended")?);
+        let snapshot = history::Snapshot {
+            check_id: history::uuid(message, "checkId")?,
+            session_id: history::uuid(message, "sessionId")?,
+            title: text(message, "title"),
+            service: text(message, "module"),
+            started,
+            ended,
+            duration: ended.saturating_sub(started),
+            status: match message["status"].as_str() {
+                Some(status @ ("success" | "error" | "stopped")) => status.into(),
+                _ => return Err(Error::new("status must be success, error or stopped")),
+            },
+            text: text(message, "text"),
+        };
+        if snapshot.text.len() > history::MAX_BYTES {
+            return Err(Error::new("Snapshot exceeds the 100 MiB history quota"));
+        }
+        if message["defer"] == true {
+            self.history.defer(snapshot);
+            return Ok(json!({"saved": false, "deferred": true}));
+        }
+        let id = self.history.save(snapshot).await?;
+        Ok(json!({"saved": true, "id": id}))
+    }
+
+    /// `{"service":"modules"}`: the loaded modules, the wasm modules the App runs (`wasm`:
+    /// SDK manifest plus `digest`) and the packages that failed to load;
     /// `op:"ui"` with a `module` id: the module's console part as base64;
+    /// `op:"wasm"` with a `module` id: the wasm module as base64;
     /// `op:"install"` with the `source`, `module` and `version` of a source's offer, and
     /// `op:"remove"` with a `module` folder change the modules folder; `forget:true` also deletes the module's history, local templates and
     /// hints. This host keeps the modules it loaded; a new host process loads the change.
@@ -99,6 +169,23 @@ impl Runtime {
         use base64::Engine;
         match message["op"].as_str() {
             Some("ui") => {}
+            Some("wasm") => {
+                let id = text(message, "module");
+                let module = self
+                    .registry
+                    .wasm()
+                    .iter()
+                    .find(|module| module.manifest.id == id)
+                    .ok_or_else(|| Error::new(format!("Module \"{id}\" is not a wasm module")))?;
+                let wasm = std::fs::read(&module.path).map_err(|e| {
+                    Error::new(format!("Cannot read {}: {e}", module.path.display()))
+                })?;
+                return Ok(json!({
+                    "module": id,
+                    "digest": crate::core::modules::digest(&wasm),
+                    "wasm": base64::engine::general_purpose::STANDARD.encode(wasm),
+                }));
+            }
             Some("install") => {
                 let source = message["source"]
                     .as_str()
@@ -153,7 +240,18 @@ impl Runtime {
                 return Ok(reply);
             }
             _ => {
-                let mut reply = json!({"modules": self.registry.manifests().as_slice()});
+                let wasm: Vec<Value> = self
+                    .registry
+                    .wasm()
+                    .iter()
+                    .map(|module| {
+                        let mut manifest = json!(module.manifest);
+                        manifest["digest"] = json!(module.digest);
+                        manifest
+                    })
+                    .collect();
+                let mut reply =
+                    json!({"modules": self.registry.manifests().as_slice(), "wasm": wasm});
                 if !self.registry.failed().is_empty() {
                     reply["failed"] = json!(self.registry.failed());
                 }
@@ -392,7 +490,11 @@ impl Runtime {
         } else if service == "agent_sessions" {
             self.agent.sessions(message).await
         } else if service == "history" {
-            self.history.dispatch(message).await
+            if message["op"] == "insert" {
+                self.insert_history(message).await
+            } else {
+                self.history.dispatch(message).await
+            }
         } else if service == "sessions" {
             (|| -> Result<Value> {
                 let variables = self.variable_store.list()?;
@@ -406,6 +508,11 @@ impl Runtime {
                             self.hints.get(&manifest.id, &manifest.console.hints)["text"].clone(),
                         )
                     })
+                    .chain(self.registry.wasm().iter().map(|module| {
+                        let id = module.manifest.id.clone();
+                        let text = self.hints.get(&id, "")["text"].clone();
+                        (id, text)
+                    }))
                     .collect();
                 Ok(json!({"variables":variables["profiles"]["var"],"hints":hints}))
             })()
@@ -424,6 +531,16 @@ impl Runtime {
                     version: Some(manifest.version.clone()),
                     error: None,
                 })
+                .chain(self.registry.wasm().iter().map(|module| {
+                    sources::Installed {
+                        id: module.manifest.id.clone(),
+                        name: Some(module.manifest.name.clone()),
+                        description: Some(module.manifest.description.clone())
+                            .filter(|description| !description.is_empty()),
+                        version: Some(module.manifest.version.clone()),
+                        error: None,
+                    }
+                }))
                 .chain(
                     self.registry
                         .failed()
@@ -443,6 +560,8 @@ impl Runtime {
                 hints: self.hints.local(),
             };
             sources::dispatch(&self.sources, message, local, &installed).await
+        } else if service == "vars" && message["op"] == "resolve" {
+            self.resolve(message)
         } else if service == "vars" {
             if let Some(variables) = message.get("sessionVariables") {
                 self.variable_store.session_dispatch(message, variables)

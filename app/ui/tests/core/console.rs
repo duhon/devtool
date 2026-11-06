@@ -35,11 +35,6 @@ fn request_content_requires_an_explicit_section_marker() {
             "#endpoint\nmysql://localhost/db\nSELECT 1",
             "#query",
         ),
-        (
-            "rest",
-            "#endpoint\nPOST https://a\n#headers\nX: y\n{\"a\":1}",
-            "#body",
-        ),
         ("grpc", "#endpoint\ngrpc://a/b/c\n{}", "#message"),
         ("graphql", "#endpoint\nhttps://a\nquery { a }", "#query"),
     ] {
@@ -55,7 +50,8 @@ fn every_service_console_parses_into_its_request_shape() {
             "#headers\nX: y\n#body\n{}\n#endpoint\nPOST https://a"
         )
         .unwrap(),
-        json!({"method":"POST","url":"https://a","headers":{"X":"y"},"body":"{}"})
+        json!({"driver":"http","stream":false,"request":{"method":"POST","url":"https://a",
+            "headers":[["X","y"]],"body":"{}","text":true}})
     );
     assert_eq!(
         parse("terminal", "#endpoint\nbash -c\necho hi").unwrap()["command"],

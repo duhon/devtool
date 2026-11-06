@@ -228,7 +228,7 @@
   await run();
   await wait(() => status().classList.contains('is-error'));
   assert(light(checks()[3]) === 'ready' && light(testid('console-service-rest')) === 'ready',
-    'A visible validation failure must keep its error status but acknowledge both check and service signals');
+    `A visible validation failure must keep its error status but acknowledge both check and service signals: ${JSON.stringify({check:light(checks()[3]),service:light(testid('console-service-rest')),status:status().textContent})}`);
   await seen();
   await select(2);
   assert(status().textContent === successfulStatus && light(checks()[2]) === 'ready',

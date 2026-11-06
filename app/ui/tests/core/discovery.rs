@@ -36,11 +36,6 @@ fn discovery_params_come_from_the_connection_sections() {
     let headers = "Authorization: token";
     for (service, endpoint, expected) in [
         (
-            "rest",
-            "POST https://fixture.invalid/v1?x=1",
-            json!({"url":"https://fixture.invalid/v1?x=1","headers":{"Authorization":"token"}}),
-        ),
-        (
             "graphql",
             "https://fixture.invalid/graphql",
             json!({"url":"https://fixture.invalid/graphql","headers":{"Authorization":"token"}}),
@@ -68,11 +63,8 @@ fn discovery_params_come_from_the_connection_sections() {
         params("graphql", &sections(&[])),
         Some(json!({"url":"","headers":{}}))
     );
-    assert_eq!(
-        params("rest", &sections(&[("endpoint", "GET")])).map(|params| params["url"].clone()),
-        Some(json!(""))
-    );
-    for service in ["terminal", "splunk", "unknown"] {
+    // REST discovers inside its Kernel module.
+    for service in ["rest", "terminal", "splunk", "unknown"] {
         assert_eq!(
             params(service, &sections(&[("endpoint", "x")])),
             None,
@@ -83,7 +75,7 @@ fn discovery_params_come_from_the_connection_sections() {
 
 #[test]
 fn incomplete_addresses_are_not_ready_for_discovery() {
-    for service in ["rest", "graphql", "grpc", "mysql"] {
+    for service in ["graphql", "grpc", "mysql"] {
         let field = match service {
             "grpc" => "endpoint",
             "mysql" => "connectionString",

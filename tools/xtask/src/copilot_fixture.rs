@@ -758,8 +758,11 @@ Raw HTML: <img src="https://images.fixture.invalid/raw" onerror="globalThis.agen
                 );
                 ensure!(
                     !result.to_string().contains("resolved-fixture")
-                        && result["debug"]["debug"]["request"]["headers"]["X-Token"]
-                            == "[redacted]",
+                        && result["debug"]["request"]["request"]["headers"]
+                            .as_array()
+                            .is_some_and(
+                                |headers| headers.contains(&json!(["X-Token", "[redacted]"]))
+                            ),
                     "Debug must mask resolved credentials: {result}"
                 );
                 ensure!(
@@ -770,10 +773,7 @@ Raw HTML: <img src="https://images.fixture.invalid/raw" onerror="globalThis.agen
                     "Debug must point to the response instead of repeating it: {result}"
                 );
                 ensure!(
-                    !result.to_string().contains("materialized-sku")
-                        && result
-                            .to_string()
-                            .contains("Session variable values omitted"),
+                    !result.to_string().contains("materialized-sku"),
                     "Debug must not disclose session variable values: {result}"
                 );
                 self.finish(
@@ -782,7 +782,7 @@ Raw HTML: <img src="https://images.fixture.invalid/raw" onerror="globalThis.agen
                         "Read response: {}; Debug status: {}; HTTP {}",
                         context["responseText"].as_str().unwrap_or_default(),
                         result["status"].as_str().unwrap_or_default(),
-                        result["debug"]["status"]
+                        result["debug"]["response"]["status"]
                     ),
                 )
             }

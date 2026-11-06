@@ -1,6 +1,7 @@
 //! Packaged modules for tests: each package crate is built once per test process into
 //! its own target directory and linked into every test data directory's modules folder,
-//! the way an installed host finds it.
+//! the way an installed host finds it. SDK modules (a manifest with `abi`) are built for
+//! `wasm32-unknown-unknown` and installed as `module.wasm` with the manifest as `package.json`.
 
 use std::{
     path::{Path, PathBuf},
@@ -12,17 +13,24 @@ fn workspace() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-/// `(crate, module id, version)` of every package crate: a `cdylib` in `modules/services/<dir>`.
+/// `(crate, module id, version)` of every package crate with a library the Host loads: a
+/// `cdylib` in `modules/services/<dir>`.
 pub fn packages() -> &'static [(String, String, String)] {
     static PACKAGES: OnceLock<Vec<(String, String, String)>> = OnceLock::new();
-    PACKAGES.get_or_init(|| scan("modules/services"))
+    PACKAGES.get_or_init(|| scan("modules/services", false))
+}
+
+/// `(crate, module id, version)` of every SDK module crate in `modules/services/<dir>`.
+pub fn wasm_packages() -> &'static [(String, String, String)] {
+    static PACKAGES: OnceLock<Vec<(String, String, String)>> = OnceLock::new();
+    PACKAGES.get_or_init(|| scan("modules/services", true))
 }
 
 /// `(crate, module id, version)` of the example modules in `examples/<dir>`: built
 /// like the shipped ones, but never installed in a test data directory.
 pub fn examples() -> &'static [(String, String, String)] {
     static EXAMPLES: OnceLock<Vec<(String, String, String)>> = OnceLock::new();
-    EXAMPLES.get_or_init(|| scan("examples"))
+    EXAMPLES.get_or_init(|| scan("examples", false))
 }
 
 /// The version of module `id`: the version of its crate.
@@ -30,12 +38,13 @@ pub fn version(id: &str) -> &'static str {
     packages()
         .iter()
         .chain(examples())
+        .chain(wasm_packages())
         .find(|(_, package_id, _)| package_id == id)
         .map(|(_, _, version)| version.as_str())
         .expect("a package with this module id")
 }
 
-fn scan(folder: &str) -> Vec<(String, String, String)> {
+fn scan(folder: &str, sdk: bool) -> Vec<(String, String, String)> {
     let mut packages = Vec::new();
     let modules = workspace().join(folder);
     for entry in std::fs::read_dir(&modules).expect("module crates must be readable") {
@@ -54,6 +63,9 @@ fn scan(folder: &str) -> Vec<(String, String, String)> {
             &std::fs::read(dir.join("manifest.json")).expect("a package has a manifest"),
         )
         .expect("a package manifest is JSON");
+        if manifest.get("abi").is_some() != sdk {
+            continue;
+        }
         let id = manifest["id"]
             .as_str()
             .expect("a package manifest has an id");
@@ -95,6 +107,48 @@ fn built() -> &'static Path {
     })
 }
 
+/// Builds the SDK modules for `wasm32-unknown-unknown` (same profile as the tests).
+fn built_wasm() -> &'static Path {
+    static BUILT: OnceLock<PathBuf> = OnceLock::new();
+    BUILT.get_or_init(|| {
+        let target = workspace().join("target/modules");
+        let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+        let mut command = Command::new(cargo);
+        command
+            .current_dir(workspace())
+            .args([
+                "build",
+                "--quiet",
+                "--lib",
+                "--target",
+                "wasm32-unknown-unknown",
+            ])
+            .arg("--target-dir")
+            .arg(&target);
+        for (package, _, _) in wasm_packages() {
+            command.args(["-p", package]);
+        }
+        let profile = if cfg!(debug_assertions) {
+            "debug"
+        } else {
+            command.arg("--release");
+            "release"
+        };
+        if !wasm_packages().is_empty() {
+            let status = command
+                .status()
+                .expect("cargo must run to build the wasm modules");
+            assert!(status.success(), "wasm modules must build");
+        }
+        target.join("wasm32-unknown-unknown").join(profile)
+    })
+}
+
+/// The built `module.wasm` of an SDK module crate.
+pub fn wasm(package: &str) -> PathBuf {
+    built_wasm().join(format!("{}.wasm", package.replace('-', "_")))
+}
+
 /// The built library of a package crate.
 pub fn library(package: &str) -> PathBuf {
     let name = package.replace('-', "_");
@@ -116,6 +170,24 @@ pub fn install(data: &Path) {
         std::fs::write(
             dir.join(services_contracts::package::PACKAGE_FILE),
             serde_json::json!({"id": id, "version": version}).to_string(),
+        )
+        .expect("package.json must be writable");
+    }
+    for (package, id, version) in wasm_packages() {
+        let dir = data.join("modules").join(id);
+        std::fs::create_dir_all(&dir).expect("modules folder must be creatable");
+        let link = dir.join(services_contracts::package::WASM_FILE);
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(wasm(package), &link).expect("package must be linkable");
+        let crate_dir = workspace().join("modules/services").join(id);
+        let mut manifest: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(crate_dir.join("manifest.json")).expect("a package has a manifest"),
+        )
+        .expect("a package manifest is JSON");
+        manifest["version"] = serde_json::json!(version);
+        std::fs::write(
+            dir.join(services_contracts::package::PACKAGE_FILE),
+            manifest.to_string(),
         )
         .expect("package.json must be writable");
     }

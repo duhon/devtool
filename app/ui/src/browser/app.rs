@@ -27,6 +27,7 @@ use web_sys::{DragEvent, HtmlInputElement};
 use yew::prelude::*;
 
 mod console_panel;
+mod kernel_panel;
 
 /// Name of Console session 0.
 const TEMPORARY_SESSION: &str = "Temporary";
@@ -316,6 +317,21 @@ pub enum Msg {
     ProfileActivity(bool, (crate::activity::Indicator, String)),
     ClearNotice,
     CloseExport,
+    /// Kernel modules started: their effects and the ids that started.
+    KernelStarted((Vec<services_kernel::Effect>, Vec<String>)),
+    /// `vars.resolve` answered a module's driver call: (module, tag, driver, reply).
+    KernelResolved(String, String, String, Reply),
+    /// A driver answered a module's call: (module, tag, reply).
+    KernelReplied(String, String, Reply),
+    /// `vars.resolve` answered a module's `vars.resolve` command: (module, tag, reply).
+    KernelVariables(String, String, Reply),
+    KernelTimer(String, String),
+    KernelRunResolved(String, Reply),
+    KernelRunReplied(String, Reply),
+    KernelSaved(Reply),
+    KernelDocument(String),
+    /// The user asked a Kernel service for hints at an offset of a check.
+    KernelHints(services_sdk::Check, u32),
 }
 pub struct App {
     sessions: super::sessions::Shared,
@@ -386,6 +402,7 @@ pub struct App {
     agent_edit: Option<AgentEdit>,
     agent_serial: u64,
     agent_run: Option<AgentRun>,
+    kernel: kernel_panel::KernelState,
     agent_activity: Vec<Activity>,
     profile_activity: BTreeMap<bool, (crate::activity::Indicator, String)>,
     agent_stop_generation: u64,
@@ -500,6 +517,7 @@ impl Component for App {
             agent_edit: None,
             agent_serial: 0,
             agent_run: None,
+            kernel: Default::default(),
             agent_activity: Vec::new(),
             profile_activity: BTreeMap::new(),
             agent_stop_generation: 0,
@@ -909,9 +927,10 @@ impl Component for App {
                 if service != self.console_service {
                     self.cancel_agent_edit();
                 }
-                self.console_service = service;
+                self.console_service = service.clone();
                 self.export_text = None;
                 self.persist_console();
+                self.kernel_schedule(ctx, &service);
             }
             Msg::ConsoleText(text) => {
                 let old = self
@@ -935,6 +954,7 @@ impl Component for App {
                 self.persist_console();
                 let service = self.console_service.clone();
                 self.stop_edited_repeats(ctx, &service);
+                self.kernel_schedule(ctx, &service);
             }
             Msg::ConsoleEdited(service, edit) => {
                 self.checks.insert(service.clone(), edit.checks);
@@ -942,6 +962,7 @@ impl Component for App {
                 self.response_regions.insert(service.clone(), edit.regions);
                 self.persist_console();
                 self.stop_edited_repeats(ctx, &service);
+                self.kernel_schedule(ctx, &service);
             }
             Msg::ConsoleEditor(service, msg) => {
                 let events = self.console_editor(&service).update(msg);
@@ -1061,6 +1082,10 @@ impl Component for App {
                 }
                 _ => {}
             },
+            Msg::Discover if crate::kernel::is_service(&self.console_service) => {
+                let service = self.console_service.clone();
+                self.kernel_discover(ctx, &service);
+            }
             Msg::Discover => {
                 if !self.discovering.contains(self.current_language()) {
                     self.discovered_params
@@ -1087,7 +1112,11 @@ impl Component for App {
             Msg::Scroll(service, viewport) => {
                 let active = self.active_console_line(&service);
                 self.viewports.insert(service.clone(), viewport);
-                return active != self.active_console_line(&service);
+                let moved = active != self.active_console_line(&service);
+                if moved {
+                    self.kernel_schedule(ctx, &service);
+                }
+                return moved;
             }
             Msg::Check(line) => {
                 self.console_editor(&self.console_service)
@@ -1152,6 +1181,10 @@ impl Component for App {
                 match super::accept_modules(&value) {
                     Ok(changed) => {
                         super::module_ui::prepare(&self.transport, Callback::noop());
+                        super::kernel_modules::prepare(
+                            &self.transport,
+                            ctx.link().callback(Msg::KernelStarted),
+                        );
                         if !changed {
                             return false;
                         }
@@ -1740,6 +1773,7 @@ impl Component for App {
                 self.hidden = !visible;
                 if !visible {
                     self.pending_discovery.clear();
+                    self.kernel_hidden();
                     for (service, id) in std::mem::take(&mut self.hints_timers) {
                         window().clear_timeout_with_handle(id);
                         self.record_panel_status(PanelEvent {
@@ -1772,6 +1806,25 @@ impl Component for App {
             }
             Msg::ClearNotice => self.notice = None,
             Msg::CloseExport => self.export_text = None,
+            Msg::KernelStarted((effects, started)) => {
+                self.kernel_started(ctx, effects, started.clone());
+                if !started.is_empty() {
+                    self.sync_services(ctx);
+                }
+            }
+            Msg::KernelResolved(module, tag, driver, reply) => {
+                self.kernel_resolved(ctx, module, tag, driver, reply);
+            }
+            Msg::KernelReplied(module, tag, reply) => self.kernel_replied(ctx, module, tag, reply),
+            Msg::KernelVariables(module, tag, reply) => {
+                self.kernel_variables(ctx, module, tag, reply);
+            }
+            Msg::KernelTimer(module, tag) => self.kernel_timer(ctx, &module, &tag),
+            Msg::KernelRunResolved(key, reply) => self.kernel_run_resolved(ctx, &key, reply),
+            Msg::KernelRunReplied(key, reply) => self.kernel_run_replied(ctx, &key, reply),
+            Msg::KernelSaved(reply) => self.kernel_saved(reply),
+            Msg::KernelDocument(service) => self.kernel_document(ctx, &service),
+            Msg::KernelHints(check, pos) => self.kernel_hints(ctx, check, pos),
         }
         true
     }
@@ -2266,6 +2319,7 @@ impl App {
                     endpoint: ["url", "connectionString", "endpoint", "baseUrl", "target"]
                         .into_iter()
                         .find_map(|field| params[field].as_str())
+                        .or_else(|| params["request"]["url"].as_str())
                         .map(|endpoint| {
                             if let Ok(url) = url::Url::parse(endpoint)
                                 && let Some(host) = url.host_str()
@@ -2482,7 +2536,9 @@ fn agent_debug(debug: &Value, response: bool) -> Value {
                             }
                             scrub(child, false);
                         }
-                        "result" | "previousOperation" if response => scrub(child, true),
+                        "result" | "previousOperation" | "response" if response => {
+                            scrub(child, true)
+                        }
                         _ => scrub(child, false),
                     }
                 }

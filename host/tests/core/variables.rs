@@ -80,7 +80,10 @@ async fn session_variables_are_request_local_and_never_replace_stored_ones() {
         .dispatch(&json!({"service":"sessions","op":"bootstrap"}))
         .await;
     assert_eq!(boot["result"]["variables"]["TOKEN"], "legacy");
-    assert!(boot["result"]["hints"]["rest"].is_string());
+    assert!(
+        boot["result"]["hints"]["rest"].is_string()
+            && boot["result"]["hints"]["graphql"].is_string()
+    );
 }
 
 #[test]
@@ -109,7 +112,7 @@ fn nested_json_keeps_keys_and_types_and_reports_resolution_errors() {
     });
     for (service, field) in [
         ("graphql", "variables"),
-        ("rest", "headers"),
+        ("graphql", "headers"),
         ("grpc", "headers"),
         ("grpc", "requestMessage"),
         ("splunk", "headers"),
@@ -178,7 +181,7 @@ fn cycles_display_tolerantly_and_fall_back_to_globals() {
     let data = DataDir::new();
     let runtime = data.runtime();
     let vars = runtime.dictionary_store.clone();
-    let rest = runtime.registry.params("rest").unwrap();
+    let graphql = runtime.registry.params("graphql").unwrap();
     vars.dispatch(&json!({"op":"save","name":"default","variables":{"value":"{{default:value}}"}}))
         .unwrap();
     vars.dispatch(
@@ -200,13 +203,13 @@ fn cycles_display_tolerantly_and_fall_back_to_globals() {
     );
     assert_eq!(list["resolvedProfiles"]["fallback"]["indirect"], "ok");
     assert!(
-        vars.resolve_params(rest, &json!({"url":"literal"}))
+        vars.resolve_params(graphql, &json!({"url":"literal"}))
             .is_err()
     );
     vars.dispatch(&json!({"op":"reorder","order":["fallback","default"]}))
         .unwrap();
     assert_eq!(
-        vars.resolve_params(rest, &json!({"url":"{{:value}}"}))
+        vars.resolve_params(graphql, &json!({"url":"{{:value}}"}))
             .unwrap()["url"],
         "ok"
     );

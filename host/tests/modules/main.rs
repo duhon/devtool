@@ -5,7 +5,6 @@
 mod graphql;
 mod mysql;
 mod opensearch;
-mod rest;
 mod splunk;
 mod templates;
 mod terminal;

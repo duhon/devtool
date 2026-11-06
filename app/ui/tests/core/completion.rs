@@ -297,10 +297,6 @@ fn case_sensitive_names_can_still_be_corrected() {
         json!({"queryType":"Query","types":{"Query":{"fields":[{"name":"name","type":"String"}]}}});
     let r = suggest("graphql", "query", "{\n  Name", 1, 6, &[], &d);
     assert_eq!(r.candidates[0].text, "name");
-    let d = json!({"paths":["/Users"]});
-    let source = "https://fixture.invalid/users";
-    let r = suggest("rest", "endpoint", source, 0, source.len(), &[], &d);
-    assert_eq!(r.candidates[0].text, "/Users");
 }
 
 #[test]
@@ -384,63 +380,37 @@ fn profiles_then_scoped_variables() {
 
 #[test]
 fn endpoint_completion_offsets_use_utf16_after_trimming() {
-    for (service, field, endpoint, expected, discovery) in [
-        (
-            "rest",
-            "endpoint",
-            "\u{2003}https://пример.рф/api/",
-            "\u{2003}https://пример.рф/api/pets",
-            json!({"paths":["/api/pets"]}),
-        ),
-        (
-            "rest",
-            "",
-            "GET \u{a0}https://petst",
-            "GET \u{a0}https://petstore3.swagger.io/api/v3/",
-            Value::Null,
-        ),
-        (
-            "grpc",
-            "endpoint",
-            "\u{2003}grpc://fixture.invalid/",
-            "\u{2003}grpc://fixture.invalid/fixture.Echo/",
-            json!({"services":["fixture.Echo"]}),
-        ),
-    ] {
-        let hints = vec![("https://petstore3.swagger.io/api/v3/".into(), String::new())];
-        let source = if field.is_empty() {
-            format!("#endpoint\n{endpoint}")
-        } else {
-            endpoint.into()
-        };
-        let result = suggest(
-            service,
-            field,
-            &source,
-            usize::from(field.is_empty()),
-            endpoint.encode_utf16().count(),
-            &hints,
-            &discovery,
-        );
-        assert_eq!(result.candidates.len(), 1, "{service}: {endpoint}");
-        let mut units = endpoint.encode_utf16().collect::<Vec<_>>();
-        units.splice(
-            result.from..result.to,
-            result.candidates[0].text.encode_utf16(),
-        );
-        assert_eq!(String::from_utf16(&units).unwrap(), expected);
-    }
+    let endpoint = "\u{2003}grpc://fixture.invalid/";
+    let result = suggest(
+        "grpc",
+        "endpoint",
+        endpoint,
+        0,
+        endpoint.encode_utf16().count(),
+        &[],
+        &json!({"services":["fixture.Echo"]}),
+    );
+    assert_eq!(result.candidates.len(), 1);
+    let mut units = endpoint.encode_utf16().collect::<Vec<_>>();
+    units.splice(
+        result.from..result.to,
+        result.candidates[0].text.encode_utf16(),
+    );
+    assert_eq!(
+        String::from_utf16(&units).unwrap(),
+        "\u{2003}grpc://fixture.invalid/fixture.Echo/"
+    );
 }
 
 #[test]
 fn fuzzy_saved_headers_are_isolated_and_used_names_are_hidden() {
     let hints = vec![("X-Correlation-Id: ".into(), "saved REST".into())];
-    let r = suggest("rest", "headers", "xcid", 0, 4, &hints, &Value::Null);
+    let r = suggest("opensearch", "headers", "xcid", 0, 4, &hints, &Value::Null);
     assert_eq!(r.candidates[0].text, "X-Correlation-Id: ");
     let r = suggest("graphql", "headers", "xcid", 0, 4, &[], &Value::Null);
     assert!(r.candidates.is_empty());
     let r = suggest(
-        "rest",
+        "opensearch",
         "headers",
         "xcid\nX-Correlation-Id: used",
         0,
@@ -457,7 +427,7 @@ fn saved_hints_are_offered_only_in_their_section() {
         "Authorization: Bearer t\nhttp://api.test\n#body\n{\"query\":{\"match_all\":{}}}\n#headers\nX-Tenant: a\n#endpoint\nGET https://saved.test/x",
     );
     let at = |field: &str| {
-        suggest("rest", field, "", 0, 0, &hints, &Value::Null)
+        suggest("opensearch", field, "", 0, 0, &hints, &Value::Null)
             .candidates
             .into_iter()
             .map(|c| (c.text, c.detail))

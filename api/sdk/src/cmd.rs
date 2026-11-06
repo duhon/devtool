@@ -17,6 +17,7 @@ pub const NAMES: &[&str] = &[
     "history.insert",
     "history.search",
     "os.env",
+    "vars.resolve",
     "clipboard.read",
     "clipboard.write",
     "sources.read",
@@ -74,6 +75,11 @@ pub fn cancel(target: &str) -> Cmd {
     Cmd::new(target, "driver.cancel", &json!({}))
 }
 
+/// Resolves the `{{…}}` variables in `text`; the reply is the resolved text as a string.
+pub fn resolve(tag: impl Into<String>, text: &str) -> Cmd {
+    Cmd::new(tag, "vars.resolve", &json!({"text": text}))
+}
+
 pub fn kv_get(tag: impl Into<String>, key: &str) -> Cmd {
     Cmd::new(tag, "kv.get", &json!({"key": key}))
 }
@@ -116,6 +122,15 @@ pub fn status(text: &str, indicator: &str) -> Cmd {
         "",
         "status.set",
         &json!({"text": text, "indicator": indicator}),
+    )
+}
+
+/// A [`status`] with structured details for its Debug, e.g. what discovery found.
+pub fn status_with(text: &str, indicator: &str, detail: &impl Serialize) -> Cmd {
+    Cmd::new(
+        "",
+        "status.set",
+        &json!({"text": text, "indicator": indicator, "detail": detail}),
     )
 }
 

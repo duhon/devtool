@@ -68,6 +68,9 @@ pub fn remove(modules: &Path, name: &str) -> Result<(), String> {
 /// the quarantine is cleared after it.
 #[cfg(target_os = "macos")]
 fn prepare(package: &Path) -> Result<(), String> {
+    if !package.join(LIBRARY_FILE).is_file() {
+        return clear_quarantine(package);
+    }
     let output = std::process::Command::new("/usr/bin/codesign")
         .args(["--force", "--sign", "-"])
         .arg(package.join(LIBRARY_FILE))

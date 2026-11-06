@@ -7,17 +7,18 @@ use services_ui::{console, services, storage};
 #[test]
 fn the_built_in_modules_seed_the_tabs_labels_and_order() {
     assert_eq!(*services::all(), services::seed());
+    // Registered modules first, then the ones the Kernel runs.
     assert_eq!(
         services::ids(),
         [
-            "rest",
             "mysql",
             "graphql",
             "grpc",
             "splunk",
             "terminal",
             "artemis",
-            "opensearch"
+            "opensearch",
+            "rest"
         ]
     );
     let labels: Vec<_> = services::ids()
@@ -27,14 +28,14 @@ fn the_built_in_modules_seed_the_tabs_labels_and_order() {
     assert_eq!(
         labels,
         [
-            "REST",
             "MySQL",
             "GraphQL",
             "gRPC",
             "Splunk",
             "Terminal",
             "Artemis",
-            "OpenSearch"
+            "OpenSearch",
+            "REST"
         ]
     );
     assert_eq!(services::label("unknown"), "unknown");
@@ -60,7 +61,6 @@ fn sections_and_new_documents_come_from_the_manifests() {
     for (service, sections) in [
         ("mysql", &["endpoint", "options", "query"][..]),
         // The console's own `#options` (Repeat, Until, Format) come before the payload.
-        ("rest", &["endpoint", "headers", "options", "body"]),
         (
             "graphql",
             &["endpoint", "headers", "variables", "options", "query"],
@@ -112,15 +112,15 @@ fn host_module_lists_are_validated_before_they_replace_the_registry() {
         })
         .is_err()
     );
-    fn rest(
+    fn graphql(
         list: &mut [services_contracts::manifest::Manifest],
     ) -> &mut Vec<services_contracts::manifest::Section> {
-        let at = list.iter().position(|m| m.id == "rest").unwrap();
+        let at = list.iter().position(|m| m.id == "graphql").unwrap();
         &mut list[at].console.sections
     }
-    assert!(broken(|list| rest(list)[0].connection = false).is_err());
-    assert!(broken(|list| rest(list)[1].param = None).is_err());
-    assert!(broken(|list| rest(list)[2].param = None).is_ok());
+    assert!(broken(|list| graphql(list)[0].connection = false).is_err());
+    assert!(broken(|list| graphql(list)[1].param = None).is_err());
+    assert!(broken(|list| graphql(list)[2].param = None).is_ok());
     assert!(services::parse(&json!({"modules": [{"name": "no id"}]})).is_err());
     assert!(services::parse(&json!({})).is_err());
 }

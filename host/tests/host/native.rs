@@ -64,7 +64,7 @@ async fn large_responses_are_chunked_without_stopping_terminal_and_old_clients_a
     let roundtrip = async {
         input.write_all(&encode(&json!({"id":1,"service":"terminal","params":{"endpoint":"sh -c","command":"printf ready; sleep 30"}})).unwrap()).await.unwrap();
         assert_eq!(read_frame(&mut output).await["event"]["data"], "ready");
-        let request = |id| json!({"id":id,"service":"rest","params":{"method":"GET","url":format!("{}/large",server.url)}});
+        let request = |id| json!({"id":id,"service":"drivers","driver":"http","op":"call","request":{"method":"GET","url":format!("{}/large",server.url),"text":true}});
         input
             .write_all(&encode(&request(2)).unwrap())
             .await
@@ -161,7 +161,7 @@ async fn concurrent_requests_stop_and_health_are_routed_by_id() {
     let (mut input, input_host) = tokio::io::duplex(65536);
     let (output_host, mut output) = tokio::io::duplex(65536);
     let host = tokio::spawn(native::run(data.runtime(), input_host, output_host));
-    let slow = json!({"id":"slow","service":"rest","params":{"method":"POST","url":format!("{}/slow",server.url),"body":"body"}});
+    let slow = json!({"id":"slow","service":"drivers","driver":"http","op":"call","request":{"method":"POST","url":format!("{}/slow",server.url),"body":"body","text":true}});
     input.write_all(&encode(&slow).unwrap()).await.unwrap();
     let health = encode(&json!({"id":"health","type":"health"})).unwrap();
     for bytes in health.chunks(2) {
@@ -226,7 +226,7 @@ async fn stop_and_eof_cancel_requests_without_touching_siblings() {
     let (output_host, mut output) = tokio::io::duplex(65536);
     let host = tokio::spawn(native::run(data.runtime(), input_host, output_host));
     for (id, path) in [(1, "cancel-slow"), (2, "slow")] {
-        input.write_all(&encode(&json!({"id":id,"service":"rest","params":{"method":"POST","url":format!("{}/{path}",server.url),"body":"fixture"}})).unwrap()).await.unwrap();
+        input.write_all(&encode(&json!({"id":id,"service":"drivers","driver":"http","op":"call","request":{"method":"POST","url":format!("{}/{path}",server.url),"body":"fixture","text":true}})).unwrap()).await.unwrap();
     }
     tokio::time::timeout(Duration::from_secs(2), async {
         while seen.lock().unwrap().len() < 2 {
@@ -248,15 +248,15 @@ async fn stop_and_eof_cancel_requests_without_touching_siblings() {
         );
     }
     assert_eq!(
-        replies.iter().find(|reply| reply["id"] == 1).unwrap()["result"]["cancelled"],
-        true
+        replies.iter().find(|reply| reply["id"] == 1).unwrap()["failure"]["stage"],
+        "cancelled"
     );
     assert_eq!(
         replies.iter().find(|reply| reply["id"] == 2).unwrap()["result"]["status"],
         201
     );
     for id in [3, 4] {
-        input.write_all(&encode(&json!({"id":id,"service":"rest","params":{"method":"GET","url":format!("{}/cancel-slow",server.url)}})).unwrap()).await.unwrap();
+        input.write_all(&encode(&json!({"id":id,"service":"drivers","driver":"http","op":"call","request":{"method":"GET","url":format!("{}/cancel-slow",server.url),"text":true}})).unwrap()).await.unwrap();
     }
     tokio::time::timeout(Duration::from_secs(2), async {
         while seen.lock().unwrap().len() < 4 {
@@ -270,8 +270,8 @@ async fn stop_and_eof_cancel_requests_without_touching_siblings() {
         assert_eq!(
             tokio::time::timeout(Duration::from_secs(2), read_frame(&mut output))
                 .await
-                .unwrap()["result"]["cancelled"],
-            true
+                .unwrap()["failure"]["stage"],
+            "cancelled"
         );
     }
     tokio::time::timeout(Duration::from_secs(4), host)

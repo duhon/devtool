@@ -45,6 +45,7 @@ impl Module for Rest {
         Ok(Rendered {
             text: format!("{} {}", response.status, response.body.unwrap_or_default()),
             language: "text".into(),
+            outcome: "OK".into(),
         })
     }
 }
@@ -238,7 +239,11 @@ fn a_shown_panel_runs_its_commands_and_redraws_from_replies() {
     );
     assert_eq!(
         modules.get("panel").unwrap().status,
-        Some(("fetching".into(), "busy".into()))
+        Some(services_kernel::Status {
+            text: "fetching".into(),
+            indicator: "busy".into(),
+            detail: Value::Null,
+        })
     );
     let errors = &texts(modules.view("panel").unwrap())[1];
     assert!(errors.contains("bad: Unknown command \"nope\""), "{errors}");
@@ -438,4 +443,114 @@ fn slow_synchronous_calls_are_noted_in_the_log() {
         modules.get("rest").unwrap().log.back().unwrap().1,
         "fold took 6.0 ms (budget 5 ms)"
     );
+}
+
+/// A service that notes the hints it hears in its status.
+#[derive(Default)]
+struct Hinted;
+
+impl Module for Hinted {
+    type Msg = ();
+    fn build(&self, _: &Check) -> Result<DriverCall, String> {
+        Err("no requests".into())
+    }
+    fn render(&self, _: &Chunk) -> Result<Rendered, String> {
+        Err("no responses".into())
+    }
+    fn update(&mut self, event: Event<()>) -> Vec<Cmd> {
+        match event {
+            Event::Hints { check, pos } => {
+                vec![cmd::status(&format!("{} {pos}", check.text), "ok")]
+            }
+            Event::Discover(check) => vec![cmd::resolve("url", &check.text)],
+            Event::Reply { tag, result } => {
+                let text = match result {
+                    Ok(value) => format!("{tag} {}", value.as_str().unwrap_or("")),
+                    Err(failure) => format!("{tag} failed: {}", failure.message),
+                };
+                vec![cmd::status(&text, "ok")]
+            }
+            _ => Vec::new(),
+        }
+    }
+    fn subscriptions(&self) -> Subscriptions {
+        Subscriptions {
+            hints: true,
+            discover: true,
+            ..Subscriptions::default()
+        }
+    }
+}
+
+#[test]
+fn hints_reach_only_the_subscribed_service_of_the_check() {
+    let mut modules = modules();
+    load(&mut modules);
+    for id in ["one", "two"] {
+        modules
+            .load(
+                manifest(id, "service", 1),
+                Box::new(Linked::<Hinted>::default()),
+                json!({}),
+            )
+            .unwrap();
+    }
+    let hints = |service: &str| wire::Event {
+        kind: Some(event::Kind::Hints(wire::CompleteRequest {
+            check: Some(Check {
+                service: service.into(),
+                text: "#endpoint".into(),
+                ..Check::default()
+            }),
+            pos: 3,
+        })),
+    };
+    let status = |modules: &Modules, id: &str| {
+        modules
+            .get(id)
+            .unwrap()
+            .status
+            .as_ref()
+            .map(|status| status.text.clone())
+    };
+
+    modules.broadcast(hints("one"));
+    assert_eq!(status(&modules, "one").as_deref(), Some("#endpoint 3"));
+    assert_eq!(status(&modules, "two"), None);
+    // `rest` does not subscribe to hints.
+    assert!(modules.broadcast(hints("rest")).is_empty());
+    assert_eq!(status(&modules, "rest"), None);
+    assert_eq!(status(&modules, "two"), None);
+}
+
+#[test]
+fn a_module_resolves_variables_through_the_app() {
+    let mut modules = modules();
+    modules
+        .load(
+            manifest("one", "service", 1),
+            Box::new(Linked::<Hinted>::default()),
+            json!({}),
+        )
+        .unwrap();
+    let discover = wire::Event {
+        kind: Some(event::Kind::Discover(Check {
+            service: "one".into(),
+            text: "http://{{var:host}}/a".into(),
+            ..Check::default()
+        })),
+    };
+    assert_eq!(
+        modules.broadcast(discover),
+        [Effect::Resolve {
+            module: "one".into(),
+            tag: "url".into(),
+            text: "http://{{var:host}}/a".into(),
+        }]
+    );
+    modules.reply("one", "url", Ok(json!("http://x.test/a")));
+    let status = modules.get("one").unwrap().status.clone().unwrap();
+    assert_eq!(status.text, "url http://x.test/a");
+    // The reply ended the command: a late end changes nothing.
+    assert!(modules.end("one", "url").is_empty());
 }

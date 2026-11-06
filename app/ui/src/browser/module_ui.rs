@@ -176,7 +176,7 @@ async fn fetch(transport: &Rc<Transport>, id: &str) -> Result<(String, Vec<u8>),
     }
 }
 
-async fn open() -> Result<IdbDatabase, String> {
+pub(super) async fn open() -> Result<IdbDatabase, String> {
     let factory = window()
         .indexed_db()
         .map_err(error)?
@@ -198,7 +198,11 @@ async fn open() -> Result<IdbDatabase, String> {
     opened?.dyn_into::<IdbDatabase>().map_err(error)
 }
 
-async fn read(database: &IdbDatabase, id: &str, hash: &str) -> Result<Option<Vec<u8>>, String> {
+pub(super) async fn read(
+    database: &IdbDatabase,
+    id: &str,
+    hash: &str,
+) -> Result<Option<Vec<u8>>, String> {
     let store = database
         .transaction_with_str(STORE)
         .and_then(|transaction| transaction.object_store(STORE))
@@ -213,7 +217,12 @@ async fn read(database: &IdbDatabase, id: &str, hash: &str) -> Result<Option<Vec
         .map(|bytes| bytes.to_vec()))
 }
 
-async fn write(database: &IdbDatabase, id: &str, hash: &str, bytes: &[u8]) -> Result<(), String> {
+pub(super) async fn write(
+    database: &IdbDatabase,
+    id: &str,
+    hash: &str,
+    bytes: &[u8],
+) -> Result<(), String> {
     let store = database
         .transaction_with_str_and_mode(STORE, IdbTransactionMode::Readwrite)
         .and_then(|transaction| transaction.object_store(STORE))

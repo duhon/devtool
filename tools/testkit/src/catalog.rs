@@ -67,7 +67,6 @@ const fn panel(
 
 /// Services in the host's order (`console.order`), then the host's own panels.
 pub const MODULES: &[ModuleSpec] = &[
-    service("rest", "REST", "url", true),
     service("mysql", "MySQL", "connectionString", true),
     service("graphql", "GraphQL", "url", true),
     service("grpc", "gRPC", "endpoint", true),
@@ -81,7 +80,7 @@ pub const MODULES: &[ModuleSpec] = &[
     panel("vars", "Variables", &[("list", "{}")]),
     panel("dictionary", "Dictionary", &[("list", "{}")]),
     panel("templates", "Templates", &[("get", "{}")]),
-    panel("hints", "Hints", &[("get", r#"{"serviceName":"rest"}"#)]),
+    panel("hints", "Hints", &[("get", r#"{"serviceName":"graphql"}"#)]),
     panel(
         "history",
         "History",

@@ -10,6 +10,8 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 services-contracts = { path = "../../api/protocol" }
 services-module-ui = { path = "../../api/module-ui" }
+services-kernel = { path = "../kernel" }
+services-sdk = { path = "../../api/sdk" }
 serde.workspace = true
 serde_json.workspace = true
 regex = "1"
@@ -19,7 +21,7 @@ uuid = { version = "1.29.0", features = ["v7", "js"] }
 # Packaged modules' console parts load from their ui.wasm in the browser; native builds
 # (tests) link them instead.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-services-module-rest-ui = { path = "../../modules/services/rest/ui" }
+services-module-rest = { path = "../../modules/services/rest" }
 services-module-graphql-ui = { path = "../../modules/services/graphql/ui" }
 services-module-grpc-ui = { path = "../../modules/services/grpc/ui" }
 services-module-mysql-ui = { path = "../../modules/services/mysql/ui" }

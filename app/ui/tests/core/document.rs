@@ -354,7 +354,7 @@ fn exact_cut_and_paste_does_not_expand_the_previous_response() {
     let block = request_at(&pasted.text, boundary, &pasted.regions).unwrap();
     assert_eq!(block.start, boundary);
     assert_eq!(
-        console::parse("rest", &block.text).unwrap()["url"],
+        console::parse("rest", &block.text).unwrap()["request"]["url"],
         "https://fixture.invalid/moved"
     );
     let source = history.text().to_owned();

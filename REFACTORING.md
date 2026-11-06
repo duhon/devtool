@@ -392,6 +392,11 @@ Kernel не знает ни одной панели: даёт точки рас�
 | `Reply { tag, result }`, `End { tag }` | ответ на Cmd, куски стрима |
 | `Document { check, sections }` | документ сервиса изменился |
 | `Discover` | ручной discovery |
+| `Hints { check, pos }` | пользователь запросил подсказки (Ctrl+Space, `/` в адресе) — ленивый discovery |
+
+- Значения переменных модуль просит Cmd `Resolve { tag, text }`: App → панель Variables →
+  её хранилище; ответ приходит в `Reply { tag }`. До шага 5 App отвечает через временный
+  `vars.resolve` Host.
 | `Request { started / finished }` | запуск и завершение запросов |
 | `Workspace` | restore: сессия переключена |
 | `Storage { key }` | изменился ключ из `watch` |
@@ -543,6 +548,16 @@ Settings. Пакеты выпуска — `dist/modules/`, как сейчас.
   драйвер http в Host (`host/src/drivers{.rs,/http.rs}`: один клиент, редиректы сам,
   тайминги, `DriverFailure`, стрим, отмена; `health` отдаёт драйверы). App пока на старых
   модулях; подключение — в шаге 3.
+- Шаг 3: REST — первый wasm-модуль на SDK (`modules/services/rest`, `lang/` в SDK: json,
+  headers, endpoint, curl); пакет `package.json` + `module.wasm` без платформы. Host находит
+  wasm-пакеты, отдаёт их списком и `op:"wasm"`; App кеширует wasm в IndexedDB по digest и
+  ведёт REST через Kernel (подсветка, подсказки, свёртки, Run, Export/Import, discovery).
+  Discovery ленивый: `Hints` (Ctrl+Space, набранный `/` в адресе) и `Discover`; переменные
+  модуль получает Cmd `vars.resolve`. Временные операции Host до шага 5: `vars.resolve`,
+  `history.insert`. Остальные сервисы на старом пути до шага 4. Отличия: у REST нет
+  Templates до шага 5 (сценарий templates на GraphQL), Debug — `{body, outcome, request,
+  response}`, исход 1xx/3xx — OK, discovery не идёт при наборе JSON без известных путей,
+  REST подписан на `Document` только чтобы заранее подставить переменные в адрес.
 
 ## Решить
 

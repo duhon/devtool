@@ -365,7 +365,7 @@
     if (!globalThis.chrome?.runtime?.connectNative) return false;
     const connect = chrome.runtime.connectNative.bind(chrome.runtime);
     globalThis.nativeProbe = {
-      clipboardReads: 0, saves: 0, ports: 0, discoveries: [], chunkMessages: 0, maxMessageBytes: 0,
+      clipboardReads: 0, saves: 0, ports: 0, discoveries: [], discoveryRuns: new Set(), chunkMessages: 0, maxMessageBytes: 0,
       clipboard: { text: "curl -X POST 'https://fixture.invalid/import' -H 'X-Fixture: imported' --data '{\"fixture\":true}'" },
     };
     chrome.runtime.connectNative = (...args) => {
@@ -388,6 +388,14 @@
         postMessage: message => {
           if (message.type === 'discover')
             nativeProbe.discoveries.push({service: message.service, params: message.params});
+          // A Kernel module discovers through driver calls tagged `discover:{run}:{n}`: one run
+          // is one discovery, whatever number of candidate documents it tries.
+          const run = message.service === 'vars' && message.op === 'resolve'
+            && /^discover:([^:]+):/.exec(message.tag || '')?.[1];
+          if (run && !nativeProbe.discoveryRuns.has(`${message.module}:${run}`)) {
+            nativeProbe.discoveryRuns.add(`${message.module}:${run}`);
+            nativeProbe.discoveries.push({service: message.module, params: {url: message.value?.url}});
+          }
           if (message.type === 'clipboardRead') {
             nativeProbe.clipboardReads++;
             const fixture = nativeProbe.clipboard;

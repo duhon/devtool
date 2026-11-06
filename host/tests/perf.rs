@@ -54,9 +54,13 @@ async fn history_pages_stay_fast_with_many_entries() {
     let (server, _) = http::services().await;
     let started = Instant::now();
     for index in 0..ENTRIES {
-        host.send(json!({"service":"rest",
-            "history":{"checkId":CHECK,"sessionId":CHECK,"title":format!("#check {index}"),"source":"#check"},
-            "params":{"method":"POST","url":format!("{}/echo",server.url),"body":"x".repeat(2048)}}))
+        let call = host
+            .send(json!({"service":"drivers","driver":"http","op":"call","request":{
+                "method":"POST","url":format!("{}/echo",server.url),"body":"x".repeat(2048),"text":true}}))
+            .await;
+        host.send(json!({"service":"history","op":"insert","checkId":CHECK,"sessionId":CHECK,
+            "title":format!("#check {index}"),"module":"rest","started":1,"ended":2,"status":"success",
+            "text":format!("#check\n\n#responce OK\n{}", call.ok()["body"].as_str().unwrap())}))
             .await
             .ok();
     }
@@ -126,12 +130,16 @@ async fn variables_resolve_fast_with_many_profiles() {
     let started = Instant::now();
     for _ in 0..REQUESTS {
         let reply = host
-            .call(
-                "rest",
-                json!({"method":"GET","url":format!("{}/echo",server.url),"headers":headers}),
+            .op(
+                "vars",
+                "resolve",
+                json!({"value":{"method":"GET","url":format!("{}/echo",server.url),"headers":headers}}),
             )
             .await;
-        reply.ok();
+        host.send(json!({"service":"drivers","driver":"http","op":"call",
+            "request":{"method":"GET","url":reply.ok()["value"]["url"],"text":true}}))
+            .await
+            .ok();
     }
     within(
         &format!("{REQUESTS} requests with 50 variables across {PROFILES} profiles"),

@@ -1,6 +1,7 @@
-//! A module package: `<modules>/<id>/` with `package.json`, `module.dylib`, an optional
-//! `ui.wasm`, optional `RELEASE_NOTES.md` and an optional Agent skill in
-//! `skills/module-<id>/`. `package.json` says what the package is without loading its library.
+//! A module package: `<modules>/<id>/` with `package.json` and either `module.wasm` (the
+//! App runs it; `package.json` is its SDK manifest) or `module.dylib` with an optional
+//! `ui.wasm` (old modules the Host runs), optional `RELEASE_NOTES.md` and an optional Agent
+//! skill in `skills/module-<id>/`. `package.json` says what the package is without loading it.
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -11,6 +12,8 @@ pub const PACKAGE_FILE: &str = "package.json";
 pub const LIBRARY_FILE: &str = "module.dylib";
 /// The optional console part of a package.
 pub const UI_FILE: &str = "ui.wasm";
+/// A module the App runs.
+pub const WASM_FILE: &str = "module.wasm";
 /// The optional changes of the package's versions, newest first (`## X.Y.Z` sections).
 pub const NOTES_FILE: &str = "RELEASE_NOTES.md";
 /// The folder of the package's Agent skill: `skills/module-<id>/SKILL.md` and its files.
@@ -20,9 +23,9 @@ pub const SKILLS_DIR: &str = "skills";
 pub const ARCHIVE_SUFFIX: &str = ".module.tgz";
 /// The extension a file picker filters package files by.
 pub const ARCHIVE_EXTENSION: &str = ".tgz";
-/// The files a package archive may hold at its root; `package.json` and the library are
-/// required. Besides them only the skill folder ([`SKILLS_DIR`]).
-pub const ARCHIVE_FILES: &[&str] = &[PACKAGE_FILE, LIBRARY_FILE, UI_FILE, NOTES_FILE];
+/// The files a package archive may hold at its root; `package.json` and the library or the
+/// wasm module are required. Besides them only the skill folder ([`SKILLS_DIR`]).
+pub const ARCHIVE_FILES: &[&str] = &[PACKAGE_FILE, LIBRARY_FILE, WASM_FILE, UI_FILE, NOTES_FILE];
 
 /// The file name of a package archive.
 pub fn archive_name(package: &Package) -> String {
@@ -221,7 +224,7 @@ pub fn version(value: &str) -> Result<[u64; 3], String> {
 /// Package files: [`ARCHIVE_FILES`] and the skill folder of a package folder in one gzip'd tar.
 #[cfg(feature = "archive")]
 pub mod archive {
-    use super::{ARCHIVE_FILES, LIBRARY_FILE, PACKAGE_FILE, SKILLS_DIR};
+    use super::{ARCHIVE_FILES, LIBRARY_FILE, PACKAGE_FILE, SKILLS_DIR, WASM_FILE};
     use std::{
         fs,
         io::{self, Read},
@@ -240,10 +243,14 @@ pub mod archive {
             flate2::Compression::default(),
         ));
         builder.mode(tar::HeaderMode::Deterministic);
+        let code = [LIBRARY_FILE, WASM_FILE];
+        if !code.iter().any(|name| dir.join(name).is_file()) {
+            return Err(format!("{} is missing", dir.join(LIBRARY_FILE).display()));
+        }
         for name in ARCHIVE_FILES {
             let path = dir.join(name);
             if !path.is_file() {
-                if [PACKAGE_FILE, LIBRARY_FILE].contains(name) {
+                if *name == PACKAGE_FILE {
                     return Err(format!("{} is missing", path.display()));
                 }
                 continue;
@@ -354,10 +361,11 @@ pub mod archive {
             }
             left -= copied;
         }
-        for required in [PACKAGE_FILE, LIBRARY_FILE] {
-            if !into.join(required).is_file() {
-                return Err(invalid(format!("it has no {required}")));
-            }
+        if !into.join(PACKAGE_FILE).is_file() {
+            return Err(invalid(format!("it has no {PACKAGE_FILE}")));
+        }
+        if !into.join(LIBRARY_FILE).is_file() && !into.join(WASM_FILE).is_file() {
+            return Err(invalid(format!("it has no {LIBRARY_FILE}")));
         }
         Ok(())
     }

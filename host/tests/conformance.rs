@@ -116,7 +116,7 @@ async fn a_service_without_saved_hints_gets_its_manifest_defaults() {
     };
     assert_eq!(defaults("mysql"), "#endpoint\nmysql://\n");
     assert_eq!(defaults("terminal"), "");
-    for id in ["rest", "graphql", "grpc", "splunk"] {
+    for id in ["graphql", "grpc", "splunk"] {
         assert!(
             defaults(id).starts_with("#endpoint\nhttp://\nhttps://\n\n#headers\nAccept: */*\n"),
             "{id}"
@@ -140,13 +140,20 @@ async fn the_console_reads_the_loaded_manifests_from_the_host() {
         ids,
         services().map(|module| module.name).collect::<Vec<_>>()
     );
-    let rest = &modules[ids.iter().position(|id| *id == "rest").unwrap()];
-    assert_eq!(rest["name"], "REST");
-    assert_eq!(rest["execute"], true);
-    assert_eq!(rest["console"]["payload"], "body");
-    assert_eq!(rest["console"]["response"], "body-headers");
+    let wasm: Vec<_> = reply.ok()["wasm"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(wasm, ["rest"]);
+    let graphql = &modules[ids.iter().position(|id| *id == "graphql").unwrap()];
+    assert_eq!(graphql["name"], "GraphQL");
+    assert_eq!(graphql["execute"], true);
+    assert_eq!(graphql["console"]["payload"], "query");
+    assert_eq!(graphql["console"]["response"], "body-headers");
     assert_eq!(
-        rest["console"]["sections"][1],
+        graphql["console"]["sections"][1],
         json!({"name":"headers","shape":"pairs","language":"headers","param":"headers","connection":true})
     );
 }
@@ -225,7 +232,7 @@ async fn every_request_gets_an_envelope_echoing_its_id() {
             }
         }
     }
-    let anonymous = host.call("rest", json!({})).await;
+    let anonymous = host.call("graphql", json!({})).await;
     assert_eq!(anonymous["id"], Value::Null, "{anonymous}");
 }
 
@@ -363,15 +370,15 @@ async fn panel_state_survives_a_restart() {
         ),
         (
             "templates",
-            json!({"op":"save","serviceName":"rest","section":"body","text":"@kept\n{}","base":""}),
+            json!({"op":"save","serviceName":"graphql","section":"variables","text":"@kept\n{}","base":""}),
             ("get", json!({})),
-            "/templates/rest/body",
+            "/templates/graphql/variables",
             json!("@kept\n{}"),
         ),
         (
             "hints",
-            json!({"op":"save","serviceName":"rest","text":"#kept\n"}),
-            ("get", json!({"serviceName":"rest"})),
+            json!({"op":"save","serviceName":"graphql","text":"#kept\n"}),
+            ("get", json!({"serviceName":"graphql"})),
             "/text",
             json!("#kept\n"),
         ),

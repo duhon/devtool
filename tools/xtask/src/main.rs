@@ -69,7 +69,9 @@ fn target(root: &Path) -> PathBuf {
 
 /// A module built as a package: a `cdylib` crate with a `manifest.json` (the shipped ones are
 /// in `modules/services/<dir>`), its console part (`ui/`, built for `wasm32-unknown-unknown`),
-/// Agent skill (`skill/SKILL.md`) and `RELEASE_NOTES.md` when it has them.
+/// Agent skill (`skill/SKILL.md`) and `RELEASE_NOTES.md` when it has them. A manifest with
+/// `abi` is an SDK module: the crate is built for `wasm32-unknown-unknown` as `module.wasm`
+/// and its `package.json` is the manifest.
 #[derive(Clone)]
 struct Package {
     id: String,
@@ -82,16 +84,34 @@ struct Package {
     dir: PathBuf,
     library: String,
     ui: Option<String>,
+    /// The SDK manifest of a module the App runs.
+    sdk: Option<Value>,
 }
 
 impl Package {
-    /// Its `package.json`, built for this computer's platform.
+    /// Its `package.json`: the SDK manifest with the crate's version, or the description
+    /// of a library built for this computer's platform.
+    fn package_json(&self) -> Result<Vec<u8>> {
+        Ok(match &self.sdk {
+            Some(manifest) => {
+                let mut manifest = manifest.clone();
+                manifest["version"] = Value::String(self.version.clone());
+                serde_json::to_vec_pretty(&manifest)?
+            }
+            None => serde_json::to_vec_pretty(&self.described())?,
+        })
+    }
+
+    /// Its description; a library is built for this computer's platform.
     fn described(&self) -> services_contracts::package::Package {
         services_contracts::package::Package {
             id: self.id.clone(),
             version: self.version.clone(),
             min_core: self.min_core.clone(),
-            platform: Some(services_contracts::package::host_platform()),
+            platform: self
+                .sdk
+                .is_none()
+                .then(services_contracts::package::host_platform),
             name: Some(self.name.clone()),
             description: Some(self.description.clone()).filter(|text| !text.is_empty()),
         }
@@ -176,6 +196,7 @@ fn package_at(root: &Path, dir: &Path) -> Result<Package> {
         dir: dir.to_path_buf(),
         library: crate_name(&cargo)?,
         ui: ui.exists().then(|| crate_name(&ui)).transpose()?,
+        sdk: manifest.get("abi").is_some().then(|| manifest.clone()),
     };
     services_contracts::package::check_id(&package.id).map_err(anyhow::Error::msg)?;
     services_contracts::package::version(&package.version).map_err(anyhow::Error::msg)?;
@@ -222,12 +243,11 @@ fn build_packages(root: &Path, packages: &[Package], modules: &Path, release: bo
         }
         let crates: Vec<&str> = packages
             .iter()
-            .filter_map(|package| {
-                if wasm {
-                    package.ui.as_deref()
-                } else {
-                    Some(&package.library)
-                }
+            .filter_map(|package| match (wasm, &package.sdk) {
+                (true, Some(_)) => Some(package.library.as_str()),
+                (true, None) => package.ui.as_deref(),
+                (false, Some(_)) => None,
+                (false, None) => Some(package.library.as_str()),
             })
             .collect();
         if crates.is_empty() {
@@ -243,7 +263,7 @@ fn build_packages(root: &Path, packages: &[Package], modules: &Path, release: bo
         fs::create_dir_all(&dir)?;
         fs::write(
             dir.join(services_contracts::package::PACKAGE_FILE),
-            serde_json::to_vec_pretty(&package.described())?,
+            package.package_json()?,
         )?;
         let notes = package.dir.join(services_contracts::package::NOTES_FILE);
         let placed = dir.join(services_contracts::package::NOTES_FILE);
@@ -270,19 +290,23 @@ fn build_packages(root: &Path, packages: &[Package], modules: &Path, release: bo
             );
             copy_tree(&skill, &skills.join(name))?;
         }
-        let mut files = vec![(
-            target(root)
-                .join(profile)
-                .join(format!("lib{}.dylib", package.library.replace('-', "_"))),
-            "module.dylib",
-        )];
+        let wasm_dir = target(root).join("wasm32-unknown-unknown").join(profile);
+        let mut files = vec![match package.sdk {
+            Some(_) => (
+                wasm_dir.join(format!("{}.wasm", package.library.replace('-', "_"))),
+                services_contracts::package::WASM_FILE,
+            ),
+            None => (
+                target(root)
+                    .join(profile)
+                    .join(format!("lib{}.dylib", package.library.replace('-', "_"))),
+                services_contracts::package::LIBRARY_FILE,
+            ),
+        }];
         if let Some(ui) = &package.ui {
             files.push((
-                target(root)
-                    .join("wasm32-unknown-unknown")
-                    .join(profile)
-                    .join(format!("{}.wasm", ui.replace('-', "_"))),
-                "ui.wasm",
+                wasm_dir.join(format!("{}.wasm", ui.replace('-', "_"))),
+                services_contracts::package::UI_FILE,
             ));
         }
         for (built, name) in files {

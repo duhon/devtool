@@ -94,8 +94,9 @@ async fn service_latency() {
     let host = Host::new();
     let (server, _) = http::services().await;
     let url = server.url.clone();
-    latency("rest.echo", || async {
-        host.call("rest", json!({"method":"post","url":format!("{url}/echo"),"headers":{"X-Token":"secret"},"body":"hello"}))
+    latency("http.echo", || async {
+        host.send(json!({"service":"drivers","driver":"http","op":"call","request":{"method":"POST",
+            "url":format!("{url}/echo"),"headers":[["X-Token","secret"]],"body":"hello","text":true}}))
             .await
             .ok();
     })
@@ -177,8 +178,11 @@ async fn large_payloads() {
     ))
     .await;
     let url = format!("{}/large", server.url);
-    latency("rest.large_10mib", || async {
-        let reply = host.call("rest", json!({"method":"get","url":url})).await;
+    latency("http.large_10mib", || async {
+        let reply = host
+            .send(json!({"service":"drivers","driver":"http","op":"call",
+                "request":{"method":"GET","url":url,"text":true}}))
+            .await;
         assert_eq!(reply.ok()["body"].as_str().map(str::len), Some(size));
     })
     .await;
@@ -387,13 +391,13 @@ async fn host_process() {
         idle_rss.push(native.rss_mib());
         for _ in 0..50 {
             let reply = native
-                .request(json!({"service":"rest","params":{"method":"post","url":format!("{}/echo",server.url),"body":"hello"}}))
+                .request(json!({"service":"drivers","driver":"http","op":"call","request":{"method":"POST","url":format!("{}/echo",server.url),"body":"hello","text":true}}))
                 .await;
             assert_eq!(reply["ok"], true, "{reply}");
         }
         for _ in 0..5 {
             let reply = native
-                .request(json!({"service":"rest","params":{"method":"get","url":format!("{}/large",large_server.url)}}))
+                .request(json!({"service":"drivers","driver":"http","op":"call","request":{"method":"GET","url":format!("{}/large",large_server.url),"text":true}}))
                 .await;
             assert_eq!(reply["ok"], true, "{reply}");
         }
@@ -429,7 +433,7 @@ async fn host_large_response() {
     for round in 0..WARMUP + SAMPLES {
         let started = Instant::now();
         let reply = native
-            .request(json!({"service":"rest","params":{"method":"get","url":url}}))
+            .request(json!({"service":"drivers","driver":"http","op":"call","request":{"method":"GET","url":url,"text":true}}))
             .await;
         let elapsed = started.elapsed();
         assert_eq!(reply["result"]["body"].as_str().map(str::len), Some(size));
@@ -437,7 +441,7 @@ async fn host_large_response() {
             samples.push(ms(elapsed));
         }
     }
-    report("host.rest_large_10mib", "ms", samples);
+    report("host.http_large_10mib", "ms", samples);
     report("footprint.after_large", "MiB", vec![native.footprint_mib()]);
     report("rss.after_large", "MiB", vec![native.rss_mib()]);
     let dsn = isolated_mysql();

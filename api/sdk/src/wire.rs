@@ -123,6 +123,9 @@ pub struct Rendered {
     /// The id of the module whose language highlights the text, or `json` / `text`.
     #[prost(string, tag = "2")]
     pub language: String,
+    /// The module's verdict for the status line: `OK`, `WARNING` or `ERROR`.
+    #[prost(string, tag = "3")]
+    pub outcome: String,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -180,6 +183,10 @@ pub struct Item {
     pub detail: String,
     #[prost(string, tag = "4")]
     pub kind: String,
+    /// The App asks for hints again once it is inserted, e.g. for the value of a field
+    /// that takes one of a list.
+    #[prost(bool, tag = "5")]
+    pub next: bool,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -274,6 +281,8 @@ pub struct Subscriptions {
     pub modules: bool,
     #[prost(bool, tag = "6")]
     pub tools: bool,
+    #[prost(bool, tag = "7")]
+    pub hints: bool,
 }
 
 /// An event from the Kernel (the `Msg` table of the design).
@@ -281,7 +290,7 @@ pub struct Subscriptions {
 pub struct Event {
     #[prost(
         oneof = "event::Kind",
-        tags = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13"
+        tags = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14"
     )]
     pub kind: Option<event::Kind>,
 }
@@ -302,8 +311,9 @@ pub mod event {
         End(String),
         #[prost(message, tag = "5")]
         Document(Check),
+        /// Discover again for this check, cached or not.
         #[prost(message, tag = "6")]
-        Discover(Empty),
+        Discover(Check),
         #[prost(message, tag = "7")]
         Request(RequestEvent),
         #[prost(message, tag = "8")]
@@ -318,6 +328,8 @@ pub mod event {
         Modules(Empty),
         #[prost(message, tag = "13")]
         ToolCall(ToolCall),
+        #[prost(message, tag = "14")]
+        Hints(CompleteRequest),
     }
 }
 

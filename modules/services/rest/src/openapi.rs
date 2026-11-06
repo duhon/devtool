@@ -1,10 +1,11 @@
-use futures_util::future::join_all;
+//! OpenAPI and Swagger specs summarized for completion: paths, methods per path, header
+//! names and request body fields.
+
 use serde_json::{Map, Value, json};
-use services_module_api::error::{Error, Result, http_failure, text};
-use services_module_api::http::header_list;
-use services_module_api::proto::host::{HTTP, HttpFailure, HttpRequest, HttpResponse};
-use services_module_api::sdk::Host;
-const CANDIDATES: [&str; 7] = [
+use services_sdk::lang::endpoint::Url;
+
+/// Where discovery looks for a spec, under every prefix of the service path.
+pub const CANDIDATES: [&str; 7] = [
     "/rest/default/schema?services=all",
     "/openapi.json",
     "/v3/api-docs",
@@ -13,152 +14,39 @@ const CANDIDATES: [&str; 7] = [
     "/swagger/v1/swagger.json",
     "/api-docs",
 ];
-/// A failed candidate, classified like the reqwest error it used to be.
-enum Failure {
-    Http(HttpFailure),
-    Decode(serde_json::Error),
-    Other(Error),
+
+/// A Swagger 2 or OpenAPI 3 document with paths.
+pub fn is_spec(spec: &Value) -> bool {
+    (spec["swagger"] == "2.0"
+        || spec["openapi"]
+            .as_str()
+            .is_some_and(|version| version.starts_with("3.")))
+        && spec["paths"]
+            .as_object()
+            .is_some_and(|paths| !paths.is_empty())
 }
 
-impl Failure {
-    fn transport(&self) -> bool {
-        matches!(self, Self::Http(failure) if failure.connect || failure.builder)
+/// A path as `Url::join` resolves it against a directory path ending with `/`.
+fn join(directory: &str, reference: &str) -> String {
+    if let Some(url) = Url::parse(reference) {
+        return url.path.into();
     }
-
-    fn status(&self) -> Option<u16> {
-        match self {
-            Self::Http(failure) => failure.status.map(|status| status as u16),
-            _ => None,
-        }
-    }
-
-    fn decode(&self) -> bool {
-        matches!(self, Self::Decode(_)) || matches!(self, Self::Http(failure) if failure.decode)
-    }
-
-    fn error(self) -> Error {
-        match self {
-            Self::Http(failure) => Error::http(&failure),
-            Self::Decode(error) => Error::http(&HttpFailure {
-                causes: vec!["error decoding response body".into(), error.to_string()],
-                ..Default::default()
-            }),
-            Self::Other(error) => error,
-        }
+    let reference = reference.split(['?', '#']).next().unwrap_or("");
+    if reference.starts_with('/') {
+        reference.into()
+    } else {
+        format!("{directory}{reference}")
     }
 }
 
-async fn fetch(host: &Host, url: &str, headers: &Value) -> std::result::Result<Value, Failure> {
-    let request = HttpRequest {
-        method: "GET".into(),
-        url: url.into(),
-        headers: header_list(headers),
-        timeout_ms: 5000,
-        error_for_status: true,
-        ..Default::default()
-    };
-    let response: HttpResponse =
-        host.unary(HTTP, &request)
-            .await
-            .map_err(|status| match http_failure(&status) {
-                Some(failure) => Failure::Http(failure),
-                None => Failure::Other(Error::from_host(status)),
-            })?;
-    serde_json::from_slice(&response.body).map_err(Failure::Decode)
-}
-
-pub async fn discover(host: &Host, params: &Value) -> Result<Value> {
-    let headers = services_module_api::error::headers(params)?;
-    let address = text(params, "url");
-    let url = url::Url::parse(address.trim())
-        .ok()
-        .filter(|url| {
-            matches!(url.scheme(), "http" | "https")
-                && url.host_str().is_some()
-                && address.trim().contains("://")
-                && !address.trim().contains(char::is_whitespace)
-        })
-        .ok_or_else(|| {
-            Error::new("Invalid discovery URL: expected http:// or https:// with a host")
-        })?;
-    let parts: Vec<_> = url.path().split('/').filter(|s| !s.is_empty()).collect();
-    let mut candidates = vec![];
-    for i in (0..=parts.len()).rev() {
-        let prefix = if i == 0 {
-            String::new()
-        } else {
-            format!("/{}", parts[..i].join("/"))
-        };
-        for candidate in CANDIDATES {
-            candidates.push(format!(
-                "{}{prefix}{candidate}",
-                url.origin().ascii_serialization()
-            ));
-        }
-    }
-    let headers = &headers;
-    let mut debug = vec![];
-    let mut failure = None;
-    for group in candidates.chunks(CANDIDATES.len()) {
-        let attempts = join_all(group.iter().map(|url| fetch(host, url, headers))).await;
-        let mut transport_only = true;
-        for (url, attempt) in group.iter().zip(attempts) {
-            match attempt {
-                Ok(spec) => {
-                    transport_only = false;
-                    let document = spec["swagger"] == "2.0"
-                        || spec["openapi"]
-                            .as_str()
-                            .is_some_and(|v| v.starts_with("3."));
-                    if document
-                        && spec["paths"]
-                            .as_object()
-                            .is_some_and(|paths| !paths.is_empty())
-                    {
-                        let search_base = group[0]
-                            .strip_suffix(CANDIDATES[0])
-                            .expect("Discovery groups start with the first candidate");
-                        let mut summary = summarize_at(&spec, search_base)?;
-                        if summary["methodsByPath"]
-                            .as_object()
-                            .is_some_and(|methods| !methods.is_empty())
-                        {
-                            summary["specUrl"] = json!(url);
-                            return Ok(summary);
-                        }
-                    }
-                    debug.push(json!({"url":url,"outcome":"No OpenAPI or Swagger operations"}));
-                }
-                Err(error) => {
-                    transport_only &= error.transport();
-                    let status = error.status();
-                    let failed = status.is_some_and(|status| ![404, 410].contains(&status))
-                        || status.is_none() && !error.decode();
-                    let error = error.error();
-                    debug.push(json!({"url":url,"status":status,"error":error.json()}));
-                    if failed && (failure.is_none() || matches!(status, Some(401 | 403))) {
-                        failure = Some(error);
-                    }
-                }
-            }
-        }
-        if transport_only {
-            break;
-        }
-    }
-    let request = json!({"url":address,"headers":headers,"attempts":debug});
-    if let Some(error) = failure {
-        return Err(error.with_debug(request));
-    }
-    Ok(
-        json!({"warning":"No OpenAPI or Swagger schema found at known discovery locations","debug":{"request":request}}),
-    )
-}
-fn summarize_at(spec: &Value, search_base: &str) -> Result<Value> {
+/// The summary of a spec found under `search_base` (`scheme://host/prefix`): paths are
+/// relocated under the mount the spec was found at unless they already contain it.
+pub fn summarize_at(spec: &Value, search_base: &str) -> Result<Value, String> {
     let mut summary = summarize(spec);
-    let base = url::Url::parse(&format!("{}/", search_base.trim_end_matches('/')))
-        .map_err(|error| Error::new(format!("Invalid discovery base URL: {error}")))?;
-    let mount = base.path().trim_end_matches('/');
+    let base = Url::parse(search_base)
+        .ok_or_else(|| format!("Invalid discovery base URL: {search_base}"))?;
+    let directory = format!("{}/", base.path.trim_end_matches('/'));
+    let mount = directory.trim_end_matches('/');
     let absolute_paths = !mount.is_empty()
         && spec["paths"].as_object().is_some_and(|paths| {
             paths
@@ -166,25 +54,23 @@ fn summarize_at(spec: &Value, search_base: &str) -> Result<Value> {
                 .any(|path| path == mount || path.starts_with(&format!("{mount}/")))
         });
     let scope = if absolute_paths {
-        base.origin().ascii_serialization()
+        base.origin()
     } else {
-        search_base.to_owned()
+        search_base.trim_end_matches('/').to_owned()
     };
-    let base = if let Some(declared) = spec["basePath"]
+    let path = if let Some(declared) = spec["basePath"]
         .as_str()
         .filter(|base| !base.is_empty())
         .or_else(|| spec["servers"][0]["url"].as_str())
     {
-        base.join(declared)
-            .map_err(|error| Error::new(format!("Invalid OpenAPI base URL: {error}")))?
+        join(&directory, declared)
     } else if absolute_paths {
-        base.join("/")
-            .map_err(|error| Error::new(format!("Invalid discovery origin: {error}")))?
+        "/".into()
     } else {
-        base
+        directory.clone()
     };
+    let path = path.trim_end_matches('/').to_owned();
     let old = summary["basePath"].as_str().unwrap_or("").to_owned();
-    let path = base.path().trim_end_matches('/').to_owned();
     let relocate = |value: &str| format!("{path}{}", value.strip_prefix(&old).unwrap_or(value));
     summary["paths"] = summary["paths"]
         .as_array()
@@ -200,13 +86,11 @@ fn summarize_at(spec: &Value, search_base: &str) -> Result<Value> {
                 .into_iter()
                 .flatten()
                 .map(|(key, value)| {
-                    let key = if field == "bodySchemas" {
-                        let (method, path) = key
-                            .split_once(' ')
-                            .expect("Body schema keys contain a method and path");
-                        format!("{method} {}", relocate(path))
-                    } else {
-                        relocate(key)
+                    let key = match key.split_once(' ') {
+                        Some((method, path)) if field == "bodySchemas" => {
+                            format!("{method} {}", relocate(path))
+                        }
+                        _ => relocate(key),
                     };
                     (key, value.clone())
                 })
@@ -217,6 +101,7 @@ fn summarize_at(spec: &Value, search_base: &str) -> Result<Value> {
     summary["baseUrl"] = json!(scope);
     Ok(summary)
 }
+
 fn resolve<'a>(spec: &'a Value, mut schema: &'a Value) -> &'a Value {
     for _ in 0..12 {
         let Some(reference) = schema["$ref"].as_str().filter(|s| s.starts_with("#/")) else {
@@ -229,6 +114,8 @@ fn resolve<'a>(spec: &'a Value, mut schema: &'a Value) -> &'a Value {
     }
     schema
 }
+
+/// The fields of an object schema, nested at most 5 deep.
 pub fn fields(spec: &Value, schema: &Value, depth: usize) -> Vec<Value> {
     if depth > 5 {
         return vec![];
@@ -251,6 +138,7 @@ pub fn fields(spec: &Value, schema: &Value, depth: usize) -> Vec<Value> {
         })
         .collect()
 }
+
 fn shape(spec: &Value, schema: &Value, depth: usize) -> Value {
     let schema = resolve(spec, schema);
     let kind = match schema["type"].as_str() {
@@ -283,13 +171,17 @@ fn shape(spec: &Value, schema: &Value, depth: usize) -> Value {
     }
     field
 }
+
+/// `{basePath, paths, methodsByPath, headers, bodySchemas}` of a spec; body schemas are
+/// keyed `METHOD path`.
 pub fn summarize(spec: &Value) -> Value {
     let base = if let Some(base) = spec["basePath"].as_str().filter(|s| !s.is_empty()) {
         base.to_string()
     } else if let Some(server) = spec["servers"][0]["url"].as_str() {
-        url::Url::parse(server)
-            .map(|u| u.path().to_string())
-            .unwrap_or_else(|_| format!("/{}", server.trim_start_matches('/')))
+        Url::parse(server).map_or_else(
+            || format!("/{}", server.trim_start_matches('/')),
+            |url| url.path.to_owned(),
+        )
     } else {
         String::new()
     };
@@ -308,13 +200,13 @@ pub fn summarize(spec: &Value) -> Value {
         add_header(resolve(spec, param));
     }
     for (path, item) in spec["paths"].as_object().into_iter().flatten() {
-        if !item.is_object() {
+        let Some(operations) = item.as_object() else {
             continue;
-        }
+        };
         let path = format!("{base}{path}");
         paths.push(path.clone());
         let mut names = vec![];
-        for (method, op) in item.as_object().unwrap() {
+        for (method, op) in operations {
             if ![
                 "get", "put", "post", "delete", "options", "head", "patch", "trace",
             ]
@@ -512,21 +404,9 @@ mod tests {
             assert_eq!(field("id")["readOnly"], true);
             assert!(field("optional").get("required").is_none());
             let nested = field("settings")["fields"].as_array().unwrap();
-            assert_eq!(
-                nested
-                    .iter()
-                    .find(|field| field["name"] == "locale")
-                    .unwrap()["required"],
-                true
-            );
-            assert!(
-                nested
-                    .iter()
-                    .find(|field| field["name"] == "optionalChild")
-                    .unwrap()
-                    .get("required")
-                    .is_none()
-            );
+            let child = |name: &str| nested.iter().find(|field| field["name"] == name).unwrap();
+            assert_eq!(child("locale")["required"], true);
+            assert!(child("optionalChild").get("required").is_none());
         }
     }
 

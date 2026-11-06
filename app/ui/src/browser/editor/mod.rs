@@ -17,6 +17,16 @@ thread_local! {
     static KEPT: RefCell<BTreeMap<String, Handle>> = const { RefCell::new(BTreeMap::new()) };
 }
 
+/// Highlights the kept editors of `service` again: its module has just started.
+pub fn relight(service: &str) {
+    let handles: Vec<Handle> = KEPT.with(|kept| kept.borrow().values().cloned().collect());
+    for handle in handles {
+        if handle.read(|session| session.setup().service == service) {
+            handle.with(crate::editor::session::Session::relight);
+        }
+    }
+}
+
 /// The editor kept under `key` beyond its owner, so undo and scroll survive switching
 /// sessions; a new one showing `text` when there is none for this `setup`.
 pub fn kept(key: &str, setup: Setup, text: &str) -> Handle {

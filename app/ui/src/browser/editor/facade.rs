@@ -379,7 +379,8 @@ fn completion(handle: &Handle) -> JsValue {
             .iter()
             .map(|item| {
                 object(&[
-                    ("text", item.text.as_str().into()),
+                    // What a pick inserts: without the `$0` cursor mark.
+                    ("text", item.text.replacen("$0", "", 1).into()),
                     ("displayText", item.display.as_str().into()),
                     ("literal", item.literal.into()),
                 ])

@@ -3133,19 +3133,9 @@ dependencies = [
 name = "services-module-rest"
 version = "3.2.2"
 dependencies = [
- "futures-util",
+ "prost",
  "serde_json",
- "services-module-api",
- "stabby",
- "url",
-]
-
-[[package]]
-name = "services-module-rest-ui"
-version = "3.7.0"
-dependencies = [
- "serde_json",
- "services-module-ui",
+ "services-sdk",
 ]
 
 [[package]]
@@ -3263,16 +3253,18 @@ dependencies = [
  "serde-wasm-bindgen 0.6.5",
  "serde_json",
  "services-contracts",
+ "services-kernel",
  "services-module-artemis-ui",
  "services-module-graphql-ui",
  "services-module-grpc-ui",
  "services-module-mysql-ui",
  "services-module-opensearch",
  "services-module-opensearch-ui",
- "services-module-rest-ui",
+ "services-module-rest",
  "services-module-splunk-ui",
  "services-module-terminal-ui",
  "services-module-ui",
+ "services-sdk",
  "url",
  "uuid",
  "wasm-bindgen",

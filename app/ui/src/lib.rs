@@ -14,6 +14,7 @@ mod graphql_completion;
 pub mod graphql {
     pub use crate::graphql_completion::{object_fields, operation_fold};
 }
+pub mod kernel;
 pub mod logfmt;
 pub mod profiles;
 pub mod services;

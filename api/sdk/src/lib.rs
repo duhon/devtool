@@ -10,6 +10,7 @@
 pub mod cmd;
 pub mod driver;
 pub mod http;
+pub mod lang;
 pub mod manifest;
 pub mod ui;
 pub mod wire;
@@ -49,7 +50,15 @@ pub enum Event<M> {
     },
     /// The document of the service changed (debounced, the changed check only).
     Document(Check),
-    Discover,
+    /// The user asked to discover again for this check, cached or not.
+    Discover(Check),
+    /// The user asked for hints at `pos` (a UTF-8 byte offset in the check text): completion
+    /// opened on demand, or a typed character that may commit an address. A module that
+    /// completes from fetched data fetches it now.
+    Hints {
+        check: Check,
+        pos: u32,
+    },
     Request {
         id: String,
         service: String,
@@ -163,7 +172,11 @@ fn decode_event<M: DeserializeOwned>(event: wire::Event) -> Result<Event<M>, Str
         },
         event::Kind::End(tag) => Event::End { tag },
         event::Kind::Document(check) => Event::Document(check),
-        event::Kind::Discover(_) => Event::Discover,
+        event::Kind::Discover(check) => Event::Discover(check),
+        event::Kind::Hints(hints) => Event::Hints {
+            check: hints.check.unwrap_or_default(),
+            pos: hints.pos,
+        },
         event::Kind::Request(request) => Event::Request {
             id: request.id,
             service: request.service,

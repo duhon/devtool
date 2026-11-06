@@ -89,22 +89,34 @@ async fn only_used_secrets_and_authorization_are_masked() {
     .await;
     let url = format!("{}/history-fixture", fixture.url);
     let source = format!(
-        "#check ordinary fixture\n#url\n{url}\n#headers\nAuthorization: Bearer raw-auth-secret\n#body\n{{{{var:VALUE}}}} {{{{:ALIAS}}}} {{{{var:SOURCE_ALIAS}}}}"
+        "#check ordinary fixture\n#endpoint\nPOST {url}\n#headers\nAuthorization: ****** {{{{:ALIAS}}}} {{{{var:SOURCE_ALIAS}}}}"
     );
-    let reply = runtime
-        .dispatch(&json!({
-            "service":"rest","history":context(&source),"params":{
-                "method":"POST","url":url,
-                "headers":{"Authorization":"Bearer raw-auth-secret"},
-                "body":"{{var:VALUE}} {{:ALIAS}}"
-            }
-        }))
+    let request = json!({"method":"POST","url":url,
+        "headers":[["Authorization","******"]],"body":"{{var:VALUE}} {{:ALIAS}}","text":true});
+    let resolved = runtime
+        .dispatch(&json!({"service":"vars","op":"resolve","value":request,
+            "source":source,"title":"#check {{var:VALUE}}"}))
         .await;
-    assert_eq!(reply["ok"], true, "{reply}");
-    assert_eq!(reply["history"]["saved"], true, "{reply}");
-    let text = get(&runtime, &reply["history"]["id"]).await;
+    assert_eq!(resolved["ok"], true, "{resolved}");
+    let resolved = &resolved["result"];
+    assert_eq!(
+        resolved["value"]["body"],
+        "companion-fixture-only used-private-token"
+    );
+    let called = runtime
+        .dispatch(
+            &json!({"service":"drivers","driver":"http","op":"call","request":resolved["value"]}),
+        )
+        .await;
+    let response = called["result"]["body"].as_str().unwrap();
+    let saved = runtime
+        .dispatch(&json!({"service":"history","op":"insert","checkId":CHECK,"sessionId":OTHER,
+            "title":resolved["title"],"module":"rest","started":1,"ended":3,"status":"success",
+            "text":format!("{}\n\n#responce OK\n{response}", resolved["source"].as_str().unwrap())}))
+        .await;
+    assert_eq!(saved["result"]["saved"], true, "{saved}");
+    let text = get(&runtime, &saved["result"]["id"]).await;
     assert!(text.contains("/history-fixture"), "{text}");
-    assert!(text.contains("companion-fixture-only"), "{text}");
     let (request, response) = text.split_once("\n\n#responce OK\n").unwrap();
     assert!(!request.contains("used-private-token"), "{request}");
     assert!(!request.contains("source-private-token"), "{request}");
@@ -114,6 +126,9 @@ async fn only_used_secrets_and_authorization_are_masked() {
         response,
         "companion-fixture-only used-private-token source-private-token raw-auth-secret"
     );
+    let listed = list(&runtime, CHECK).await;
+    assert_eq!(listed["entries"][0]["service"], "rest", "{listed}");
+    assert_eq!(listed["entries"][0]["durationMs"], 2, "{listed}");
     let (tx, mut rx) = mpsc::channel(128);
     let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
     let reply = runtime.execute(&json!({
@@ -124,42 +139,6 @@ async fn only_used_secrets_and_authorization_are_masked() {
     drain.await.unwrap();
     let text = get(&runtime, &reply["history"]["id"]).await;
     assert!(text.contains("companion-fixture-only"), "{text}");
-}
-
-#[tokio::test]
-async fn http_response_bytes_are_kept_and_only_the_request_is_masked() {
-    const BODY: &str = "\r\n{\n  \"data\": {\"products\": []}, \"debug\": {\"keep\": true}, \"token\": \"response-secret\"\n}\t\n";
-    let data = DataDir::new();
-    let runtime = data.runtime();
-    let fixture = Server::new(
-        axum::Router::new()
-            .route(
-                "/error",
-                axum::routing::get(|| async { (axum::http::StatusCode::BAD_REQUEST, BODY) }),
-            )
-            .fallback(|| async { BODY }),
-    )
-    .await;
-    for (path, status) in [("/", "OK"), ("/error", "WARNING")] {
-        let url = format!("{}{path}", fixture.url);
-        let source =
-            format!("#check verbatim\n#endpoint\n{url}\n#headers\nX-Api-Key: response-secret");
-        let reply = runtime
-            .dispatch(&json!({
-                "service":"rest","history":context(&source),
-                "params":{"method":"GET","url":url,"headers":{"X-Api-Key":"response-secret"}}
-            }))
-            .await;
-        assert_eq!(reply["history"]["saved"], true, "{reply}");
-        assert_eq!(reply["result"]["body"], BODY, "{reply}");
-        assert!(reply["result"]["debug"].is_object(), "{reply}");
-        let text = get(&runtime, &reply["history"]["id"]).await;
-        let marker = format!("\n\n#responce {status}\n");
-        let (request, response) = text.split_once(&marker).unwrap();
-        assert!(!request.contains("response-secret"), "{request}");
-        assert!(!request.contains("#effective-parameters"), "{request}");
-        assert_eq!(response.as_bytes(), BODY.as_bytes());
-    }
 }
 
 #[tokio::test]

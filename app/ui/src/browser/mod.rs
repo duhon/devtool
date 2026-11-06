@@ -7,6 +7,7 @@ mod console_variables;
 mod editor;
 mod find;
 mod history;
+mod kernel_modules;
 mod module_settings;
 mod module_ui;
 mod page_agent;
@@ -61,25 +62,33 @@ const MODULES: &str = "servicesConsole.modules";
 
 /// The module list of the last host reply; the built-in one stays without a valid cache.
 fn restore_modules() -> bool {
-    let cached = window()
+    let cached: Option<serde_json::Value> = window()
         .local_storage()
         .ok()
         .flatten()
-        .and_then(|storage| storage.get_item(MODULES).ok().flatten());
-    cached
-        .and_then(|raw| serde_json::from_str(&raw).ok())
-        .and_then(|value| crate::services::parse(&value).ok())
-        .is_some_and(|manifests| crate::services::install(manifests).is_ok())
+        .and_then(|storage| storage.get_item(MODULES).ok().flatten())
+        .and_then(|raw| serde_json::from_str(&raw).ok());
+    let Some(cached) = cached else {
+        return false;
+    };
+    if let Ok(modules) = crate::kernel::parse(&cached) {
+        crate::kernel::declare(modules);
+    }
+    crate::services::parse(&cached)
+        .is_ok_and(|manifests| crate::services::install(manifests).is_ok())
 }
 
-/// Installs and caches the host's module list; `true` when it changed.
+/// Installs and caches the host's module list and the modules the Kernel runs; `true` when
+/// either changed.
 pub fn accept_modules(value: &serde_json::Value) -> Result<bool, String> {
     let manifests = crate::services::parse(value)?;
+    let modules = crate::kernel::parse(value)?;
     if let Some(storage) = window().local_storage().ok().flatten() {
-        let cached = serde_json::json!({"modules": manifests}).to_string();
+        let cached = serde_json::json!({"modules": manifests, "wasm": value["wasm"]}).to_string();
         let _ = storage.set_item(MODULES, &cached);
     }
-    crate::services::install(manifests)
+    let declared = crate::kernel::declare(modules);
+    Ok(crate::services::install(manifests)? | declared)
 }
 
 pub fn start() -> Result<(), JsValue> {

@@ -37,6 +37,12 @@ pub enum Effect {
         module: String,
         tag: String,
     },
+    /// Resolve the `{{…}}` variables in `text`; the reply is the resolved text.
+    Resolve {
+        module: String,
+        tag: String,
+        text: String,
+    },
     Timer {
         module: String,
         tag: String,
@@ -72,6 +78,16 @@ pub enum Effect {
     },
 }
 
+/// A module's status line (`status.set`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Status {
+    pub text: String,
+    /// `idle`, `busy`, `ok`, `warning` or `error`.
+    pub indicator: String,
+    /// Structured details for Debug; `null` without.
+    pub detail: Value,
+}
+
 /// Synchronous calls over this many milliseconds are noted in the module's log.
 pub const BUDGET_MS: f64 = 5.0;
 const LOG_LINES: usize = 500;
@@ -88,7 +104,7 @@ pub struct Loaded {
     pending: BTreeMap<String, bool>,
     watched: BTreeSet<String>,
     held: BTreeSet<String>,
-    pub status: Option<(String, String)>,
+    pub status: Option<Status>,
     pub log: VecDeque<(String, String)>,
 }
 
@@ -314,13 +330,17 @@ impl Modules {
             .values()
             .filter(|module| {
                 let subscriptions = module.subscriptions;
+                // A check's events go to panels and to the service whose language it is in.
+                let about = |check: &Check| {
+                    module.manifest.kind == Kind::Panel || module.manifest.id == check.service
+                };
                 match which {
-                    event::Kind::Document(check) => {
-                        subscriptions.document
-                            && (module.manifest.kind == Kind::Panel
-                                || module.manifest.id == check.service)
+                    event::Kind::Document(check) => subscriptions.document && about(check),
+                    event::Kind::Discover(check) => subscriptions.discover && about(check),
+                    event::Kind::Hints(hints) => {
+                        subscriptions.hints
+                            && about(hints.check.as_ref().unwrap_or(&Check::default()))
                     }
-                    event::Kind::Discover(_) => subscriptions.discover,
                     event::Kind::Request(_) => subscriptions.requests,
                     event::Kind::Workspace(_) => subscriptions.workspace,
                     event::Kind::Modules(_) => subscriptions.modules,
@@ -408,7 +428,11 @@ impl Modules {
                 Vec::new()
             }
             "status.set" => {
-                module.status = Some((text("text"), text("indicator")));
+                module.status = Some(Status {
+                    text: text("text"),
+                    indicator: text("indicator"),
+                    detail: args.get("detail").cloned().unwrap_or(Value::Null),
+                });
                 vec![Effect::Changed { module: owner }]
             }
             "notify" => vec![Effect::Notify {
@@ -444,6 +468,14 @@ impl Modules {
                 } else {
                     Vec::new()
                 }
+            }
+            "vars.resolve" => {
+                module.pending.insert(cmd.tag.clone(), false);
+                vec![Effect::Resolve {
+                    module: owner,
+                    tag: cmd.tag,
+                    text: text("text"),
+                }]
             }
             "timer.after" => {
                 module.pending.insert(cmd.tag.clone(), false);

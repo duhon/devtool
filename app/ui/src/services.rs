@@ -24,12 +24,8 @@ pub fn attach(id: &str, ui: &'static dyn ServiceUi) {
 
 /// Packaged modules linked natively, so tests run their console parts without a browser.
 #[cfg(not(target_arch = "wasm32"))]
-fn linked() -> [(&'static str, &'static dyn ServiceUi); 8] {
+fn linked() -> [(&'static str, &'static dyn ServiceUi); 7] {
     [
-        (
-            services_module_rest_ui::MANIFEST,
-            &services_module_rest_ui::Rest,
-        ),
         (
             services_module_mysql_ui::MANIFEST,
             &services_module_mysql_ui::Mysql,
@@ -182,29 +178,44 @@ pub fn get(id: &str) -> Option<Service> {
     Some(Service { all, index })
 }
 
+/// A console service: a registered module or one the Kernel runs.
 pub fn contains(id: &str) -> bool {
-    all().iter().any(|manifest| manifest.id == id)
+    all().iter().any(|manifest| manifest.id == id) || crate::kernel::is_service(id)
 }
 
-/// Module ids in load order.
+/// Service ids in load order: registered modules, then the Kernel's.
 pub fn ids() -> Vec<String> {
-    all().iter().map(|manifest| manifest.id.clone()).collect()
+    let mut ids: Vec<String> = all().iter().map(|manifest| manifest.id.clone()).collect();
+    for manifest in crate::kernel::declared() {
+        if !ids.contains(&manifest.id) {
+            ids.push(manifest.id);
+        }
+    }
+    ids
 }
 
 /// The tab title: the manifest name, or the id of an unknown service.
 pub fn label(id: &str) -> String {
-    get(id).map_or_else(|| id.to_owned(), |service| service.name.clone())
+    get(id)
+        .map(|service| service.name.clone())
+        .or_else(|| crate::kernel::manifest(id).map(|manifest| manifest.name))
+        .unwrap_or_else(|| id.to_owned())
 }
 
-/// Tab order without a saved one: by `console.order`, then the rest in load order.
+/// Tab order without a saved one: by `console.order` (a Kernel service's `order`), then the
+/// rest in load order.
 pub fn default_order() -> Vec<String> {
-    let all = all();
-    let mut ordered: Vec<&Manifest> = all.iter().collect();
-    ordered.sort_by_key(|manifest| manifest.console.order.unwrap_or(u32::MAX));
-    ordered
-        .into_iter()
-        .map(|manifest| manifest.id.clone())
-        .collect()
+    let mut ordered: Vec<(Option<u32>, String)> = all()
+        .iter()
+        .map(|manifest| (manifest.console.order, manifest.id.clone()))
+        .collect();
+    for manifest in crate::kernel::declared() {
+        if !ordered.iter().any(|(_, id)| *id == manifest.id) {
+            ordered.push((manifest.order, manifest.id));
+        }
+    }
+    ordered.sort_by_key(|(order, _)| order.unwrap_or(u32::MAX));
+    ordered.into_iter().map(|(_, id)| id).collect()
 }
 
 /// The service a new console opens on.

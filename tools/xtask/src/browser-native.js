@@ -259,8 +259,8 @@
   const magentoFixtureUrl = fixtureUrl.replace('127.0.0.1', 'localhost');
   await wait(() => magentoEditor.__servicesCompletion?.discovery?.specUrl === `${magentoFixtureUrl}/rest/default/swagger.json`);
   const magentoLoaded = restDiscoveryCount();
-  assert(nativeProbe.discoveries.filter(request => request.service === 'rest').at(-1).params.url === magentoUrl,
-    'Native discovery must receive the original variable-based URL for its normal materialization');
+  assert(nativeProbe.discoveries.filter(request => request.service === 'rest').at(-1).params.url.startsWith(`${magentoFixtureUrl}/`),
+    'Discovery must probe the variable-based URL with its variables resolved');
   await checkLocalBodyHints();
   await pick(magentoEditor, '{\n  \n}');
   await wait(() => credentials.every(field => candidates().includes(field)),
@@ -560,6 +560,8 @@
   catch (error) { denied = /permissions policy/i.test(error.message); }
   assert(denied, 'Browser clipboard must fail under Permissions Policy');
   assert(win.nativeProbe.clipboardReads === 0, 'No automatic clipboard read');
+  // Import appears once the iframe's own Kernel runs the REST module.
+  await wait(() => doc.querySelector('[data-testid="console-import"]'), 'REST Import must appear once its module runs');
   await click(button(/^Import/, doc));
   await wait(() => editorOf('console-editor', doc).getValue().includes('POST https://fixture.invalid/import'));
   assert(editorOf('console-editor', doc).getValue().includes('X-Fixture: imported'), 'Import headers');

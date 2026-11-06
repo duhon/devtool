@@ -48,13 +48,14 @@ async fn legacy_profiles_migrate_once_into_independent_files() {
         original
     );
     let reply = host
-        .call(
-            "rest",
-            echo(&server, "{{:HOST}}/{{var:FROM_DICT}}/{{shop:FROM_VAR}}"),
+        .op(
+            "vars",
+            "resolve",
+            json!({"value": echo(&server, "{{:HOST}}/{{var:FROM_DICT}}/{{shop:FROM_VAR}}")}),
         )
         .await;
     assert_eq!(
-        reply.ok()["body"],
+        reply.ok()["value"]["body"],
         "local.invalid/fixture.invalid/local",
         "{reply}"
     );
@@ -238,17 +239,13 @@ async fn profiles_persist_resolve_by_priority_and_keep_env_read_only() {
     .ok();
     let mut params = echo(&server, "{{:url}}/{{default:same}}");
     params["headers"] = json!({"X":"{{second:name}}"});
-    let reply = host.call("rest", params).await;
+    let reply = host.op("vars", "resolve", json!({"value": params})).await;
     assert_eq!(
-        reply.ok()["body"],
+        reply.ok()["value"]["body"],
         "https://fixture.invalid/first",
         "{reply}"
     );
-    assert_eq!(
-        reply.ok()["debug"]["request"]["headers"]["X"],
-        "second",
-        "{reply}"
-    );
+    assert_eq!(reply.ok()["value"]["headers"]["X"], "second", "{reply}");
     assert_eq!(
         list(&host.reopen(), "dictionary").await["resolvedProfiles"]["default"]["url"],
         "https://fixture.invalid"
@@ -260,8 +257,14 @@ async fn profiles_persist_resolve_by_priority_and_keep_env_read_only() {
     )
     .await
     .ok();
-    let reply = host.call("rest", echo(&server, "{{:name}}")).await;
-    assert_eq!(reply.ok()["body"], "second", "{reply}");
+    let reply = host
+        .op(
+            "vars",
+            "resolve",
+            json!({"value": echo(&server, "{{:name}}")}),
+        )
+        .await;
+    assert_eq!(reply.ok()["value"]["body"], "second", "{reply}");
     let reply = host
         .op(
             "dictionary",

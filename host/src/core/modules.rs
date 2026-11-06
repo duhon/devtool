@@ -1,5 +1,6 @@
 //! Packaged modules: `<data>/modules/<id>/module.dylib` with the console's `ui.wasm` next
-//! to it. A package that fails to load is skipped and reported; the host keeps running.
+//! to it, or `module.wasm` the App runs. A package that fails to load is skipped and
+//! reported; the host keeps running.
 
 use services_module_api::{
     ABI_SYMBOL, ABI_VERSION, ENTRY, Entry,
@@ -15,6 +16,8 @@ use std::{
 pub const DIR: &str = "modules";
 /// The console part of a package.
 pub const UI: &str = "ui.wasm";
+/// A module the App runs.
+pub const WASM: &str = "module.wasm";
 
 /// The native part of a package, `module.dylib` on macOS.
 pub fn library_name() -> String {
@@ -31,6 +34,12 @@ impl Package {
         self.dir.join(library_name())
     }
 
+    /// The module the App runs, when the package is one.
+    pub fn wasm(&self) -> Option<PathBuf> {
+        let path = self.dir.join(WASM);
+        path.is_file().then_some(path)
+    }
+
     /// The console part, when the package ships one.
     pub fn ui(&self) -> Option<PathBuf> {
         let path = self.dir.join(UI);
@@ -38,7 +47,7 @@ impl Package {
     }
 }
 
-/// Package folders with a library, by folder name.
+/// Package folders with a library or a wasm module, by folder name.
 pub fn scan(root: &Path) -> Vec<Package> {
     let Ok(entries) = std::fs::read_dir(root) else {
         return Vec::new();
@@ -48,7 +57,7 @@ pub fn scan(root: &Path) -> Vec<Package> {
         // Hidden folders are an installer's staged or backed-up packages.
         .filter(|entry| !entry.file_name().to_string_lossy().starts_with('.'))
         .map(|entry| Package { dir: entry.path() })
-        .filter(|package| package.library().is_file())
+        .filter(|package| package.library().is_file() || package.wasm().is_some())
         .collect();
     packages.sort_by(|a, b| a.dir.cmp(&b.dir));
     packages

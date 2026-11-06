@@ -121,7 +121,7 @@ impl App {
                     editor.set_context(EditorContext {
                         hints: self.completions(service),
                         templates: self.template_entries(service),
-                        discovery: self.schema(service).cloned().unwrap_or(Value::Null),
+                        discovery: self.editor_discovery(service),
                     });
                 }
                 if editor.pending() {
@@ -157,6 +157,7 @@ impl App {
                 EditorEvent::AutoDiscover(endpoint) => {
                     Msg::AutoDiscover(format!("console:{service}"), endpoint)
                 }
+                EditorEvent::Hints(check, pos) => Msg::KernelHints(check, pos),
                 EditorEvent::Viewport(viewport) => Msg::Scroll(service.into(), viewport),
                 EditorEvent::Cursor(_) => continue,
             };
@@ -543,7 +544,7 @@ impl App {
                 line: Some(line),
                 vertical,
                 started,
-                debug: json!({"operation":"request","service":service,"params":params,"started":started,"state":"running"}),
+                debug: run_debug(service, &params, started),
                 anchor: self.anchor(service, line),
                 format: options.format,
                 ..Default::default()
@@ -589,6 +590,9 @@ impl App {
         self.send_run(ctx, service, key, message);
     }
     fn send_run(&mut self, ctx: &Context<Self>, service: &str, key: &str, message: Value) {
+        if crate::kernel::is_service(service) {
+            return self.kernel_send(ctx, service, key, message);
+        }
         let k = key.to_string();
         let s = service.to_string();
         let callback = ctx
@@ -974,6 +978,28 @@ impl App {
         .map(|b| b.text)
         .unwrap_or(source);
         crate::discovery::params(service, &console::sections(service, &block))
+    }
+    /// What completion in the editor of `service` reads besides hints: the discovered
+    /// schema, or a Kernel service's status (with its details) and how many variable
+    /// resolutions its module got; a change reopens hints.
+    fn editor_discovery(&self, service: &str) -> Value {
+        if !crate::kernel::is_service(service) {
+            return self.schema(service).cloned().unwrap_or(Value::Null);
+        }
+        let resolutions = self.kernel.resolutions.get(service).copied().unwrap_or(0);
+        let Some(status) = crate::kernel::status(service) else {
+            return if resolutions == 0 {
+                Value::Null
+            } else {
+                json!({"module":service,"resolutions":resolutions})
+            };
+        };
+        let mut value = json!({"module":service,"status":status.text,"indicator":status.indicator,
+            "resolutions":resolutions});
+        if let (Some(value), Some(detail)) = (value.as_object_mut(), status.detail.as_object()) {
+            value.extend(detail.clone());
+        }
+        value
     }
     /// The discovered schema for the current check of `service`.
     pub(super) fn schema(&self, service: &str) -> Option<&Value> {
@@ -1400,4 +1426,17 @@ fn interval(ms: u32) -> String {
         seconds if seconds.is_multiple_of(60) => format!("{}m", seconds / 60),
         seconds => format!("{seconds}s"),
     }
+}
+
+/// A running request as Debug shows it; a Kernel driver call shows its request as `params`,
+/// so the URL is visible without unfolding.
+fn run_debug(service: &str, params: &Value, started: f64) -> Value {
+    let mut debug = json!({"operation":"request","service":service,"params":params,
+        "started":started,"state":"running"});
+    if let Some(driver) = params["driver"].as_str() {
+        debug["driver"] = json!(driver);
+        debug["params"] = params["request"].clone();
+        debug["stream"] = params["stream"].clone();
+    }
+    debug
 }

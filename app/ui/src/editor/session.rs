@@ -166,6 +166,9 @@ pub enum Event {
     },
     Discover,
     AutoDiscover(Option<String>),
+    /// The user asked a Kernel service for hints: the check at the cursor and the cursor's
+    /// UTF-8 offset in it.
+    Hints(services_sdk::Check, u32),
     Cursor(usize),
     Viewport(CheckViewport),
 }
@@ -234,6 +237,8 @@ struct Operation {
     changes: Vec<TextChange>,
     cursor: bool,
     discover: Vec<Option<String>>,
+    /// A typed `/` asks a Kernel service for hints.
+    hints: bool,
     scroll: bool,
     /// Hints were already refreshed, so cursor activity need not.
     hinted: bool,
@@ -654,6 +659,18 @@ impl Session {
         super::fold::range(&mut self.highlighter, self.state.lines(), line)
     }
 
+    /// Highlights everything again from scratch: the service's module has just started.
+    pub fn relight(&mut self) {
+        let mut highlighter = Highlighter::new(&self.setup.mode);
+        highlighter.set_template_section(
+            (!self.setup.template_section.is_empty())
+                .then_some(self.setup.template_section.as_str()),
+        );
+        highlighter.set_regions(&self.regions);
+        self.highlighter = highlighter;
+        self.revision += 1;
+    }
+
     /// Replaces the response regions as the owner's document would, so later edits keep them.
     pub fn set_responses(&mut self, regions: &[ResponseRegion]) {
         self.set_regions(regions);
@@ -921,6 +938,7 @@ impl Session {
             Command::Complete => {
                 self.show_hints(false);
                 self.request_body_discovery();
+                self.kernel_hints();
             }
             Command::Newline => {
                 let commit = !crate::services::lazy_discovery(&self.setup.service)
@@ -1117,6 +1135,9 @@ impl Session {
         if tracked {
             self.events
                 .extend(op.discover.into_iter().map(Event::AutoDiscover));
+            if op.hints {
+                self.kernel_hints();
+            }
         }
     }
 
@@ -1285,6 +1306,18 @@ impl Session {
             return;
         }
         let cursor = self.state.cursor();
+        if origin != "paste"
+            && cursor.ch > 0
+            && self
+                .state
+                .line(cursor.line)
+                .encode_utf16()
+                .nth(cursor.ch - 1)
+                == Some(u16::from(b'/'))
+            && let Some(op) = &mut self.op
+        {
+            op.hints = true;
+        }
         if crate::services::path_discovery(&service) && self.connection_position() {
             let endpoint = crate::completion::discovery_endpoint(
                 &service,
@@ -1570,6 +1603,24 @@ impl Session {
             &self.source(),
             line,
         )
+    }
+
+    /// A Kernel service hears that hints were asked for; its module may fetch what they need.
+    fn kernel_hints(&mut self) {
+        let service = &self.setup.service;
+        let cursor = self.state.cursor();
+        if !self.setup.field.is_empty()
+            || !crate::kernel::is_service(service)
+            || self.in_output(cursor.line)
+        {
+            return;
+        }
+        let masked = crate::document::mask_output(&self.source(), &self.regions);
+        if let Some((check, pos)) =
+            crate::completion::kernel_check(service, &masked, cursor.line, cursor.ch)
+        {
+            self.events.push(Event::Hints(check, pos));
+        }
     }
 
     fn request_body_discovery(&mut self) {

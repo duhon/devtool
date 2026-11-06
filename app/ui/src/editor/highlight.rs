@@ -34,6 +34,8 @@ pub struct Config {
     sections: Vec<(String, String)>,
     payload: String,
     response: View,
+    /// The service's module highlights it (through the Kernel).
+    kernel: bool,
 }
 
 impl Config {
@@ -44,6 +46,13 @@ impl Config {
                 ..Self::default()
             };
         };
+        if crate::kernel::is_service(id) {
+            return Self {
+                service: id.to_owned(),
+                kernel: true,
+                ..Self::default()
+            };
+        }
         let service = crate::services::get(id);
         Self {
             service: id.to_owned(),
@@ -60,6 +69,7 @@ impl Config {
             response: service
                 .map(|service| service.console.response)
                 .unwrap_or_default(),
+            kernel: false,
         }
     }
 
@@ -74,11 +84,17 @@ impl Config {
                 .collect(),
             payload: payload.into(),
             response,
+            kernel: false,
         }
     }
 
     pub fn console(&self) -> bool {
         !self.service.is_empty()
+    }
+
+    /// The console service whose module highlights it.
+    pub fn kernel(&self) -> Option<&str> {
+        self.kernel.then_some(self.service.as_str())
     }
 
     /// Responses are tables.
@@ -115,6 +131,8 @@ pub struct LineState {
     lex: syntax::State,
     /// The region whose table metadata the table tokenizer uses.
     table: Option<usize>,
+    /// A Kernel module's state; empty at the start of a check.
+    module: Rc<[u8]>,
 }
 
 impl LineState {
@@ -156,7 +174,12 @@ pub struct Highlighter {
     /// Bumps when cached spans are repainted without an edit.
     revision: u64,
     pub(super) json_folds: super::fold::JsonFolds,
+    /// A Kernel module's folds of the check at a line: `(start, end)` document lines.
+    pub(super) module_folds: Option<(usize, ModuleFolds)>,
 }
+
+/// A module's folds of one check: `(start, end)` document lines.
+pub(super) type ModuleFolds = Rc<[(usize, usize)]>;
 
 impl Highlighter {
     pub fn new(mode: &str) -> Self {
@@ -174,6 +197,7 @@ impl Highlighter {
             frontier: 0,
             revision: 0,
             json_folds: Default::default(),
+            module_folds: None,
         }
     }
 
@@ -223,6 +247,7 @@ impl Highlighter {
         self.frontier = 0;
         self.revision += 1;
         self.json_folds.clear();
+        self.module_folds = None;
     }
 
     /// Forgets everything from `line` on; call after an edit starting there.
@@ -231,13 +256,28 @@ impl Highlighter {
         self.states.truncate(line + 1);
         self.frontier = self.frontier.min(line);
         self.json_folds.clear();
+        self.module_folds = None;
     }
 
     fn start(&self) -> LineState {
         LineState {
             area: self.template_section.clone().unwrap_or_default(),
+            module: self.section_state(),
             ..LineState::default()
         }
+    }
+
+    /// A Kernel module's state inside the template section: after its `#section` line.
+    fn section_state(&self) -> Rc<[u8]> {
+        let (Some(service), Some(section)) = (self.config.kernel(), &self.template_section) else {
+            return Rc::from([]);
+        };
+        crate::kernel::with(|modules| {
+            modules.highlight(service, Vec::new(), vec![format!("#{section}")])
+        })
+        .ok()
+        .and_then(|mut lines| lines.pop())
+        .map_or_else(|| Rc::from([]), |line| line.state.into())
     }
 
     fn region(&self, line: usize) -> Option<(usize, &Region)> {
@@ -349,6 +389,10 @@ impl Highlighter {
 
     fn line(&self, lines: &[String], index: usize, state: &mut LineState) -> Vec<Span> {
         let text = lines[index].as_str();
+        if let Some(service) = self.config.kernel() {
+            let tokens = self.module_line(service, index, text, state);
+            return spans(text, merge(&tokens, &overlay(text, false)));
+        }
         if text.is_empty() {
             return Vec::new();
         }
@@ -388,15 +432,58 @@ impl Highlighter {
                 }
             }
         }
-        let merged = merge(&tokens, &overlay(text, sql));
-        let mut spans = Vec::with_capacity(merged.len());
-        let (mut start, mut end16) = (0, 0);
-        for (end, style) in merged {
-            end16 += utf16_len(&text[start..end]);
-            spans.push(Span { end: end16, style });
-            start = end;
+        spans(text, merge(&tokens, &overlay(text, sql)))
+    }
+
+    /// A line of a Kernel service: `#check` and template `@` lines are the App's, the rest
+    /// the module's, which turns byte tokens into byte ends.
+    fn module_line(
+        &self,
+        service: &str,
+        index: usize,
+        text: &str,
+        state: &mut LineState,
+    ) -> Vec<(usize, Style)> {
+        state.response = self.region(index).is_some();
+        let whole = |style| vec![(text.len(), style)];
+        if self.template_section.is_some() && text.starts_with('@') && !text.starts_with("@@") {
+            state.module = self.section_state();
+            return whole(Some("comment"));
         }
-        spans
+        if crate::console::is_check(text) {
+            state.module = Rc::from([]);
+            return whole(Some("comment"));
+        }
+        if utf16_len(text) > MAX_HIGHLIGHT {
+            return whole(None);
+        }
+        let highlighted = crate::kernel::with(|modules| {
+            modules.highlight(service, state.module.to_vec(), vec![text.to_owned()])
+        });
+        let Some(line) = highlighted.ok().and_then(|mut lines| lines.pop()) else {
+            let marker = text.trim_start().starts_with('#');
+            return whole(marker.then_some("comment"));
+        };
+        state.module = line.state.into();
+        let mut tokens = Vec::with_capacity(line.tokens.len() * 2);
+        let mut at = 0;
+        for token in line.tokens {
+            let start = (token.start as usize).max(at);
+            let end = (token.start as usize + token.len as usize).min(text.len());
+            if start >= end || !text.is_char_boundary(start) || !text.is_char_boundary(end) {
+                continue;
+            }
+            if start > at {
+                tokens.push((start, None));
+            }
+            let style = (!token.kind.is_empty()).then(|| crate::kernel::style(&token.kind));
+            tokens.push((end, style));
+            at = end;
+        }
+        if at < text.len() {
+            tokens.push((text.len(), None));
+        }
+        tokens
     }
 
     /// The token at byte `pos`, which is character `chars`.
@@ -540,6 +627,18 @@ impl Highlighter {
         }
         spans
     }
+}
+
+/// Byte-end tokens as spans ending at UTF-16 columns.
+fn spans(text: &str, tokens: Vec<(usize, Style)>) -> Vec<Span> {
+    let mut spans = Vec::with_capacity(tokens.len());
+    let (mut start, mut end16) = (0, 0);
+    for (end, style) in tokens {
+        end16 += utf16_len(&text[start..end]);
+        spans.push(Span { end: end16, style });
+        start = end;
+    }
+    spans
 }
 
 /// The byte end of `n` characters from byte `pos`.

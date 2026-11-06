@@ -29,12 +29,52 @@ pub struct Registry {
     manifests: Arc<Vec<Manifest>>,
     /// The console part of each package that ships one, by module id.
     uis: Arc<HashMap<String, PathBuf>>,
+    /// Modules the App runs, in tab order.
+    wasm: Arc<Vec<Wasm>>,
     /// Packages that failed to load: `{"package","module","error"}`.
     failed: Arc<Vec<Value>>,
     /// The modules folder.
     dir: PathBuf,
     /// The host functions every module gets.
     host: EndpointArc,
+}
+
+/// A module the App runs: its SDK manifest (`package.json`) and `module.wasm`.
+#[derive(Clone, Debug)]
+pub struct Wasm {
+    pub manifest: services_sdk::manifest::Manifest,
+    pub path: PathBuf,
+    /// The cache key of the App's compiled copy.
+    pub digest: String,
+}
+
+/// Checks a wasm package before the App gets it: its `package.json` is the SDK manifest of
+/// the module, the App can run it and this Host has the drivers it calls.
+fn load_wasm(package: &modules::Package, placed: bool) -> std::result::Result<Wasm, String> {
+    let path = package.dir.join(services_contracts::package::PACKAGE_FILE);
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let manifest = services_sdk::manifest::Manifest::parse(&text)?;
+    services_contracts::package::check_id(&manifest.id)?;
+    let folder = package
+        .dir
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy();
+    if placed && folder != manifest.id.as_str() {
+        return Err(format!(
+            "the folder of module \"{}\" is named \"{folder}\"; it must be named by the module id",
+            manifest.id
+        ));
+    }
+    let drivers = serde_json::from_value(crate::drivers::versions()).unwrap_or_default();
+    manifest.check(env!("CARGO_PKG_VERSION"), &drivers)?;
+    let path = package.wasm().ok_or("module.wasm is missing")?;
+    let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(Wasm {
+        manifest,
+        digest: modules::digest(&bytes),
+        path,
+    })
 }
 
 /// A module answer as the module serialized it; the host passes `json` through unparsed.
@@ -175,7 +215,22 @@ impl Registry {
         let mut loaded = Vec::new();
         let mut uis = HashMap::new();
         let mut failed = Vec::new();
+        let mut wasm = Vec::new();
+        let fail = |package: &modules::Package, error: String| {
+            json!({
+                "package": package.dir.display().to_string(),
+                "module": package.dir.file_name().unwrap_or_default().to_string_lossy(),
+                "error": error,
+            })
+        };
         for package in packages {
+            if package.wasm().is_some() {
+                match load_wasm(&package, true) {
+                    Ok(module) => wasm.push(module),
+                    Err(error) => failed.push(fail(&package, error)),
+                }
+                continue;
+            }
             match load_package(&package, &host, true) {
                 Ok((module, mut manifest)) => {
                     if let Some(ui) = package.ui() {
@@ -187,13 +242,10 @@ impl Registry {
                     }
                     loaded.push((module, manifest));
                 }
-                Err(error) => failed.push(json!({
-                    "package": package.dir.display().to_string(),
-                    "module": package.dir.file_name().unwrap_or_default().to_string_lossy(),
-                    "error": error,
-                })),
+                Err(error) => failed.push(fail(&package, error)),
             }
         }
+        wasm.sort_by_key(|module| module.manifest.order.unwrap_or(u32::MAX));
         loaded.sort_by_key(|(_, manifest)| manifest.console.order.unwrap_or(u32::MAX));
         let (modules, manifests) = loaded.into_iter().unzip();
         Ok(Self {
@@ -201,6 +253,7 @@ impl Registry {
             modules: Arc::new(modules),
             manifests: Arc::new(manifests),
             uis: Arc::new(uis),
+            wasm: Arc::new(wasm),
             failed: Arc::new(failed),
             dir,
             host,
@@ -224,7 +277,22 @@ impl Registry {
         let package = modules::Package {
             dir: dir.to_path_buf(),
         };
+        if package.wasm().is_some() {
+            let module = load_wasm(&package, false)?.manifest;
+            return Ok(Manifest {
+                id: module.id,
+                name: module.name,
+                version: module.version,
+                description: module.description,
+                ..Manifest::default()
+            });
+        }
         load_package(&package, &self.host, false).map(|(_, manifest)| manifest)
+    }
+
+    /// Modules the App runs, in tab order.
+    pub fn wasm(&self) -> &[Wasm] {
+        &self.wasm
     }
 
     /// The console part of a package's module.
