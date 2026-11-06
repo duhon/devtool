@@ -489,15 +489,10 @@ fn archived_install_native_services_update_and_uninstall() {
         variables.is_file(),
         "Variables must persist in isolated installation data"
     );
-    let mut cli = fixture.command(paths.base.join("dev"));
-    cli.args([
-        "terminal",
-        "--endpoint=/bin/sh -c",
-        "--command=printf '{{var:marker}}'",
-    ]);
+    let (marker, marker_events) = host.request(json!({"id":50,"service":"terminal","params":{"endpoint":"/bin/sh -c","command":"printf '{{var:marker}}'"}}));
     assert!(
-        fixture.successful(cli).contains("survives-update"),
-        "installed CLI must use saved Variables"
+        format!("{marker} {marker_events:?}").contains("survives-update"),
+        "installed host must use saved Variables: {marker} {marker_events:?}"
     );
     let (terminal, events) = host.request(json!({"id":4,"service":"terminal","params":{"endpoint":"/bin/sh -c","command":"printf installed-terminal"}}));
     assert_eq!(

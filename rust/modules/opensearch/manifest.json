@@ -3,10 +3,10 @@
   "name": "OpenSearch",
   "description": "OpenSearch HTTP API: search, documents, indices, bulk and multi-search.",
   "params": [
-    {"name": "method", "flag": "method", "alias": "m", "positional": true, "type": "string", "required": true, "default": "GET"},
-    {"name": "url", "flag": "endpoint", "alias": "e", "positional": true, "type": "string", "required": true},
-    {"name": "headers", "flag": "headers", "alias": "H", "type": "json"},
-    {"name": "body", "flag": "body", "alias": "b", "type": "string"}
+    {"name": "method", "type": "string", "required": true, "default": "GET"},
+    {"name": "url", "type": "string", "required": true},
+    {"name": "headers", "type": "json"},
+    {"name": "body", "type": "string"}
   ],
   "console": {
     "order": 8,

@@ -44,13 +44,6 @@ in-app updates; the installed release is not touched.
 - Remove: `~/Library/Application\ Support/ServicesDevTools-Prerelease/uninstall`,
   then remove the extension in Chrome.
 
-CLI, without Chrome ([flags](adapters/cli/README.md)):
-
-```sh
-cargo run -p xtask -- modules   # module packages for the development host
-./dev rest --method=GET --endpoint=https://httpbin.org/get
-```
-
 ## Test
 
 ```sh
@@ -61,7 +54,7 @@ cargo run -p xtask -- test <type>   # one kind at a time
 | Type | Checks | Where |
 |---|---|---|
 | `behavior [--module NAME]` | What each module does, through the host protocol; the shared core | `rust/native/tests/modules/`, `tests/core/` |
-| `contract` | Rules every module obeys; native messaging, CLI, shell environment, TLS | `rust/native/tests/conformance.rs`, `tests/host/` |
+| `contract` | Rules every module obeys; native messaging, shell environment, TLS | `rust/native/tests/conformance.rs`, `tests/host/` |
 | `ui` | UI models, parsing, completion, rendering | `rust/ui/tests/` |
 | `browser [--scenario NAME] [--jobs N] [--list]` | User scenarios in the built extension, isolated Chrome profiles | `rust/xtask/src/browser*` |
 | `install` | Install, update, rollback, uninstall in a temporary HOME | `rust/installer/tests` |
@@ -73,7 +66,7 @@ cargo run -p xtask -- test <type>   # one kind at a time
 ## Layout
 
 - `rust/native` — the host: variables, history, templates, hints, updates,
-  the agent, the module registry and loader, native-messaging and CLI adapters.
+  the agent, the module registry and loader, native-messaging adapter.
 - `rust/contracts` — module manifest, package format, protocol constants.
 - `rust/module-api`, `rust/module-ui` — SDKs of a module's native part
   (`module.dylib`) and console part (`ui.wasm`).

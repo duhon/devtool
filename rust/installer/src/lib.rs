@@ -727,12 +727,6 @@ fn install_payload(home: &Path, payload: &Path, automatic: bool) -> Result<Locat
                 shell_quote(&paths.base.join("extension/native/bin/services-install"))
             );
             atomic_write(&paths.base.join("uninstall"), uninstall.as_bytes(), 0o755)?;
-            let cli = format!(
-                "#!/bin/sh\nset -eu\nexport SERVICES_DATA_DIR={}\nexec {} cli \"$@\"\n",
-                shell_quote(&paths.data),
-                shell_quote(&paths.base.join("extension/native/bin/services-devtools"))
-            );
-            atomic_write(&paths.base.join("dev"), cli.as_bytes(), 0o755)?;
             let state = State {
                 application: APPLICATION.into(),
                 extension_id: metadata["extensionId"].as_str().unwrap().into(),

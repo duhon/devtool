@@ -19,7 +19,7 @@ supported.
 
 Updates replace the installed copy; no release history is kept. Variables and
 browser-stored settings are not replaced; do not remove the extension in
-Chrome. After an update, reopen panels and restart any running CLI processes.
+Chrome. After an update, reopen panels.
 When upgrading an older installation whose `extension` folder was a symlink,
 select that folder once more through **Load unpacked**, without removing the
 existing extension; later updates need only **Reload**.

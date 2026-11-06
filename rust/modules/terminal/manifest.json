@@ -3,9 +3,9 @@
   "name": "Terminal",
   "description": "Run a command through an endpoint (a local shell or an ssh connection) and stream its output.",
   "params": [
-    {"name": "endpoint", "flag": "endpoint", "alias": "e", "positional": true, "type": "string", "required": true},
-    {"name": "env", "flag": "env", "alias": "v", "type": "json"},
-    {"name": "command", "flag": "command", "alias": "c", "positional": true, "type": "string", "required": true}
+    {"name": "endpoint", "type": "string", "required": true},
+    {"name": "env", "type": "json"},
+    {"name": "command", "type": "string", "required": true}
   ],
   "console": {
     "order": 6,

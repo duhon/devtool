@@ -263,27 +263,3 @@ async fn startup_failure_is_a_native_error_without_exposing_shell_output() {
         assert!(!String::from_utf8_lossy(&output.stderr).contains("private-fixture"));
     }
 }
-
-#[tokio::test]
-async fn cli_keeps_its_callers_environment_without_loading_shell_startup_files() {
-    let fixture = Fixture::new();
-    fixture.write(
-        ".zprofile",
-        "printf unexpected >> \"$HOME/start-count\"\nexit 7\n",
-    );
-    let output = fixture
-        .command()
-        .args([
-            "cli",
-            "terminal",
-            "/bin/sh -c",
-            "printf '%s' \"$SDT_LOGIN_VALUE\"",
-        ])
-        .env("SDT_LOGIN_VALUE", "caller-fixture")
-        .output()
-        .await
-        .unwrap();
-    assert!(output.status.success());
-    assert_eq!(output.stdout, b"caller-fixture");
-    assert!(!fixture.0.join("start-count").exists());
-}

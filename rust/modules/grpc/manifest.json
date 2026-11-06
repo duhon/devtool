@@ -3,10 +3,10 @@
   "name": "gRPC",
   "description": "Make a gRPC call and inspect the response.",
   "params": [
-    {"name": "endpoint", "flag": "endpoint", "alias": "e", "positional": true, "type": "string", "required": true},
-    {"name": "proto", "flag": "proto", "alias": "p", "type": "string"},
-    {"name": "headers", "flag": "headers", "alias": "H", "type": "json"},
-    {"name": "requestMessage", "flag": "message", "alias": "m", "type": "string"}
+    {"name": "endpoint", "type": "string", "required": true},
+    {"name": "proto", "type": "string"},
+    {"name": "headers", "type": "json"},
+    {"name": "requestMessage", "type": "string"}
   ],
   "console": {
     "order": 4,

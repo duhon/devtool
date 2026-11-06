@@ -48,3 +48,53 @@ pub async fn read_frame(reader: &mut (impl tokio::io::AsyncRead + Unpin)) -> Val
     reader.read_exact(&mut bytes).await.unwrap();
     serde_json::from_slice(&bytes).unwrap()
 }
+
+/// A host binary running as its own process over native messaging, for behavior that
+/// depends on the process (its environment, locks shared between processes).
+pub struct Process {
+    child: tokio::process::Child,
+    input: tokio::process::ChildStdin,
+    output: tokio::process::ChildStdout,
+}
+
+impl Process {
+    pub fn spawn(
+        binary: &std::path::Path,
+        data: &std::path::Path,
+        env: &[(&str, &str)],
+    ) -> Self {
+        let mut command = tokio::process::Command::new(binary);
+        command
+            .arg("__native-host-shell")
+            .env("SERVICES_DATA_DIR", data)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .kill_on_drop(true);
+        for (name, value) in env {
+            command.env(name, value);
+        }
+        let mut child = command.spawn().expect("the host binary must start");
+        Self {
+            input: child.stdin.take().unwrap(),
+            output: child.stdout.take().unwrap(),
+            child,
+        }
+    }
+
+    /// A service execution: `{"service", "params"}`; returns the whole reply.
+    pub async fn call(&mut self, service: &str, params: Value) -> Value {
+        let message = serde_json::json!({"id":1,"service":service,"params":params});
+        self.input
+            .write_all(&encode(&message).unwrap())
+            .await
+            .unwrap();
+        self.input.flush().await.unwrap();
+        read_frame(&mut self.output).await
+    }
+}
+
+impl Drop for Process {
+    fn drop(&mut self) {
+        let _ = self.child.start_kill();
+    }
+}

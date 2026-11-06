@@ -3,10 +3,10 @@
   "name": "GraphQL",
   "description": "Send a GraphQL query or mutation and inspect the response.",
   "params": [
-    {"name": "url", "flag": "endpoint", "alias": "e", "positional": true, "type": "string", "required": true},
-    {"name": "headers", "flag": "headers", "alias": "H", "type": "json"},
-    {"name": "query", "flag": "query", "alias": "q", "positional": true, "type": "string", "required": true},
-    {"name": "variables", "flag": "variables", "alias": "v", "type": "json"}
+    {"name": "url", "type": "string", "required": true},
+    {"name": "headers", "type": "json"},
+    {"name": "query", "type": "string", "required": true},
+    {"name": "variables", "type": "json"}
   ],
   "console": {
     "order": 3,

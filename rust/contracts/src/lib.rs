@@ -30,16 +30,10 @@ pub const SPLUNK_PREVIEW_WARNING: &str =
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct ParamConfig {
     pub name: String,
-    #[serde(default)]
-    pub flag: Option<String>,
-    #[serde(default)]
-    pub alias: Option<String>,
     #[serde(rename = "type")]
     pub kind: String,
     #[serde(default)]
     pub required: bool,
-    #[serde(default)]
-    pub positional: bool,
     #[serde(default)]
     pub multi: bool,
     #[serde(default)]

@@ -29,13 +29,12 @@ Keep `.agent/` private and treat its persisted conversations as application data
 ```text
 services-devtools                    Chrome native messaging on stdin/stdout
 services-devtools native-host        Explicit native-messaging mode
-services-devtools cli <service> ...  Shared-config CLI flags/aliases/positionals
 services-devtools --version
 ```
 
 `SERVICES_DATA_DIR` selects the directory containing `.variable-profiles.json`,
-`.dictionary-profiles.json` and `.console-hints.txt`. Source builds default to the repository root. Installed
-launchers must set the persistent application-data directory.
+`.dictionary-profiles.json` and `.console-hints.txt`. It is required; installed
+launchers set the persistent application-data directory.
 Source builds discover `adapters/extension/dist` by walking the executable's
 and current working directory's ancestors, without embedding a developer's
 filesystem path.
@@ -50,7 +49,7 @@ shared connection. Browser-to-host frames still permit 64 MiB.
 
 Splunk API calls share a per-server queue keyed by URL origin (scheme, host and
 port), independent of the check, session, app or credentials. Private lock/state
-files in `.splunk-rate-limits/` coordinate native, HTTP and CLI processes using
+files in `.splunk-rate-limits/` coordinate host processes using
 the same data directory. Every export request and retry waits
 at least 13 seconds after the previous call completes: at most five calls in any
 minute. Different servers proceed independently. HTTP 429 extends the shared
@@ -103,7 +102,7 @@ environment once per connection, before constructing service clients. The shell
 comes from `SHELL`, or the user's account when unset; zsh, bash, sh, dash, ksh and
 fish are supported. For zsh, both `.zprofile` and `.zshrc` exports become visible
 in the read-only `env` profile, variable substitutions and child commands,
-including `PATH`. CLI mode retains its caller's environment unchanged.
+including `PATH`.
 Exports made only in an already-open terminal cannot be recovered this way.
 
 Shell startup runs in a separate session without a controlling terminal, has no
@@ -133,9 +132,6 @@ preserved. Retrying the connection or reopening the panel reloads shell settings
   frames. Messages larger than 64 MiB are rejected.
 - `adapters::native::run(Runtime, AsyncRead, AsyncWrite)` concurrently dispatches
   IDs, serializes output, and cancels/reaps owned child process groups on EOF.
-- `adapters::cli::{service_args,parse_params,usage,run}` uses shared descriptors.
-  Terminal outputs raw stdout/stderr and returns its exit code. Ctrl+C cancels
-  requests/commands; HTTP 4xx/5xx and non-OK gRPC statuses produce nonzero exits.
 
 Native health, Variables CRUD, discovery, unary results and Terminal
 data/exit/stop frames retain their original envelope shapes. Native hints add
@@ -146,7 +142,7 @@ data/exit/stop frames retain their original envelope shapes. Native hints add
 Console execution envelopes may include top-level
 `history:{checkId,sessionId,title,source}`. Both identities are UUID strings;
 `source` is the complete original check, without a previous response. Calls
-without context, discovery, and direct Registry/CLI calls are not recorded.
+without context, discovery, and direct Registry calls are not recorded.
 The Runtime resolves execution parameters and source against the same captured
 variable/profile values, then stores an immutable resolved check, effective
 parameters, response/status and terminal stdout/stderr events. Viewing history
@@ -225,7 +221,7 @@ file. An empty Dictionary is valid; `var` cannot be deleted or renamed.
 `cargo test -p services-native` runs local, bounded fixtures for all service
 transports, actual MySQL wire protocol, dynamic gRPC/reflection and four stream
 shapes, Variables persistence/cycles, fragmented/concurrent native messages,
-Terminal stop/EOF cleanup, and binary CLI/framing behavior.
+Terminal stop/EOF cleanup, and framing behavior.
 Fixtures create and remove data under this crate's `target/test-data`, never
 the user's real profiles. `cargo clippy -p services-native --all-targets --
 -D warnings` checks all targets.
@@ -236,7 +232,7 @@ unavailable Node TLS socket/certificate inspection APIs. MySQL text is decoded
 as UTF-8; unusual server character sets are not emulated. DATE, DATETIME and
 TIMESTAMP values are interpreted as host-local wall time and rendered as UTC
 JSON, matching mysql2's default, including DST gaps/overlaps and millisecond
-truncation. Tests inject explicit timezones or set `TZ` only in isolated CLI
+truncation. Tests inject explicit timezones or set `TZ` only in isolated host
 child processes; they never modify the test runner's global environment. Large integers
 retain exact Rust/JSON integer values rather than JavaScript precision loss.
 TLS uses rustls (bundled

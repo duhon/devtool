@@ -29,13 +29,6 @@ fn every_manifest_is_unambiguous_and_its_console_is_self_consistent() {
         let id = &manifest.id;
         let names: BTreeSet<_> = manifest.params.iter().map(|p| &p.name).collect();
         assert_eq!(names.len(), manifest.params.len(), "{id}: duplicate param");
-        let flags: Vec<_> = manifest
-            .params
-            .iter()
-            .filter_map(|p| p.flag.as_ref())
-            .collect();
-        let unique: BTreeSet<_> = flags.iter().collect();
-        assert_eq!(unique.len(), flags.len(), "{id}: duplicate flag");
         let console = &manifest.console;
         let sections: BTreeSet<_> = console.sections.iter().map(|s| &s.name).collect();
         assert_eq!(

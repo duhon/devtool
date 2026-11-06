@@ -3,6 +3,7 @@ use serde_json::json;
 use services_testkit::{
     Host,
     http::{self, Server},
+    native::Process,
 };
 use std::{
     sync::{Arc, Mutex, atomic::Ordering},
@@ -21,7 +22,6 @@ fn options_keep_derived_fields_and_resolution_modes() {
         assert_eq!(options.keys[name], name);
         let param = config.iter().find(|p| p.name == name).unwrap();
         assert_eq!(param.resolve.as_deref(), Some("none"));
-        assert!(param.flag.is_none());
     }
 }
 
@@ -421,24 +421,21 @@ async fn server_quota_is_shared_across_processes_paths_and_apps_only() {
     let params =
         json!({"baseUrl":format!("{}/proxy", shared.url),"search":"index=main","app":"search"});
     let other_params = json!({"baseUrl":independent.url,"search":"index=main"});
-    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_services-devtools"));
-    command
-        .env("SERVICES_DATA_DIR", host.path())
-        .args(["cli", "splunk", &shared.url, "index=cli", "-o", "app=other"])
-        .kill_on_drop(true);
+    let mut process = Process::spawn(
+        env!("CARGO_BIN_EXE_services-devtools").as_ref(),
+        host.path(),
+        &[],
+    );
     let (reply, child, other_reply) = tokio::join!(
         host.call("splunk", params),
-        command.output(),
+        process.call(
+            "splunk",
+            json!({"baseUrl":shared.url,"search":"index=cli","app":"other"}),
+        ),
         other_host.call("splunk", other_params)
     );
     assert_eq!(reply.ok()["rows"][0]["host"], "fixture", "{reply}");
-    let child = child.unwrap();
-    assert!(
-        child.status.success(),
-        "{}",
-        String::from_utf8_lossy(&child.stderr)
-    );
-    assert!(String::from_utf8_lossy(&child.stdout).contains("fixture"));
+    assert_eq!(child["result"]["rows"][0]["host"], "fixture", "{child}");
     assert_eq!(
         other_reply.ok()["rows"][0]["host"],
         "fixture",

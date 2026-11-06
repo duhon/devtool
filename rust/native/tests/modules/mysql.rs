@@ -2,6 +2,7 @@ use serde_json::json;
 use services_testkit::{
     DataDir, Host,
     mysql::{CancellationFixture, Server},
+    native::Process,
 };
 use std::{sync::Arc, time::Duration};
 use tokio_util::sync::CancellationToken;
@@ -92,29 +93,22 @@ async fn dates_use_the_host_timezone_without_mutating_the_environment() {
             "2026-03-07T20:45:00.000Z",
         ),
     ] {
-        let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_services-devtools"));
-        command
-            .args([
-                "cli",
-                "mysql",
-                "--connection",
-                &server.dsn,
-                "--sql",
-                "SELECT dates_fixture",
-            ])
-            .env("TZ", zone)
-            .env("SERVICES_DATA_DIR", data.path())
-            .kill_on_drop(true);
-        let output = tokio::time::timeout(Duration::from_secs(10), command.output())
-            .await
-            .unwrap()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
+        let mut host = Process::spawn(
+            env!("CARGO_BIN_EXE_services-devtools").as_ref(),
+            data.path(),
+            &[("TZ", zone)],
         );
-        let response: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let reply = tokio::time::timeout(
+            Duration::from_secs(10),
+            host.call(
+                "mysql",
+                json!({"connectionString":server.dsn,"sql":"SELECT dates_fixture"}),
+            ),
+        )
+        .await
+        .unwrap();
+        assert_eq!(reply["ok"], true, "{reply}");
+        let response = &reply["result"];
         assert_eq!(
             response["rows"][0],
             json!({"winter":winter,"summer":summer,"calendar":calendar,"overlap":overlap,"gap":gap}),

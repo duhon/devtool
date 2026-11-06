@@ -60,9 +60,8 @@ impl Runtime {
     }
     pub fn new() -> Result<Self> {
         let base = std::env::var_os("SERVICES_DATA_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.."));
-        Self::with_data_dir(base)
+            .ok_or_else(|| crate::Error::new("SERVICES_DATA_DIR is not set"))?;
+        Self::with_data_dir(PathBuf::from(base))
     }
     pub fn with_data_dir(path: impl Into<PathBuf>) -> Result<Self> {
         let path = path.into();

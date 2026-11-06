@@ -209,14 +209,12 @@ fn packages(root: &Path) -> Result<Vec<Package>> {
 }
 
 /// Builds `packages` and lays each out as `<modules>/<id>/{package.json,module.dylib,ui.wasm,
-/// RELEASE_NOTES.md,skills/module-<id>/}`; `link` symlinks the build outputs instead of copying
-/// them (a development data directory).
+/// RELEASE_NOTES.md,skills/module-<id>/}`.
 fn build_packages(
     root: &Path,
     packages: &[Package],
     modules: &Path,
     release: bool,
-    link: bool,
 ) -> Result<()> {
     let profile = if release { "release" } else { "debug" };
     for wasm in [false, true] {
@@ -297,11 +295,7 @@ fn build_packages(
             if fs::symlink_metadata(&placed).is_ok() {
                 fs::remove_file(&placed)?;
             }
-            if link {
-                std::os::unix::fs::symlink(&built, &placed)?;
-            } else {
-                fs::copy(&built, &placed)?;
-            }
+            fs::copy(&built, &placed)?;
         }
     }
     Ok(())
@@ -348,7 +342,7 @@ fn package_files(root: &Path, args: &[String]) -> Result<Vec<PathBuf>> {
 /// Builds `packages` for release and writes their package files into `out`.
 fn archives(root: &Path, packages: &[Package], out: &Path) -> Result<Vec<PathBuf>> {
     let staging = tempfile::tempdir()?;
-    build_packages(root, packages, staging.path(), true, false)?;
+    build_packages(root, packages, staging.path(), true)?;
     fs::create_dir_all(out)?;
     let mut files = Vec::new();
     for package in packages {
@@ -677,20 +671,6 @@ fn main() {
             build_extension(&root, &root.join("adapters/extension/dist"), false).map(|_| ())
         }
         Some("build") => build_distribution(&root, &args[1..]),
-        Some("modules") => {
-            // The development host's data directory is the repository root by default.
-            let data = std::env::var_os("SERVICES_DATA_DIR").map_or(root.clone(), PathBuf::from);
-            let release = args.get(1).is_some_and(|flag| flag == "--release");
-            packages(&root).and_then(|packages| {
-                build_packages(
-                    &root,
-                    &packages,
-                    &data.join(services_installer::MODULES),
-                    release,
-                    true,
-                )
-            })
-        }
         Some("package") => package_files(&root, &args[1..]).map(|files| {
             for file in files {
                 println!("{}", file.display());
@@ -704,7 +684,7 @@ fn main() {
         }
         Some("copilot-fixture") => copilot_fixture::run(),
         _ => Err(anyhow::anyhow!(
-            "Usage: cargo run -p xtask -- build-extension | build [--repository OWNER/REPO] [--branch distribution] | build --prerelease | modules [--release] | {PACKAGE_USAGE} | test-browser | test-agent | test-settings\n       {TEST_USAGE}"
+            "Usage: cargo run -p xtask -- build-extension | build [--repository OWNER/REPO] [--branch distribution] | build --prerelease | {PACKAGE_USAGE} | test-browser | test-agent | test-settings\n       {TEST_USAGE}"
         )),
     };
     if let Err(error) = result {

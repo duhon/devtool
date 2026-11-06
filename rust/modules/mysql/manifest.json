@@ -3,9 +3,9 @@
   "name": "MySQL",
   "description": "Run a SQL query against a MySQL connection.",
   "params": [
-    {"name": "connectionString", "flag": "connection", "alias": "c", "positional": true, "type": "string", "required": true},
-    {"name": "sql", "flag": "sql", "alias": "q", "positional": true, "type": "string", "required": true},
-    {"name": "options", "flag": "options", "alias": "o", "multi": true, "type": "keyvalue", "keys": {"columns-type": "columnsType"}},
+    {"name": "connectionString", "type": "string", "required": true},
+    {"name": "sql", "type": "string", "required": true},
+    {"name": "options", "multi": true, "type": "keyvalue", "keys": {"columns-type": "columnsType"}},
     {"name": "columnsType", "type": "string", "resolve": "none"}
   ],
   "console": {

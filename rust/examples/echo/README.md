@@ -163,8 +163,5 @@ installing it replaces a module with the same id, whatever its source.
 
 A package the host cannot load stays in the list with its error.
 
-For development, `cargo run -p xtask -- modules` links the debug builds of the
-standard modules into the development data folder.
-
 A module runs in the host process with your permissions: install only modules
 you trust.
