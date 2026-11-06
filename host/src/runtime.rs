@@ -19,6 +19,7 @@ pub struct Runtime {
     pub templates: crate::core::templates::Templates,
     pub history: crate::core::history::History,
     pub sources: Sources,
+    pub drivers: crate::drivers::Drivers,
 }
 impl Runtime {
     pub fn agent_session_sensitive_values(&self, params: &Value) -> Result<Vec<String>> {
@@ -85,6 +86,7 @@ impl Runtime {
             ),
             history: crate::core::history::History::new(path.join(".console-history.sqlite3")),
             sources: Sources::new(path),
+            drivers: crate::drivers::Drivers::new()?,
         })
     }
     /// `{"service":"modules"}`: the loaded modules and the packages that failed to load;
@@ -374,7 +376,15 @@ impl Runtime {
         let id = message.get("id").cloned().unwrap_or(Value::Null);
         let service = text(message, "service");
         let result = if message["type"] == "health" {
-            Ok(json!({"protocolVersion":services_contracts::PROTOCOL_VERSION}))
+            Ok(json!({
+                "protocolVersion": services_contracts::PROTOCOL_VERSION,
+                "drivers": crate::drivers::versions(),
+            }))
+        } else if service == "drivers" {
+            return Reply::Value(match self.drivers.call(message, cancel).await {
+                Ok(result) => json!({"id": id, "ok": true, "result": result}),
+                Err(failure) => failure.reply(&id),
+            });
         } else if service == "updates" {
             crate::core::updates::dispatch(&self.sources, self.sources.data(), message).await
         } else if service == "agent_models" {

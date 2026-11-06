@@ -1,5 +1,5 @@
-use crate::editor::layout;
 use crate::document::ResponseRegion;
+use crate::editor::layout;
 use crate::editor::session::{Context, Event, Metrics, Msg, Session, Setup};
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};

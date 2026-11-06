@@ -231,7 +231,14 @@ fn select(handle: &Handle, selection: Selection, options: &JsValue) {
     handle.with(|session| session.select(selection, scroll));
 }
 
-fn replace(handle: &Handle, from: Position, to: Position, text: String, origin: &JsValue, selection: Option<Selection>) {
+fn replace(
+    handle: &Handle,
+    from: Position,
+    to: Position,
+    text: String,
+    origin: &JsValue,
+    selection: Option<Selection>,
+) {
     let origin = origin.as_string().unwrap_or_default();
     handle.with(|session| {
         let mut transaction = Transaction::replace(from, to, text, &origin);
@@ -254,7 +261,10 @@ fn tokens(handle: &Handle, line: usize) -> Vec<(usize, usize, String, Option<&'s
             if span.end <= start {
                 continue;
             }
-            let range = state.range(Position { line, ch: start }, Position { line, ch: span.end });
+            let range = state.range(
+                Position { line, ch: start },
+                Position { line, ch: span.end },
+            );
             tokens.push((start, span.end, range, span.style));
             start = span.end;
         }
@@ -291,7 +301,10 @@ fn marks(handle: &Handle) -> JsValue {
             let class = match mark {
                 Mark::Range { class, .. } | Mark::Line { class, .. } => class.as_str(),
             };
-            list.push(&object(&[("id", id.to_string().into()), ("className", class.into())]));
+            list.push(&object(&[
+                ("id", id.to_string().into()),
+                ("className", class.into()),
+            ]));
         }
         for fold in session.state().folds() {
             list.push(&object(&[
@@ -311,8 +324,15 @@ fn fold_line(id: &str) -> Option<usize> {
 fn options(handle: &Handle, name: &str) -> JsValue {
     handle.read(|session| match name {
         "readOnly" => session.setup().readonly.into(),
-        "servicesResponses" => super::js(&serde_json::to_value(session.regions()).unwrap_or_default()),
-        "servicesChecks" => session.check_lines().iter().map(|line| JsValue::from(*line)).collect::<Array>().into(),
+        "servicesResponses" => {
+            super::js(&serde_json::to_value(session.regions()).unwrap_or_default())
+        }
+        "servicesChecks" => session
+            .check_lines()
+            .iter()
+            .map(|line| JsValue::from(*line))
+            .collect::<Array>()
+            .into(),
         "mode" => object(&[("name", format!("services-{}", session.setup().mode).into())]),
         "lineNumbers" => true.into(),
         "lineWrapping" => false.into(),
@@ -366,7 +386,14 @@ fn completion(handle: &Handle) -> JsValue {
             })
             .collect();
         let active = object(&[
-            ("data", object(&[("list", list.into()), ("from", position(popup.from)), ("to", position(popup.to))])),
+            (
+                "data",
+                object(&[
+                    ("list", list.into()),
+                    ("from", position(popup.from)),
+                    ("to", position(popup.to)),
+                ]),
+            ),
             ("widget", object(&[("selectedHint", popup.selected.into())])),
         ]);
         object(&[("completionActive", active)])
@@ -377,7 +404,9 @@ fn call(handle: &Handle, name: &str, args: &Array) -> Result<JsValue, JsValue> {
     let arg = |index: u32| args.get(index);
     let at = |index: u32| read_position(&arg(index));
     let missing = || JsValue::from_str(&format!("{name}: missing position"));
-    let state = |read: &dyn Fn(&crate::editor::State) -> JsValue| handle.read(|session| read(session.state()));
+    let state = |read: &dyn Fn(&crate::editor::State) -> JsValue| {
+        handle.read(|session| read(session.state()))
+    };
     Ok(match name {
         "getValue" => handle.text().as_ref().into(),
         "setValue" => {
@@ -423,14 +452,24 @@ fn call(handle: &Handle, name: &str, args: &Array) -> Result<JsValue, JsValue> {
             state(&|state| {
                 let (from, to) = (state.clip(from), state.clip(to));
                 state
-                    .range(crate::editor::text::min(from, to), crate::editor::text::max(from, to))
+                    .range(
+                        crate::editor::text::min(from, to),
+                        crate::editor::text::max(from, to),
+                    )
                     .into()
             })
         }
         "replaceRange" => {
             let from = at(1).ok_or_else(missing)?;
             let to = at(2).unwrap_or(from);
-            replace(handle, from, to, arg(0).as_string().unwrap_or_default(), &arg(3), None);
+            replace(
+                handle,
+                from,
+                to,
+                arg(0).as_string().unwrap_or_default(),
+                &arg(3),
+                None,
+            );
             JsValue::UNDEFINED
         }
         "replaceSelection" => {
@@ -439,7 +478,10 @@ fn call(handle: &Handle, name: &str, args: &Array) -> Result<JsValue, JsValue> {
             let (from, to) = (selection.from(), selection.to());
             let end = end_of(from, &text);
             let after = match arg(1).as_string().as_deref() {
-                Some("around") => Selection { anchor: from, head: end },
+                Some("around") => Selection {
+                    anchor: from,
+                    head: end,
+                },
                 Some("start") => Selection::cursor(from),
                 _ => Selection::cursor(end),
             };
@@ -455,7 +497,11 @@ fn call(handle: &Handle, name: &str, args: &Array) -> Result<JsValue, JsValue> {
                 },
                 None => at(0).ok_or_else(missing)?,
             };
-            let options = if number(&arg(0)).is_some() { arg(2) } else { arg(1) };
+            let options = if number(&arg(0)).is_some() {
+                arg(2)
+            } else {
+                arg(1)
+            };
             select(handle, Selection::cursor(at), &options);
             JsValue::UNDEFINED
         }
@@ -467,7 +513,8 @@ fn call(handle: &Handle, name: &str, args: &Array) -> Result<JsValue, JsValue> {
         }
         "setSelections" => {
             let ranges: Array = arg(0).dyn_into().map_err(|_| missing())?;
-            let primary = number(&arg(1)).map_or(ranges.length().saturating_sub(1), |index| index as u32);
+            let primary =
+                number(&arg(1)).map_or(ranges.length().saturating_sub(1), |index| index as u32);
             let range = ranges.get(primary);
             let anchor = read_position(&get(&range, "anchor")).ok_or_else(missing)?;
             let head = read_position(&get(&range, "head")).unwrap_or(anchor);
@@ -476,7 +523,10 @@ fn call(handle: &Handle, name: &str, args: &Array) -> Result<JsValue, JsValue> {
         }
         "listSelections" => {
             let selection = handle.read(|session| session.state().selection());
-            let range = object(&[("anchor", position(selection.anchor)), ("head", position(selection.head))]);
+            let range = object(&[
+                ("anchor", position(selection.anchor)),
+                ("head", position(selection.head)),
+            ]);
             Array::of1(&range).into()
         }
         "getSelection" => state(&|state| state.selected_text().into()),
@@ -523,17 +573,26 @@ fn call(handle: &Handle, name: &str, args: &Array) -> Result<JsValue, JsValue> {
             .dom()
             .and_then(|dom| {
                 let active = super::window().document()?.active_element()?;
-                Some(JsValue::from(&active == AsRef::<web_sys::Element>::as_ref(&dom.input)))
+                Some(JsValue::from(
+                    &active == AsRef::<web_sys::Element>::as_ref(&dom.input),
+                ))
             })
             .unwrap_or(JsValue::FALSE),
-        "getWrapperElement" => handle.0.wrapper.borrow().clone().map_or(JsValue::NULL, Into::into),
-        "getScrollerElement" => handle.dom().map_or(JsValue::NULL, |dom| dom.scroller.into()),
+        "getWrapperElement" => handle
+            .0
+            .wrapper
+            .borrow()
+            .clone()
+            .map_or(JsValue::NULL, Into::into),
+        "getScrollerElement" => handle
+            .dom()
+            .map_or(JsValue::NULL, |dom| dom.scroller.into()),
         "getInputField" => handle.dom().map_or(JsValue::NULL, |dom| dom.input.into()),
         "getScrollInfo" => {
             let metrics = metrics(handle);
-            let (width, height) = handle
-                .dom()
-                .map_or((0, 0), |dom| (dom.scroller.scroll_width(), dom.scroller.scroll_height()));
+            let (width, height) = handle.dom().map_or((0, 0), |dom| {
+                (dom.scroller.scroll_width(), dom.scroller.scroll_height())
+            });
             object(&[
                 ("left", metrics.scroll_left.into()),
                 ("top", metrics.scroll_top.into()),
@@ -579,7 +638,8 @@ fn call(handle: &Handle, name: &str, args: &Array) -> Result<JsValue, JsValue> {
             let height = handle.read(|session| {
                 layout::document_height(session.state(), &metrics, session.setup().console)
             });
-            let (top, left) = layout::scroll_into_view(&metrics, height, metrics.gutter_width, area);
+            let (top, left) =
+                layout::scroll_into_view(&metrics, height, metrics.gutter_width, area);
             handle.scroll_to(top, left);
             JsValue::UNDEFINED
         }
@@ -596,7 +656,9 @@ fn call(handle: &Handle, name: &str, args: &Array) -> Result<JsValue, JsValue> {
             let left = number(&get(&arg(0), "left")).unwrap_or(0.0) - x;
             let top = number(&get(&arg(0), "top")).unwrap_or(0.0) - y;
             let metrics = metrics(handle);
-            position(handle.read(|session| layout::position_at(session.state(), &metrics, left, top)))
+            position(
+                handle.read(|session| layout::position_at(session.state(), &metrics, left, top)),
+            )
         }
         "heightAtLine" => {
             let line = number(&arg(0)).unwrap_or(0.0).max(0.0) as usize;
@@ -617,7 +679,9 @@ fn call(handle: &Handle, name: &str, args: &Array) -> Result<JsValue, JsValue> {
             handle
                 .read(|session| {
                     let state = session.state();
-                    let row = ((y - layout::PADDING_TOP) / metrics.line_height).floor().max(0.0) as usize;
+                    let row = ((y - layout::PADDING_TOP) / metrics.line_height)
+                        .floor()
+                        .max(0.0) as usize;
                     if row >= state.row_count() {
                         state.last_line()
                     } else {
@@ -652,7 +716,12 @@ fn call(handle: &Handle, name: &str, args: &Array) -> Result<JsValue, JsValue> {
                 }
                 (state.line(line).to_owned(), ends, styles.join("\n"))
             });
-            Array::of3(&text.into(), &js_sys::Uint32Array::from(&ends[..]), &styles.into()).into()
+            Array::of3(
+                &text.into(),
+                &js_sys::Uint32Array::from(&ends[..]),
+                &styles.into(),
+            )
+            .into()
         }
         "getTokenAt" => token(&token_at(handle, at(0).ok_or_else(missing)?)),
         "getTokenTypeAt" => token_at(handle, at(0).ok_or_else(missing)?)
@@ -765,7 +834,8 @@ fn call(handle: &Handle, name: &str, args: &Array) -> Result<JsValue, JsValue> {
         }
         "execCommand" => {
             let name = arg(0).as_string().unwrap_or_default();
-            let command = command(&name).ok_or_else(|| JsValue::from_str(&format!("Unknown command {name}")))?;
+            let command = command(&name)
+                .ok_or_else(|| JsValue::from_str(&format!("Unknown command {name}")))?;
             // Commands run synchronously; callers read the result right away.
             handle.with(|session| session.dispatch(Msg::Command(command), now()));
             JsValue::UNDEFINED
@@ -777,23 +847,36 @@ fn call(handle: &Handle, name: &str, args: &Array) -> Result<JsValue, JsValue> {
                     return (None, None);
                 }
                 let text = session.state().line(line).to_string();
-                let marker = session.setup().console.then(|| session.fold_marker(line)).flatten();
+                let marker = session
+                    .setup()
+                    .console
+                    .then(|| session.fold_marker(line))
+                    .flatten();
                 (Some(text), marker)
             });
             let Some(text) = text else {
                 return Ok(JsValue::NULL);
             };
             let markers = marker.map_or(JsValue::NULL, |folded| {
-                let class = if folded { "console-fold-folded" } else { "console-fold-open" };
+                let class = if folded {
+                    "console-fold-folded"
+                } else {
+                    "console-fold-open"
+                };
                 // Callers get the marker element itself; off-screen lines have none drawn.
                 let drawn = handle.dom().and_then(|dom| {
                     let selector = format!(".console-fold-gutter[data-line=\"{line}\"] > .{class}");
                     dom.root.query_selector(&selector).ok().flatten()
                 });
-                let marker = drawn.map_or_else(|| object(&[("className", class.into())]), JsValue::from);
+                let marker =
+                    drawn.map_or_else(|| object(&[("className", class.into())]), JsValue::from);
                 object(&[("console-fold-gutter", marker)])
             });
-            object(&[("line", line.into()), ("text", text.into()), ("gutterMarkers", markers)])
+            object(&[
+                ("line", line.into()),
+                ("text", text.into()),
+                ("gutterMarkers", markers),
+            ])
         }
         "setSize" => {
             if let Some(dom) = handle.dom() {
@@ -860,6 +943,10 @@ fn call(handle: &Handle, name: &str, args: &Array) -> Result<JsValue, JsValue> {
                 "discovery": session.context().discovery,
             }))
         }),
-        _ => return Err(JsValue::from_str(&format!("Unsupported editor method {name}"))),
+        _ => {
+            return Err(JsValue::from_str(&format!(
+                "Unsupported editor method {name}"
+            )));
+        }
     })
 }

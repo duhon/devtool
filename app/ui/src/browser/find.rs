@@ -136,9 +136,7 @@ impl Component for FindBar {
         listeners.push((
             "focusin",
             Closure::new(move |event: Event| {
-                if let Some(editor) =
-                    event_element(&event).and_then(|el| closest(&el, ".editor"))
-                {
+                if let Some(editor) = event_element(&event).and_then(|el| closest(&el, ".editor")) {
                     state.borrow_mut().last_editor = Some(editor);
                 }
             }),
@@ -698,7 +696,8 @@ impl FindBar {
         self.target
             .as_ref()
             .and_then(|target| {
-                let regions = call(&target.editor, "getOption", &["servicesResponses".into()]).ok()?;
+                let regions =
+                    call(&target.editor, "getOption", &["servicesResponses".into()]).ok()?;
                 serde_json::from_value(super::json(regions)).ok()
             })
             .unwrap_or_default()
@@ -898,11 +897,7 @@ fn escapes(shared: &Shared) -> bool {
         return false;
     };
     target.contains(Some(active.as_ref()))
-        && !get(
-            &get(&get(target, "editor"), "state"),
-            "completionActive",
-        )
-        .is_truthy()
+        && !get(&get(&get(target, "editor"), "state"), "completionActive").is_truthy()
 }
 
 fn document() -> web_sys::Document {

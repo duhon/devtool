@@ -234,7 +234,10 @@ impl State {
         let before = self.selection;
         let mut changes = Vec::with_capacity(transaction.changes.len());
         for change in transaction.changes {
-            let (from, to) = (self.clip(min(change.from, change.to)), self.clip(max(change.from, change.to)));
+            let (from, to) = (
+                self.clip(min(change.from, change.to)),
+                self.clip(max(change.from, change.to)),
+            );
             let text = split_lines(&change.text);
             if from == to && text.len() == 1 && text[0].is_empty() {
                 continue;
@@ -401,8 +404,9 @@ impl State {
         if !before(from, to)
             || self.folds.iter().any(|fold| {
                 let within = !before(from, fold.from) && !before(fold.to, to);
-                let crosses = before(fold.from, from) && before(from, fold.to) && before(fold.to, to)
-                    || before(from, fold.from) && before(fold.from, to) && before(to, fold.to);
+                let crosses =
+                    before(fold.from, from) && before(from, fold.to) && before(fold.to, to)
+                        || before(from, fold.from) && before(fold.from, to) && before(to, fold.to);
                 within || crosses || fold.from.line == from.line
             })
         {
@@ -499,7 +503,12 @@ impl State {
     }
 
     /// Replaces `from..to`; returns the removed lines and the end of the inserted text.
-    fn replace(&mut self, from: Position, to: Position, text: Vec<String>) -> (Vec<String>, Position) {
+    fn replace(
+        &mut self,
+        from: Position,
+        to: Position,
+        text: Vec<String>,
+    ) -> (Vec<String>, Position) {
         let removed = self.removed(from, to);
         let count = text.len();
         let whole = from.ch == 0 && to.ch == 0 && text[count - 1].is_empty();
@@ -594,7 +603,14 @@ impl State {
     /// outer ones.
     fn sync_folds(&mut self) {
         use super::text::before;
-        self.folds.sort_by(|a, b| (a.from.line, a.from.ch, b.to.line, b.to.ch).cmp(&(b.from.line, b.from.ch, a.to.line, a.to.ch)));
+        self.folds.sort_by(|a, b| {
+            (a.from.line, a.from.ch, b.to.line, b.to.ch).cmp(&(
+                b.from.line,
+                b.from.ch,
+                a.to.line,
+                a.to.ch,
+            ))
+        });
         let mut open: Vec<Fold> = Vec::new();
         self.outer.clear();
         let mut line = None;
@@ -634,7 +650,10 @@ mod tests {
     fn changes_report_removed_text_and_map_the_cursor() {
         let mut state = State::new("one\ntwo\nthree");
         state.set_selection(Selection::cursor(at(1, 3)));
-        let changes = state.apply(Transaction::replace(at(0, 1), at(1, 1), "X\nY", "+input"), 0.0);
+        let changes = state.apply(
+            Transaction::replace(at(0, 1), at(1, 1), "X\nY", "+input"),
+            0.0,
+        );
         assert_eq!(state.text(), "oX\nYwo\nthree");
         assert_eq!(changes[0].removed, ["ne", "t"]);
         assert_eq!(changes[0].text, ["X", "Y"]);
@@ -646,11 +665,17 @@ mod tests {
         let mut state = State::new("");
         assert_eq!(state.generation(), 1);
         state.apply(Transaction::replace(at(0, 0), at(0, 0), "a", "+input"), 0.0);
-        state.apply(Transaction::replace(at(0, 1), at(0, 1), "b", "+input"), 10.0);
+        state.apply(
+            Transaction::replace(at(0, 1), at(0, 1), "b", "+input"),
+            10.0,
+        );
         assert_eq!(state.generation(), 3);
         assert_eq!(state.history_size(), (1, 0));
         state.close_history();
-        state.apply(Transaction::replace(at(0, 2), at(0, 2), "c", "+input"), 20.0);
+        state.apply(
+            Transaction::replace(at(0, 2), at(0, 2), "c", "+input"),
+            20.0,
+        );
         assert_eq!(state.generation(), 4);
         let undone = state.undo();
         assert_eq!(undone[0].origin.as_deref(), Some("undo"));
@@ -661,14 +686,20 @@ mod tests {
         assert_eq!((state.text().as_str(), state.generation()), ("ab", 3));
         state.redo();
         assert_eq!((state.text().as_str(), state.generation()), ("abc", 4));
-        assert_eq!(state.generations().into_iter().collect::<Vec<_>>(), [1, 3, 4]);
+        assert_eq!(
+            state.generations().into_iter().collect::<Vec<_>>(),
+            [1, 3, 4]
+        );
     }
 
     #[test]
     fn typing_after_the_delay_starts_a_new_undo_step() {
         let mut state = State::new("");
         state.apply(Transaction::replace(at(0, 0), at(0, 0), "a", "+input"), 0.0);
-        state.apply(Transaction::replace(at(0, 1), at(0, 1), "b", "+input"), 2000.0);
+        state.apply(
+            Transaction::replace(at(0, 1), at(0, 1), "b", "+input"),
+            2000.0,
+        );
         state.undo();
         assert_eq!(state.text(), "a");
     }
@@ -679,11 +710,19 @@ mod tests {
         let next = state.anchor(2).unwrap();
         let first = state.anchor(0).unwrap();
         // A response inserted before the next check keeps the check's anchor.
-        state.set_text("#check A\nbody\n#response\nok\n#check B", Some(14), "+services-response", 0.0);
+        state.set_text(
+            "#check A\nbody\n#response\nok\n#check B",
+            Some(14),
+            "+services-response",
+            0.0,
+        );
         assert_eq!(state.anchor_line(next), Some(4));
         assert_eq!(state.anchor_line(first), Some(0));
         // Splitting a line keeps the anchor on its first part.
-        state.apply(Transaction::replace(at(0, 6), at(0, 6), "\n", "+input"), 0.0);
+        state.apply(
+            Transaction::replace(at(0, 6), at(0, 6), "\n", "+input"),
+            0.0,
+        );
         assert_eq!(state.anchor_line(first), Some(0));
         // Deleting a line drops its anchor.
         let body = state.anchor(2).unwrap();
@@ -696,11 +735,24 @@ mod tests {
     fn folds_hide_lines_and_follow_edits() {
         let mut state = State::new("#response\na\nb\nc\nnext");
         assert!(state.fold(at(0, 9), at(3, 1)));
-        assert_eq!((state.row_count(), state.line_of_row(1), state.row_of_line(4)), (2, 4, 1));
+        assert_eq!(
+            (
+                state.row_count(),
+                state.line_of_row(1),
+                state.row_of_line(4)
+            ),
+            (2, 4, 1)
+        );
         assert!(state.hidden(2) && !state.hidden(4));
-        state.apply(Transaction::replace(at(0, 0), at(0, 0), "x\n", "+input"), 0.0);
+        state.apply(
+            Transaction::replace(at(0, 0), at(0, 0), "x\n", "+input"),
+            0.0,
+        );
         assert_eq!(state.folds()[0].from, at(1, 9));
-        state.apply(Transaction::replace(at(2, 0), at(2, 1), "A\nA", "+services-response"), 0.0);
+        state.apply(
+            Transaction::replace(at(2, 0), at(2, 1), "A\nA", "+services-response"),
+            0.0,
+        );
         assert_eq!(state.folds()[0].to, at(5, 1));
         state.set_selection(Selection::cursor(at(3, 0)));
         assert!(state.folds().is_empty());
@@ -708,20 +760,38 @@ mod tests {
 
     #[test]
     fn nested_folds_return_when_the_outer_one_opens() {
-        let mut state = State::new("#check
+        let mut state = State::new(
+            "#check
 #body
 a
 b
 #response
 c
-next");
+next",
+        );
         assert!(state.fold(at(1, 5), at(3, 1)));
         assert!(state.fold(at(0, 6), at(5, 1)));
         assert_eq!(state.folds().len(), 2);
         assert_eq!((state.row_count(), state.line_of_row(1)), (2, 6));
-        assert!(!state.fold(at(2, 0), at(6, 2)), "a fold can't cross another");
+        assert!(
+            !state.fold(at(2, 0), at(6, 2)),
+            "a fold can't cross another"
+        );
         assert!(state.unfold(0));
-        assert_eq!(state.folds(), &[Fold { from: at(1, 5), to: at(3, 1) }]);
-        assert_eq!((state.row_count(), state.line_of_row(2), state.row_of_line(4)), (5, 4, 2));
+        assert_eq!(
+            state.folds(),
+            &[Fold {
+                from: at(1, 5),
+                to: at(3, 1)
+            }]
+        );
+        assert_eq!(
+            (
+                state.row_count(),
+                state.line_of_row(2),
+                state.row_of_line(4)
+            ),
+            (5, 4, 2)
+        );
     }
 }

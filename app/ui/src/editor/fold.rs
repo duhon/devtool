@@ -54,7 +54,11 @@ pub fn range(highlighter: &mut Highlighter, lines: &[String], line: usize) -> Op
             to: end_of(lines, end),
         });
     }
-    let output = |line: usize| regions.iter().any(|region| line >= region.header && line < region.end);
+    let output = |line: usize| {
+        regions
+            .iter()
+            .any(|region| line >= region.header && line < region.end)
+    };
     if !output(line) && first.trim_start().starts_with('#') {
         let check = crate::console::is_check(first);
         let main = first.trim_start().starts_with("#respon");
@@ -79,7 +83,10 @@ pub fn range(highlighter: &mut Highlighter, lines: &[String], line: usize) -> Op
     }
     let config = highlighter.config().clone();
     if config.grid() {
-        if let Some(region) = regions.iter().find(|region| line >= region.header && line < region.end) {
+        if let Some(region) = regions
+            .iter()
+            .find(|region| line >= region.header && line < region.end)
+        {
             let json = region.table.as_ref().is_some_and(|table| {
                 table.json || table.types.values().any(|kind| *kind == Kind::Json)
             });
@@ -125,7 +132,9 @@ fn operation(
         if output(end)
             || (config.console()
                 && (crate::console::is_check(text)
-                    || marker.is_some_and(|marker| marker.starts_with("respon") || config.section(marker))))
+                    || marker.is_some_and(|marker| {
+                        marker.starts_with("respon") || config.section(marker)
+                    })))
         {
             break;
         }
@@ -168,7 +177,10 @@ fn brackets(lines: &[String], line: usize) -> Option<Fold> {
             match c {
                 '"' | '\'' => quote = Some(c),
                 '{' | '[' => {
-                    start.get_or_insert(Position { line: i, ch: at + 1 });
+                    start.get_or_insert(Position {
+                        line: i,
+                        ch: at + 1,
+                    });
                     depth += 1;
                 }
                 '}' | ']' => {
@@ -193,14 +205,24 @@ fn brackets(lines: &[String], line: usize) -> Option<Fold> {
 }
 
 /// The JSON value of a vertical row field (`  name: {...}`) that `line` opens.
-fn vertical_json(highlighter: &mut Highlighter, lines: &[String], region: &ResponseRegion, line: usize) -> Option<Fold> {
+fn vertical_json(
+    highlighter: &mut Highlighter,
+    lines: &[String],
+    region: &ResponseRegion,
+    line: usize,
+) -> Option<Fold> {
     let table = region.table.as_ref()?;
     if line <= region.header {
         return None;
     }
     let cache = &mut highlighter.json_folds;
     if cache.region != Some(region.header) {
-        let width = table.columns.iter().map(|name| name.chars().count()).max().unwrap_or(0);
+        let width = table
+            .columns
+            .iter()
+            .map(|name| name.chars().count())
+            .max()
+            .unwrap_or(0);
         *cache = JsonFolds {
             region: Some(region.header),
             fields: table
@@ -219,7 +241,11 @@ fn vertical_json(highlighter: &mut Highlighter, lines: &[String], region: &Respo
     }
     let mut found = None;
     for at in (region.header + 1..=line).rev() {
-        if let Some(scope) = cache.scopes.iter_mut().find(|scope| at >= scope.from && at <= scope.to) {
+        if let Some(scope) = cache
+            .scopes
+            .iter_mut()
+            .find(|scope| at >= scope.from && at <= scope.to)
+        {
             scope.to = scope.to.max(line);
             found = Some((scope.from, scope.field));
             break;
@@ -228,7 +254,11 @@ fn vertical_json(highlighter: &mut Highlighter, lines: &[String], region: &Respo
         if text.starts_with("*****") || text.starts_with('|') || text.starts_with('+') {
             return None;
         }
-        if let Some(field) = cache.fields.iter().position(|field| text.starts_with(&field.prefix)) {
+        if let Some(field) = cache
+            .fields
+            .iter()
+            .position(|field| text.starts_with(&field.prefix))
+        {
             cache.scopes.push(Scope {
                 from: at,
                 to: line,
@@ -269,7 +299,10 @@ fn vertical_json(highlighter: &mut Highlighter, lines: &[String], region: &Respo
             } else if c == '"' {
                 quoted = true;
             } else if c == '{' || c == '[' {
-                from.get_or_insert(Position { line: at, ch: ch + 1 });
+                from.get_or_insert(Position {
+                    line: at,
+                    ch: ch + 1,
+                });
                 stack.push(if c == '{' { '}' } else { ']' });
             } else if c == '}' || c == ']' {
                 if stack.pop() != Some(c) {
@@ -312,7 +345,11 @@ mod tests {
     }
 
     fn console(payload: &str, response: View) -> Highlighter {
-        Highlighter::with_config(Config::console_for_tests(&[("sql", "sql")], payload, response))
+        Highlighter::with_config(Config::console_for_tests(
+            &[("sql", "sql")],
+            payload,
+            response,
+        ))
     }
 
     #[test]
@@ -325,7 +362,8 @@ mod tests {
             end: 6,
             table: None,
         }]);
-        let fold = |h: &mut Highlighter, line| range(h, &doc, line).map(|fold| (fold.from, fold.to));
+        let fold =
+            |h: &mut Highlighter, line| range(h, &doc, line).map(|fold| (fold.from, fold.to));
         assert_eq!(fold(&mut highlighter, 0), Some((at(0, 8), at(5, 2))));
         assert_eq!(fold(&mut highlighter, 4), Some((at(4, 13), at(5, 2))));
         assert_eq!(fold(&mut highlighter, 1), Some((at(1, 1), at(3, 0))));
@@ -344,7 +382,9 @@ mod tests {
     #[test]
     fn vertical_json_fields_fold_their_value() {
         let mut highlighter = console("sql", View::Grid);
-        let doc = lines("#check\nSELECT 1\n#response\n***** 1. row *****\n  id: 1\ndata: {\"a\": [\n  1]}\n  id: 2");
+        let doc = lines(
+            "#check\nSELECT 1\n#response\n***** 1. row *****\n  id: 1\ndata: {\"a\": [\n  1]}\n  id: 2",
+        );
         highlighter.set_regions(&[ResponseRegion {
             request: 0,
             header: 2,

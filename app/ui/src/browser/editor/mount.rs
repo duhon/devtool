@@ -26,7 +26,13 @@ fn mount(host: web_sys::Element, options: JsValue) -> JsValue {
         serde_json::from_value(options["responses"].clone()).unwrap_or_default();
     let checks: Vec<Identity> = options["checks"]
         .as_array()
-        .map(|lines| lines.iter().filter_map(|line| line.as_u64()).map(|line| Identity::new(line as usize)).collect())
+        .map(|lines| {
+            lines
+                .iter()
+                .filter_map(|line| line.as_u64())
+                .map(|line| Identity::new(line as usize))
+                .collect()
+        })
         .unwrap_or_default();
     let setup = Setup {
         mode: format!("console-{service}"),

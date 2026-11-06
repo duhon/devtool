@@ -176,12 +176,14 @@ pub fn gutter_width(line_count: usize, char_width: f64, console: bool) -> f64 {
 /// The rows to render: the visible ones and a margin around them.
 pub fn rendered_rows(state: &State, metrics: Option<Metrics>) -> Range<usize> {
     let rows = state.row_count();
-    let Some(metrics) = metrics.filter(|metrics| metrics.line_height > 0.0 && metrics.client_height > 0.0)
+    let Some(metrics) =
+        metrics.filter(|metrics| metrics.line_height > 0.0 && metrics.client_height > 0.0)
     else {
         return 0..rows.min(UNMEASURED_ROWS);
     };
     let first = ((metrics.scroll_top - PADDING_TOP).max(0.0) / metrics.line_height) as usize;
-    let last = ((metrics.scroll_top + metrics.client_height - PADDING_TOP) / metrics.line_height).ceil() as usize;
+    let last = ((metrics.scroll_top + metrics.client_height - PADDING_TOP) / metrics.line_height)
+        .ceil() as usize;
     first.saturating_sub(MARGIN).min(rows)..(last + MARGIN).min(rows)
 }
 
@@ -244,7 +246,12 @@ pub fn caret(state: &State, metrics: &Metrics, at: Position) -> Option<Rect> {
 
 /// The selected text on `rows`: one
 /// rectangle per selected run of text, joined on a row.
-pub fn selection_rects(state: &State, metrics: &Metrics, selection: Selection, rows: Range<usize>) -> Vec<Rect> {
+pub fn selection_rects(
+    state: &State,
+    metrics: &Metrics,
+    selection: Selection,
+    rows: Range<usize>,
+) -> Vec<Rect> {
     let (from, to) = (selection.from(), selection.to());
     let mut rects = Vec::new();
     if from == to {
@@ -277,8 +284,20 @@ pub fn selection_rects(state: &State, metrics: &Metrics, selection: Selection, r
             }
         };
         for (index, piece) in layout.pieces.iter().enumerate() {
-            let start = max(from, Position { line: piece.line, ch: piece.from });
-            let end = min(to, Position { line: piece.line, ch: piece.to });
+            let start = max(
+                from,
+                Position {
+                    line: piece.line,
+                    ch: piece.from,
+                },
+            );
+            let end = min(
+                to,
+                Position {
+                    line: piece.line,
+                    ch: piece.to,
+                },
+            );
             if before(start, end) && start.line == piece.line && end.line == piece.line {
                 let text = state.line(piece.line);
                 let left = advance(piece.column, slice(text, piece.from, start.ch));
@@ -350,7 +369,12 @@ pub fn outline(rects: &[Rect]) -> String {
 }
 
 /// The scroll offsets that bring `rect` into view.
-pub fn scroll_into_view(metrics: &Metrics, document_height: f64, gutter: f64, mut rect: Rect) -> (Option<f64>, Option<f64>) {
+pub fn scroll_into_view(
+    metrics: &Metrics,
+    document_height: f64,
+    gutter: f64,
+    mut rect: Rect,
+) -> (Option<f64>, Option<f64>) {
     let snap = metrics.line_height;
     rect.top = rect.top.max(0.0);
     let screen = metrics.client_height;
@@ -363,7 +387,13 @@ pub fn scroll_into_view(metrics: &Metrics, document_height: f64, gutter: f64, mu
     if rect.top < metrics.scroll_top {
         top = Some(if at_top { 0.0 } else { rect.top });
     } else if rect.bottom > metrics.scroll_top + screen {
-        let next = rect.top.min(if at_bottom { document_height } else { rect.bottom } - screen);
+        let next = rect.top.min(
+            if at_bottom {
+                document_height
+            } else {
+                rect.bottom
+            } - screen,
+        );
         if next != metrics.scroll_top {
             top = Some(next);
         }
@@ -480,12 +510,18 @@ mod tests {
             right: 4.0,
             bottom: 214.0,
         };
-        assert_eq!(scroll_into_view(&metrics, 1000.0, 30.0, rect), (Some(114.0), Some(0.0)));
+        assert_eq!(
+            scroll_into_view(&metrics, 1000.0, 30.0, rect),
+            (Some(114.0), Some(0.0))
+        );
         let wide = Rect {
             left: 400.0,
             right: 400.0,
             ..rect
         };
-        assert_eq!(scroll_into_view(&metrics, 1000.0, 30.0, wide).1, Some(240.0));
+        assert_eq!(
+            scroll_into_view(&metrics, 1000.0, 30.0, wide).1,
+            Some(240.0)
+        );
     }
 }

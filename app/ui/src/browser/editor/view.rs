@@ -8,8 +8,8 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use wasm_bindgen::{JsCast, JsValue, closure::Closure};
 use web_sys::{
-    ClipboardEvent, Element, HtmlElement, HtmlTextAreaElement, KeyboardEvent,
-    MouseEvent, ResizeObserver,
+    ClipboardEvent, Element, HtmlElement, HtmlTextAreaElement, KeyboardEvent, MouseEvent,
+    ResizeObserver,
 };
 use yew::prelude::*;
 
@@ -96,7 +96,8 @@ fn hide_tooltip(tooltip: &RefCell<Option<Element>>) {
 fn point(scroller: &Element, metrics: &Metrics, event: &MouseEvent) -> (f64, f64) {
     let bounds = scroller.get_bounding_client_rect();
     (
-        f64::from(event.client_x()) - bounds.left() + number(scroller, "scrollLeft") - metrics.gutter_width,
+        f64::from(event.client_x()) - bounds.left() + number(scroller, "scrollLeft")
+            - metrics.gutter_width,
         f64::from(event.client_y()) - bounds.top() + number(scroller, "scrollTop"),
     )
 }
@@ -224,8 +225,14 @@ impl View {
                         let metrics = session.metrics()?;
                         let state = session.state();
                         let caret = layout::caret(state, &metrics, state.selection().head)?;
-                        let height = layout::document_height(state, &metrics, session.setup().console);
-                        Some(layout::scroll_into_view(&metrics, height, metrics.gutter_width, caret))
+                        let height =
+                            layout::document_height(state, &metrics, session.setup().console);
+                        Some(layout::scroll_into_view(
+                            &metrics,
+                            height,
+                            metrics.gutter_width,
+                            caret,
+                        ))
                     });
                     if let Some((top, left)) = target {
                         handle.scroll_to(top, left);
@@ -261,13 +268,22 @@ impl View {
         }) else {
             return;
         };
-        let anchor = handle.read(|session| render::hint_anchor(session, &render::frame(session), bounds));
+        let anchor =
+            handle.read(|session| render::hint_anchor(session, &render::frame(session), bounds));
         let Some((left, top, bottom)) = anchor else {
             return;
         };
         let window = super::window();
-        let height = window.inner_height().ok().and_then(|value| value.as_f64()).unwrap_or_default();
-        let width = window.inner_width().ok().and_then(|value| value.as_f64()).unwrap_or_default();
+        let height = window
+            .inner_height()
+            .ok()
+            .and_then(|value| value.as_f64())
+            .unwrap_or_default();
+        let width = window
+            .inner_width()
+            .ok()
+            .and_then(|value| value.as_f64())
+            .unwrap_or_default();
         let style = list.style();
         let _ = style.set_property("max-height", "");
         let rect = list.get_bounding_client_rect();
@@ -275,11 +291,17 @@ impl View {
             if top - rect.height() > 0.0 {
                 let _ = style.set_property("top", &format!("{}px", top - rect.height()));
             } else {
-                let _ = style.set_property("max-height", &format!("{}px", (height - bottom - 5.0).max(40.0)));
+                let _ = style.set_property(
+                    "max-height",
+                    &format!("{}px", (height - bottom - 5.0).max(40.0)),
+                );
             }
         }
         if rect.right() > width && width > 0.0 {
-            let _ = style.set_property("left", &format!("{}px", (left - (rect.right() - width)).max(0.0)));
+            let _ = style.set_property(
+                "left",
+                &format!("{}px", (left - (rect.right() - width)).max(0.0)),
+            );
         }
         if let Ok(Some(active)) = list.query_selector(".editor-hint-active")
             && let Ok(active) = active.dyn_into::<HtmlElement>()
@@ -355,75 +377,85 @@ impl View {
         self.columns.set(Some((edits, columns)));
         columns
     }
-
 }
 
 /// Selects with the mouse until it is released, wherever it moves.
 fn start_drag(drag: &Rc<RefCell<Option<Drag>>>, scroller: &HtmlElement, handle: &Handle) {
-        let document = match super::window().document() {
-            Some(document) => document,
-            None => return,
-        };
-        let moving = {
-            let handle = handle.clone();
-            let scroller = scroller.clone();
-            Closure::<dyn FnMut(MouseEvent)>::new(move |event: MouseEvent| {
-                let Some(metrics) = handle.metrics() else {
-                    return;
-                };
-                let bounds = scroller.get_bounding_client_rect();
-                let y = f64::from(event.client_y());
-                let x = f64::from(event.client_x());
-                if y < bounds.top() {
-                    scroller.set_scroll_top(scroller.scroll_top() - (bounds.top() - y).ceil() as i32);
-                } else if y > bounds.bottom() {
-                    scroller.set_scroll_top(scroller.scroll_top() + (y - bounds.bottom()).ceil() as i32);
-                }
-                if x < bounds.left() + metrics.gutter_width {
-                    scroller.set_scroll_left(scroller.scroll_left() - (bounds.left() + metrics.gutter_width - x).ceil() as i32);
-                } else if x > bounds.right() {
-                    scroller.set_scroll_left(scroller.scroll_left() + (x - bounds.right()).ceil() as i32);
-                }
-                let (x, y) = point(&scroller, &metrics, &event);
-                let at = handle.read(|session| layout::position_at(session.state(), &metrics, x, y));
-                handle.notify(Msg::Drag(at));
-            })
-        };
-        let cell = drag.clone();
-        let up = {
-            let handle = handle.clone();
-            let document = document.clone();
-            Closure::<dyn FnMut(MouseEvent)>::new(move |_: MouseEvent| {
-                if let Some(drag) = cell.borrow_mut().as_mut() {
-                    drag.active = false;
-                    for (name, listener) in &drag.listeners {
-                        let _ = document.remove_event_listener_with_callback(name, listener);
-                    }
-                }
-                handle.notify(Msg::Release);
-            })
-        };
-        let listeners = [
-            ("mousemove", moving.as_ref().unchecked_ref::<js_sys::Function>().clone()),
-            ("mouseup", up.as_ref().unchecked_ref::<js_sys::Function>().clone()),
-        ];
-        let mut current = drag.borrow_mut();
-        if let Some(previous) = current.as_ref()
-            && previous.active
-        {
-            for (name, listener) in &previous.listeners {
-                let _ = document.remove_event_listener_with_callback(name, listener);
+    let document = match super::window().document() {
+        Some(document) => document,
+        None => return,
+    };
+    let moving = {
+        let handle = handle.clone();
+        let scroller = scroller.clone();
+        Closure::<dyn FnMut(MouseEvent)>::new(move |event: MouseEvent| {
+            let Some(metrics) = handle.metrics() else {
+                return;
+            };
+            let bounds = scroller.get_bounding_client_rect();
+            let y = f64::from(event.client_y());
+            let x = f64::from(event.client_x());
+            if y < bounds.top() {
+                scroller.set_scroll_top(scroller.scroll_top() - (bounds.top() - y).ceil() as i32);
+            } else if y > bounds.bottom() {
+                scroller
+                    .set_scroll_top(scroller.scroll_top() + (y - bounds.bottom()).ceil() as i32);
             }
+            if x < bounds.left() + metrics.gutter_width {
+                scroller.set_scroll_left(
+                    scroller.scroll_left()
+                        - (bounds.left() + metrics.gutter_width - x).ceil() as i32,
+                );
+            } else if x > bounds.right() {
+                scroller
+                    .set_scroll_left(scroller.scroll_left() + (x - bounds.right()).ceil() as i32);
+            }
+            let (x, y) = point(&scroller, &metrics, &event);
+            let at = handle.read(|session| layout::position_at(session.state(), &metrics, x, y));
+            handle.notify(Msg::Drag(at));
+        })
+    };
+    let cell = drag.clone();
+    let up = {
+        let handle = handle.clone();
+        let document = document.clone();
+        Closure::<dyn FnMut(MouseEvent)>::new(move |_: MouseEvent| {
+            if let Some(drag) = cell.borrow_mut().as_mut() {
+                drag.active = false;
+                for (name, listener) in &drag.listeners {
+                    let _ = document.remove_event_listener_with_callback(name, listener);
+                }
+            }
+            handle.notify(Msg::Release);
+        })
+    };
+    let listeners = [
+        (
+            "mousemove",
+            moving.as_ref().unchecked_ref::<js_sys::Function>().clone(),
+        ),
+        (
+            "mouseup",
+            up.as_ref().unchecked_ref::<js_sys::Function>().clone(),
+        ),
+    ];
+    let mut current = drag.borrow_mut();
+    if let Some(previous) = current.as_ref()
+        && previous.active
+    {
+        for (name, listener) in &previous.listeners {
+            let _ = document.remove_event_listener_with_callback(name, listener);
         }
-        for (name, listener) in &listeners {
-            let _ = document.add_event_listener_with_callback(name, listener);
-        }
-        *current = Some(Drag {
-            active: true,
-            _move: moving,
-            _up: up,
-            listeners,
-        });
+    }
+    for (name, listener) in &listeners {
+        let _ = document.add_event_listener_with_callback(name, listener);
+    }
+    *current = Some(Drag {
+        active: true,
+        _move: moving,
+        _up: up,
+        listeners,
+    });
 }
 
 impl View {
@@ -480,8 +512,12 @@ impl Component for View {
     fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
         match msg {
             ViewMsg::Redraw => {
-                let (shown, effects) = Self::handle(ctx)
-                    .read(|session| ((session.revision(), session.metrics()), session.has_effects()));
+                let (shown, effects) = Self::handle(ctx).read(|session| {
+                    (
+                        (session.revision(), session.metrics()),
+                        session.has_effects(),
+                    )
+                });
                 effects || self.shown.get() != Some(shown)
             }
             ViewMsg::Typed => {
@@ -526,7 +562,8 @@ impl Component for View {
         let widest = self.widest(ctx);
         let mut session = handle.0.session.borrow_mut();
         let frame: Frame = render::frame(&session);
-        self.shown.set(Some((session.revision(), session.metrics())));
+        self.shown
+            .set(Some((session.revision(), session.metrics())));
         let gutter = render::gutter(&mut session, &frame);
         let rows = render::rows(&mut session, &frame);
         let session = &*session;
@@ -543,7 +580,11 @@ impl Component for View {
         });
         let hints = bounds
             .and_then(|bounds| render::hint_anchor(session, &frame, bounds))
-            .zip(super::window().document().and_then(|document| document.body()))
+            .zip(
+                super::window()
+                    .document()
+                    .and_then(|document| document.body()),
+            )
             .map(|(anchor, body)| {
                 let onclick = {
                     let handle = handle.clone();
@@ -559,7 +600,10 @@ impl Component for View {
                         }
                     })
                 };
-                create_portal(render::hints(session, anchor, &self.hints, onclick), body.into())
+                create_portal(
+                    render::hints(session, anchor, &self.hints, onclick),
+                    body.into(),
+                )
             });
         let input_at = {
             let caret = layout::caret(state, &metrics, state.selection().head);
@@ -572,7 +616,8 @@ impl Component for View {
                 )
             })
         };
-        let width = frame.gutter + layout::x(widest, metrics.char_width) + layout::LINE_PADDING + 1.0;
+        let width =
+            frame.gutter + layout::x(widest, metrics.char_width) + layout::LINE_PADDING + 1.0;
 
         let onkeydown = {
             let handle = handle.clone();
@@ -599,7 +644,8 @@ impl Component for View {
         };
         let oninput = {
             let composing = self.composing.clone();
-            ctx.link().batch_callback(move |_: InputEvent| (!composing.get()).then_some(ViewMsg::Typed))
+            ctx.link()
+                .batch_callback(move |_: InputEvent| (!composing.get()).then_some(ViewMsg::Typed))
         };
         let oncopy = {
             let handle = handle.clone();
@@ -633,7 +679,10 @@ impl Component for View {
                     return;
                 };
                 event.prevent_default();
-                if let Some(text) = event.clipboard_data().and_then(|data| data.get_data("text/plain").ok()) {
+                if let Some(text) = event
+                    .clipboard_data()
+                    .and_then(|data| data.get_data("text/plain").ok())
+                {
                     handle.notify(Msg::Paste(text));
                 }
             })
@@ -663,10 +712,14 @@ impl Component for View {
                     f64::from(event.client_x()) - bounds.left(),
                     f64::from(event.client_y()) - bounds.top(),
                 );
-                if x >= f64::from(scroller.client_width()) || y >= f64::from(scroller.client_height()) {
+                if x >= f64::from(scroller.client_width())
+                    || y >= f64::from(scroller.client_height())
+                {
                     return;
                 }
-                let target = event.target().and_then(|target| target.dyn_into::<Element>().ok());
+                let target = event
+                    .target()
+                    .and_then(|target| target.dyn_into::<Element>().ok());
                 let focus = || {
                     if let Some(input) = input.cast::<HtmlElement>() {
                         let _ = input.focus();
@@ -676,7 +729,11 @@ impl Component for View {
                     && target.closest(".editor-gutters").ok().flatten().is_some()
                 {
                     event.prevent_default();
-                    if target.closest(".console-fold-open, .console-fold-folded").ok().flatten().is_some()
+                    if target
+                        .closest(".console-fold-open, .console-fold-folded")
+                        .ok()
+                        .flatten()
+                        .is_some()
                         && let Some(line) = line_of(target, ".console-fold-gutter")
                     {
                         handle.notify(Msg::ToggleFold(line));
@@ -700,7 +757,8 @@ impl Component for View {
                     return;
                 };
                 let (x, y) = point(&scroller, &metrics, &event);
-                let at = handle.read(|session| layout::position_at(session.state(), &metrics, x, y));
+                let at =
+                    handle.read(|session| layout::position_at(session.state(), &metrics, x, y));
                 focus();
                 handle.notify(Msg::Press {
                     at,
@@ -759,7 +817,11 @@ impl Component for View {
                 element.set_text_content(Some(&text));
                 let _ = element.set_attribute(
                     "style",
-                    &format!("left:{}px;top:{}px", event.client_x() + 12, event.client_y() + 16),
+                    &format!(
+                        "left:{}px;top:{}px",
+                        event.client_x() + 12,
+                        event.client_y() + 16
+                    ),
                 );
             })
         };
@@ -829,7 +891,10 @@ impl Component for View {
             // Toggled, not set, so classes others add to the wrapper stay.
             let (focused, empty) = handle.read(|session| {
                 let state = session.state();
-                (session.focused(), state.line_count() == 1 && state.line(0).is_empty())
+                (
+                    session.focused(),
+                    state.line_count() == 1 && state.line(0).is_empty(),
+                )
             });
             let classes = root.class_list();
             let _ = classes.toggle_with_force("editor-focused", focused);
@@ -837,7 +902,11 @@ impl Component for View {
         }
         let gutter = handle.read(|session| {
             let metrics = session.metrics()?;
-            let width = layout::gutter_width(session.state().line_count(), metrics.char_width, session.setup().console);
+            let width = layout::gutter_width(
+                session.state().line_count(),
+                metrics.char_width,
+                session.setup().console,
+            );
             (width != metrics.gutter_width).then_some(Metrics {
                 gutter_width: width,
                 ..metrics
@@ -858,7 +927,8 @@ impl Component for View {
         }
         if let Some(input) = self.input.cast::<HtmlTextAreaElement>() {
             for (name, closure) in &self.listeners {
-                let _ = input.remove_event_listener_with_callback(name, closure.as_ref().unchecked_ref());
+                let _ = input
+                    .remove_event_listener_with_callback(name, closure.as_ref().unchecked_ref());
             }
         }
     }

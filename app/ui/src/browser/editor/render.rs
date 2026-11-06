@@ -92,7 +92,10 @@ fn decorations(session: &Session, lines: std::ops::RangeInclusive<usize>) -> Dec
     let mut out = Decorations::default();
     let mut add = |line: usize, from: usize, to: usize, class: AttrValue| {
         if lines.contains(&line) && from < to {
-            out.text.entry(line).or_default().push(Decoration { from, to, class });
+            out.text
+                .entry(line)
+                .or_default()
+                .push(Decoration { from, to, class });
         }
     };
     for (_, mark) in session.marks() {
@@ -108,7 +111,10 @@ fn decorations(session: &Session, lines: std::ops::RangeInclusive<usize>) -> Dec
                 if let Some(line) = state.anchor_line(*anchor)
                     && lines.contains(&line)
                 {
-                    out.lines.entry(line).or_default().push(AttrValue::from(class.clone()));
+                    out.lines
+                        .entry(line)
+                        .or_default()
+                        .push(AttrValue::from(class.clone()));
                 }
             }
         }
@@ -122,7 +128,12 @@ fn decorations(session: &Session, lines: std::ops::RangeInclusive<usize>) -> Dec
         add(at.line, at.ch, at.ch + 1, AttrValue::Static(class));
     }
     for (line, from, to) in session.objects() {
-        add(*line, *from, *to, AttrValue::Static("tok-graphql-object-field"));
+        add(
+            *line,
+            *from,
+            *to,
+            AttrValue::Static("tok-graphql-object-field"),
+        );
     }
     out
 }
@@ -142,12 +153,22 @@ fn expand(text: &str, column: &mut usize, out: &mut String) {
 }
 
 /// The token spans of one piece of a row, merged where their classes match.
-fn piece(text: &str, piece: &Piece, spans: &[Span], decorations: &[Decoration], out: &mut Vec<Html>) {
+fn piece(
+    text: &str,
+    piece: &Piece,
+    spans: &[Span],
+    decorations: &[Decoration],
+    out: &mut Vec<Html>,
+) {
     let mut cuts = vec![piece.from, piece.to];
     let inside = |cut: usize| cut > piece.from && cut < piece.to;
     cuts.extend(spans.iter().map(|span| span.end).filter(|end| inside(*end)));
     for decoration in decorations {
-        cuts.extend([decoration.from, decoration.to].into_iter().filter(|cut| inside(*cut)));
+        cuts.extend(
+            [decoration.from, decoration.to]
+                .into_iter()
+                .filter(|cut| inside(*cut)),
+        );
     }
     cuts.sort_unstable();
     cuts.dedup();
@@ -227,7 +248,13 @@ struct LineProps {
 fn Line(props: &LineProps) -> Html {
     let mut children = Vec::new();
     for part in &props.pieces {
-        piece(&part.text, &part.piece, &part.spans, &part.decorations, &mut children);
+        piece(
+            &part.text,
+            &part.piece,
+            &part.spans,
+            &part.decorations,
+            &mut children,
+        );
         if let Some(line) = part.fold {
             children.push(html! {
                 <span class="editor-widget" role="presentation">
@@ -286,7 +313,9 @@ pub(super) fn rows(session: &mut Session, frame: &Frame) -> Html {
     let widget_width = frame.metrics.char_width * WIDGET_COLUMNS as f64;
     let rows = layouts.into_iter().map(|layout| {
         let line = layout.pieces[0].line;
-        let key = state.anchor(line).map_or(line as u64, |anchor| anchor.key());
+        let key = state
+            .anchor(line)
+            .map_or(line as u64, |anchor| anchor.key());
         let pieces = layout
             .pieces
             .iter()
@@ -294,15 +323,25 @@ pub(super) fn rows(session: &mut Session, frame: &Frame) -> Html {
             .map(|(index, part)| LinePiece {
                 text: state.line(part.line).to_owned(),
                 piece: part.clone(),
-                spans: tokens.get(&part.line).cloned().unwrap_or_else(|| std::rc::Rc::from([])),
-                decorations: decorations.text.get(&part.line).cloned().unwrap_or_default(),
+                spans: tokens
+                    .get(&part.line)
+                    .cloned()
+                    .unwrap_or_else(|| std::rc::Rc::from([])),
+                decorations: decorations
+                    .text
+                    .get(&part.line)
+                    .cloned()
+                    .unwrap_or_default(),
                 fold: layout.widgets.get(index).map(|(_, fold)| fold.from.line),
             })
             .collect();
         let props = LineProps {
             pieces,
             blank: layout.columns == 0,
-            band: frame.console.then(|| checks::band(session.check_lines(), line)).flatten(),
+            band: frame
+                .console
+                .then(|| checks::band(session.check_lines(), line))
+                .flatten(),
             backgrounds: decorations.lines.remove(&line).unwrap_or_default(),
             widget_width,
         };
@@ -358,7 +397,12 @@ pub(super) fn gutter(session: &mut Session, frame: &Frame) -> Html {
 /// The selection: rectangles under the text and their outline.
 pub(super) fn selection(session: &Session, frame: &Frame) -> Html {
     let state = session.state();
-    let rects = layout::selection_rects(state, &frame.metrics, state.selection(), frame.first..frame.end);
+    let rects = layout::selection_rects(
+        state,
+        &frame.metrics,
+        state.selection(),
+        frame.first..frame.end,
+    );
     let outline = (!rects.is_empty()).then(|| layout::outline(&rects));
     html! {
         <div class="editor-selection-layer" style={format!("left:{}px", frame.gutter)}>
@@ -404,12 +448,17 @@ pub(super) fn to_window(frame: &Frame, bounds: (f64, f64), x: f64, y: f64) -> (f
 }
 
 /// The caret of the hints' start in window coordinates: `(left, top, bottom)`, when visible.
-pub(super) fn hint_anchor(session: &Session, frame: &Frame, bounds: (f64, f64)) -> Option<(f64, f64, f64)> {
+pub(super) fn hint_anchor(
+    session: &Session,
+    frame: &Frame,
+    bounds: (f64, f64),
+) -> Option<(f64, f64, f64)> {
     let popup = session.popup()?;
     let state = session.state();
     let caret = layout::caret(state, &frame.metrics, state.clip(popup.from))?;
     let visible = caret.bottom > frame.metrics.scroll_top
-        && caret.top < frame.metrics.scroll_top + frame.metrics.client_height.max(frame.metrics.line_height);
+        && caret.top
+            < frame.metrics.scroll_top + frame.metrics.client_height.max(frame.metrics.line_height);
     if !visible {
         return None;
     }
@@ -418,7 +467,12 @@ pub(super) fn hint_anchor(session: &Session, frame: &Frame, bounds: (f64, f64)) 
 }
 
 /// The open hints list under the caret; the view moves it above when it does not fit.
-pub(super) fn hints(session: &Session, anchor: (f64, f64, f64), node: &NodeRef, onclick: Callback<MouseEvent>) -> Html {
+pub(super) fn hints(
+    session: &Session,
+    anchor: (f64, f64, f64),
+    node: &NodeRef,
+    onclick: Callback<MouseEvent>,
+) -> Html {
     let Some(popup) = session.popup() else {
         return Html::default();
     };

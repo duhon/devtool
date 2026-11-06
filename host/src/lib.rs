@@ -1,6 +1,7 @@
 pub mod adapters;
 pub mod agent;
 pub mod core;
+pub mod drivers;
 pub mod host;
 pub mod runtime;
 #[cfg(unix)]

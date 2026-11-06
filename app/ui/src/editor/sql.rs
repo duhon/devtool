@@ -95,8 +95,14 @@ fn is_operator(b: u8) -> bool {
 
 /// A block comment's text from byte `from` to its `*/` or the line end.
 fn block_comment(bytes: &[u8], from: usize, state: &mut State) -> (usize, Style) {
-    let close = bytes[from.min(bytes.len())..].windows(2).position(|pair| pair == b"*/");
-    *state = if close.is_some() { State::Code } else { State::Comment };
+    let close = bytes[from.min(bytes.len())..]
+        .windows(2)
+        .position(|pair| pair == b"*/");
+    *state = if close.is_some() {
+        State::Code
+    } else {
+        State::Comment
+    };
     (close.map_or(bytes.len(), |n| from + n + 2), Some("comment"))
 }
 
@@ -150,7 +156,9 @@ fn variable(bytes: &[u8], pos: usize) -> (usize, Style) {
 
 /// The end of a number literal at byte `pos`: decimal, `0x`/`0b` or `X'…'`/`B'…'`.
 fn number(bytes: &[u8], pos: usize) -> Option<usize> {
-    let digits = |from: usize, accept: fn(&u8) -> bool| from + bytes[from..].iter().take_while(|b| accept(b)).count();
+    let digits = |from: usize, accept: fn(&u8) -> bool| {
+        from + bytes[from..].iter().take_while(|b| accept(b)).count()
+    };
     let binary = |b: &u8| matches!(b, b'0' | b'1');
     let first = bytes[pos].to_ascii_lowercase();
     if matches!(first, b'x' | b'b') && bytes.get(pos + 1) == Some(&b'\'') {
@@ -240,13 +248,22 @@ mod tests {
                 ("still'", "string"),
             ]
         );
-        assert_eq!(styled("/*! x */ `a``b` `open"), [("/*! x */", "comment"), ("`a``b`", "variable-2"), ("`open", "variable-2")]);
+        assert_eq!(
+            styled("/*! x */ `a``b` `open"),
+            [
+                ("/*! x */", "comment"),
+                ("`a``b`", "variable-2"),
+                ("`open", "variable-2")
+            ]
+        );
     }
 
     #[test]
     fn words_are_atoms_types_keywords_or_names() {
         assert_eq!(
-            styled("Select NULL, Unknown, CAST(x AS UNSIGNED) FROM tbl_é WHERE date = DATE '2024-01-01'"),
+            styled(
+                "Select NULL, Unknown, CAST(x AS UNSIGNED) FROM tbl_é WHERE date = DATE '2024-01-01'"
+            ),
             [
                 ("Select", "keyword"),
                 ("NULL", "atom"),
@@ -307,7 +324,19 @@ mod tests {
     fn dashes_start_a_comment_only_before_a_space_or_the_line_end() {
         assert_eq!(styled("a--b"), [("--", "operator")]);
         assert_eq!(styled("a--\tb"), [("--\tb", "comment")]);
-        assert_eq!(styled("1=--\n2 # x"), [("1", "number"), ("=", "operator"), ("--", "comment"), ("2", "number"), ("# x", "comment")]);
-        assert_eq!(styled("a<>/* c */"), [("<>", "operator"), ("/* c */", "comment")]);
+        assert_eq!(
+            styled("1=--\n2 # x"),
+            [
+                ("1", "number"),
+                ("=", "operator"),
+                ("--", "comment"),
+                ("2", "number"),
+                ("# x", "comment")
+            ]
+        );
+        assert_eq!(
+            styled("a<>/* c */"),
+            [("<>", "operator"), ("/* c */", "comment")]
+        );
     }
 }

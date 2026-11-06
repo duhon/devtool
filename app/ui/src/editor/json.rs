@@ -60,14 +60,20 @@ fn value(text: &str, pos: usize, key: bool) -> (usize, Style) {
         (end, "number")
     } else if is_word(c) {
         let end = run(text, pos, |c| is_word(c) || c.is_ascii_digit());
-        let atom = matches!(&text[pos..end], "true" | "false" | "null" | "NaN" | "Infinity" | "undefined");
+        let atom = matches!(
+            &text[pos..end],
+            "true" | "false" | "null" | "NaN" | "Infinity" | "undefined"
+        );
         (end, if atom { "atom" } else { "variable" })
     } else if is_operator(bytes[pos]) {
         // The run stops before a comment.
         let length = bytes[pos + 1..]
             .iter()
             .enumerate()
-            .take_while(|&(i, &b)| is_operator(b) && !(b == b'/' && matches!(bytes.get(pos + i + 2), Some(b'/' | b'*'))))
+            .take_while(|&(i, &b)| {
+                is_operator(b)
+                    && !(b == b'/' && matches!(bytes.get(pos + i + 2), Some(b'/' | b'*')))
+            })
             .count();
         return (pos + 1 + length, Some("operator"));
     } else {
@@ -90,7 +96,9 @@ fn is_operator(b: u8) -> bool {
 
 /// A block comment's text from byte `from` to its `*/` or the line end.
 fn block_comment(bytes: &[u8], from: usize, state: &mut State) -> (usize, Style) {
-    let close = bytes[from.min(bytes.len())..].windows(2).position(|pair| pair == b"*/");
+    let close = bytes[from.min(bytes.len())..]
+        .windows(2)
+        .position(|pair| pair == b"*/");
     state.comment = close.is_none();
     (close.map_or(bytes.len(), |n| from + n + 2), Some("comment"))
 }
@@ -111,21 +119,40 @@ fn string(bytes: &[u8], mut i: usize, quote: u8, state: &mut State) -> (usize, S
             None => break bytes.len(),
         }
     };
-    (end, Some(if state.key { "string property" } else { "string" }))
+    (
+        end,
+        Some(if state.key {
+            "string property"
+        } else {
+            "string"
+        }),
+    )
 }
 
 /// The end of a number at byte `pos`: an optional `-`, digits, fraction and exponent, or hex.
 fn number(bytes: &[u8], pos: usize) -> Option<usize> {
-    let digits = |from: usize| from + bytes[from..].iter().take_while(|b| b.is_ascii_digit()).count();
+    let digits = |from: usize| {
+        from + bytes[from..]
+            .iter()
+            .take_while(|b| b.is_ascii_digit())
+            .count()
+    };
     let start = pos + usize::from(bytes[pos] == b'-');
     if bytes.get(start) == Some(&b'0') && matches!(bytes.get(start + 1), Some(b'x' | b'X')) {
-        let end = start + 2 + bytes[start + 2..].iter().take_while(|b| b.is_ascii_hexdigit()).count();
+        let end = start
+            + 2
+            + bytes[start + 2..]
+                .iter()
+                .take_while(|b| b.is_ascii_hexdigit())
+                .count();
         if end > start + 2 {
             return Some(end);
         }
     }
     let mut end = digits(start);
-    if bytes.get(end) == Some(&b'.') && (end > start || bytes.get(end + 1).is_some_and(u8::is_ascii_digit)) {
+    if bytes.get(end) == Some(&b'.')
+        && (end > start || bytes.get(end + 1).is_some_and(u8::is_ascii_digit))
+    {
         end = digits(end + 1);
     }
     if end == start {

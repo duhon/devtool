@@ -140,6 +140,28 @@ pub async fn run(
                             let reply=clipboard_reply(id,read_clipboard().await);
                             let _=tx.send(reply.into()).await;
                         });
+                    }else if message["service"]=="drivers" && message["op"]=="stream" {
+                        let token=root_cancel.child_token();
+                        let cleanup=token.clone();
+                        if let Some(previous)=active.insert(key,token.clone()){previous.cancel();}
+                        tasks.spawn(async move {
+                            let (event_tx,mut event_rx)=mpsc::channel(128);
+                            let run=runtime.drivers.stream(&message,token,event_tx);
+                            tokio::pin!(run);
+                            let result=loop {
+                                tokio::select! {
+                                    event=event_rx.recv()=>if let Some(event)=event {if tx.send(json!({"id":id,"type":"data","event":event}).into()).await.is_err(){return}}else{break run.await},
+                                    result=&mut run=>break result,
+                                }
+                            };
+                            while let Ok(event)=event_rx.try_recv(){let _=tx.send(json!({"id":id,"type":"data","event":event}).into()).await;}
+                            let reply=match result {
+                                Ok(info)=>json!({"id":id,"type":"exit","info":info}),
+                                Err(failure)=>failure.reply(&id),
+                            };
+                            let _=tx.send(reply.into()).await;
+                            cleanup.cancel();
+                        });
                     }else if message["type"]!="discover" && runtime.registry.is_streaming(message["service"].as_str().unwrap_or_default()) {
                         let token=root_cancel.child_token();
                         let cleanup=token.clone();

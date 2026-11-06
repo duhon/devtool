@@ -210,12 +210,7 @@ fn packages(root: &Path) -> Result<Vec<Package>> {
 
 /// Builds `packages` and lays each out as `<modules>/<id>/{package.json,module.dylib,ui.wasm,
 /// RELEASE_NOTES.md,skills/module-<id>/}`.
-fn build_packages(
-    root: &Path,
-    packages: &[Package],
-    modules: &Path,
-    release: bool,
-) -> Result<()> {
+fn build_packages(root: &Path, packages: &[Package], modules: &Path, release: bool) -> Result<()> {
     let profile = if release { "release" } else { "debug" };
     for wasm in [false, true] {
         let mut args = vec!["build", "--lib"];

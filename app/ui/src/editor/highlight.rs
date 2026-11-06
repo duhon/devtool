@@ -208,7 +208,9 @@ impl Highlighter {
     }
 
     pub fn set_template_section(&mut self, section: Option<&str>) {
-        let section = section.filter(|section| !section.is_empty()).map(str::to_owned);
+        let section = section
+            .filter(|section| !section.is_empty())
+            .map(str::to_owned);
         if self.template_section != section {
             self.template_section = section;
             self.reset();
@@ -315,7 +317,8 @@ impl Highlighter {
 
     /// Tokenizes `from..to` from `state`, caching spans and the states after each line.
     fn run(&mut self, lines: &[String], from: usize, to: usize, mut state: LineState) {
-        let exact = from <= self.frontier && self.states.get(from).is_some_and(Option::is_some) || from == 0;
+        let exact = from <= self.frontier && self.states.get(from).is_some_and(Option::is_some)
+            || from == 0;
         let to = to.min(lines.len());
         if self.spans.len() < to {
             self.spans.resize(to, None);
@@ -502,7 +505,9 @@ impl Highlighter {
         {
             state.table = Some(index);
         }
-        let metadata = state.table.and_then(|index| self.regions.get(index)?.table.as_ref());
+        let metadata = state
+            .table
+            .and_then(|index| self.regions.get(index)?.table.as_ref());
         if let Some(metadata) = metadata {
             std::mem::swap(&mut state.lex.table, &mut *metadata.borrow_mut());
         }
@@ -549,7 +554,8 @@ fn char_end(text: &str, pos: usize, n: usize) -> usize {
 /// replaces the base style where it has one.
 fn overlay(text: &str, sql: bool) -> Vec<(usize, usize, &'static str)> {
     const NOT_FUNCTIONS: [&str; 14] = [
-        "in", "not", "and", "or", "on", "as", "values", "is", "all", "any", "some", "when", "then", "else",
+        "in", "not", "and", "or", "on", "as", "values", "is", "all", "any", "some", "when", "then",
+        "else",
     ];
     let mut out = Vec::new();
     let (mut pos, mut open) = (0, false);
@@ -654,16 +660,71 @@ fn merge(base: &[(usize, Style)], overlay: &[(usize, usize, &'static str)]) -> V
 /// Languages without a tokenizer of their own.
 fn fallback(text: &str, pos: usize) -> (usize, Style) {
     const KEYWORDS: [&str; 57] = [
-        "SELECT", "FROM", "WHERE", "LIMIT", "ORDER", "BY", "GROUP", "AS", "JOIN", "LEFT", "RIGHT", "INNER", "ON",
-        "INSERT", "UPDATE", "DELETE", "SET", "VALUES", "AND", "OR", "NOT", "IN", "IS", "NULL", "TRUE", "FALSE",
-        "CREATE", "TABLE", "DROP", "SHOW", "DESCRIBE", "EXPLAIN", "QUERY", "MUTATION", "SUBSCRIPTION", "FRAGMENT",
-        "SEARCH", "STATS", "EVAL", "SORT", "HEAD", "GET", "POST", "PUT", "PATCH", "PROTO3", "SYNTAX", "MESSAGE",
-        "SERVICE", "RPC", "RETURNS", "IF", "THEN", "FI", "DO", "DONE", "EXPORT",
+        "SELECT",
+        "FROM",
+        "WHERE",
+        "LIMIT",
+        "ORDER",
+        "BY",
+        "GROUP",
+        "AS",
+        "JOIN",
+        "LEFT",
+        "RIGHT",
+        "INNER",
+        "ON",
+        "INSERT",
+        "UPDATE",
+        "DELETE",
+        "SET",
+        "VALUES",
+        "AND",
+        "OR",
+        "NOT",
+        "IN",
+        "IS",
+        "NULL",
+        "TRUE",
+        "FALSE",
+        "CREATE",
+        "TABLE",
+        "DROP",
+        "SHOW",
+        "DESCRIBE",
+        "EXPLAIN",
+        "QUERY",
+        "MUTATION",
+        "SUBSCRIPTION",
+        "FRAGMENT",
+        "SEARCH",
+        "STATS",
+        "EVAL",
+        "SORT",
+        "HEAD",
+        "GET",
+        "POST",
+        "PUT",
+        "PATCH",
+        "PROTO3",
+        "SYNTAX",
+        "MESSAGE",
+        "SERVICE",
+        "RPC",
+        "RETURNS",
+        "IF",
+        "THEN",
+        "FI",
+        "DO",
+        "DONE",
+        "EXPORT",
     ];
     let rest = &text[pos..];
     let end = |n: usize| pos + n;
     if rest.starts_with("{{") {
-        return (rest.find("}}").map_or(text.len(), |n| end(n + 2)), Some("gw-placeholder"));
+        return (
+            rest.find("}}").map_or(text.len(), |n| end(n + 2)),
+            Some("gw-placeholder"),
+        );
     }
     let Some(c) = rest.chars().next() else {
         return (pos, None);
@@ -688,7 +749,10 @@ fn fallback(text: &str, pos: usize) -> (usize, Style) {
         return (text.len(), Some("comment"));
     }
     if c.is_ascii_digit() || (c == '-' && rest[1..].starts_with(|c: char| c.is_ascii_digit())) {
-        return (end(take(&|c| c.is_ascii_digit() || ".-+eE".contains(c))), Some("number"));
+        return (
+            end(take(&|c| c.is_ascii_digit() || ".-+eE".contains(c))),
+            Some("number"),
+        );
     }
     if c.is_alphabetic() || c == '_' || c == '$' {
         let word = take(&|c| c.is_alphanumeric() || "_$.-".contains(c));
@@ -701,10 +765,7 @@ fn fallback(text: &str, pos: usize) -> (usize, Style) {
         };
         return (end(word), Some(style));
     }
-    (
-        end(c.len_utf8()),
-        "{}[]()".contains(c).then_some("bracket"),
-    )
+    (end(c.len_utf8()), "{}[]()".contains(c).then_some("bracket"))
 }
 
 #[cfg(test)]
@@ -720,12 +781,17 @@ mod tests {
     }
 
     /// `(text, style)` pairs of a line's styled spans.
-    fn styled(highlighter: &mut Highlighter, lines: &[String], line: usize) -> Vec<(String, &'static str)> {
+    fn styled(
+        highlighter: &mut Highlighter,
+        lines: &[String],
+        line: usize,
+    ) -> Vec<(String, &'static str)> {
         let text = &lines[line];
         let mut start = 0;
         let mut out = Vec::new();
         for span in highlighter.spans(lines, line).iter() {
-            let piece: String = String::from_utf16_lossy(&text.encode_utf16().collect::<Vec<_>>()[start..span.end]);
+            let piece: String =
+                String::from_utf16_lossy(&text.encode_utf16().collect::<Vec<_>>()[start..span.end]);
             if let Some(style) = span.style {
                 out.push((piece, style));
             }
@@ -736,9 +802,18 @@ mod tests {
 
     #[test]
     fn sections_switch_languages_and_overlays_apply() {
-        let mut highlighter = console(&[("headers", "headers"), ("sql", "sql")], "json", View::BodyHeaders);
-        let doc = lines("#check one\n{\"id\": \"{{user:id}}\"}\n#sql\nSELECT count(id) FROM t WHERE x IN (1)");
-        assert_eq!(styled(&mut highlighter, &doc, 0), [("#check one".to_owned(), "comment")]);
+        let mut highlighter = console(
+            &[("headers", "headers"), ("sql", "sql")],
+            "json",
+            View::BodyHeaders,
+        );
+        let doc = lines(
+            "#check one\n{\"id\": \"{{user:id}}\"}\n#sql\nSELECT count(id) FROM t WHERE x IN (1)",
+        );
+        assert_eq!(
+            styled(&mut highlighter, &doc, 0),
+            [("#check one".to_owned(), "comment")]
+        );
         assert_eq!(
             styled(&mut highlighter, &doc, 1),
             [
@@ -777,10 +852,16 @@ mod tests {
             end: 4,
             table: None,
         }]);
-        assert_eq!(styled(&mut highlighter, &doc, 2), [("#response 200".to_owned(), "comment")]);
+        assert_eq!(
+            styled(&mut highlighter, &doc, 2),
+            [("#response 200".to_owned(), "comment")]
+        );
         assert_eq!(
             styled(&mut highlighter, &doc, 3),
-            [("\"a\"".to_owned(), "string property"), ("1".to_owned(), "number")]
+            [
+                ("\"a\"".to_owned(), "string property"),
+                ("1".to_owned(), "number")
+            ]
         );
         // After the next check the payload language returns.
         let state = highlighter.state_before(&doc, 5);
@@ -796,7 +877,10 @@ mod tests {
         }
         let doc = lines(&text);
         // 200 lines past the section header, the restart reads the line as the payload.
-        assert_eq!(styled(&mut highlighter, &doc, 250)[0], ("SELECT".to_owned(), "variable"));
+        assert_eq!(
+            styled(&mut highlighter, &doc, 250)[0],
+            ("SELECT".to_owned(), "variable")
+        );
         let revision = highlighter.revision();
         assert!(!highlighter.work(&doc, doc.len(), || true));
         assert!(highlighter.revision() > revision);
@@ -810,10 +894,16 @@ mod tests {
     fn edits_invalidate_the_following_lines() {
         let mut highlighter = console(&[("sql", "sql")], "json", View::BodyHeaders);
         let mut doc = lines("#check\nSELECT 1");
-        assert_eq!(styled(&mut highlighter, &doc, 1)[0], ("SELECT".to_owned(), "variable"));
+        assert_eq!(
+            styled(&mut highlighter, &doc, 1)[0],
+            ("SELECT".to_owned(), "variable")
+        );
         doc[0] = "#sql".into();
         highlighter.edited(0);
-        assert_eq!(styled(&mut highlighter, &doc, 1)[0], ("SELECT".to_owned(), "keyword"));
+        assert_eq!(
+            styled(&mut highlighter, &doc, 1)[0],
+            ("SELECT".to_owned(), "keyword")
+        );
     }
 
     #[test]
@@ -821,7 +911,13 @@ mod tests {
         let mut highlighter = console(&[("sql", "sql")], "json", View::BodyHeaders);
         highlighter.set_template_section(Some("sql"));
         let doc = lines("SELECT 1\n@other\nSELECT 1");
-        assert_eq!(styled(&mut highlighter, &doc, 0)[0], ("SELECT".to_owned(), "keyword"));
-        assert_eq!(styled(&mut highlighter, &doc, 1), [("@other".to_owned(), "comment")]);
+        assert_eq!(
+            styled(&mut highlighter, &doc, 0)[0],
+            ("SELECT".to_owned(), "keyword")
+        );
+        assert_eq!(
+            styled(&mut highlighter, &doc, 1),
+            [("@other".to_owned(), "comment")]
+        );
     }
 }

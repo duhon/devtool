@@ -18,10 +18,8 @@ fn fixture() -> (tempfile::TempDir, PathBuf, PathBuf, Value) {
     fs::create_dir_all(&home).unwrap();
     fs::create_dir_all(payload.join("extension")).unwrap();
     fs::create_dir_all(payload.join("native/bin")).unwrap();
-    let source: Value = serde_json::from_str(include_str!(
-        "../../app/extension/src/manifest.json"
-    ))
-    .unwrap();
+    let source: Value =
+        serde_json::from_str(include_str!("../../app/extension/src/manifest.json")).unwrap();
     let key = source["key"].as_str().unwrap();
     let id = extension_id(key).unwrap();
     fs::write(

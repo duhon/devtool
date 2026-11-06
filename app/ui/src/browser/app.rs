@@ -2218,7 +2218,8 @@ impl App {
                 self.console_service = service.clone();
                 self.persist_console();
                 let editor = self.console_editor(&service);
-                let result = editor.with(|session| session.agent_edit(&command, js_sys::Date::now()));
+                let result =
+                    editor.with(|session| session.agent_edit(&command, js_sys::Date::now()));
                 let events = editor.update(EditorMsg::Flush);
                 self.console_events(ctx, &service, events);
                 if let Some(result) = result {

@@ -33,7 +33,11 @@ pub struct Utf16Cursor<'a> {
 
 impl<'a> Utf16Cursor<'a> {
     pub fn new(text: &'a str) -> Self {
-        Self { text, byte: 0, ch: 0 }
+        Self {
+            text,
+            byte: 0,
+            ch: 0,
+        }
     }
 
     /// As [`byte_at`]; a column before the previous one restarts from the line start.
@@ -136,11 +140,19 @@ pub fn class(c: char) -> CharClass {
 }
 
 pub fn min(a: Position, b: Position) -> Position {
-    if (a.line, a.ch) <= (b.line, b.ch) { a } else { b }
+    if (a.line, a.ch) <= (b.line, b.ch) {
+        a
+    } else {
+        b
+    }
 }
 
 pub fn max(a: Position, b: Position) -> Position {
-    if (a.line, a.ch) >= (b.line, b.ch) { a } else { b }
+    if (a.line, a.ch) >= (b.line, b.ch) {
+        a
+    } else {
+        b
+    }
 }
 
 pub fn before(a: Position, b: Position) -> bool {

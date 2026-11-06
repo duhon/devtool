@@ -20,7 +20,10 @@ impl Previous {
         Self {
             line,
             check,
-            output: check && regions.iter().any(|region| line >= region.header && line < region.end),
+            output: check
+                && regions
+                    .iter()
+                    .any(|region| line >= region.header && line < region.end),
         }
     }
 }
@@ -52,14 +55,20 @@ pub fn separate(
     if !matches!(origin, "+input" | "paste" | "complete") {
         return None;
     }
-    let mut protected: Vec<_> = pasted.iter().map(|region| (region.header, region.end)).collect();
+    let mut protected: Vec<_> = pasted
+        .iter()
+        .map(|region| (region.header, region.end))
+        .collect();
     protected.sort_unstable();
     let mut next = 0;
     let mut seen = None;
     let mut added = Vec::new();
     for i in 0..inserted.len() {
         let number = from.line + i;
-        let Some(text) = lines.get(number).filter(|text| !text.is_empty() && is_check(text)) else {
+        let Some(text) = lines
+            .get(number)
+            .filter(|text| !text.is_empty() && is_check(text))
+        else {
             continue;
         };
         while next < protected.len() && protected[next].1 <= i {
@@ -68,7 +77,12 @@ pub fn separate(
         if next < protected.len() && protected[next].0 <= i {
             continue;
         }
-        if i == 0 && previous.line == number && previous.check && previous.output && origin != "paste" {
+        if i == 0
+            && previous.line == number
+            && previous.check
+            && previous.output
+            && origin != "paste"
+        {
             continue;
         }
         let seen = seen.get_or_insert_with(|| checks.iter().any(|line| *line < from.line));
@@ -128,8 +142,22 @@ mod tests {
         let doc = lines("#check a\nx\n#check b\ny\n#check c");
         let inserted = lines("#check b\ny\n#check c");
         let separate = |checks: &[usize], pasted: &[ResponseRegion]| {
-            separate(&doc, at(2, 0), &inserted, "paste", checks, Previous::default(), pasted)
-                .map(|transaction| transaction.changes.iter().map(|change| change.from.line).collect::<Vec<_>>())
+            separate(
+                &doc,
+                at(2, 0),
+                &inserted,
+                "paste",
+                checks,
+                Previous::default(),
+                pasted,
+            )
+            .map(|transaction| {
+                transaction
+                    .changes
+                    .iter()
+                    .map(|change| change.from.line)
+                    .collect::<Vec<_>>()
+            })
         };
         assert_eq!(separate(&[0], &[]), Some(vec![4, 2]));
         // Without an earlier check the first one stays put.
@@ -160,7 +188,10 @@ mod tests {
             separate(&doc, at(2, 6), &[" ".into()], "+input", &[0], previous, &[]).map(|t| t.join),
             Some(true)
         );
-        assert_eq!(separate(&doc, at(2, 6), &[" ".into()], "undo", &[0], previous, &[]).map(|t| t.join), None);
+        assert_eq!(
+            separate(&doc, at(2, 6), &[" ".into()], "undo", &[0], previous, &[]).map(|t| t.join),
+            None
+        );
     }
 
     #[test]

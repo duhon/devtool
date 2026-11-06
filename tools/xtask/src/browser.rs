@@ -1829,7 +1829,9 @@ impl Harness {
                         &page,
                         &format!(
                             "globalThis.pageAgentScript = {}; true",
-                            serde_json::to_string(include_str!("../../../app/ui/assets/page-agent.js"))?
+                            serde_json::to_string(include_str!(
+                                "../../../app/ui/assets/page-agent.js"
+                            ))?
                         ),
                     )
                     .await?;

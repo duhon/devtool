@@ -160,7 +160,10 @@ pub enum Event {
     /// A console edit with its response regions and checks.
     Edited(DocumentEdit),
     EditError(String),
-    Run { source: String, line: usize },
+    Run {
+        source: String,
+        line: usize,
+    },
     Discover,
     AutoDiscover(Option<String>),
     Cursor(usize),
@@ -486,8 +489,12 @@ impl Session {
             let popup = match (name.as_str(), key.shift) {
                 ("Up", false) => Some(Command::HintMove(-1, true)),
                 ("Down", false) => Some(Command::HintMove(1, true)),
-                ("PageUp", false) => Some(Command::HintMove(-(self.menu_size() as isize - 1), false)),
-                ("PageDown", false) => Some(Command::HintMove(self.menu_size() as isize - 1, false)),
+                ("PageUp", false) => {
+                    Some(Command::HintMove(-(self.menu_size() as isize - 1), false))
+                }
+                ("PageDown", false) => {
+                    Some(Command::HintMove(self.menu_size() as isize - 1, false))
+                }
                 ("Home", false) => Some(Command::HintFirst),
                 ("End", false) => Some(Command::HintLast),
                 ("Enter" | "Tab", false) => Some(Command::HintPick),
@@ -618,7 +625,8 @@ impl Session {
     ) {
         self.syncing = true;
         let selection = self.state.selection();
-        let changes = self.change(|state| state.set_text(text, preserve_after, "+services-response", now));
+        let changes =
+            self.change(|state| state.set_text(text, preserve_after, "+services-response", now));
         self.synced_text = !changes.is_empty();
         self.set_regions(regions);
         self.changes.extend(changes);
@@ -859,7 +867,8 @@ impl Session {
             return None;
         }
         let rows = self.state.row_count();
-        let row = ((metrics.scroll_top - layout::PADDING_TOP).max(0.0) / metrics.line_height) as usize;
+        let row =
+            ((metrics.scroll_top - layout::PADDING_TOP).max(0.0) / metrics.line_height) as usize;
         let top = self.state.line_of_row(row.min(rows - 1));
         let cursor = self.state.cursor();
         let visible = metrics.client_height > 0.0
@@ -868,7 +877,8 @@ impl Session {
                 caret.bottom > metrics.scroll_top
                     && caret.top < metrics.scroll_top + metrics.client_height
                     && caret.left >= metrics.scroll_left
-                    && metrics.gutter_width + caret.left - metrics.scroll_left < metrics.client_width
+                    && metrics.gutter_width + caret.left - metrics.scroll_left
+                        < metrics.client_width
             });
         Some(CheckViewport {
             top,
@@ -944,7 +954,9 @@ impl Session {
             Command::DeleteLine => {
                 self.operation(|session| session.change(|state| state.delete_lines(now)));
             }
-            Command::MoveH(dir, unit, extend) => self.motion(|state| state.move_h(dir, unit, extend)),
+            Command::MoveH(dir, unit, extend) => {
+                self.motion(|state| state.move_h(dir, unit, extend))
+            }
             Command::MoveV(dir, extend) => self.motion(|state| state.move_v(dir, 1, extend)),
             Command::Page(dir, extend) => {
                 let rows = self.page_rows();
@@ -1215,8 +1227,8 @@ impl Session {
             super::checks::Previous::capture(self.state.lines(), from.line, &self.regions);
         let checks = self.check_lines.clone();
         self.operation(|session| {
-            let mut changes =
-                session.change(|state| state.apply(Transaction::replace(from, to, text, origin), now));
+            let mut changes = session
+                .change(|state| state.apply(Transaction::replace(from, to, text, origin), now));
             let inserted = super::text::split_lines(text);
             session
                 .state
@@ -1319,19 +1331,21 @@ impl Session {
             (selection.from(), selection.to())
         };
         self.operation(|session| {
-            session.change(|state| state.apply(
-                Transaction {
-                    changes: vec![Change {
-                        from,
-                        to,
-                        text: String::new(),
-                    }],
-                    origin: "cut".into(),
-                    selection: Some(Selection::cursor(from)),
-                    join: false,
-                },
-                now,
-            ))
+            session.change(|state| {
+                state.apply(
+                    Transaction {
+                        changes: vec![Change {
+                            from,
+                            to,
+                            text: String::new(),
+                        }],
+                        origin: "cut".into(),
+                        selection: Some(Selection::cursor(from)),
+                        join: false,
+                    },
+                    now,
+                )
+            })
         });
     }
 
@@ -1442,7 +1456,8 @@ impl Session {
 
     /// Folds the range starting on `line`, or opens it when folded.
     pub fn toggle_fold(&mut self, line: usize) {
-        let Some(range) = super::fold::range(&mut self.highlighter, self.state.lines(), line) else {
+        let Some(range) = super::fold::range(&mut self.highlighter, self.state.lines(), line)
+        else {
             return;
         };
         if self
@@ -1678,9 +1693,7 @@ impl Session {
             return;
         }
         let payload = crate::services::language(&service, "");
-        let comma = completion
-            .comma
-            .map(|(line, ch)| Position { line, ch });
+        let comma = completion.comma.map(|(line, ch)| Position { line, ch });
         let items: Vec<Item> = completion
             .candidates
             .iter()
@@ -1782,7 +1795,8 @@ impl Session {
                 to = next;
             }
         }
-        let previous = super::checks::Previous::capture(self.state.lines(), from.line, &self.regions);
+        let previous =
+            super::checks::Previous::capture(self.state.lines(), from.line, &self.regions);
         let checks = self.check_lines.clone();
         self.operation(|session| {
             let mut changes = Vec::new();
@@ -1799,7 +1813,8 @@ impl Session {
                 .state
                 .set_selection(Selection::cursor(end_of(from, &inserted)));
             if console && session.setup.console {
-                changes.extend(session.separate(from, &inserted, "complete", &checks, previous, now));
+                changes
+                    .extend(session.separate(from, &inserted, "complete", &checks, previous, now));
             }
             if let Some(target) = target {
                 let lines = super::text::split_lines(&text[..target]);
@@ -1972,13 +1987,22 @@ mod tests {
         let mut session = session(&"a\n".repeat(3));
         session.start_operation();
         for line in (0..3).rev() {
-            session.apply(Transaction::replace(at(line, 0), at(line, 1), "b", "*replace"), 0.0);
+            session.apply(
+                Transaction::replace(at(line, 0), at(line, 1), "b", "*replace"),
+                0.0,
+            );
         }
         assert!(session.take_events().is_empty());
         session.end_operation();
         let events = session.take_events();
-        let changed: Vec<_> = events.iter().filter(|event| matches!(event, Event::Changed(_))).collect();
-        assert!(matches!(&changed[..], [Event::Changed(text)] if text == "b\nb\nb\n"), "{events:?}");
+        let changed: Vec<_> = events
+            .iter()
+            .filter(|event| matches!(event, Event::Changed(_)))
+            .collect();
+        assert!(
+            matches!(&changed[..], [Event::Changed(text)] if text == "b\nb\nb\n"),
+            "{events:?}"
+        );
         assert_eq!(session.take_changes().len(), 3);
     }
 
@@ -1987,7 +2011,10 @@ mod tests {
         let mut session = session("a\n\n");
         session.start_operation();
         session.apply(Transaction::replace(at(1, 0), at(2, 0), "", "+input"), 0.0);
-        session.apply(Transaction::replace(at(1, 0), at(1, 0), "b\nc", "paste"), 0.0);
+        session.apply(
+            Transaction::replace(at(1, 0), at(1, 0), "b\nc", "paste"),
+            0.0,
+        );
         session.end_operation();
         session.apply(Transaction::replace(at(0, 0), at(0, 0), "d", "paste"), 0.0);
         session.command(Command::Undo, 0.0);
@@ -2011,7 +2038,10 @@ mod tests {
             table: None,
         };
         session.set_responses(std::slice::from_ref(&region));
-        session.apply(Transaction::replace(at(5, 0), at(5, 0), "  ", "+input"), 0.0);
+        session.apply(
+            Transaction::replace(at(5, 0), at(5, 0), "  ", "+input"),
+            0.0,
+        );
         assert_eq!(session.regions(), [region]);
     }
 
@@ -2065,7 +2095,10 @@ mod tests {
             ..key("z")
         };
         assert_eq!(editor.resolve(pc_undo), Some(Command::Undo));
-        let mac_ctrl_z = Key { mac: true, ..pc_undo };
+        let mac_ctrl_z = Key {
+            mac: true,
+            ..pc_undo
+        };
         assert_eq!(editor.resolve(mac_ctrl_z), None);
         let copy = Key {
             code: "KeyC",
@@ -2133,7 +2166,12 @@ mod tests {
         editor.sync("x\na\nb", &[], &[], None, 0.0);
         assert_eq!(editor.state().cursor(), at(2, 1));
         assert!(matches!(&editor.take_events()[..], [Event::Cursor(2)]));
-        assert!(editor.take_changes().iter().any(|change| change.origin.as_deref() == Some("+services-response")));
+        assert!(
+            editor
+                .take_changes()
+                .iter()
+                .any(|change| change.origin.as_deref() == Some("+services-response"))
+        );
     }
 
     #[test]

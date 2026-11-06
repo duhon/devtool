@@ -5,7 +5,9 @@ use super::{
     views::{ConsoleStatus, OperationStatus, SeenTimer, indicator},
     window,
 };
-use crate::editor::session::{Context as EditorContext, Event as EditorEvent, Msg as EditorMsg, Setup};
+use crate::editor::session::{
+    Context as EditorContext, Event as EditorEvent, Msg as EditorMsg, Setup,
+};
 use crate::profiles;
 use serde_json::{Value, json};
 use std::{

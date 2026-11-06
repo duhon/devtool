@@ -58,11 +58,7 @@ pub struct Process {
 }
 
 impl Process {
-    pub fn spawn(
-        binary: &std::path::Path,
-        data: &std::path::Path,
-        env: &[(&str, &str)],
-    ) -> Self {
+    pub fn spawn(binary: &std::path::Path, data: &std::path::Path, env: &[(&str, &str)]) -> Self {
         let mut command = tokio::process::Command::new(binary);
         command
             .arg("__native-host-shell")

@@ -536,6 +536,13 @@ Settings. Пакеты выпуска — `dist/modules/`, как сейчас.
   `api/module-ui`, `app/ui`, `app/extension`, `modules/services/`, `examples/echo`,
   `installer/`, `tools/{xtask,testkit,scripts}`); имена крейтов и поведение прежние.
   Раздел «Что есть сейчас» описывает раскладку до переноса.
+- Шаг 2: `api/sdk` (манифест, protobuf событий и синхронных вызовов, Cmd как
+  `{tag, name, args JSON}`, UI-дерево, формы http, `export!`), `app/kernel` (загрузка wasm,
+  Init/update/view, подписки, панели закрыты — работа отменена, конвейер
+  build → before_request → after_response, ловушки, бюджет 5 мс, разбиение чека по `#name`),
+  драйвер http в Host (`host/src/drivers{.rs,/http.rs}`: один клиент, редиректы сам,
+  тайминги, `DriverFailure`, стрим, отмена; `health` отдаёт драйверы). App пока на старых
+  модулях; подключение — в шаге 3.
 
 ## Решить
 

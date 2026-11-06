@@ -2973,6 +2973,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "services-kernel"
+version = "3.7.0"
+dependencies = [
+ "js-sys",
+ "prost",
+ "serde",
+ "serde_json",
+ "services-sdk",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+]
+
+[[package]]
 name = "services-module-api"
 version = "3.7.0"
 dependencies = [
@@ -3207,6 +3220,7 @@ dependencies = [
  "serde_json",
  "services-contracts",
  "services-module-api",
+ "services-sdk",
  "services-testkit",
  "sha2",
  "stabby",
@@ -3214,6 +3228,15 @@ dependencies = [
  "tokio",
  "tokio-util",
  "url",
+]
+
+[[package]]
+name = "services-sdk"
+version = "3.7.0"
+dependencies = [
+ "prost",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
