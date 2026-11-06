@@ -1,0 +1,45 @@
+# Releases
+
+## Automatic releases from `main`
+
+`.github/workflows/devtool-release.yml` runs on pushes to `main`; these
+scripts are its steps (`release.py`, tested by `test_release.py`).
+`RELEASE_NOTES.md` controls releases: add a new `## X.Y.Z` section at the top,
+followed by older versions in descending order. The workflow sets the Cargo
+and Chrome versions from that section without committing them back.
+
+An already published version is skipped, so ordinary pushes do not rebuild or
+overwrite a release; to ship another build, add a higher version. The workflow
+uses a macOS ARM64 runner, runs the Rust and packaged-installation checks and
+the browser scenarios (`cargo run -p xtask -- test browser --jobs 2`), then
+publishes `devtool-vX.Y.Z` as a GitHub Release with
+`services-macos-arm64.tar.gz`, `checksums.txt`, `install.sh` and
+`version.json`; its description is the matching notes. A failing scenario
+blocks the release; run the browser scenarios locally before pushing. Assets
+are uploaded to a draft before publication and are never replaced.
+
+Modules are released apart from the application. The installer contains no
+modules; the build writes one package per module to `dist/modules/`. When a
+module version (the `version` of `modules/services/<id>/Cargo.toml`) is not in the
+`modules` branch yet, the workflow builds and replaces that branch with a
+single commit without history holding `modules/<id>-<version>-<platform>.module.tgz`
+for the newest version of each module: a version already there keeps its
+published file, an older one is dropped. The newest section of the module's
+`RELEASE_NOTES.md`, which the package contains, must be its version. To ship a
+module change, raise its version and add the section; the application version
+need not change. Settings → Modules offers these packages through the
+preconfigured Standard source (`duhon/devtool`, branch `modules`).
+
+The package and update metadata use the current repository and `main` as their
+source; the legacy `devtool` channel is accepted too. The application can be
+updated from any source that offers it, a fork included. Public releases in
+`duhon/devtool` need no GitHub authentication.
+
+The build bakes the repository and version into `install.sh`, so piping
+`releases/latest/download/install.sh` to Bash downloads the checksum and
+archive of that same release:
+
+    curl -fsSL https://github.com/OWNER/REPO/releases/latest/download/install.sh | bash
+
+`release.py metadata` refuses to publish an installer bound to another release.
+The generated archive contains no private keys, Variables or other user data.

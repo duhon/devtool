@@ -1,0 +1,52 @@
+[package]
+name = "services-ui"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+services-contracts = { path = "../../api/protocol" }
+services-module-ui = { path = "../../api/module-ui" }
+serde.workspace = true
+serde_json.workspace = true
+regex = "1"
+url = "2"
+uuid = { version = "1.29.0", features = ["v7", "js"] }
+
+# Packaged modules' console parts load from their ui.wasm in the browser; native builds
+# (tests) link them instead.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+services-module-rest-ui = { path = "../../modules/services/rest/ui" }
+services-module-graphql-ui = { path = "../../modules/services/graphql/ui" }
+services-module-grpc-ui = { path = "../../modules/services/grpc/ui" }
+services-module-mysql-ui = { path = "../../modules/services/mysql/ui" }
+services-module-splunk-ui = { path = "../../modules/services/splunk/ui" }
+services-module-terminal-ui = { path = "../../modules/services/terminal/ui" }
+services-module-artemis-ui = { path = "../../modules/services/artemis/ui" }
+services-module-opensearch-ui = { path = "../../modules/services/opensearch/ui" }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+base64 = "0.22"
+pulldown-cmark = { version = "0.13", default-features = false }
+yew = { version = "0.21", features = ["csr"] }
+wasm-bindgen = "=0.2.108"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+serde-wasm-bindgen = "0.6"
+web-sys = { version = "0.3", features = [
+  "Window", "Document", "Element", "HtmlElement", "HtmlInputElement",
+  "HtmlTextAreaElement", "HtmlSelectElement", "Node", "Storage", "Event",
+  "InputEvent", "KeyboardEvent", "MouseEvent", "PointerEvent", "DragEvent", "DataTransfer", "CssStyleDeclaration",
+  "console", "DomRect", "Navigator",
+  "Clipboard", "FocusEvent", "ResizeObserver", "BeforeUnloadEvent", "StorageEvent",
+  "IdbFactory", "IdbOpenDbRequest", "IdbDatabase", "IdbObjectStore",
+  "IdbRequest", "IdbTransaction", "IdbTransactionMode", "DomException",
+  "ClipboardEvent", "DomTokenList"
+] }
+
+[dev-dependencies]
+# The OpenSearch tests complete from the module's real discovery schema.
+services-module-opensearch = { path = "../../modules/services/opensearch" }

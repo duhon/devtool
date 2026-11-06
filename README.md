@@ -44,7 +44,7 @@ Uninstall, then remove the extension in Chrome (your data is kept):
 Every service in the panel is a module, and you can write your own. Modules
 are installed from sources only: put the package file in `modules/` of a folder
 source and install it in **Settings** → **Modules**. How to write and package a
-module: [rust/examples/echo/README.md](rust/examples/echo/README.md).
+module: [examples/echo/README.md](examples/echo/README.md).
 
 A team can share modules and settings through **Settings** → **Sources**: add a
 GitHub repository or a local folder, then install its modules and apply its
@@ -95,4 +95,4 @@ The Agent reads only `SKILL.md`, not other files beside it.
 
 ---
 
-[Development](DEVELOPMENT.md) · [Installer details](rust/installer/README.md)
+[Development](DEVELOPMENT.md) · [Installer details](installer/README.md)

@@ -530,6 +530,12 @@ Settings. Пакеты выпуска — `dist/modules/`, как сейчас.
 
 - Шаг 0: CodeMirror заменён своим редактором на Yew (MVU) без смены архитектуры. В
   пре-релизе, не выпущено. Части, переведённые из CodeMirror, переписаны с нуля.
+- CLI удалён вместе с `./dev`, `xtask modules` и dev-данными в корне; `SERVICES_DATA_DIR`
+  обязателен.
+- Шаг 1: крейты перенесены в новое дерево (`host/`, `api/protocol`, `api/module-api`,
+  `api/module-ui`, `app/ui`, `app/extension`, `modules/services/`, `examples/echo`,
+  `installer/`, `tools/{xtask,testkit,scripts}`); имена крейтов и поведение прежние.
+  Раздел «Что есть сейчас» описывает раскладку до переноса.
 
 ## Решить
 

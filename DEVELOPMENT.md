@@ -23,8 +23,8 @@ packages to `dist/modules/`. Add `dist/` as a folder source in Settings →
 Sources and install them from Settings → Modules.
 
 `build --repository OWNER/REPO --branch BRANCH` sets the update source.
-Publishing: [scripts/distribution/README.md](scripts/distribution/README.md).
-Extension only: [adapters/extension/README.md](adapters/extension/README.md).
+Publishing: [tools/scripts/distribution/README.md](tools/scripts/distribution/README.md).
+Extension only: [app/extension/README.md](app/extension/README.md).
 
 ### Pre-release
 
@@ -53,32 +53,32 @@ cargo run -p xtask -- test <type>   # one kind at a time
 
 | Type | Checks | Where |
 |---|---|---|
-| `behavior [--module NAME]` | What each module does, through the host protocol; the shared core | `rust/native/tests/modules/`, `tests/core/` |
-| `contract` | Rules every module obeys; native messaging, shell environment, TLS | `rust/native/tests/conformance.rs`, `tests/host/` |
-| `ui` | UI models, parsing, completion, rendering | `rust/ui/tests/` |
-| `browser [--scenario NAME] [--jobs N] [--list]` | User scenarios in the built extension, isolated Chrome profiles | `rust/xtask/src/browser*` |
-| `install` | Install, update, rollback, uninstall in a temporary HOME | `rust/installer/tests` |
-| `perf` | Time budgets; release build, ignored by default | `rust/native/tests/perf.rs` |
+| `behavior [--module NAME]` | What each module does, through the host protocol; the shared core | `host/tests/modules/`, `tests/core/` |
+| `contract` | Rules every module obeys; native messaging, shell environment, TLS | `host/tests/conformance.rs`, `tests/host/` |
+| `ui` | UI models, parsing, completion, rendering | `app/ui/tests/` |
+| `browser [--scenario NAME] [--jobs N] [--list]` | User scenarios in the built extension, isolated Chrome profiles | `tools/xtask/src/browser*` |
+| `install` | Install, update, rollback, uninstall in a temporary HOME | `installer/tests` |
+| `perf` | Time budgets; release build, ignored by default | `host/tests/perf.rs` |
 
 `browser` needs Chrome for Testing or Chromium (`CHROME_BIN`). Details:
-[rust/testkit/README.md](rust/testkit/README.md).
+[tools/testkit/README.md](tools/testkit/README.md).
 
 ## Layout
 
-- `rust/native` — the host: variables, history, templates, hints, updates,
+- `host` — the host: variables, history, templates, hints, updates,
   the agent, the module registry and loader, native-messaging adapter.
-- `rust/contracts` — module manifest, package format, protocol constants.
-- `rust/module-api`, `rust/module-ui` — SDKs of a module's native part
+- `api/protocol` — module manifest, package format, protocol constants.
+- `api/module-api`, `api/module-ui` — SDKs of a module's native part
   (`module.dylib`) and console part (`ui.wasm`).
-- `rust/modules/<id>` — the standard modules, each released on its own with its
+- `modules/services/<id>` — the standard modules, each released on its own with its
   version, `RELEASE_NOTES.md` and Agent skill (`skill/SKILL.md`).
-- `rust/examples/echo` — an unshipped example module and the module guide.
-- `rust/ui` — the browser UI (Yew/WebAssembly), including its text editor;
-  `rust/ui/assets` — styles.
-- `rust/installer` — install, update, rollback, uninstall.
-- `rust/testkit` — test host, module catalog, wire fixtures.
-- `rust/xtask` — builds, module packages, test commands.
-- `adapters/extension/src` — Chrome manifest, HTML, minimal bootstrap.
+- `examples/echo` — an unshipped example module and the module guide.
+- `app/ui` — the browser UI (Yew/WebAssembly), including its text editor;
+  `app/ui/assets` — styles.
+- `installer` — install, update, rollback, uninstall.
+- `tools/testkit` — test host, module catalog, wire fixtures.
+- `tools/xtask` — builds, module packages, test commands.
+- `app/extension/src` — Chrome manifest, HTML, minimal bootstrap.
 - `install.sh`, `prerelease`, `dev` — root entry points.
 
 ## Rules

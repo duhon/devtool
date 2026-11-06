@@ -11,11 +11,10 @@
 .console-mysql-endpoint-hints.txt
 .worktrees/
 .superpowers/
-adapters/extension/dist/
-adapters/extension/pinned-key.pem
+app/extension/dist/
+app/extension/pinned-key.pem
 /dist/
 /.distribution-cache/
 /target/
-/modules/
 /.playwright-mcp/
 __pycache__/
