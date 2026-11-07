@@ -15,7 +15,6 @@ use crate::editor::{
 };
 use crate::{console, format, profiles, storage};
 use serde_json::{Value, json};
-use services_contracts::manifest::{DiscoveryKind, View};
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet},
@@ -46,13 +45,10 @@ struct Run {
     stdout: String,
     stderr: String,
     line: Option<usize>,
-    vertical: bool,
     started: f64,
     anchor: Option<Anchor>,
     signal: crate::activity::Signal,
     duplicate_error: Option<String>,
-    /// `Format:` of the check; only the console's display uses it.
-    format: Option<console::Format>,
     repeat: Option<Repeat>,
 }
 impl Run {
@@ -92,14 +88,20 @@ impl CheckOwner {
         }
     }
 }
-struct DiscoveryStatus {
+/// A module's own status (`Discovery · OK`, …), shown on the check that started it.
+struct ModuleStatus {
+    /// The Host request of the module's driver call while it is busy.
     request: Option<u32>,
     text: String,
     debug: Value,
     started: f64,
     owner: CheckOwner,
-    params: Value,
     signal: crate::activity::Signal,
+}
+impl ModuleStatus {
+    fn check_line(&self, editor: &Handle) -> Option<usize> {
+        self.owner.check_line(editor)
+    }
 }
 /// A failure with no status of its own. It stays in the top banner, and lights the
 /// toolbar action that caused it, until the user dismisses it.
@@ -205,30 +207,6 @@ struct AgentRun {
     approval: Approval,
     started: bool,
 }
-impl DiscoveryStatus {
-    fn check_line(&self, editor: &Handle) -> Option<usize> {
-        self.owner.check_line(editor)
-    }
-
-    fn finish(&mut self, result: &Value, failed: bool) {
-        self.request = None;
-        let outcome = if result["cancelled"] == true {
-            "Stopped".into()
-        } else if failed {
-            format!("ERROR · {}", err_text(result))
-        } else if let Some(warning) = result["warning"].as_str() {
-            format!("WARNING · {warning}")
-        } else {
-            "OK".into()
-        };
-        self.text = format!(
-            "{} · Discovery · {outcome} · {}",
-            time(),
-            format::duration(js_sys::Date::now() - self.started)
-        );
-        self.debug = result.clone();
-    }
-}
 pub enum Msg {
     /// A status on screen may now count as seen.
     Seen,
@@ -286,11 +264,9 @@ pub enum Msg {
     Retry,
     Vars(Reply),
     Discover,
-    AutoDiscover(String, Option<String>),
     Scroll(String, crate::document::CheckViewport),
     Check(usize),
     EditorError(String),
-    Discovered(String, Value, Value, Reply),
     ToggleHints,
     ToggleVariables,
     ToggleDictionary,
@@ -319,10 +295,12 @@ pub enum Msg {
     CloseExport,
     /// Kernel modules started: their effects and the ids that started.
     KernelStarted((Vec<services_kernel::Effect>, Vec<String>)),
-    /// `vars.resolve` answered a module's driver call: (module, tag, driver, reply).
-    KernelResolved(String, String, String, Reply),
+    /// `vars.resolve` answered a module's driver call: (module, tag, driver, stream, reply).
+    KernelResolved(String, String, String, bool, Reply),
     /// A driver answered a module's call: (module, tag, reply).
     KernelReplied(String, String, Reply),
+    /// A module's driver stream sent an event or ended.
+    KernelStreamed(String, String, Reply),
     /// `vars.resolve` answered a module's `vars.resolve` command: (module, tag, reply).
     KernelVariables(String, String, Reply),
     KernelTimer(String, String),
@@ -380,13 +358,8 @@ pub struct App {
     notice: Option<Notice>,
     vars: Value,
     drag: Option<String>,
-    discovery: BTreeMap<String, Value>,
-    lazy_schemas: BTreeMap<String, crate::discovery::LazyCache>,
-    discovered_params: BTreeMap<String, Value>,
-    discovering: BTreeSet<String>,
-    pending_discovery: BTreeMap<String, (Value, CheckOwner)>,
-    discovery_status: BTreeMap<String, DiscoveryStatus>,
-    discovery_history: BTreeMap<String, Vec<DiscoveryStatus>>,
+    module_status: BTreeMap<String, ModuleStatus>,
+    module_history: BTreeMap<String, Vec<ModuleStatus>>,
     hints: BTreeMap<String, String>,
     templates: services_contracts::templates::Library,
     templates_visited: bool,
@@ -495,13 +468,8 @@ impl Component for App {
             notice: None,
             vars: json!({"order":[],"profiles":{},"validation":{}}),
             drag: None,
-            discovery: BTreeMap::new(),
-            lazy_schemas: BTreeMap::new(),
-            discovered_params: BTreeMap::new(),
-            discovering: BTreeSet::new(),
-            pending_discovery: BTreeMap::new(),
-            discovery_status: BTreeMap::new(),
-            discovery_history: BTreeMap::new(),
+            module_status: BTreeMap::new(),
+            module_history: BTreeMap::new(),
             hints: BTreeMap::new(),
             templates: Default::default(),
             templates_visited: false,
@@ -991,6 +959,10 @@ impl Component for App {
                     return false;
                 }
                 let service = self.console_service.clone();
+                if self.kernel.loading > 0 && crate::kernel::loading(&service) {
+                    self.kernel.waiting = Some((service, text, line));
+                    return false;
+                }
                 let old = self.docs.get(&service).cloned().unwrap_or_default();
                 crate::document::remap(
                     &old,
@@ -1082,32 +1054,9 @@ impl Component for App {
                 }
                 _ => {}
             },
-            Msg::Discover if crate::kernel::is_service(&self.console_service) => {
+            Msg::Discover => {
                 let service = self.console_service.clone();
                 self.kernel_discover(ctx, &service);
-            }
-            Msg::Discover => {
-                if !self.discovering.contains(self.current_language()) {
-                    self.discovered_params
-                        .remove(self.current_language().to_string().as_str());
-                }
-                self.discover(ctx, true);
-            }
-            Msg::AutoDiscover(owner, endpoint) => {
-                if owner != self.key() {
-                    return false;
-                }
-                if let Some(endpoint) = endpoint
-                    && crate::services::lazy_discovery(self.current_language())
-                {
-                    let service = self.current_language().to_owned();
-                    if let Some(mut params) = self.discovery_params(&service) {
-                        crate::discovery::set_address(&service, &mut params, &endpoint);
-                        self.start_discovery(ctx, service, params, false, None);
-                    }
-                } else {
-                    self.discover(ctx, false);
-                }
             }
             Msg::Scroll(service, viewport) => {
                 let active = self.active_console_line(&service);
@@ -1180,7 +1129,7 @@ impl Component for App {
                 };
                 match super::accept_modules(&value) {
                     Ok(changed) => {
-                        super::module_ui::prepare(&self.transport, Callback::noop());
+                        self.kernel.loading += 1;
                         super::kernel_modules::prepare(
                             &self.transport,
                             ctx.link().callback(Msg::KernelStarted),
@@ -1274,7 +1223,7 @@ impl Component for App {
             }
             Msg::AgentApprove(approve) => self.approve_agent_run(ctx, approve),
             Msg::AgentFinished(session) => {
-                self.stop_agent_requests(&session);
+                self.stop_agent_requests(ctx, &session);
                 if self
                     .agent_run
                     .as_ref()
@@ -1313,75 +1262,6 @@ impl Component for App {
                     Some(ConsolePanel::Variables)
                 };
                 self.variables_visited = true;
-            }
-            Msg::Discovered(service, params, key, reply) => {
-                self.discovering.remove(&service);
-                let superseded = self
-                    .discovery_status
-                    .get(&service)
-                    .is_some_and(|status| status.debug["params"] != params);
-                let reply = match reply {
-                    Reply::Result(mut value) => {
-                        if crate::services::discovery(&service) == Some(DiscoveryKind::Openapi)
-                            && value.get("error").is_none()
-                            && value.get("warning").is_none()
-                            && value["cancelled"] != true
-                            && value["paths"]
-                                .as_array()
-                                .is_none_or(|paths| paths.is_empty())
-                        {
-                            value["warning"] = json!(
-                                "No OpenAPI or Swagger schema found at known discovery locations"
-                            );
-                        }
-                        Reply::Result(value)
-                    }
-                    reply => reply,
-                };
-                let status = if !superseded {
-                    self.discovery_status.get_mut(&service)
-                } else {
-                    self.discovery_history
-                        .get_mut(&service)
-                        .and_then(|history| {
-                            history
-                                .iter_mut()
-                                .find(|status| status.request.is_some() && status.params == params)
-                        })
-                };
-                if let Some(status) = status {
-                    match &reply {
-                        Reply::Result(value) => status.finish(value, value.get("error").is_some()),
-                        Reply::Error(value) => status.finish(value, true),
-                        Reply::Data(value) | Reply::Exit(value) => status.finish(
-                            &json!({"error":"Unexpected discovery reply","reply":value}),
-                            true,
-                        ),
-                    }
-                }
-                if let Reply::Result(mut value) = reply
-                    && value.get("error").is_none()
-                    && value.get("warning").is_none()
-                    && value["cancelled"] != true
-                {
-                    if crate::services::lazy_discovery(&service) {
-                        self.lazy_schemas
-                            .entry(service.clone())
-                            .or_default()
-                            .insert(&crate::discovery::address(&service, &key), value);
-                    } else if !superseded {
-                        if crate::services::discovery(&service)
-                            == Some(DiscoveryKind::GrpcReflection)
-                        {
-                            value["discoveryEndpoint"] =
-                                json!(crate::discovery::address(&service, &params));
-                        }
-                        self.discovery.insert(service.clone(), value);
-                    }
-                }
-                if let Some((params, owner)) = self.pending_discovery.remove(&service) {
-                    self.start_discovery(ctx, service, params, false, Some(owner));
-                }
             }
             Msg::ToggleHints => {
                 self.console_panel = if self.console_panel == Some(ConsolePanel::Hints) {
@@ -1741,6 +1621,14 @@ impl Component for App {
                     self.finish_repeat(ctx, &key, "Repeat stopped");
                     return true;
                 }
+                if let Some(key) = self
+                    .console_run_entry(&service, self.active_console_line(&service))
+                    .filter(|(_, run)| run.running)
+                    .map(|(key, _)| key.to_owned())
+                    && self.kernel_stop(ctx, &key)
+                {
+                    return true;
+                }
                 let (run, discovery) = self.selected_status(&self.console_service);
                 let id = if let Some(run) = run {
                     run.running.then_some(run.stream).flatten()
@@ -1772,7 +1660,6 @@ impl Component for App {
             Msg::Visibility(visible) => {
                 self.hidden = !visible;
                 if !visible {
-                    self.pending_discovery.clear();
                     self.kernel_hidden();
                     for (service, id) in std::mem::take(&mut self.hints_timers) {
                         window().clear_timeout_with_handle(id);
@@ -1789,6 +1676,15 @@ impl Component for App {
                     self.agent_stop_generation += 1;
                     for run in self.runs.values_mut().filter(|run| run.running) {
                         run.stopping = true;
+                    }
+                    let running: Vec<_> = self
+                        .runs
+                        .iter()
+                        .filter(|(_, run)| run.running)
+                        .map(|(key, _)| key.clone())
+                        .collect();
+                    for key in running {
+                        self.kernel_stop(ctx, &key);
                     }
                     let waiting: Vec<_> = self
                         .runs
@@ -1812,10 +1708,13 @@ impl Component for App {
                     self.sync_services(ctx);
                 }
             }
-            Msg::KernelResolved(module, tag, driver, reply) => {
-                self.kernel_resolved(ctx, module, tag, driver, reply);
+            Msg::KernelResolved(module, tag, driver, stream, reply) => {
+                self.kernel_resolved(ctx, module, tag, driver, stream, reply);
             }
             Msg::KernelReplied(module, tag, reply) => self.kernel_replied(ctx, module, tag, reply),
+            Msg::KernelStreamed(module, tag, reply) => {
+                self.kernel_streamed(ctx, module, tag, reply);
+            }
             Msg::KernelVariables(module, tag, reply) => {
                 self.kernel_variables(ctx, module, tag, reply);
             }
@@ -2023,6 +1922,9 @@ impl App {
         if self.updates.busy() {
             reasons.push("update in progress".into());
         }
+        if self.kernel.loading > 0 {
+            reasons.push("modules loading".into());
+        }
         if self.sessions.borrow().saving() {
             reasons.push("session saving".into());
         }
@@ -2036,9 +1938,6 @@ impl App {
             if run.running {
                 reasons.push(format!("run {service}"));
             }
-        }
-        if !self.discovering.is_empty() {
-            reasons.push(format!("discovering {:?}", self.discovering));
         }
         if self.agent_run.is_some() {
             reasons.push("agent run".into());
@@ -2110,7 +2009,16 @@ impl App {
         };
         self.session_status = OperationStatus::event("Sessions", js_sys::Date::now(), Some(&reply));
     }
-    fn stop_agent_requests(&mut self, session: &str) {
+    fn stop_agent_requests(&mut self, ctx: &Context<Self>, session: &str) {
+        let keys: Vec<_> = self
+            .runs
+            .iter()
+            .filter(|(_, run)| run.running && run.agent_session.as_deref() == Some(session))
+            .map(|(key, _)| key.clone())
+            .collect();
+        for key in keys {
+            self.kernel_stop(ctx, &key);
+        }
         let ids: Vec<_> = self
             .runs
             .values_mut()
@@ -2190,7 +2098,7 @@ impl App {
                         .take(512)
                         .collect::<Vec<_>>()
                 );
-                value["schemaAvailable"] = json!(self.schema(&service).is_some());
+                value["schemaAvailable"] = json!(module_schema(&service).is_some());
                 value
             }
             "console_read_check" => self.agent_workspace.read_check(
@@ -2225,8 +2133,7 @@ impl App {
                 }
             }
             "console_schema" => {
-                let schema = self
-                    .schema(&service)
+                let schema = module_schema(&service)
                     .ok_or("No cached schema. Discover the service in Console first.")?;
                 page(&schema.to_string(), offset, limit)
             }
@@ -2428,9 +2335,6 @@ impl App {
     fn current_language(&self) -> &str {
         &self.console_service
     }
-    fn key(&self) -> String {
-        format!("console:{}", self.console_service)
-    }
     /// Console session names by id, for the Agent chat list.
     pub(super) fn session_names(&self) -> BTreeMap<u64, String> {
         std::iter::once((0, TEMPORARY_SESSION.to_owned()))
@@ -2593,75 +2497,9 @@ fn time() -> String {
         .as_string()
         .unwrap_or_default()
 }
-fn collect_discovery(value: &Value, key: &str, out: &mut Vec<(String, String)>) {
-    if out.len() > 5000 {
-        return;
-    }
-    match value {
-        Value::Object(map) => {
-            for (k, v) in map {
-                if ![
-                    "debug",
-                    "transportDebug",
-                    "description",
-                    "error",
-                    "body",
-                    "schema",
-                ]
-                .contains(&k.as_str())
-                    && k.len() < 100
-                    && !k.starts_with('$')
-                {
-                    if ![
-                        "services",
-                        "methods",
-                        "fields",
-                        "tables",
-                        "columns",
-                        "types",
-                        "paths",
-                        "queryFields",
-                        "mutationFields",
-                        "args",
-                        "properties",
-                        "requestFields",
-                        "responseFields",
-                    ]
-                    .contains(&k.as_str())
-                    {
-                        out.push((k.clone(), key.into()));
-                    }
-                    collect_discovery(v, k, out);
-                }
-            }
-        }
-        Value::Array(array) => {
-            for v in array {
-                collect_discovery(v, key, out)
-            }
-        }
-        Value::String(s)
-            if s.len() < 200
-                && !s.contains('\n')
-                && [
-                    "name",
-                    "path",
-                    "field",
-                    "table",
-                    "column",
-                    "service",
-                    "method",
-                    "type",
-                    "tables",
-                    "columns",
-                    "paths",
-                    "queryFields",
-                    "mutationFields",
-                ]
-                .contains(&key) =>
-        {
-            out.push((s.clone(), key.into()));
-        }
-        _ => {}
-    }
+/// What the module of `service` reports it discovered: the details of its status.
+fn module_schema(service: &str) -> Option<Value> {
+    crate::kernel::status(service)
+        .map(|status| status.detail)
+        .filter(|detail| !detail.is_null())
 }

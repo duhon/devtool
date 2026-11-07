@@ -1,17 +1,10 @@
 {
   "id": "echo",
+  "kind": "service",
   "name": "Echo",
+  "version": "0.1.0",
   "description": "Example module: sends the text of a check back.",
-  "params": [
-    {"name": "endpoint", "type": "string", "required": true},
-    {"name": "text", "type": "string", "required": true}
-  ],
-  "console": {
-    "sections": [
-      {"name": "endpoint", "shape": "line", "language": "endpoint", "param": "endpoint"},
-      {"name": "text", "shape": "block", "param": "text"}
-    ],
-    "payload": "text",
-    "response": "body-headers"
-  }
+  "abi": 1,
+  "app": ">=3.7",
+  "drivers": {}
 }

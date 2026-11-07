@@ -166,7 +166,6 @@ mod tests {
             request: 0,
             header: 2,
             end: 3,
-            table: None,
         };
         assert_eq!(separate(&[0], &[pasted]), Some(vec![2]));
     }

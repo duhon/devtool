@@ -9,7 +9,6 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 services-contracts = { path = "../../api/protocol" }
-services-module-ui = { path = "../../api/module-ui" }
 services-kernel = { path = "../kernel" }
 services-sdk = { path = "../../api/sdk" }
 serde.workspace = true
@@ -18,17 +17,16 @@ regex = "1"
 url = "2"
 uuid = { version = "1.29.0", features = ["v7", "js"] }
 
-# Packaged modules' console parts load from their ui.wasm in the browser; native builds
-# (tests) link them instead.
+# Service modules load from their wasm in the browser; native builds (tests) link them.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 services-module-rest = { path = "../../modules/services/rest" }
-services-module-graphql-ui = { path = "../../modules/services/graphql/ui" }
-services-module-grpc-ui = { path = "../../modules/services/grpc/ui" }
-services-module-mysql-ui = { path = "../../modules/services/mysql/ui" }
-services-module-splunk-ui = { path = "../../modules/services/splunk/ui" }
-services-module-terminal-ui = { path = "../../modules/services/terminal/ui" }
-services-module-artemis-ui = { path = "../../modules/services/artemis/ui" }
-services-module-opensearch-ui = { path = "../../modules/services/opensearch/ui" }
+services-module-graphql = { path = "../../modules/services/graphql" }
+services-module-opensearch = { path = "../../modules/services/opensearch" }
+services-module-mysql = { path = "../../modules/services/mysql" }
+services-module-grpc = { path = "../../modules/services/grpc" }
+services-module-splunk = { path = "../../modules/services/splunk" }
+services-module-terminal = { path = "../../modules/services/terminal" }
+services-module-artemis = { path = "../../modules/services/artemis" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 base64 = "0.22"
@@ -48,7 +46,3 @@ web-sys = { version = "0.3", features = [
   "IdbRequest", "IdbTransaction", "IdbTransactionMode", "DomException",
   "ClipboardEvent", "DomTokenList"
 ] }
-
-[dev-dependencies]
-# The OpenSearch tests complete from the module's real discovery schema.
-services-module-opensearch = { path = "../../modules/services/opensearch" }

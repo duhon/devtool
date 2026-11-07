@@ -9,7 +9,6 @@ mod history;
 mod json;
 pub mod layout;
 pub mod session;
-mod sql;
 mod state;
 pub mod text;
 

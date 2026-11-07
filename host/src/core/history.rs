@@ -634,30 +634,25 @@ mod tests {
         assert!(!cleaned.contains("\"debug\""));
         assert!(cleaned.contains("\"code\": 7"));
     }
+    /// The App's `history.insert` of a run started at 1000.
+    fn insert(title: &str, text: String, defer: bool) -> Value {
+        json!({"service":"history","op":"insert","checkId":CHECK,"sessionId":CHECK,
+            "title":title,"module":"terminal","started":1000,"ended":crate::core::history::now(),
+            "status":"success","text":text,"defer":defer})
+    }
     #[tokio::test]
-    async fn oversize_history_failure_keeps_successful_execution_and_parallel_writes_obey_quota() {
+    async fn oversize_history_inserts_fail_and_parallel_writes_obey_quota() {
         let data = Data::new();
-        services_testkit::packages::install(&data.0);
         let mut store = data.history();
         store.quota = 500;
         store.target = 250;
         let mut runtime = crate::Runtime::with_data_dir(&data.0).unwrap();
         runtime.history = store.clone();
-        let (tx, mut rx) = tokio::sync::mpsc::channel(128);
-        let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
-        let reply=runtime.execute(&json!({"service":"terminal",
-                "params":{"endpoint":"sh -c","command":"printf successful"},
-                "history":{"checkId":CHECK,"sessionId":CHECK,"title":"large","source":"x".repeat(1000)}}),
-                tokio_util::sync::CancellationToken::new(),Some(tx)).await.unwrap();
-        drain.await.unwrap();
-        assert_eq!(reply["code"], 0);
-        assert_eq!(reply["history"]["saved"], false);
-        assert!(
-            reply["history"]["error"]
-                .as_str()
-                .unwrap()
-                .contains("exceeds")
-        );
+        let reply = runtime
+            .dispatch(&insert("large", "x".repeat(1000), false))
+            .await;
+        assert_eq!(reply["ok"], false);
+        assert!(reply["error"].as_str().unwrap().contains("exceeds"));
         store.quota = 20_000;
         store.target = 10_000;
         let mut tasks = tokio::task::JoinSet::new();
@@ -678,25 +673,17 @@ mod tests {
     #[tokio::test]
     async fn a_repeat_saves_only_its_last_run_timed_from_its_first_start() {
         let data = Data::new();
-        services_testkit::packages::install(&data.0);
         let runtime = crate::Runtime::with_data_dir(&data.0).unwrap();
         let store = runtime.history.clone();
         for text in ["first", "second"] {
-            let (tx, mut rx) = tokio::sync::mpsc::channel(128);
-            let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
             let reply = runtime
-                .execute(
-                    &json!({"service":"terminal",
-                        "params":{"endpoint":"sh -c","command":format!("printf {text}")},
-                        "history":{"checkId":CHECK,"sessionId":CHECK,"title":"repeat",
-                            "source":"#check repeat","defer":true,"startedAt":1000}}),
-                    tokio_util::sync::CancellationToken::new(),
-                    Some(tx),
-                )
-                .await
-                .unwrap();
-            drain.await.unwrap();
-            assert_eq!(reply["history"], json!({"deferred":true}));
+                .dispatch(&insert(
+                    "repeat",
+                    format!("#check repeat\n\n#responce OK\n{text}"),
+                    true,
+                ))
+                .await;
+            assert_eq!(reply["result"], json!({"saved":false,"deferred":true}));
         }
         let list = json!({"op":"list","checkId":CHECK});
         assert_eq!(store.dispatch(&list).await.unwrap()["total"], 0);

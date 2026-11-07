@@ -1,5 +1,5 @@
 [workspace]
-members = ["api/protocol", "api/sdk", "app/kernel", "api/module-api", "api/module-ui", "modules/services/rest", "modules/services/graphql", "modules/services/graphql/ui", "modules/services/grpc", "modules/services/grpc/ui", "modules/services/mysql", "modules/services/mysql/ui", "modules/services/splunk", "modules/services/splunk/ui", "modules/services/terminal", "modules/services/terminal/ui", "modules/services/artemis", "modules/services/artemis/ui", "modules/services/opensearch", "modules/services/opensearch/ui", "examples/echo", "examples/echo/ui", "host", "app/ui", "installer", "tools/testkit", "tools/xtask"]
+members = ["api/protocol", "api/sdk", "app/kernel", "modules/services/rest", "modules/services/graphql", "modules/services/grpc", "modules/services/mysql", "modules/services/splunk", "modules/services/terminal", "modules/services/artemis", "modules/services/opensearch", "examples/echo", "host", "app/ui", "installer", "tools/testkit", "tools/xtask"]
 resolver = "3"
 
 [workspace.package]

@@ -1,23 +1,38 @@
 //! The REST service: a `#endpoint` (`METHOD URL`), `#headers` and a `#body` sent through the
 //! Host `http` driver, with OpenAPI discovery for completion when the user asks for hints.
 
-mod complete;
-mod discovery;
-mod highlight;
 pub mod openapi;
+mod probe;
 
-use serde_json::Value;
-use services_sdk::http::{Request, Response};
+use services_sdk::http::Request;
+use services_sdk::lang::rest::{self, Language, discovery::Discovery, highlight};
 use services_sdk::lang::{curl, endpoint, headers};
 use services_sdk::{
     Check, Chunk, Cmd, Completions, DriverCall, Event, Fold, Line, Module, Rendered, Subscriptions,
 };
 
-pub use complete::HEADERS;
+pub const HEADERS: [&str; 9] = [
+    "Accept: */*",
+    "Accept-Encoding: gzip, deflate, br",
+    "Authorization: ****** application/json",
+    "Cookie:",
+    "Host:",
+    "User-Agent:",
+    "X-Api-Key:",
+    "X-Forwarded-For:",
+    "X-Requested-With: XMLHttpRequest",
+];
+
+const LANGUAGE: Language = Language {
+    sections: &["endpoint", "headers", "body"],
+    methods: &endpoint::METHODS,
+    headers: &HEADERS,
+    discovered_header: "OpenAPI header",
+};
 
 #[derive(Debug, Default)]
 pub struct Rest {
-    discovery: discovery::Discovery,
+    discovery: Discovery<probe::OpenApi>,
 }
 
 /// The `http` request of a check; `{{…}}` placeholders stay for the App to resolve.
@@ -60,11 +75,11 @@ impl Module for Rest {
     }
 
     fn highlight(&self, state: &[u8], lines: &[String]) -> Vec<Line> {
-        highlight::highlight(state, lines)
+        highlight::highlight(&LANGUAGE, state, lines)
     }
 
     fn complete(&self, check: &Check, pos: u32) -> Completions {
-        complete::complete(&self.discovery, check, pos as usize)
+        rest::complete::complete(&LANGUAGE, &self.discovery, check, pos as usize)
     }
 
     fn fold(&self, check: &Check) -> Vec<Fold> {
@@ -76,25 +91,7 @@ impl Module for Rest {
     }
 
     fn render(&self, chunk: &Chunk) -> Result<Rendered, String> {
-        let response = Response::parse(&chunk.response())?;
-        let body = response.body.unwrap_or_default();
-        let pretty = serde_json::from_str::<Value>(&body)
-            .ok()
-            .and_then(|value| serde_json::to_string_pretty(&value).ok());
-        let outcome = match response.status {
-            ..400 => "OK",
-            400..500 => "WARNING",
-            _ => "ERROR",
-        };
-        let (text, language) = match pretty {
-            Some(text) => (text, "json"),
-            None => (body, "text"),
-        };
-        Ok(Rendered {
-            text,
-            language: language.into(),
-            outcome: outcome.into(),
-        })
+        rest::render(&chunk.response())
     }
 
     fn export(&self, check: &Check) -> Result<String, String> {

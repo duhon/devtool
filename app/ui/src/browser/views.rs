@@ -210,8 +210,6 @@ struct JsonProps {
     value: Value,
     depth: usize,
     #[prop_or_default]
-    logfmt: bool,
-    #[prop_or_default]
     label: Option<String>,
     #[prop_or_default]
     is_index: bool,
@@ -221,26 +219,16 @@ fn json_node(props: &JsonProps) -> Html {
     let state = use_state_eq(|| (props.depth < 2, props.depth < 2));
     let (expanded, built) = *state;
     let depth = props.depth;
-    let embedded = props
-        .value
-        .as_str()
-        .and_then(|s| {
-            let s = s.trim();
-            if s.starts_with('{') || s.starts_with('[') {
-                serde_json::from_str::<Value>(s)
-                    .ok()
-                    .filter(|v| v.is_object() || v.is_array())
-            } else {
-                None
-            }
-        })
-        .or_else(|| {
-            if props.logfmt {
-                props.value.as_str().and_then(crate::logfmt::parse)
-            } else {
-                None
-            }
-        });
+    let embedded = props.value.as_str().and_then(|s| {
+        let s = s.trim();
+        if s.starts_with('{') || s.starts_with('[') {
+            serde_json::from_str::<Value>(s)
+                .ok()
+                .filter(|v| v.is_object() || v.is_array())
+        } else {
+            None
+        }
+    });
     let value = embedded.as_ref().unwrap_or(&props.value);
     if depth > 40 {
         return html! {<pre>{display(value)}</pre>};
@@ -293,7 +281,7 @@ fn json_node(props: &JsonProps) -> Html {
             </div>
             if !empty {
                 <div class="json-children" hidden={!expanded}>if built { {for entries.iter().map(|(label,value)| html!{
-                    <JsonNode key={label.clone()} value={(*value).clone()} depth={depth+1} logfmt={props.logfmt} label={label.clone()} is_index={array}/>
+                    <JsonNode key={label.clone()} value={(*value).clone()} depth={depth+1} label={label.clone()} is_index={array}/>
                 })} }</div>
                 <div class="json-line" hidden={!expanded}><span class="json-punct">{close}</span></div>
             }

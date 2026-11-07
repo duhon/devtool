@@ -15,8 +15,8 @@ for these user-driven discovery triggers.
 
 ## REST: what to tell the user
 
-There is no Discover button. Alt+Space is not a REST discovery shortcut.
-Use one of the real automatic triggers:
+There is no Discover button. Alt+Space in the editor requests discovery for
+the check at the cursor. The automatic triggers are:
 
 1. Select the rest service tab and the relevant check. Its `#endpoint` must
    contain METHOD URL, and any authentication headers belong in `#headers`.
@@ -56,10 +56,12 @@ representative response rather than inventing required fields or API behavior.
 
 ## Other services
 
-MySQL, GraphQL and gRPC support Alt+Space in their editor to request discovery.
-They also have automatic editor/connection triggers. Use the relevant check's
-connection and headers and watch the same bottom status strip.
+Every service with discovery supports Alt+Space in its editor to request it.
+GraphQL and OpenSearch discover like REST: on Ctrl+Space hints for a check
+whose address has no cached schema yet. MySQL and gRPC also discover
+automatically when the cursor leaves their connection sections. Use the
+relevant check's connection and headers and watch the same bottom status strip.
 MySQL discovery supplies database tables/columns; GraphQL uses introspection;
-gRPC discovers services, methods and message fields using its reflection/proto
-support. Authentication or server capabilities can limit what is available.
+OpenSearch reads the cluster, its mappings and aliases; gRPC discovers
+services, methods and message fields using its reflection/proto support. Authentication or server capabilities can limit what is available.
 Splunk and Terminal do not have this schema discovery flow.

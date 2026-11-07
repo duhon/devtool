@@ -163,7 +163,6 @@ impl EditHistory {
                             request: region.request + change.from.line,
                             header: region.header + change.from.line,
                             end: region.end + change.from.line,
-                            table: region.table.clone(),
                         }));
                         if fragment.moved && fragment.scope == self.scope {
                             checks.extend(fragment.checks.iter().cloned().map(|mut check| {
@@ -310,7 +309,6 @@ fn clipboard_fragment(
             request: region.request - from.line,
             header: region.header - from.line,
             end: region.end - from.line,
-            table: region.table.clone(),
         })
         .collect();
     Ok(ClipboardFragment {
@@ -384,7 +382,6 @@ fn remap_change(
                             request: region.request,
                             header: tail_line,
                             end: region.end,
-                            table: region.table.clone(),
                         });
                     }
                     region.end = index;
@@ -431,14 +428,16 @@ pub struct ResponseRegion {
     pub header: usize,
     /// Exclusive line boundary. Output markers inside this region are never requests.
     pub end: usize,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub table: Option<crate::tables::Metadata>,
 }
 fn marker(line: &str, name: &str) -> bool {
-    line.trim_start()
-        .to_ascii_lowercase()
-        .strip_prefix(&format!("#{name}"))
-        .is_some_and(|s| s.is_empty() || s.starts_with(char::is_whitespace))
+    // Only the marker's own bytes are compared: result lines can be megabytes long.
+    let rest = line.trim_start().strip_prefix('#').unwrap_or_default();
+    rest.get(..name.len())
+        .is_some_and(|head| head.eq_ignore_ascii_case(name))
+        && rest[name.len()..]
+            .chars()
+            .next()
+            .is_none_or(char::is_whitespace)
 }
 fn valid_regions(lines: &[&str], regions: &[ResponseRegion]) -> Vec<ResponseRegion> {
     let anchored = |region: &&ResponseRegion| {
@@ -582,7 +581,6 @@ pub fn replace_response(
         request: block.start,
         header,
         end,
-        table: None,
     });
     regions.sort_by_key(|r| r.header);
     result

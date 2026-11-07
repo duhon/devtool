@@ -382,6 +382,18 @@ Kernel не знает ни одной панели: даёт точки рас�
 - Модуль видит только свой kv; чужие данные напрямую не читает.
 - Разрешений нет; исключение — установка модулей и обновление App только у встроенных.
 - History — отдельные Cmd (`insert`, `search`): поиск на kv не сделать.
+- Имена Cmd в SDK (`api/sdk/src/cmd.rs`): `driver.call`, `driver.stream`, `driver.cancel`;
+  `vars.resolve` (`mode: "json"` — значения экранируются как содержимое JSON-строки);
+  `run.output`, `run.result` (тело, исход, язык, Debug или ошибка); `status.set` (с меткой
+  запуска — статус запуска, например `3 rows`); `kv.get`/`put`/`delete`/`watch` (kv модуля
+  в `localStorage` `module:<id>:<key>`); `timer.after`; `lock.acquire`/`lock.release`
+  (именованный замок, общий для всех окон App — Web Locks); `notify`, `log`.
+- Запуск, который ведёт модуль (решено 07.11, вариант A): модуль, подписанный на `run`,
+  получает `Run { tag, check }`, сам делает сколько нужно вызовов драйвера (ответы по меткам),
+  берёт замки и таймеры и заканчивает Cmd `run.result`. Stop: модуль получает
+  `Cancel { tag }` (замки ещё держатся), затем Kernel отменяет его открытые вызовы и
+  освобождает замки. Сервисы с одним вызовом остаются на простом пути
+  `build → call → render`.
 
 #### Msg (05.11)
 
@@ -393,10 +405,14 @@ Kernel не знает ни одной панели: даёт точки рас�
 | `Document { check, sections }` | документ сервиса изменился |
 | `Discover` | ручной discovery |
 | `Hints { check, pos }` | пользователь запросил подсказки (Ctrl+Space, `/` в адресе) — ленивый discovery |
+| `Run { tag, check }`, `Cancel { tag }` | Run чека модулем, который ведёт запуск сам; Stop |
 
-- Значения переменных модуль просит Cmd `Resolve { tag, text }`: App → панель Variables →
-  её хранилище; ответ приходит в `Reply { tag }`. До шага 5 App отвечает через временный
-  `vars.resolve` Host.
+- Значения переменных модуль просит Cmd `Resolve { tag, text, mode }`: App → панель
+  Variables → её хранилище; ответ приходит в `Reply { tag }`. `mode: "json"` (решено 07.11):
+  App экранирует значения как содержимое JSON-строки — так GraphQL подставляет переменные в
+  JSON. Модуль сам экранирует под свой язык (Terminal — кавычки shell после Resolve); App
+  ничего не подставляет после модуля. До шага 5 App отвечает через временный `vars.resolve`
+  Host.
 | `Request { started / finished }` | запуск и завершение запросов |
 | `Workspace` | restore: сессия переключена |
 | `Storage { key }` | изменился ключ из `watch` |
@@ -425,7 +441,7 @@ Kernel вызывает модуль напрямую и сразу получа
 | | `complete(check, pos) -> items` | подсказки |
 | | `fold(check) -> ranges` | свёртки |
 | Сервис | `build(check) -> driver call` | Run |
-| | `render(chunk) -> response text` | ответ или кусок стрима |
+| | `render(chunk) -> response text` | ответ или кусок стрима (`stream: true` — по куску) |
 | | `export(check) -> text`, `import(text) -> check` | Export, Import |
 | Панель | `before_request(call) -> call or error` | перед драйвером |
 | | `after_response(call, response) -> cmds` | после ответа |
@@ -558,7 +574,32 @@ Settings. Пакеты выпуска — `dist/modules/`, как сейчас.
   Templates до шага 5 (сценарий templates на GraphQL), Debug — `{body, outcome, request,
   response}`, исход 1xx/3xx — OK, discovery не идёт при наборе JSON без известных путей,
   REST подписан на `Document` только чтобы заранее подставить переменные в адрес.
+- Шаг 4: все сервисы — wasm-модули на SDK (`modules/services/{rest,graphql,opensearch,
+  mysql,grpc,splunk,terminal,artemis}`), драйверы Host http, grpc, mysql, process, tcp.
+  Удалены нативный путь целиком: `api/module-api`, `api/module-ui`, `ui/`-крейты модулей,
+  загрузка dylib в Host, stabby, путь `ServiceUi` и старый discovery (`type:"discover"`) в
+  App; `examples/echo` — модуль на SDK; xtask и testkit собирают и ставят только wasm-пакеты.
+  Язык сервисов — в модулях и `api/sdk/src/lang/` (`rest/`, `json`, `headers`, `endpoint`,
+  `curl`, `sql/`, `table`, `check`, `resolve`, `shell`); из App ушли `tables.rs`,
+  `editor/sql.rs`, `sql_completion.rs`, части `syntax.rs`/`format.rs`, `columns.rs` в
+  протоколе. `logfmt` — в Splunk. Splunk и Artemis ведут запуск сами (`Run`, вариант A):
+  Splunk — замок `splunk:<origin>`, пауза 13 с между окнами, откат на старый API при 404, повтор
+  429, стрим с ранней остановкой, предел 605 с; Artemis — несколько вызовов Jolokia.
+  Стрим драйвера (`driver.stream`) с `render(chunk)`: Terminal (stdout и stderr вперемешку);
+  MySQL отвечает одним вызовом. Статус запуска от модуля (`N rows`, `exit N · последняя строка stderr`). `#options`
+  передаются модулю (MySQL `Columns-Type`); типы колонок таблиц берутся из `Columns-Type` в
+  чеке, не из метаданных ответа (MySQL угадывает JSON без объявления, Splunk нет); свёртки
+  JSON в вертикальных таблицах — `table::folds` модуля. Пока модули грузятся, Sessions
+  заняты (`modules loading`), а Run ждёт загрузки и запускается после неё.
+  Отличия: Templates у сервисов нет до шага 5 (сценарий templates сокращён), нет крючков
+  запуска до шага 5; Console `Format:` и SQL-оверлей убраны, History не форматирует тело;
+  авто-discovery убран (только `Hints`/`Discover`); ответ Host `modules` —
+  `{wasm, failed?}`; Debug Terminal — поля выхода на верхнем уровне и `request`; Splunk
+  `resultCount` — в `debug.export`; ответ на `Cancel` модуля не показывается; статус
+  запуска — только по завершении; предупреждения Artemis — в исходе и Debug; пакеты без
+  платформы и без codesign.
 
 ## Решить
 
-- Пока ничего.
+- Метаданные ответа для подсветки и свёрток: типы колонок таблиц сейчас только из
+  `Columns-Type` в чеке; нужен ли `render` с метаданными ответа (типы колонок сервера).

@@ -10,11 +10,16 @@ pub const METHODS: [&str; 6] = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"]
 /// `string`. With `http` the line may start with a method (`property`), `{name}` path
 /// segments are `rest-path-param` and the query after `?` is `number`.
 pub fn tokens(line: &str, http: bool) -> Vec<Token> {
+    tokens_with(line, http, &METHODS)
+}
+
+/// [`tokens`] of a line whose method is one of `methods`.
+pub fn tokens_with(line: &str, http: bool, methods: &[&str]) -> Vec<Token> {
     let mut out = Vec::new();
     let mut pos = 0;
     if http
         && let Some((method, _)) = line.split_once(char::is_whitespace)
-        && METHODS.contains(&method.to_ascii_uppercase().as_str())
+        && methods.contains(&method.to_ascii_uppercase().as_str())
     {
         pos = run(line, method.len(), char::is_whitespace);
         out.push(token(0, pos, "property"));

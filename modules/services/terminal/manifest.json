@@ -1,22 +1,11 @@
 {
   "id": "terminal",
+  "kind": "service",
   "name": "Terminal",
-  "description": "Run a command through an endpoint (a local shell or an ssh connection) and stream its output.",
-  "params": [
-    {"name": "endpoint", "type": "string", "required": true},
-    {"name": "env", "type": "json"},
-    {"name": "command", "type": "string", "required": true}
-  ],
-  "console": {
-    "order": 6,
-    "sections": [
-      {"name": "endpoint", "shape": "line", "language": "shell", "param": "endpoint", "hints": [{"text": "bash -c"}, {"text": "zsh -c"}, {"text": "ssh "}]},
-      {"name": "command", "shape": "block", "language": "shell", "param": "command"},
-      {"name": "env", "shape": "pairs", "language": "headers", "param": "env", "hints": [{"text": "PATH: "}, {"text": "HOME: "}, {"text": "USER: "}, {"text": "LANG: en_US.UTF-8"}, {"text": "NODE_ENV: production"}, {"text": "DEBUG: *"}]}
-    ],
-    "payload": "command",
-    "implicitPayload": true,
-    "response": "stream",
-    "keywords": ["PATH: ", "HOME: ", "LANG: en_US.UTF-8", "NODE_ENV: production"]
-  }
+  "version": "3.2.2",
+  "description": "Run a command through an endpoint (a local shell or an ssh connection) and show its output.",
+  "abi": 1,
+  "app": ">=3.7",
+  "drivers": {"process": "1"},
+  "order": 6
 }

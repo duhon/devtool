@@ -1,17 +1,12 @@
-//! A module package: `<modules>/<id>/` with `package.json` and either `module.wasm` (the
-//! App runs it; `package.json` is its SDK manifest) or `module.dylib` with an optional
-//! `ui.wasm` (old modules the Host runs), optional `RELEASE_NOTES.md` and an optional Agent
-//! skill in `skills/module-<id>/`. `package.json` says what the package is without loading it.
+//! A module package: `<modules>/<id>/` with `package.json` (the module's SDK manifest),
+//! `module.wasm` the App runs, optional `RELEASE_NOTES.md` and an optional Agent skill in
+//! `skills/module-<id>/`. `package.json` says what the package is without loading it.
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 /// The package description inside a package folder.
 pub const PACKAGE_FILE: &str = "package.json";
-/// The native part of a package on macOS.
-pub const LIBRARY_FILE: &str = "module.dylib";
-/// The optional console part of a package.
-pub const UI_FILE: &str = "ui.wasm";
 /// A module the App runs.
 pub const WASM_FILE: &str = "module.wasm";
 /// The optional changes of the package's versions, newest first (`## X.Y.Z` sections).
@@ -23,9 +18,9 @@ pub const SKILLS_DIR: &str = "skills";
 pub const ARCHIVE_SUFFIX: &str = ".module.tgz";
 /// The extension a file picker filters package files by.
 pub const ARCHIVE_EXTENSION: &str = ".tgz";
-/// The files a package archive may hold at its root; `package.json` and the library or the
-/// wasm module are required. Besides them only the skill folder ([`SKILLS_DIR`]).
-pub const ARCHIVE_FILES: &[&str] = &[PACKAGE_FILE, LIBRARY_FILE, WASM_FILE, UI_FILE, NOTES_FILE];
+/// The files a package archive may hold at its root; `package.json` and the wasm module
+/// are required. Besides them only the skill folder ([`SKILLS_DIR`]).
+pub const ARCHIVE_FILES: &[&str] = &[PACKAGE_FILE, WASM_FILE, NOTES_FILE];
 
 /// The file name of a package archive.
 pub fn archive_name(package: &Package) -> String {
@@ -224,7 +219,7 @@ pub fn version(value: &str) -> Result<[u64; 3], String> {
 /// Package files: [`ARCHIVE_FILES`] and the skill folder of a package folder in one gzip'd tar.
 #[cfg(feature = "archive")]
 pub mod archive {
-    use super::{ARCHIVE_FILES, LIBRARY_FILE, PACKAGE_FILE, SKILLS_DIR, WASM_FILE};
+    use super::{ARCHIVE_FILES, PACKAGE_FILE, SKILLS_DIR, WASM_FILE};
     use std::{
         fs,
         io::{self, Read},
@@ -243,9 +238,8 @@ pub mod archive {
             flate2::Compression::default(),
         ));
         builder.mode(tar::HeaderMode::Deterministic);
-        let code = [LIBRARY_FILE, WASM_FILE];
-        if !code.iter().any(|name| dir.join(name).is_file()) {
-            return Err(format!("{} is missing", dir.join(LIBRARY_FILE).display()));
+        if !dir.join(WASM_FILE).is_file() {
+            return Err(format!("{} is missing", dir.join(WASM_FILE).display()));
         }
         for name in ARCHIVE_FILES {
             let path = dir.join(name);
@@ -364,8 +358,8 @@ pub mod archive {
         if !into.join(PACKAGE_FILE).is_file() {
             return Err(invalid(format!("it has no {PACKAGE_FILE}")));
         }
-        if !into.join(LIBRARY_FILE).is_file() && !into.join(WASM_FILE).is_file() {
-            return Err(invalid(format!("it has no {LIBRARY_FILE}")));
+        if !into.join(WASM_FILE).is_file() {
+            return Err(invalid(format!("it has no {WASM_FILE}")));
         }
         Ok(())
     }
@@ -544,7 +538,7 @@ mod tests {
             r#"{"id":"redis","version":"1.0.0"}"#,
         )
         .unwrap();
-        std::fs::write(package.join(LIBRARY_FILE), b"library").unwrap();
+        std::fs::write(package.join(WASM_FILE), b"\0asm").unwrap();
         std::fs::write(package.join(NOTES_FILE), b"## 1.0.0\nFirst\n").unwrap();
         std::fs::write(package.join("notes.txt"), b"not packed").unwrap();
         let skill = package.join("skills/module-redis/references");
@@ -559,11 +553,7 @@ mod tests {
         let file = pack(&package).unwrap();
         let unpacked = folder("unpacked");
         unpack(&file, &unpacked).unwrap();
-        assert_eq!(
-            std::fs::read(unpacked.join(LIBRARY_FILE)).unwrap(),
-            b"library"
-        );
-        assert!(!unpacked.join(UI_FILE).exists());
+        assert_eq!(std::fs::read(unpacked.join(WASM_FILE)).unwrap(), b"\0asm");
         assert!(!unpacked.join("notes.txt").exists());
         assert_eq!(
             std::fs::read(unpacked.join("skills/module-redis/references/syntax.md")).unwrap(),
@@ -573,7 +563,7 @@ mod tests {
             super::archive::read(&file, NOTES_FILE).unwrap().unwrap(),
             b"## 1.0.0\nFirst\n"
         );
-        assert_eq!(super::archive::read(&file, UI_FILE).unwrap(), None);
+        assert_eq!(super::archive::read(&file, "ui.wasm").unwrap(), None);
 
         let tar = |build: &dyn Fn(&mut tar::Builder<Vec<u8>>)| {
             let mut builder = tar::Builder::new(Vec::new());
@@ -615,7 +605,7 @@ mod tests {
             file_entry(b, "./", tar::EntryType::Directory);
             file_entry(b, "./._package.json", regular);
             file_entry(b, "./package.json", regular);
-            file_entry(b, "./module.dylib", regular);
+            file_entry(b, "./module.wasm", regular);
         });
         unpack(&mac, &folder("mac")).unwrap();
         for (name, file, error) in [
@@ -631,7 +621,7 @@ mod tests {
             ),
             (
                 "skill-escape",
-                tar(&|b| raw_entry(b, "skills/x/../../module.dylib")),
+                tar(&|b| raw_entry(b, "skills/x/../../module.wasm")),
                 "unexpected",
             ),
             (
@@ -640,10 +630,10 @@ mod tests {
                     let mut header = tar::Header::new_gnu();
                     header.set_entry_type(tar::EntryType::Symlink);
                     header.set_size(0);
-                    b.append_link(&mut header, "module.dylib", "/usr/lib/libc.dylib")
+                    b.append_link(&mut header, "module.wasm", "/usr/lib/libc.dylib")
                         .unwrap();
                 }),
-                "\"module.dylib\" is not a regular file",
+                "\"module.wasm\" is not a regular file",
             ),
             (
                 "repeated",
@@ -654,9 +644,9 @@ mod tests {
                 "\"package.json\": File exists",
             ),
             (
-                "libraryless",
+                "moduleless",
                 tar(&|b| file_entry(b, "package.json", regular)),
-                "it has no module.dylib",
+                "it has no module.wasm",
             ),
             ("garbage", b"not a package".to_vec(), "Invalid package file"),
         ] {

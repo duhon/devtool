@@ -2,42 +2,14 @@
 //! UI-behaviour tests.
 
 use serde_json::json;
-use services_ui::console::Format;
 use services_ui::format::{
-    MAX_RESPONSE_CHARS, check_response, console_response, duration, formatted_response, outcome,
+    MAX_RESPONSE_CHARS, check_response, console_response, duration, outcome,
 };
-
-#[test]
-fn format_overrides_the_table_layout_but_never_hides_an_error() {
-    let rows = json!({"columns":["id"],"rows":[{"id":1}]});
-    let shown = |vertical, format| formatted_response("mysql", &rows, vertical, format, "", "");
-    assert_eq!(
-        shown(true, Some(Format::Table)),
-        check_response("mysql", &rows, false, "", "")
-    );
-    assert_eq!(
-        shown(false, Some(Format::Vertical)),
-        check_response("mysql", &rows, true, "", "")
-    );
-    assert_eq!(
-        shown(true, None),
-        check_response("mysql", &rows, true, "", "")
-    );
-    assert_eq!(
-        shown(false, Some(Format::Json)),
-        "[\n  {\n    \"id\": 1\n  }\n]"
-    );
-    let failed = json!({"columns":["id"],"rows":[],"error":"denied"});
-    assert_eq!(
-        formatted_response("mysql", &failed, false, Some(Format::Json), "", ""),
-        "denied"
-    );
-}
 
 #[test]
 fn long_responses_are_capped_without_splitting_unicode() {
     let r = json!({"body":"é".repeat(MAX_RESPONSE_CHARS+4)});
-    let out = console_response("rest", &r, false);
+    let out = console_response(&r);
     assert!(out.contains("4 more characters"));
     assert_eq!(
         out.chars().take(MAX_RESPONSE_CHARS).collect::<String>(),
@@ -64,4 +36,22 @@ fn outcomes_and_durations_use_readable_labels() {
     );
     assert_eq!(duration(1500.0), "1.5s");
     assert_eq!(duration(60000.0), "1min");
+}
+
+#[test]
+fn a_stopped_run_keeps_what_it_showed_and_an_error_replaces_the_body() {
+    let stopped = json!({"cancelled":true,"warning":"Stopped.","body":"partial"});
+    assert_eq!(console_response(&stopped), "partial\nWarning: Stopped.");
+    assert_eq!(
+        console_response(&json!({"cancelled":true})),
+        "Request stopped before dispatch."
+    );
+    assert_eq!(
+        check_response(&json!({"error":"offline","body":"x"}), "", ""),
+        "offline"
+    );
+    assert_eq!(
+        check_response(&serde_json::Value::Null, "so far", ""),
+        "so far"
+    );
 }

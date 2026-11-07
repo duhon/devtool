@@ -154,9 +154,6 @@ impl App {
                 EditorEvent::EditError(error) => Msg::EditorError(error),
                 EditorEvent::Run { source, line } => Msg::ConsoleRun(source, line),
                 EditorEvent::Discover => Msg::Discover,
-                EditorEvent::AutoDiscover(endpoint) => {
-                    Msg::AutoDiscover(format!("console:{service}"), endpoint)
-                }
                 EditorEvent::Hints(check, pos) => Msg::KernelHints(check, pos),
                 EditorEvent::Viewport(viewport) => Msg::Scroll(service.into(), viewport),
                 EditorEvent::Cursor(_) => continue,
@@ -206,14 +203,14 @@ impl App {
         &self,
         service: &str,
         line: Option<usize>,
-    ) -> (Option<&Run>, Option<&DiscoveryStatus>) {
+    ) -> (Option<&Run>, Option<&ModuleStatus>) {
         let run = self.console_run(service, line);
         let editor = self.console_editor(service);
         let discovery = self
-            .discovery_status
+            .module_status
             .get(service)
             .into_iter()
-            .chain(self.discovery_history.get(service).into_iter().flatten())
+            .chain(self.module_history.get(service).into_iter().flatten())
             .filter(|status| line.is_some() && status.check_line(&editor) == line)
             .max_by(|a, b| a.started.total_cmp(&b.started));
         if run.is_some_and(Run::active)
@@ -224,10 +221,7 @@ impl App {
             (None, discovery)
         }
     }
-    pub(super) fn selected_status(
-        &self,
-        service: &str,
-    ) -> (Option<&Run>, Option<&DiscoveryStatus>) {
+    pub(super) fn selected_status(&self, service: &str) -> (Option<&Run>, Option<&ModuleStatus>) {
         self.check_status(service, self.active_console_line(service))
     }
     pub(super) fn check_state(&self, service: &str, line: usize) -> crate::activity::Indicator {
@@ -279,10 +273,10 @@ impl App {
             }
         }
         let discoveries =
-            self.discovery_status
+            self.module_status
                 .iter_mut()
                 .chain(
-                    self.discovery_history
+                    self.module_history
                         .iter_mut()
                         .flat_map(|(owner, statuses)| {
                             statuses.iter_mut().map(move |status| (owner, status))
@@ -362,40 +356,38 @@ impl App {
                 .map(|line| self.check_indicator(service, line)),
         )
     }
-    pub(super) fn discovery_owner(&self, service: &str) -> CheckOwner {
+    pub(super) fn status_owner(&self, service: &str) -> CheckOwner {
         let line = self.active_console_line(service);
         CheckOwner {
             line,
             anchor: line.and_then(|line| self.anchor(service, line)),
         }
     }
-    pub(super) fn set_discovery_status(
+    pub(super) fn set_module_status(
         &mut self,
         service: &str,
         text: String,
-        params: &Value,
         debug: Value,
         owner: CheckOwner,
     ) {
         let editor = self.console_editor(service);
         let line = owner.check_line(&editor);
-        let status = DiscoveryStatus {
+        let status = ModuleStatus {
             request: None,
             text,
             debug,
             started: js_sys::Date::now(),
             owner,
-            params: params.clone(),
             signal: crate::activity::Signal::default(),
         };
-        let history = self.discovery_history.entry(service.into()).or_default();
+        let history = self.module_history.entry(service.into()).or_default();
         history.retain(|previous| {
             previous.request.is_some()
                 || previous
                     .check_line(&editor)
                     .is_some_and(|previous| Some(previous) != line)
         });
-        if let Some(previous) = self.discovery_status.insert(service.into(), status)
+        if let Some(previous) = self.module_status.insert(service.into(), status)
             && (previous.request.is_some()
                 || previous
                     .check_line(&editor)
@@ -455,8 +447,19 @@ impl App {
             self.finish_repeat(ctx, &key, "Repeat stopped");
             return true;
         }
-        let run = self.runs.get_mut(&key).unwrap();
         let message = "Repeated run rejected: this check was already running. Cancellation was requested; no new request was started.";
+        if self.kernel_running(&key) {
+            if let Some(run) = self.runs.get_mut(&key) {
+                run.stopping = true;
+                run.debug["duplicateRun"] = json!({
+                    "error":message,"phase":"duplicate-run","cancellationRequested":true
+                });
+                run.duplicate_error = Some(message.to_owned());
+            }
+            self.kernel_stop(ctx, &key);
+            return true;
+        }
+        let run = self.runs.get_mut(&key).unwrap();
         let stopped = run
             .stream
             .ok_or_else(|| "Running request has no cancellation handle".to_owned())
@@ -533,7 +536,6 @@ impl App {
             ));
             return;
         }
-        let vertical = params["vertical"] == true;
         let started = js_sys::Date::now();
         self.runs.insert(
             key.into(),
@@ -542,11 +544,9 @@ impl App {
                 running: true,
                 status: "Running…".into(),
                 line: Some(line),
-                vertical,
                 started,
                 debug: run_debug(service, &params, started),
                 anchor: self.anchor(service, line),
-                format: options.format,
                 ..Default::default()
             },
         );
@@ -590,20 +590,7 @@ impl App {
         self.send_run(ctx, service, key, message);
     }
     fn send_run(&mut self, ctx: &Context<Self>, service: &str, key: &str, message: Value) {
-        if crate::kernel::is_service(service) {
-            return self.kernel_send(ctx, service, key, message);
-        }
-        let k = key.to_string();
-        let s = service.to_string();
-        let callback = ctx
-            .link()
-            .callback(move |r| Msg::Reply(k.clone(), s.clone(), r));
-        let id = self.transport.request(
-            message,
-            crate::services::view(service) == View::Stream,
-            callback,
-        );
-        self.runs.get_mut(key).unwrap().stream = Some(id);
+        self.kernel_send(ctx, service, key, message);
     }
     /// The request text of the check at `line`.
     fn check_source(&self, service: &str, line: Option<usize>) -> Option<String> {
@@ -859,7 +846,7 @@ impl App {
                             .unwrap_or("Request stopped before dispatch")
                     )
                 } else {
-                    format!("{} · {}", time(), format::status(service, &result))
+                    format!("{} · {}", time(), format::status(&result))
                 };
                 run.debug = result.clone();
                 run.result = result;
@@ -884,14 +871,7 @@ impl App {
             run.line
         };
         if let Some(line) = response_line {
-            let body = format::formatted_response(
-                service,
-                &run.result,
-                run.vertical,
-                run.format,
-                &run.stdout,
-                &run.stderr,
-            );
+            let body = format::check_response(&run.result, &run.stdout, &run.stderr);
             let outcome = if run.running {
                 "Running"
             } else {
@@ -906,7 +886,6 @@ impl App {
                     repeat.last = Some(body.clone());
                 }
             }
-            let json = format::shows_json(&run.result, run.format);
             let doc = self.docs.entry(service.into()).or_default();
             let preserve_after = crate::document::check_lines(
                 doc,
@@ -932,18 +911,6 @@ impl App {
                 &body,
                 self.response_regions.entry(service.into()).or_default(),
             );
-            if let Some(region) = self
-                .response_regions
-                .get_mut(service)
-                .and_then(|regions| regions.iter_mut().find(|region| region.request == line))
-                && crate::services::view(service) == View::Grid
-                && run.result["columns"].is_array()
-            {
-                region.table = Some(crate::tables::Metadata {
-                    json,
-                    ..crate::tables::Metadata::from_result(&run.result)
-                });
-            }
             crate::checks::remap_text(
                 &old_doc,
                 doc,
@@ -954,38 +921,10 @@ impl App {
             self.persist_console();
         }
     }
-    pub(super) fn discover(&mut self, ctx: &Context<Self>, manual: bool) {
-        let service = self.current_language().to_string();
-        if crate::services::discovery(&service).is_none() {
-            return;
-        }
-        let Some(params) = self.discovery_params(&service) else {
-            return;
-        };
-        self.start_discovery(ctx, service, params, manual, None);
-    }
-    pub(super) fn discovery_params(&self, service: &str) -> Option<Value> {
-        let source = self.docs.get(service).cloned().unwrap_or_default();
-        let cursor = self.active_console_line(service).unwrap_or(0);
-        let block = crate::document::request_at(
-            &source,
-            cursor,
-            self.response_regions
-                .get(service)
-                .map(Vec::as_slice)
-                .unwrap_or(&[]),
-        )
-        .map(|b| b.text)
-        .unwrap_or(source);
-        crate::discovery::params(service, &console::sections(service, &block))
-    }
-    /// What completion in the editor of `service` reads besides hints: the discovered
-    /// schema, or a Kernel service's status (with its details) and how many variable
-    /// resolutions its module got; a change reopens hints.
+    /// What completion in the editor of `service` reads besides hints: its module's status
+    /// (with its details) and how many variable resolutions the module got; a change reopens
+    /// hints.
     fn editor_discovery(&self, service: &str) -> Value {
-        if !crate::kernel::is_service(service) {
-            return self.schema(service).cloned().unwrap_or(Value::Null);
-        }
         let resolutions = self.kernel.resolutions.get(service).copied().unwrap_or(0);
         let Some(status) = crate::kernel::status(service) else {
             return if resolutions == 0 {
@@ -1001,102 +940,6 @@ impl App {
         }
         value
     }
-    /// The discovered schema for the current check of `service`.
-    pub(super) fn schema(&self, service: &str) -> Option<&Value> {
-        if crate::services::lazy_discovery(service) {
-            let params = self.discovery_params(service)?;
-            let key = crate::discovery::key(service, &params, &self.vars).ok()?;
-            self.lazy_schemas
-                .get(service)?
-                .get(&crate::discovery::address(service, &key))
-        } else {
-            self.discovery.get(service)
-        }
-    }
-    pub(super) fn start_discovery(
-        &mut self,
-        ctx: &Context<Self>,
-        service: String,
-        params: Value,
-        manual: bool,
-        owner: Option<CheckOwner>,
-    ) {
-        if self.hidden {
-            return;
-        }
-        let owner = owner.unwrap_or_else(|| self.discovery_owner(&service));
-        let key = match crate::discovery::key(&service, &params, &self.vars) {
-            Ok(key) => key,
-            Err(error) => {
-                self.pending_discovery.remove(&service);
-                let previous = self.discovered_params.remove(&service).is_some();
-                self.discovery.remove(&service);
-                let address = crate::discovery::address(&service, &params);
-                if manual || previous || !address.trim().is_empty() {
-                    self.set_discovery_status(
-                            &service,
-                            format!("{} · Discovery · WARNING · {error}", time()),
-                            &params,
-                            json!({"type":"discover","service":service,"params":params,"warning":error}),
-                            owner,
-                        );
-                }
-                return;
-            }
-        };
-        let lazy = crate::services::lazy_discovery(&service);
-        let address = crate::discovery::address(&service, &key);
-        let cache = self.lazy_schemas.get(&service);
-        if lazy && cache.and_then(|cache| cache.get(&address)).is_some() {
-            self.pending_discovery.remove(&service);
-            return;
-        }
-        if self.discovering.contains(&service) {
-            if crate::discovery::follows_connection(&service) {
-                if self.discovered_params.get(&service) != Some(&key) {
-                    self.pending_discovery.insert(service, (params, owner));
-                } else {
-                    self.pending_discovery.remove(&service);
-                }
-            }
-            return;
-        }
-        if self.discovered_params.get(&service) == Some(&key) {
-            return;
-        }
-        if lazy && cache.is_some_and(|cache| cache.attempted(&address)) {
-            return;
-        }
-        if crate::discovery::follows_connection(&service) {
-            self.discovery.remove(&service);
-        }
-        if lazy {
-            self.lazy_schemas
-                .entry(service.clone())
-                .or_default()
-                .attempt(&address);
-        }
-        self.discovered_params.insert(service.clone(), key.clone());
-        self.discovering.insert(service.clone());
-        self.set_discovery_status(
-            &service,
-            "Discovery…".into(),
-            &params,
-            json!({"type":"discover","service":service,"params":params}),
-            owner,
-        );
-        let s = service.clone();
-        let p = params.clone();
-        let id = self.transport.request(
-            json!({"type":"discover","service":service,"params":params}),
-            false,
-            ctx.link()
-                .callback(move |r| Msg::Discovered(s.clone(), p.clone(), key.clone(), r)),
-        );
-        if let Some(status) = self.discovery_status.get_mut(&service) {
-            status.request = Some(id);
-        }
-    }
     pub(super) fn template_entries(&self, service: &str) -> BTreeMap<String, String> {
         self.templates.get(service).cloned().unwrap_or_default()
     }
@@ -1111,9 +954,6 @@ impl App {
         }
         if let Some(text) = self.hints.get(service) {
             hints.extend(crate::completion::saved_hints(text));
-        }
-        if let Some(value) = self.discovery.get(service) {
-            collect_discovery(value, "", &mut hints);
         }
         let mut seen = BTreeSet::new();
         hints.retain(|hint| seen.insert(hint.clone()));

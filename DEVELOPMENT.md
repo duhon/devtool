@@ -67,9 +67,10 @@ cargo run -p xtask -- test <type>   # one kind at a time
 
 - `host` — the host: variables, history, templates, hints, updates,
   the agent, the module registry and loader, native-messaging adapter.
-- `api/protocol` — module manifest, package format, protocol constants.
-- `api/module-api`, `api/module-ui` — SDKs of a module's native part
-  (`module.dylib`) and console part (`ui.wasm`).
+- `api/protocol` — package format, protocol constants.
+- `api/sdk` — the module SDK: the wasm module ABI, Cmd/Msg, driver requests and shared
+  languages (`lang/`).
+- `app/kernel` — the Kernel that runs wasm modules in the App.
 - `modules/services/<id>` — the standard modules, each released on its own with its
   version, `RELEASE_NOTES.md` and Agent skill (`skill/SKILL.md`).
 - `examples/echo` — an unshipped example module and the module guide.

@@ -1,394 +1,481 @@
-//! Terminal: runs a command through a shell endpoint and streams its output.
+//! The Terminal service: a `#endpoint` command line (a local shell or an ssh connection)
+//! runs the `#command` text as its last argument through the Host `process` driver, with
+//! `#env` exported first.
 
-mod process;
-
-use process::ChildGroup;
+use serde::Deserialize;
 use serde_json::{Value, json};
-use services_module_api::error::{Error, Result, required, string};
-use services_module_api::sdk::{self, Call, Events, Manifest, Service, Threads};
-use services_module_api::transport::{EndpointArc, EndpointBox, Status};
-use std::{
-    process::Stdio,
-    sync::Mutex,
-    time::{Duration, Instant},
+use services_sdk::lang::check::At;
+use services_sdk::lang::{finish, headers, item, marker, shell};
+use services_sdk::process::{self, Exit, Request};
+use services_sdk::{
+    Check, Cmd, Completions, Event, Failure, Line, Module, Rendered, Subscriptions, Token, cmd, run,
 };
-use tokio::{
-    io::{AsyncRead, AsyncReadExt},
-    sync::mpsc,
-};
-use tokio_util::sync::CancellationToken;
+use std::collections::BTreeMap;
 
-/// The end of stderr kept in the result, so status and Debug can show why a command failed.
-pub const STDERR_TAIL_BYTES: usize = 4096;
+pub const SECTIONS: [&str; 3] = ["endpoint", "command", "env"];
 
-pub struct Terminal;
+const ENDPOINTS: [&str; 3] = ["bash -c", "zsh -c", "ssh "];
+const ENV: [&str; 6] = [
+    "PATH: ",
+    "HOME: ",
+    "USER: ",
+    "LANG: en_US.UTF-8",
+    "NODE_ENV: production",
+    "DEBUG: *",
+];
 
-impl Service for Terminal {
-    fn manifest(&self) -> Manifest {
-        Manifest {
-            execute: false,
-            discover: false,
-            stream: true,
-            ..Manifest::from_json(include_str!("../manifest.json"), env!("CARGO_PKG_VERSION"))
-        }
-    }
+pub const INCOMPLETE: &str = "Output capture ended before stdout/stderr closed. Detached background processes may still be running; close their resources explicitly.";
+pub const TRUNCATED: &str = "Output past the Host's limit was dropped.";
 
-    fn soft_cancel(&self) -> bool {
-        true
-    }
-
-    async fn stream(&self, call: Call, events: Events) -> Result<Value> {
-        run(&call.params, call.cancel, events).await
-    }
-
-    fn outcome(&self, result: &Value) -> &'static str {
-        if let Some(outcome) = sdk::common_outcome(result) {
-            return outcome;
-        }
-        match result["code"].as_i64() {
-            Some(0)
-                if result["outputIncomplete"] == true
-                    || result["stderr"]
-                        .as_str()
-                        .is_some_and(|stderr| !stderr.trim().is_empty()) =>
-            {
-                "WARNING"
-            }
-            Some(0) => "OK",
-            _ => "ERROR",
-        }
-    }
-}
-
-pub fn endpoint(host: EndpointArc) -> std::result::Result<EndpointBox, Status> {
-    sdk::serve(Terminal, host, Threads::Own("terminal-module"))
-}
-
-services_module_api::export!(endpoint);
-
-pub fn parse_argv(input: &str) -> Result<Vec<String>> {
-    let chars: Vec<char> = input.chars().collect();
-    let mut i = 0;
+/// The words of an endpoint as a POSIX shell splits them: quotes and backslashes.
+pub fn parse_argv(input: &str) -> Result<Vec<String>, String> {
+    let mut chars = input.chars().peekable();
     let mut out = vec![];
-    while i < chars.len() {
-        while i < chars.len() && chars[i].is_whitespace() {
-            i += 1;
-        }
-        if i == chars.len() {
-            break;
+    loop {
+        while chars.next_if(|c| c.is_whitespace()).is_some() {}
+        if chars.peek().is_none() {
+            return Ok(out);
         }
         let mut token = String::new();
-        while i < chars.len() && !chars[i].is_whitespace() {
-            match chars[i] {
-                '\'' => {
-                    i += 1;
-                    while i < chars.len() && chars[i] != '\'' {
-                        token.push(chars[i]);
-                        i += 1;
+        while let Some(c) = chars.next_if(|c| !c.is_whitespace()) {
+            match c {
+                '\'' => loop {
+                    match chars.next() {
+                        Some('\'') => break,
+                        Some(c) => token.push(c),
+                        None => return Err("Unterminated single quote in endpoint".into()),
                     }
-                    if i == chars.len() {
-                        return Err(Error::new("Unterminated single quote in endpoint"));
-                    }
-                    i += 1;
-                }
-                '"' => {
-                    i += 1;
-                    while i < chars.len() && chars[i] != '"' {
-                        if chars[i] == '\\'
-                            && i + 1 < chars.len()
-                            && matches!(chars[i + 1], '"' | '\\')
-                        {
-                            i += 1;
+                },
+                '"' => loop {
+                    match chars.next() {
+                        Some('"') => break,
+                        Some('\\') if matches!(chars.peek(), Some('"' | '\\')) => {
+                            token.extend(chars.next());
                         }
-                        token.push(chars[i]);
-                        i += 1;
+                        Some(c) => token.push(c),
+                        None => return Err("Unterminated double quote in endpoint".into()),
                     }
-                    if i == chars.len() {
-                        return Err(Error::new("Unterminated double quote in endpoint"));
-                    }
-                    i += 1;
-                }
-                '\\' if i + 1 < chars.len() => {
-                    i += 1;
-                    token.push(chars[i]);
-                    i += 1;
-                }
-                c => {
-                    token.push(c);
-                    i += 1;
-                }
+                },
+                '\\' if chars.peek().is_some() => token.extend(chars.next()),
+                c => token.push(c),
             }
         }
         out.push(token);
     }
-    Ok(out)
 }
-pub fn build_command(command: &str, env: &Value) -> String {
+
+/// The command with `env` exported first: `export NAME='value' …; command`.
+pub fn build_command(command: &str, env: &[(String, String)]) -> String {
+    if env.is_empty() {
+        return command.into();
+    }
     let exports: Vec<_> = env
-        .as_object()
-        .into_iter()
-        .flatten()
-        .map(|(name, value)| format!("{name}='{}'", string(value).replace('\'', "'\\''")))
+        .iter()
+        .map(|(name, value)| format!("{name}='{}'", value.replace('\'', "'\\''")))
         .collect();
-    if exports.is_empty() {
-        command.into()
-    } else {
-        format!("export {}; {command}", exports.join(" "))
-    }
+    format!("export {}; {command}", exports.join(" "))
 }
-pub async fn run(
-    params: &Value,
-    cancel: CancellationToken,
-    events: mpsc::Sender<Value>,
-) -> Result<Value> {
-    let endpoint = required(params, "endpoint")?;
-    let command = required(params, "command")?;
-    let argv = parse_argv(&endpoint)?;
+
+/// The endpoint line and the command: `#command`, or the lines after the endpoint.
+fn parts(check: &Check) -> (&str, &str) {
+    let endpoint = check.text_of("endpoint");
+    let (line, rest) = endpoint.split_once('\n').unwrap_or((endpoint, ""));
+    let command = match check.section("command") {
+        Some(command) => command,
+        None if !rest.trim().is_empty() => rest.trim(),
+        None => check.text_of("leftover"),
+    };
+    (line.trim(), command)
+}
+
+/// The `process` driver request of a check: the endpoint's program and arguments, then the
+/// command with `#env` exported.
+pub fn request(check: &Check) -> Result<Request, String> {
+    plan(check).and_then(|plan| resolved(&plan))
+}
+
+/// What a run resolves before it builds its request: the endpoint's words, the command and
+/// the `#env` pairs. Words are split first, so a value with spaces stays one argument.
+pub fn plan(check: &Check) -> Result<Value, String> {
+    run::no_options(check, "Terminal")?;
+    let (endpoint, command) = parts(check);
+    let argv = parse_argv(endpoint)?;
     if argv.is_empty() {
-        return Err(Error::new("endpoint must not be empty"));
+        return Err("endpoint must not be empty".into());
     }
-    let env = params.get("env").cloned().unwrap_or(json!({}));
-    if !env.is_object() {
-        return Err(Error::new("env must be an object of name/value pairs"));
+    if command.trim().is_empty() {
+        return Err("command is required".into());
     }
-    let started = Instant::now();
-    let request = json!({"endpoint":endpoint,"argv":argv,"env":env});
-    let mut cmd = tokio::process::Command::new(&argv[0]);
-    cmd.args(&argv[1..])
-        .arg(build_command(&command, &env))
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        cmd.as_std_mut().process_group(0);
+    let env = headers::pairs(check.text_of("env"));
+    Ok(json!({"argv": argv, "command": command, "env": env}))
+}
+
+/// The request of a [`plan`] whose variables are resolved: `#env` values are quoted only
+/// now, so a value is never resolved inside the quotes.
+pub fn resolved(plan: &Value) -> Result<Request, String> {
+    #[derive(Deserialize)]
+    struct Plan {
+        argv: Vec<String>,
+        command: String,
+        env: Vec<(String, String)>,
     }
-    let mut child = match cmd.spawn() {
-        Ok(child) => child,
-        Err(error) => {
-            return Ok(
-                json!({"code":null,"signal":null,"error":error.to_string(),"durationMs":started.elapsed().as_millis(),"debug":{"request":request,"connection":{"events":[{"event":"error","atMs":started.elapsed().as_millis(),"data":{"name":"Error","message":error.to_string()}}]}}}),
-            );
-        }
+    let plan = Plan::deserialize(plan).map_err(|error| error.to_string())?;
+    let Some((program, args)) = plan.argv.split_first() else {
+        return Err("endpoint must not be empty".into());
     };
-    let pid = child.id().unwrap();
-    let group = ChildGroup(pid);
-    let stdout = child.stdout.take().unwrap();
-    let stderr = child.stderr.take().unwrap();
-    let stderr_tail = Mutex::new(String::new());
-    let (status, cancelled, output_incomplete) = {
-        let output = async {
-            tokio::try_join!(
-                read_output(stdout, "stdout", events.clone(), None),
-                read_output(stderr, "stderr", events, Some(&stderr_tail)),
-            )?;
-            Ok::<_, std::io::Error>(())
-        };
-        let wait = async {
-            let result = tokio::select! {
-                result=child.wait()=>(result, false),
-                _=cancel.cancelled()=>{
-                    group.signal(libc::SIGTERM);
-                    let result = match tokio::time::timeout(Duration::from_secs(2),child.wait()).await {
-                        Ok(result)=>result,
-                        Err(_)=>{group.signal(libc::SIGKILL);child.wait().await}
+    let mut request = Request::new(program, &[]);
+    request.args = args.to_vec();
+    request.args.push(build_command(&plan.command, &plan.env));
+    Ok(request)
+}
+
+/// OK for exit 0, WARNING when it also wrote to stderr or output went missing, else ERROR.
+pub fn outcome(exit: &Exit) -> &'static str {
+    let stderr = exit.stderr.as_deref().unwrap_or("");
+    match exit.code {
+        Some(0) if exit.output_incomplete || exit.truncated || !stderr.trim().is_empty() => {
+            "WARNING"
+        }
+        Some(0) => "OK",
+        _ => "ERROR",
+    }
+}
+
+/// A driver answer as console text: stdout, then stderr, then why output may be missing.
+/// A piece of a stream is its text.
+pub fn render(response: &Value) -> Result<Rendered, String> {
+    let rendered = |text: String, outcome: &str| Rendered {
+        text,
+        language: "text".into(),
+        outcome: outcome.into(),
+    };
+    if let Ok(event) = process::Event::parse(response) {
+        return Ok(match event {
+            process::Event::Stdout(text) | process::Event::Stderr(text) => rendered(text, "OK"),
+            _ => rendered(String::new(), "OK"),
+        });
+    }
+    let exit = Exit::parse(response)?;
+    let mut text = format!(
+        "{}{}",
+        exit.stdout.as_deref().unwrap_or(""),
+        exit.stderr.as_deref().unwrap_or("")
+    );
+    warn(&exit, &mut text);
+    Ok(rendered(text, outcome(&exit)))
+}
+
+/// Appends why output may be missing.
+fn warn(exit: &Exit, text: &mut String) {
+    for (missing, warning) in [
+        (exit.truncated, TRUNCATED),
+        (exit.output_incomplete, INCOMPLETE),
+    ] {
+        if missing {
+            if !text.is_empty() && !text.ends_with('\n') {
+                text.push('\n');
+            }
+            text.push_str("Warning: ");
+            text.push_str(warning);
+        }
+    }
+}
+
+/// The part of a check a line is in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+enum Area {
+    Other,
+    Shell,
+    Env,
+    Response,
+}
+
+impl Area {
+    fn of(byte: Option<&u8>) -> Self {
+        match byte {
+            Some(1) => Area::Shell,
+            Some(2) => Area::Env,
+            Some(3) => Area::Response,
+            _ => Area::Other,
+        }
+    }
+}
+
+/// Tokens of a marker line: the marker as a comment; the rest of an `#endpoint` line as
+/// shell, of other lines as part of the comment.
+fn marker_tokens(line: &str, name: &str, rest: &str, quote: &mut shell::State) -> Vec<Token> {
+    let head = line.len() - line.trim_start().len() + 1 + name.len();
+    if name != "endpoint" || rest.is_empty() {
+        return vec![Token {
+            start: 0,
+            len: line.trim_end().len() as u32,
+            kind: "comment".into(),
+        }];
+    }
+    let at = (line.trim_end().len() - rest.len()) as u32;
+    let mut tokens = vec![Token {
+        start: 0,
+        len: head as u32,
+        kind: "comment".into(),
+    }];
+    tokens.extend(shell::tokens(rest, quote).into_iter().map(|t| Token {
+        start: t.start + at,
+        ..t
+    }));
+    tokens
+}
+
+/// Highlighting of a Terminal check: the endpoint and command as shell, `#env` as pairs.
+/// The output stays plain.
+pub fn highlight(state: &[u8], lines: &[String]) -> Vec<Line> {
+    let mut area = Area::of(state.first());
+    let mut quote = shell::State::decode(state.get(1..).unwrap_or(&[]));
+    lines
+        .iter()
+        .map(|line| {
+            let tokens = match marker(line) {
+                Some((name, rest))
+                    if area != Area::Response
+                        || matches!(name.as_str(), "responce" | "response") =>
+                {
+                    quote = shell::State::default();
+                    area = match name.as_str() {
+                        "endpoint" | "command" => Area::Shell,
+                        "env" => Area::Env,
+                        "responce" | "response" => Area::Response,
+                        _ => Area::Other,
                     };
-                    (result, true)
+                    marker_tokens(line, &name, rest, &mut quote)
                 }
+                _ => match area {
+                    Area::Shell => shell::tokens(line, &mut quote),
+                    Area::Env => headers::tokens(line),
+                    Area::Other | Area::Response => vec![],
+                },
             };
-            group.signal(libc::SIGKILL);
-            result
-        };
-        tokio::pin!(output);
-        tokio::pin!(wait);
-        let mut output_result = None;
-        let (status, cancelled) = tokio::select! {
-            result=&mut wait=>result,
-            result=&mut output=>{
-                if result.is_err() { cancel.cancel(); }
-                output_result = Some(result);
-                wait.await
-            }
-        };
-        let incomplete = if let Some(result) = output_result {
-            result?;
-            false
-        } else {
-            tokio::select! {
-                biased;
-                result=&mut output=>{result?;false},
-                _=cancel.cancelled()=>true,
-                _=tokio::time::sleep(Duration::from_secs(2))=>true,
-            }
-        };
-        (status?, cancelled || cancel.is_cancelled(), incomplete)
-    };
-    let code = status.code();
-    #[cfg(unix)]
-    let signal = {
-        use std::os::unix::process::ExitStatusExt;
-        status.signal().map(|signal| match signal {
-            libc::SIGTERM => "SIGTERM".to_string(),
-            libc::SIGKILL => "SIGKILL".to_string(),
-            libc::SIGINT => "SIGINT".to_string(),
-            libc::SIGHUP => "SIGHUP".to_string(),
-            libc::SIGSEGV => "SIGSEGV".to_string(),
-            libc::SIGQUIT => "SIGQUIT".to_string(),
-            libc::SIGABRT => "SIGABRT".to_string(),
-            libc::SIGILL => "SIGILL".to_string(),
-            libc::SIGFPE => "SIGFPE".to_string(),
-            libc::SIGPIPE => "SIGPIPE".to_string(),
-            libc::SIGALRM => "SIGALRM".to_string(),
-            libc::SIGUSR1 => "SIGUSR1".to_string(),
-            libc::SIGUSR2 => "SIGUSR2".to_string(),
-            libc::SIGTRAP => "SIGTRAP".to_string(),
-            libc::SIGBUS => "SIGBUS".to_string(),
-            libc::SIGXCPU => "SIGXCPU".to_string(),
-            libc::SIGXFSZ => "SIGXFSZ".to_string(),
-            _ => format!("SIG{signal}"),
+            let mut state = vec![area as u8];
+            quote.encode(&mut state);
+            Line { tokens, state }
         })
-    };
-    #[cfg(not(unix))]
-    let signal: Option<String> = None;
-    let elapsed = started.elapsed().as_millis();
-    let mut result = json!({"code":code,"signal":signal,"durationMs":elapsed,"cancelled":cancelled,
-    "debug":{"request":request,"connection":{"events":[
-        {"event":"spawn","atMs":0,"data":{"pid":pid}},
-        {"event":"exit","atMs":elapsed,"data":{"code":code,"signal":signal}},
-        {"event":"close","atMs":elapsed,"data":{"code":code,"signal":signal}}
-    ]}}});
-    let stderr_tail = stderr_tail.into_inner().unwrap_or_else(|e| e.into_inner());
-    if !stderr_tail.is_empty() {
-        result["stderr"] = json!(stderr_tail);
-    }
-    if output_incomplete {
-        result["outputIncomplete"] = json!(true);
-        result["warning"] = json!(
-            "Output capture ended before stdout/stderr closed. Detached background processes may still be running; close their resources explicitly."
-        );
-    }
-    Ok(result)
+        .collect()
 }
-/// Keeps the last `STDERR_TAIL_BYTES` of `tail`, cut at a character boundary.
-pub fn keep_tail(tail: &mut String, data: &str) {
-    tail.push_str(data);
-    if tail.len() > STDERR_TAIL_BYTES {
-        let mut start = tail.len() - STDERR_TAIL_BYTES;
-        while !tail.is_char_boundary(start) {
-            start += 1;
+
+/// Completion in a Terminal check: markers, endpoint shells and `#env` names.
+pub fn complete(check: &Check, pos: usize) -> Completions {
+    let at = At::new(&check.text, pos);
+    if at.in_placeholder() || at.in_response() {
+        return at.none();
+    }
+    if let Some(markers) = at.markers(&SECTIONS) {
+        return markers;
+    }
+    let line_start = at.line_start(at.line);
+    let first = at.section.as_ref().is_some_and(|(i, _)| at.line == i + 1);
+    match at.name() {
+        Some("endpoint") if first => {
+            let value = at.before.trim_start();
+            let from = line_start + at.before.len() - value.len();
+            let items = ENDPOINTS
+                .iter()
+                .map(|text| item(*text, "Endpoint", "keyword"))
+                .collect();
+            finish(from, at.pos, value, items)
         }
-        tail.drain(..start);
+        Some("endpoint") => at.next_section(&SECTIONS).unwrap_or_else(|| at.none()),
+        Some("env") => {
+            let used = headers::used(at.other_lines());
+            let items = headers::items(&ENV, &[], &used);
+            let mut result = finish(line_start, at.pos, at.before.trim(), items);
+            if at.before.trim().is_empty() && !used.is_empty() {
+                let mut items = finish(line_start, at.pos, "", at.unused(&SECTIONS)).items;
+                items.append(&mut result.items);
+                result.items = items;
+            }
+            result
+        }
+        _ => at.none(),
     }
 }
-async fn read_output(
-    mut reader: impl AsyncRead + Unpin,
-    kind: &str,
-    events: mpsc::Sender<Value>,
-    tail: Option<&Mutex<String>>,
-) -> std::io::Result<()> {
-    let send = |data: String| {
-        if let Some(tail) = tail {
-            keep_tail(&mut tail.lock().unwrap_or_else(|e| e.into_inner()), &data);
-        }
-        events.send(json!({"type":kind,"data":data}))
+
+/// Characters of a command's last stderr line shown in its status.
+const STATUS_STDERR_CHARS: usize = 160;
+
+/// The run's status: a failed exit's code or signal, then the last line the command wrote
+/// to stderr (also after a successful exit, where stderr makes it a warning).
+pub fn exit_summary(exit: &Exit, stderr: &str) -> Option<String> {
+    let mut parts = match (exit.code, exit.signal.as_deref()) {
+        (Some(0), _) => vec![],
+        (Some(code), _) => vec![format!("exit {code}")],
+        (None, Some(signal)) => vec![signal.to_owned()],
+        (None, None) => vec![],
     };
-    let mut buf = [0u8; 8192];
-    let mut pending = Vec::new();
-    loop {
-        match reader.read(&mut buf).await {
-            Ok(0) => break,
-            Err(error) => return Err(error),
-            Ok(n) => {
-                pending.extend_from_slice(&buf[..n]);
-                let valid = match std::str::from_utf8(&pending) {
-                    Ok(_) => pending.len(),
-                    Err(e) => {
-                        if e.error_len().is_some() {
-                            pending.len()
-                        } else {
-                            e.valid_up_to()
-                        }
+    if let Some(line) = stderr.lines().map(str::trim).rfind(|line| !line.is_empty()) {
+        parts.push(if line.chars().count() > STATUS_STDERR_CHARS {
+            let mut short: String = line.chars().take(STATUS_STDERR_CHARS - 1).collect();
+            short.push('…');
+            short
+        } else {
+            line.to_owned()
+        });
+    }
+    (!parts.is_empty()).then(|| parts.join(" · "))
+}
+
+/// A command running: its output as it came, stdout and stderr interleaved.
+#[derive(Debug, Default)]
+struct Running {
+    request: Value,
+    output: String,
+    stderr: String,
+    exit: Option<Exit>,
+}
+
+impl Running {
+    fn finish(self, run: &str) -> Vec<Cmd> {
+        let Some(mut exit) = self.exit else {
+            let debug = json!({"request": self.request});
+            return vec![cmd::fail(
+                run,
+                "The command ended without an exit status",
+                &debug,
+            )];
+        };
+        exit.stderr = Some(self.stderr.clone());
+        // The exit's fields stay at the top, where Debug shows them unfolded.
+        let mut debug = json!(exit);
+        debug["request"] = self.request;
+        let mut text = self.output;
+        warn(&exit, &mut text);
+        let rendered = Rendered {
+            text,
+            language: "text".into(),
+            outcome: outcome(&exit).into(),
+        };
+        let mut cmds: Vec<Cmd> = exit_summary(&exit, &self.stderr)
+            .iter()
+            .map(|status| cmd::run_status(run, status))
+            .collect();
+        cmds.push(cmd::result(run, &rendered, &debug));
+        cmds
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct Terminal {
+    runs: BTreeMap<String, Running>,
+}
+
+impl Terminal {
+    /// The run and the step (`resolve`, `call`) of a reply `tag`.
+    fn owner(&self, tag: &str) -> Option<(String, String)> {
+        self.runs.keys().find_map(|run| {
+            let step = tag.strip_prefix(run.as_str())?.strip_prefix(':')?;
+            Some((run.clone(), step.to_owned()))
+        })
+    }
+
+    fn start(&mut self, run: String, check: &Check) -> Vec<Cmd> {
+        match plan(check) {
+            Ok(plan) => {
+                self.runs.insert(run.clone(), Running::default());
+                vec![run::resolve_value(format!("{run}:resolve"), &plan)]
+            }
+            Err(error) => vec![cmd::fail(&run, &error, &Value::Null)],
+        }
+    }
+
+    fn reply(&mut self, run: &str, step: &str, result: Result<Value, Failure>) -> Vec<Cmd> {
+        let Some(running) = self.runs.get_mut(run) else {
+            return vec![];
+        };
+        match (step, result) {
+            ("resolve", result) => {
+                match run::resolved_value(result).and_then(|plan| resolved(&plan)) {
+                    Ok(request) => {
+                        let call = request.call().streaming();
+                        running.request = call.request();
+                        vec![cmd::driver(format!("{run}:call"), &call)]
                     }
-                };
-                if valid > 0 {
-                    let data = String::from_utf8_lossy(&pending[..valid]).to_string();
-                    pending.drain(..valid);
-                    if send(data).await.is_err() {
-                        break;
+                    Err(error) => {
+                        self.runs.remove(run);
+                        vec![cmd::fail(run, &error, &Value::Null)]
                     }
                 }
             }
+            ("call", Ok(value)) => match process::Event::parse(&value) {
+                Ok(process::Event::Stdout(text)) => {
+                    running.output.push_str(&text);
+                    vec![cmd::output(run, &text)]
+                }
+                Ok(process::Event::Stderr(text)) => {
+                    running.output.push_str(&text);
+                    running.stderr.push_str(&text);
+                    vec![cmd::output(run, &text)]
+                }
+                Ok(_) => vec![],
+                Err(_) => match Exit::parse(&value) {
+                    Ok(exit) => {
+                        running.exit = Some(exit);
+                        vec![]
+                    }
+                    Err(error) => {
+                        let debug = json!({"request": running.request, "response": value});
+                        self.runs.remove(run);
+                        vec![cmd::fail(run, &error, &debug)]
+                    }
+                },
+            },
+            ("call", Err(failure)) => {
+                let debug = json!({"request": running.request, "reply": failure.details()});
+                self.runs.remove(run);
+                vec![cmd::fail(run, &failure.message, &debug)]
+            }
+            _ => vec![],
         }
     }
-    if !pending.is_empty() {
-        let _ = send(String::from_utf8_lossy(&pending).into_owned()).await;
-    }
-    Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+impl Module for Terminal {
+    type Msg = ();
 
-    #[test]
-    fn exit_codes_signals_stderr_and_incomplete_output_set_the_outcome() {
-        for (result, expected) in [
-            (json!({"code":0,"outputIncomplete":true}), "WARNING"),
-            (
-                json!({"code":0,"outputIncomplete":true,"cancelled":true}),
-                "Stopped",
-            ),
-            (
-                json!({"code":0,"outputIncomplete":true,"error":"read failed"}),
-                "ERROR",
-            ),
-            (json!({"code":1,"outputIncomplete":true}), "ERROR"),
-            (json!({"code":0}), "OK"),
-            (json!({"code":0,"stderr":"\n  \n"}), "OK"),
-            (
-                json!({"code":0,"stderr":"warning: deprecated\n"}),
-                "WARNING",
-            ),
-            (json!({"code":1}), "ERROR"),
-            (json!({"code":2}), "ERROR"),
-            (json!({"code":127}), "ERROR"),
-            (json!({"code":null,"signal":"SIGKILL"}), "ERROR"),
-            (
-                json!({"code":null,"signal":"SIGTERM","cancelled":true}),
-                "Stopped",
-            ),
-        ] {
-            assert_eq!(Terminal.outcome(&result), expected, "{result}");
+    fn update(&mut self, event: Event<()>) -> Vec<Cmd> {
+        match event {
+            Event::Run { tag, check } => self.start(tag, &check),
+            Event::Reply { tag, result } => match self.owner(&tag) {
+                Some((run, step)) => self.reply(&run, &step, result),
+                None => vec![],
+            },
+            Event::End { tag } => match self.owner(&tag) {
+                Some((run, step)) if step == "call" => self
+                    .runs
+                    .remove(&run)
+                    .map(|running| running.finish(&run))
+                    .unwrap_or_default(),
+                _ => vec![],
+            },
+            Event::Cancel { tag } => {
+                self.runs.remove(&tag);
+                vec![]
+            }
+            _ => vec![],
         }
     }
 
-    #[test]
-    fn stderr_tail_keeps_the_last_bytes_on_a_char_boundary() {
-        let mut tail = String::new();
-        keep_tail(&mut tail, "first\n");
-        keep_tail(&mut tail, "second\n");
-        assert_eq!(tail, "first\nsecond\n");
-        keep_tail(&mut tail, &"é".repeat(STDERR_TAIL_BYTES));
-        keep_tail(&mut tail, "fail: boom\n");
-        assert!(tail.len() <= STDERR_TAIL_BYTES, "{}", tail.len());
-        assert!(tail.len() > STDERR_TAIL_BYTES - 2);
-        assert!(tail.starts_with('é') && tail.ends_with("é\u{e9}fail: boom\n"));
+    fn subscriptions(&self) -> Subscriptions {
+        Subscriptions {
+            run: true,
+            ..Subscriptions::default()
+        }
     }
 
-    #[test]
-    fn argv_quotes_and_env_match_the_shell_contract() {
-        assert_eq!(
-            parse_argv("ssh 'some host' -i \"a b\\\"c\" x\\ y").unwrap(),
-            vec!["ssh", "some host", "-i", "a b\"c", "x y"]
-        );
-        assert_eq!(parse_argv("sh -c ''").unwrap(), vec!["sh", "-c", ""]);
-        assert!(parse_argv("sh 'bad").is_err());
-        assert!(parse_argv("sh \"bad").is_err());
-        assert_eq!(
-            build_command("printf \"$VALUE\"", &json!({"VALUE":"a'b"})),
-            "export VALUE='a'\\''b'; printf \"$VALUE\""
-        );
+    fn highlight(&self, state: &[u8], lines: &[String]) -> Vec<Line> {
+        highlight(state, lines)
+    }
+
+    fn complete(&self, check: &Check, pos: u32) -> Completions {
+        complete(check, pos as usize)
     }
 }
+
+services_sdk::export!(Terminal);

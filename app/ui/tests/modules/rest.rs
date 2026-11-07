@@ -72,9 +72,7 @@ fn the_module_colors_checks_with_utf16_spans_and_the_console_overlays_variables(
 #[test]
 fn module_completions_merge_with_console_markers_options_and_variables() {
     let hints = [("{{:token}}".to_owned(), "secret".to_owned())];
-    let at = |source: &str, line: usize, ch: usize| {
-        suggest("rest", "", source, line, ch, &hints, &Value::Null)
-    };
+    let at = |source: &str, line: usize, ch: usize| suggest("rest", "", source, line, ch, &hints);
     let texts = |source: &str, line: usize, ch: usize| {
         at(source, line, ch)
             .candidates
@@ -163,7 +161,6 @@ fn curl_export_and_import_go_through_the_module() {
 #[test]
 fn rest_is_a_kernel_tab_ordered_by_its_manifest() {
     assert!(services::contains("rest"));
-    assert!(services::get("rest").is_none());
     assert_eq!(services::label("rest"), "REST");
     assert_eq!(services::default_service(), "rest");
     assert_eq!(
@@ -279,7 +276,7 @@ fn a_field_after_a_value_puts_its_comma_after_the_value() {
         })));
     }
     let source = format!("{source}{{\n  \"name\": \"x\"\n  \n}}");
-    let completion = suggest("rest", "", &source, 6, 2, &[], &Value::Null);
+    let completion = suggest("rest", "", &source, 6, 2, &[]);
     assert_eq!(completion.comma, Some((5, 13)));
     assert_eq!((completion.from, completion.to), (2, 2));
     assert_eq!(completion.candidates[0].text, "\"age\": ");
@@ -289,7 +286,7 @@ fn a_field_after_a_value_puts_its_comma_after_the_value() {
     assert!(mood.continue_hint && !mood.literal);
     // A value goes in as the module wrote it, though it ends with `""`.
     let source = format!("{}{{\"mood\": \"\"}}", &source[..source.find('{').unwrap()]);
-    let value = &suggest("rest", "", &source, 4, 10, &[], &Value::Null).candidates[0];
+    let value = &suggest("rest", "", &source, 4, 10, &[]).candidates[0];
     assert_eq!(value.text, "\"say \\\"hi\\\"\"");
     assert!(value.literal);
 }

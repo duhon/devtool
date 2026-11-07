@@ -1,35 +1,39 @@
-//! Echo: the smallest module. It answers each check with its text, the way an HTTP service
-//! answers, so the console shows it in the body/headers view.
+//! Echo: the smallest module. It answers each run of a check with the check's text, without
+//! calling any driver.
 
-use serde_json::{Value, json};
-use services_module_api::error::{Result, required};
-use services_module_api::sdk::{self, Call, Manifest, Service, Threads};
-use services_module_api::transport::{EndpointArc, EndpointBox, Status};
+use serde_json::json;
+use services_sdk::{Cmd, Event, Module, Rendered, Subscriptions, cmd};
 
+#[derive(Debug, Default)]
 pub struct Echo;
 
-impl Service for Echo {
-    fn manifest(&self) -> Manifest {
-        Manifest {
-            execute: true,
-            ..Manifest::from_json(include_str!("../manifest.json"), env!("CARGO_PKG_VERSION"))
+impl Module for Echo {
+    type Msg = ();
+
+    fn update(&mut self, event: Event<()>) -> Vec<Cmd> {
+        match event {
+            Event::Run { tag, check } => {
+                let endpoint = check.text_of("endpoint").trim();
+                if endpoint.is_empty() {
+                    return vec![cmd::fail(&tag, "#endpoint is required", &json!({}))];
+                }
+                let rendered = Rendered {
+                    text: check.text_of("text").to_owned(),
+                    language: "text".into(),
+                    outcome: "OK".into(),
+                };
+                vec![cmd::result(&tag, &rendered, &json!({"endpoint": endpoint}))]
+            }
+            _ => Vec::new(),
         }
     }
 
-    async fn execute(&self, call: Call) -> Result<Value> {
-        let endpoint = required(&call.params, "endpoint")?;
-        let text = required(&call.params, "text")?;
-        Ok(json!({
-            "status": 200,
-            "headers": {"content-type": "text/plain", "x-echo-endpoint": endpoint},
-            "body": text,
-        }))
+    fn subscriptions(&self) -> Subscriptions {
+        Subscriptions {
+            run: true,
+            ..Subscriptions::default()
+        }
     }
 }
 
-/// The module's entry: the host calls it once after loading the library.
-pub fn endpoint(host: EndpointArc) -> std::result::Result<EndpointBox, Status> {
-    sdk::serve(Echo, host, Threads::Host)
-}
-
-services_module_api::export!(endpoint);
+services_sdk::export!(Echo);

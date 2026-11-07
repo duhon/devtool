@@ -37,11 +37,13 @@ pub enum Effect {
         module: String,
         tag: String,
     },
-    /// Resolve the `{{…}}` variables in `text`; the reply is the resolved text.
+    /// Resolve the `{{…}}` variables in `text`; the reply is the resolved text. In `json`
+    /// mode each value is escaped as the content of a JSON string.
     Resolve {
         module: String,
         tag: String,
         text: String,
+        json: bool,
     },
     Timer {
         module: String,
@@ -66,6 +68,24 @@ pub enum Effect {
     Command {
         module: String,
         cmd: Cmd,
+    },
+    /// More response text of a run (`run.output`).
+    Output {
+        module: String,
+        run: String,
+        text: String,
+    },
+    /// A run's status text (`status.set` with the run's tag).
+    RunStatus {
+        module: String,
+        run: String,
+        text: String,
+    },
+    /// A run finished (`run.result`): `body`, `outcome`, `language`, `debug`, or `error`.
+    Finished {
+        module: String,
+        run: String,
+        result: Value,
     },
     /// The module's UI tree or status changed.
     Changed {
@@ -104,6 +124,10 @@ pub struct Loaded {
     pending: BTreeMap<String, bool>,
     watched: BTreeSet<String>,
     held: BTreeSet<String>,
+    /// Running checks and the lock names each holds.
+    runs: BTreeMap<String, BTreeSet<String>>,
+    /// The run each command tag was sent for.
+    owners: BTreeMap<String, String>,
     pub status: Option<Status>,
     pub log: VecDeque<(String, String)>,
 }
@@ -112,6 +136,17 @@ impl Loaded {
     /// Services always get events; a closed panel gets none.
     fn active(&self) -> bool {
         self.manifest.kind == Kind::Service || self.shown
+    }
+    /// Whether `tag` belongs to a run that already ended; forgets it.
+    fn stopped(&mut self, tag: &str) -> bool {
+        let stopped = self
+            .owners
+            .get(tag)
+            .is_some_and(|run| !self.runs.contains_key(run));
+        if stopped {
+            self.owners.remove(tag);
+        }
+        stopped
     }
     fn note(&mut self, level: &str, text: impl Into<String>) {
         if self.log.len() == LOG_LINES {
@@ -130,7 +165,10 @@ pub struct Modules {
 }
 
 fn kind(kind: event::Kind) -> wire::Event {
-    wire::Event { kind: Some(kind) }
+    wire::Event {
+        kind: Some(kind),
+        now: 0.0,
+    }
 }
 
 fn empty() -> wire::Empty {
@@ -172,6 +210,8 @@ impl Modules {
                 pending: BTreeMap::new(),
                 watched: BTreeSet::new(),
                 held: BTreeSet::new(),
+                runs: BTreeMap::new(),
+                owners: BTreeMap::new(),
                 status: None,
                 log: VecDeque::new(),
             },
@@ -251,6 +291,9 @@ impl Modules {
         let Some(module) = self.loaded.get_mut(id) else {
             return Vec::new();
         };
+        if module.stopped(tag) {
+            return Vec::new();
+        }
         if module.pending.get(tag) == Some(&false) {
             module.pending.remove(tag);
         }
@@ -274,7 +317,7 @@ impl Modules {
         let Some(module) = self.loaded.get_mut(id) else {
             return Vec::new();
         };
-        if module.pending.remove(tag).is_none() {
+        if module.stopped(tag) || module.pending.remove(tag).is_none() {
             return Vec::new();
         }
         self.send(id, kind(event::Kind::End(tag.into())))
@@ -308,6 +351,8 @@ impl Modules {
             effects.extend(Self::release(module));
             module.pending.clear();
             module.held.clear();
+            module.runs.clear();
+            module.owners.clear();
             module.view = None;
             module.shown = false;
             self.queue.retain(|(owner, _)| owner != id);
@@ -376,9 +421,22 @@ impl Modules {
         if !self.loaded.get(id).is_some_and(|module| module.initialized) {
             effects.extend(self.init(id));
         }
-        let Some(module) = self.loaded.get(id) else {
+        let Some(module) = self.loaded.get_mut(id) else {
             return effects;
         };
+        let owner = match &event.kind {
+            Some(event::Kind::Run(run)) => Some(run.tag.clone()),
+            Some(event::Kind::Reply(wire::Reply { tag, .. }) | event::Kind::End(tag)) => {
+                let owner = module.owners.get(tag).cloned();
+                if !module.pending.contains_key(tag) {
+                    module.owners.remove(tag);
+                }
+                owner.filter(|run| module.runs.contains_key(run))
+            }
+            _ => None,
+        };
+        let mut event = event;
+        event.now = (self.clock)();
         let request = request::Kind::Update(wire::UpdateRequest {
             event: Some(event),
             view: module.shown,
@@ -411,22 +469,49 @@ impl Modules {
             effects.push(Effect::Changed { module: id.into() });
         }
         for cmd in updated.cmds {
-            effects.extend(self.run(id, cmd));
+            effects.extend(self.run(id, cmd, owner.as_deref()));
         }
         effects
     }
 
     /// One command: run in the Kernel, handed to the App, or answered with an error.
-    fn run(&mut self, id: &str, cmd: Cmd) -> Vec<Effect> {
+    fn run(&mut self, id: &str, cmd: Cmd, run: Option<&str>) -> Vec<Effect> {
         let module = self.loaded.get_mut(id).expect("loaded");
         let args = cmd.args();
         let text = |key: &str| args[key].as_str().unwrap_or("").to_owned();
         let owner = id.to_owned();
+        if let Some(run) = run
+            && !cmd.tag.is_empty()
+            && !module.runs.contains_key(&cmd.tag)
+        {
+            module.owners.insert(cmd.tag.clone(), run.to_owned());
+        }
         match cmd.name.as_str() {
             "log" => {
                 module.note(&text("level"), text("text"));
                 Vec::new()
             }
+            "run.output" if module.runs.contains_key(&cmd.tag) => vec![Effect::Output {
+                module: owner,
+                run: cmd.tag,
+                text: text("text"),
+            }],
+            "status.set" if module.runs.contains_key(&cmd.tag) => vec![Effect::RunStatus {
+                module: owner,
+                run: cmd.tag,
+                text: text("text"),
+            }],
+            "run.result" if module.runs.contains_key(&cmd.tag) => {
+                let mut effects = Self::stop(module, &cmd.tag);
+                effects.push(Effect::Finished {
+                    module: owner,
+                    run: cmd.tag,
+                    result: args,
+                });
+                effects
+            }
+            // A run already stopped.
+            "run.output" | "run.result" => Vec::new(),
             "status.set" => {
                 module.status = Some(Status {
                     text: text("text"),
@@ -475,6 +560,7 @@ impl Modules {
                     module: owner,
                     tag: cmd.tag,
                     text: text("text"),
+                    json: args["mode"] == "json",
                 }]
             }
             "timer.after" => {
@@ -488,6 +574,9 @@ impl Modules {
             "lock.acquire" => {
                 module.pending.insert(cmd.tag.clone(), false);
                 module.held.insert(text("name"));
+                if let Some(locks) = run.and_then(|run| module.runs.get_mut(run)) {
+                    locks.insert(text("name"));
+                }
                 vec![Effect::Lock {
                     module: owner,
                     tag: cmd.tag,
@@ -496,6 +585,9 @@ impl Modules {
             }
             "lock.release" => {
                 module.held.remove(&text("name"));
+                for locks in module.runs.values_mut() {
+                    locks.remove(&text("name"));
+                }
                 vec![Effect::Unlock {
                     module: owner,
                     name: text("name"),
@@ -517,6 +609,78 @@ impl Modules {
                 self.refuse(id, &cmd.tag, &message)
             }
         }
+    }
+
+    /// Whether `service` runs its checks itself (`Run`) instead of building one call.
+    pub fn runs(&self, service: &str) -> bool {
+        self.loaded
+            .get(service)
+            .is_some_and(|module| module.subscriptions.run)
+    }
+
+    /// Starts the run `tag` of `check`; it ends with [`Effect::Finished`].
+    pub fn start_run(&mut self, service: &str, tag: &str, check: Check) -> Vec<Effect> {
+        let Some(module) = self.loaded.get_mut(service) else {
+            return Vec::new();
+        };
+        module.runs.insert(tag.into(), BTreeSet::new());
+        let event = kind(event::Kind::Run(wire::RunEvent {
+            tag: tag.into(),
+            check: Some(check),
+        }));
+        self.send(service, event)
+    }
+
+    /// Stops the run `tag`: the module gets `Cancel` (what it then asks for, like saving
+    /// state, happens while it still holds its locks), then its calls are cancelled and its
+    /// locks released.
+    pub fn cancel_run(&mut self, service: &str, tag: &str) -> Vec<Effect> {
+        if !self
+            .loaded
+            .get(service)
+            .is_some_and(|module| module.runs.contains_key(tag))
+        {
+            return Vec::new();
+        }
+        // The run ends first, so what the module answers to `Cancel` is dropped.
+        let mut effects = match self.loaded.get_mut(service) {
+            Some(module) => Self::stop(module, tag),
+            None => Vec::new(),
+        };
+        effects.extend(self.send(service, kind(event::Kind::Cancel(tag.into()))));
+        effects
+    }
+
+    /// Ends the run `tag`: cancels its open commands and releases its locks.
+    fn stop(module: &mut Loaded, tag: &str) -> Vec<Effect> {
+        let id = &module.manifest.id;
+        let locks = module.runs.remove(tag).unwrap_or_default();
+        let tags: Vec<String> = module
+            .owners
+            .iter()
+            .filter(|(_, run)| *run == tag)
+            .map(|(tag, _)| tag.clone())
+            .collect();
+        let mut effects = Vec::new();
+        for tag in tags {
+            // A cancelled call's late answer is dropped by its dead owner.
+            if module.pending.remove(&tag).is_some() {
+                effects.push(Effect::Cancel {
+                    module: id.clone(),
+                    tag,
+                });
+            } else {
+                module.owners.remove(&tag);
+            }
+        }
+        for name in locks {
+            module.held.remove(&name);
+            effects.push(Effect::Unlock {
+                module: id.clone(),
+                name,
+            });
+        }
+        effects
     }
 
     fn refuse(&mut self, id: &str, tag: &str, message: &str) -> Vec<Effect> {
@@ -575,6 +739,8 @@ impl Modules {
                 let mut effects = Self::release(module);
                 module.pending.clear();
                 module.held.clear();
+                module.runs.clear();
+                module.owners.clear();
                 module.initialized = false;
                 self.queue.retain(|(owner, _)| owner != id);
                 effects.push(Effect::Failed {
@@ -703,7 +869,7 @@ impl Modules {
             match self.call(&panel, request) {
                 Ok(answer::Kind::Cmds(cmds)) => {
                     for cmd in cmds.cmds {
-                        effects.extend(self.run(&panel, cmd));
+                        effects.extend(self.run(&panel, cmd, None));
                     }
                 }
                 Ok(answer::Kind::Error(message)) => self

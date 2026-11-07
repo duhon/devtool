@@ -5,18 +5,15 @@ edition.workspace = true
 publish.workspace = true
 description = "Apache ActiveMQ Artemis service module (queues over the broker's Jolokia management API)"
 
+[lib]
+crate-type = ["cdylib", "rlib"]
+
 [dependencies]
-stabby = "72.1"
-services-module-api = { path = "../../../api/module-api" }
-services-contracts.workspace = true
+services-sdk = { path = "../../../api/sdk" }
 serde_json.workspace = true
 url = "2"
 percent-encoding = "2"
 base64 = "0.22"
 
-[lib]
-crate-type = ["rlib", "cdylib"]
-
-[package.metadata.services]
-# The oldest Services DevTools version this module works with.
-min-core = "3.4.0"
+[dev-dependencies]
+prost = "0.13"

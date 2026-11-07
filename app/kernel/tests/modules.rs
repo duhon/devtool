@@ -290,6 +290,7 @@ fn a_hidden_panel_stops_its_work_and_gets_no_events() {
             service: "rest".into(),
             finished: true,
         })),
+        now: 0.0,
     };
     assert!(modules.broadcast(request.clone()).is_empty());
     assert!(
@@ -504,6 +505,7 @@ fn hints_reach_only_the_subscribed_service_of_the_check() {
             }),
             pos: 3,
         })),
+        now: 0.0,
     };
     let status = |modules: &Modules, id: &str| {
         modules
@@ -539,6 +541,7 @@ fn a_module_resolves_variables_through_the_app() {
             text: "http://{{var:host}}/a".into(),
             ..Check::default()
         })),
+        now: 0.0,
     };
     assert_eq!(
         modules.broadcast(discover),
@@ -546,6 +549,7 @@ fn a_module_resolves_variables_through_the_app() {
             module: "one".into(),
             tag: "url".into(),
             text: "http://{{var:host}}/a".into(),
+            json: false,
         }]
     );
     modules.reply("one", "url", Ok(json!("http://x.test/a")));
@@ -553,4 +557,143 @@ fn a_module_resolves_variables_through_the_app() {
     assert_eq!(status.text, "url http://x.test/a");
     // The reply ended the command: a late end changes nothing.
     assert!(modules.end("one", "url").is_empty());
+}
+
+/// A service that runs its checks: a lock, a call, output, then a result.
+#[derive(Default)]
+struct Runner {
+    cancelled: Vec<String>,
+}
+
+impl Module for Runner {
+    type Msg = ();
+    fn update(&mut self, event: Event<()>) -> Vec<Cmd> {
+        match event {
+            Event::Run { tag, check } => vec![
+                cmd::lock(format!("{tag}:lock"), "pace"),
+                cmd::output(&tag, &format!("at {} ", services_sdk::now())),
+                Cmd::new(&tag, "log", &json!({"level":"info","text":check.text})),
+            ],
+            Event::Reply { tag, .. } if tag.ends_with(":lock") => {
+                let run = tag.trim_end_matches(":lock");
+                vec![
+                    cmd::driver(
+                        format!("{run}:call"),
+                        &http::Request::new("GET", "https://x").call(),
+                    ),
+                    cmd::timer(format!("{run}:idle"), 1000),
+                ]
+            }
+            Event::Reply { tag, result } if tag.ends_with(":call") => {
+                let run = tag.trim_end_matches(":call");
+                vec![
+                    cmd::run_status(run, "1 row"),
+                    cmd::result(
+                        run,
+                        &Rendered {
+                            text: result.unwrap()["body"].as_str().unwrap().into(),
+                            language: "text".into(),
+                            outcome: "OK".into(),
+                        },
+                        &json!({}),
+                    ),
+                ]
+            }
+            Event::Cancel { tag } => {
+                self.cancelled.push(tag.clone());
+                vec![cmd::result(&tag, &Rendered::default(), &json!({}))]
+            }
+            _ => Vec::new(),
+        }
+    }
+    fn subscriptions(&self) -> Subscriptions {
+        Subscriptions {
+            run: true,
+            ..Subscriptions::default()
+        }
+    }
+}
+
+#[test]
+fn a_run_owns_its_calls_and_locks_until_it_finishes_or_stops() {
+    let mut modules = Modules::new("3.7.0", drivers(), Box::new(|| 42.0));
+    modules
+        .load(
+            manifest("runner", "service", 1),
+            Box::new(Linked::<Runner>::default()),
+            json!({}),
+        )
+        .unwrap();
+    assert!(modules.runs("runner"));
+    let check = Check {
+        service: "runner".into(),
+        text: "go".into(),
+        ..Check::default()
+    };
+    let effects = modules.start_run("runner", "r1", check.clone());
+    assert_eq!(
+        effects,
+        vec![
+            Effect::Lock {
+                module: "runner".into(),
+                tag: "r1:lock".into(),
+                name: "pace".into()
+            },
+            Effect::Output {
+                module: "runner".into(),
+                run: "r1".into(),
+                text: "at 42 ".into()
+            },
+        ]
+    );
+    let effects = modules.reply("runner", "r1:lock", Ok(json!({})));
+    assert!(matches!(&effects[0], Effect::Driver { tag, .. } if tag == "r1:call"));
+    let effects = modules.reply("runner", "r1:call", Ok(json!({"body":"done"})));
+    assert_eq!(
+        effects,
+        vec![
+            Effect::RunStatus {
+                module: "runner".into(),
+                run: "r1".into(),
+                text: "1 row".into()
+            },
+            // The finished run's timer and lock go with it.
+            Effect::Cancel {
+                module: "runner".into(),
+                tag: "r1:idle".into()
+            },
+            Effect::Unlock {
+                module: "runner".into(),
+                name: "pace".into()
+            },
+            Effect::Finished {
+                module: "runner".into(),
+                run: "r1".into(),
+                result: json!({"body":"done","language":"text","outcome":"OK","debug":{}})
+            },
+        ]
+    );
+
+    modules.start_run("runner", "r2", check);
+    modules.reply("runner", "r2:lock", Ok(json!({})));
+    let effects = modules.cancel_run("runner", "r2");
+    assert_eq!(
+        effects,
+        vec![
+            Effect::Cancel {
+                module: "runner".into(),
+                tag: "r2:call".into()
+            },
+            Effect::Cancel {
+                module: "runner".into(),
+                tag: "r2:idle".into()
+            },
+            Effect::Unlock {
+                module: "runner".into(),
+                name: "pace".into()
+            },
+        ],
+        "a stopped run's result is dropped"
+    );
+    assert!(modules.reply("runner", "r2:call", Ok(json!({}))).is_empty());
 }

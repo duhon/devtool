@@ -9,7 +9,6 @@ use std::{
         atomic::{AtomicU64, Ordering},
     },
 };
-use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -106,47 +105,6 @@ impl Host {
         merge(&mut message, fields);
         self.send(message).await
     }
-
-    /// A service execution: `{"service", "params"}`.
-    pub async fn call(&self, service: &str, params: Value) -> Reply {
-        self.send(json!({"service":service,"params":params})).await
-    }
-
-    pub async fn call_cancellable(
-        &self,
-        service: &str,
-        params: Value,
-        cancel: CancellationToken,
-    ) -> Reply {
-        self.send_cancellable(json!({"service":service,"params":params}), cancel)
-            .await
-    }
-
-    pub async fn discover(&self, service: &str, params: Value) -> Reply {
-        self.send(json!({"type":"discover","service":service,"params":params}))
-            .await
-    }
-
-    /// Runs a streaming execution to completion and collects its events.
-    pub async fn stream(&self, message: Value, cancel: CancellationToken) -> Streamed {
-        let (tx, mut rx) = mpsc::channel(128);
-        let collect = tokio::spawn(async move {
-            let mut events = vec![];
-            while let Some(event) = rx.recv().await {
-                events.push(event);
-            }
-            events
-        });
-        let result = self
-            .runtime
-            .execute(&message, cancel, Some(tx))
-            .await
-            .map_err(|error| error.json());
-        Streamed {
-            result,
-            events: collect.await.expect("event collector must not panic"),
-        }
-    }
 }
 
 impl Default for Host {
@@ -193,29 +151,6 @@ impl Reply {
             .unwrap_or_else(|| panic!("error replies must carry a message\n{self}"))
     }
 
-    /// The schema of a successful discovery. Discovery failures arrive inside
-    /// a successful envelope (`runtime.rs`, discover branch), so both are checked.
-    #[track_caller]
-    pub fn schema(&self) -> &Value {
-        assert!(
-            self.discovery_error().is_none(),
-            "expected a schema\n{self}"
-        );
-        self.ok()
-    }
-
-    /// The message of a failed discovery, if it failed.
-    #[track_caller]
-    pub fn discovery_error(&self) -> Option<&str> {
-        self.ok()["error"].as_str()
-    }
-
-    #[track_caller]
-    pub fn discovery_failure(&self) -> &str {
-        self.discovery_error()
-            .unwrap_or_else(|| panic!("expected a discovery error\n{self}"))
-    }
-
     pub fn value(&self) -> &Value {
         &self.value
     }
@@ -258,24 +193,5 @@ fn redacted(value: &Value) -> Value {
         ),
         Value::Array(items) => Value::Array(items.iter().map(redacted).collect()),
         other => other.clone(),
-    }
-}
-
-/// The outcome of a streaming execution.
-#[derive(Debug)]
-pub struct Streamed {
-    /// Final info on success, or the error envelope.
-    pub result: Result<Value, Value>,
-    pub events: Vec<Value>,
-}
-
-impl Streamed {
-    /// Concatenated `data` of every event of the given type (`data`, `stderr`).
-    pub fn output(&self, kind: &str) -> String {
-        self.events
-            .iter()
-            .filter(|event| event["type"] == kind)
-            .filter_map(|event| event["data"].as_str())
-            .collect()
     }
 }

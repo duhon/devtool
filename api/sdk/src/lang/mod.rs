@@ -5,10 +5,16 @@
 //! `string property`). `{{…}}` placeholders are left unstyled: the App overlays them.
 //! Completion inserts may hold `$0`, where the App puts the cursor.
 
+pub mod check;
 pub mod curl;
 pub mod endpoint;
 pub mod headers;
 pub mod json;
+pub mod resolve;
+pub mod rest;
+pub mod shell;
+pub mod sql;
+pub mod table;
 
 use crate::{Completions, Item, Token};
 use std::collections::BTreeSet;

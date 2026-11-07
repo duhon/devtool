@@ -30,3 +30,16 @@ impl DriverFailure {
         Self::deserialize(details.get("failure")?).ok()
     }
 }
+
+/// Binary payloads cross the driver boundary as standard base64.
+pub fn encode(bytes: &[u8]) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+pub fn decode(text: &str) -> Result<Vec<u8>, String> {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD
+        .decode(text)
+        .map_err(|error| format!("Invalid base64: {error}"))
+}

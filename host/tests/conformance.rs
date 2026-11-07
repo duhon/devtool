@@ -2,77 +2,39 @@
 //! test catalog (`services_testkit::MODULES`). A new module is held to them
 //! as soon as it is listed there; its own behavior goes to `tests/modules/`.
 
-use serde_json::{Map, Value, json};
-use services_testkit::{Host, Kind, MODULES, ModuleSpec, http, module, panels, services};
-use tokio_util::sync::CancellationToken;
+use serde_json::{Value, json};
+use services_testkit::{Host, Kind, MODULES, ModuleSpec, module, panels, services};
 
 fn offline() -> impl Iterator<Item = &'static ModuleSpec> {
     MODULES.iter().filter(|module| !module.external)
 }
 
-/// Minimal service params pointing the service at `target`.
-fn aimed(module: &ModuleSpec, target: &str) -> Value {
-    Value::Object(Map::from_iter([(module.target.into(), json!(target))]))
-}
-
-fn cancelled() -> CancellationToken {
-    let token = CancellationToken::new();
-    token.cancel();
-    token
+/// The modules the host serves, in their `order`.
+fn served(host: &Host) -> Vec<services_sdk::manifest::Manifest> {
+    let mut modules: Vec<_> = host
+        .runtime()
+        .registry
+        .wasm()
+        .iter()
+        .map(|module| module.manifest.clone())
+        .collect();
+    modules.sort_by_key(|manifest| (manifest.order.unwrap_or(u32::MAX), manifest.id.clone()));
+    modules
 }
 
 #[test]
-fn every_manifest_is_unambiguous_and_its_console_is_self_consistent() {
-    use std::collections::BTreeSet;
+fn every_manifest_is_valid_and_names_known_drivers() {
     let host = Host::new();
-    for manifest in host.runtime().registry.manifests().iter() {
+    for manifest in served(&host) {
         let id = &manifest.id;
-        let names: BTreeSet<_> = manifest.params.iter().map(|p| &p.name).collect();
-        assert_eq!(names.len(), manifest.params.len(), "{id}: duplicate param");
-        let console = &manifest.console;
-        let sections: BTreeSet<_> = console.sections.iter().map(|s| &s.name).collect();
-        assert_eq!(
-            sections.len(),
-            console.sections.len(),
-            "{id}: duplicate section"
-        );
-        assert!(manifest.section("endpoint").is_some(), "{id}: no #endpoint");
-        assert!(
-            manifest.section(&console.payload).is_some(),
-            "{id}: payload"
-        );
-        assert!(
-            console.sections.iter().all(|s| !s.language.is_empty()),
-            "{id}"
-        );
-        assert!(manifest.section("options").is_some(), "{id}: no #options");
-        for section in &console.sections {
-            let param = section.param.as_deref();
-            // Core adds #options without a param when the module has none:
-            // its console keys never reach the module.
+        assert_eq!(manifest.abi, 1, "{id}");
+        assert!(!manifest.drivers.is_empty(), "{id}: no drivers");
+        for driver in manifest.drivers.keys() {
             assert!(
-                (section.name == "options" && param.is_none())
-                    || param.is_some_and(|param| names.iter().any(|name| *name == param)),
-                "{id}: #{} fills no declared param",
-                section.name
-            );
-            assert!(
-                !section.connection || console.discovery.is_some(),
-                "{id}: #{} is a connection without discovery",
-                section.name
+                ["http", "grpc", "mysql", "process", "tcp"].contains(&driver.as_str()),
+                "{id}: unknown driver {driver}"
             );
         }
-        if let Some(discovery) = &console.discovery {
-            assert!(
-                manifest.section("endpoint").is_some_and(|s| s.connection),
-                "{id}: discovery without a connection endpoint"
-            );
-            assert!(!discovery.schemes.is_empty(), "{id}: discovery schemes");
-        }
-        assert!(
-            console.timeout.is_none_or(|seconds| seconds > 0),
-            "{id}: timeout"
-        );
     }
 }
 
@@ -92,96 +54,37 @@ fn every_module_brings_a_skill_the_agent_can_load() {
 }
 
 #[tokio::test]
-async fn a_service_without_saved_hints_gets_its_manifest_defaults() {
+async fn a_service_without_saved_hints_gets_empty_hints() {
     let host = Host::new();
-    for manifest in host.runtime().registry.manifests().iter() {
+    for name in services().map(|module| module.name).chain(["unknown"]) {
         let reply = host
-            .send(json!({"service":"hints","serviceName":manifest.id}))
+            .send(json!({"service":"hints","serviceName":name}))
             .await;
-        assert_eq!(
-            reply.ok()["text"],
-            manifest.console.hints,
-            "{}",
-            manifest.id
-        );
+        assert_eq!(reply.ok()["text"], "", "{name}");
     }
-    let defaults = |id: &str| {
-        host.runtime()
-            .registry
-            .manifest(id)
-            .unwrap()
-            .console
-            .hints
-            .clone()
-    };
-    assert_eq!(defaults("mysql"), "#endpoint\nmysql://\n");
-    assert_eq!(defaults("terminal"), "");
-    for id in ["graphql", "grpc", "splunk"] {
-        assert!(
-            defaults(id).starts_with("#endpoint\nhttp://\nhttps://\n\n#headers\nAccept: */*\n"),
-            "{id}"
-        );
-    }
-    let reply = host
-        .send(json!({"service":"hints","serviceName":"unknown"}))
-        .await;
-    assert_eq!(reply.ok()["text"], "");
 }
 
 #[tokio::test]
-async fn the_console_reads_the_loaded_manifests_from_the_host() {
+async fn the_console_reads_the_served_modules_from_the_host() {
     let host = Host::new();
     let reply = host.send(json!({"service":"modules"})).await;
-    let modules = reply.ok()["modules"].as_array().unwrap().clone();
-    let expected = serde_json::to_value(host.runtime().registry.manifests().as_slice()).unwrap();
-    assert_eq!(Value::Array(modules.clone()), expected);
-    let ids: Vec<_> = modules.iter().map(|m| m["id"].as_str().unwrap()).collect();
-    assert_eq!(
-        ids,
-        services().map(|module| module.name).collect::<Vec<_>>()
-    );
-    let wasm: Vec<_> = reply.ok()["wasm"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|m| m["id"].as_str().unwrap())
-        .collect();
-    assert_eq!(wasm, ["rest"]);
-    let graphql = &modules[ids.iter().position(|id| *id == "graphql").unwrap()];
-    assert_eq!(graphql["name"], "GraphQL");
-    assert_eq!(graphql["execute"], true);
-    assert_eq!(graphql["console"]["payload"], "query");
-    assert_eq!(graphql["console"]["response"], "body-headers");
-    assert_eq!(
-        graphql["console"]["sections"][1],
-        json!({"name":"headers","shape":"pairs","language":"headers","param":"headers","connection":true})
-    );
+    let wasm = reply.ok()["wasm"].as_array().unwrap().clone();
+    let mut ids: Vec<_> = wasm.iter().map(|m| m["id"].as_str().unwrap()).collect();
+    ids.sort();
+    let mut catalog: Vec<_> = services().map(|module| module.name).collect();
+    catalog.sort();
+    assert_eq!(ids, catalog);
+    assert!(reply.ok().get("failed").is_none(), "{reply}");
 }
 
 #[test]
-fn the_catalog_lists_exactly_the_loaded_modules() {
+fn the_catalog_lists_exactly_the_served_modules() {
     let host = Host::new();
-    let loaded: Vec<&str> = host
-        .runtime()
-        .registry
-        .manifests()
-        .iter()
-        .map(|manifest| manifest.id.as_str())
-        .collect();
+    let loaded: Vec<String> = served(&host).into_iter().map(|m| m.id).collect();
     let catalog: Vec<&str> = services().map(|module| module.name).collect();
     assert_eq!(catalog, loaded);
-    // Undeclared params never reach a service: resolution drops them.
-    for module in services() {
-        let config = host.runtime().registry.manifest(module.name).unwrap();
-        assert!(
-            config
-                .params
-                .iter()
-                .any(|param| param.name == module.target),
-            "{}: target {:?} is not a declared param",
-            module.name,
-            module.target
-        );
+    for manifest in served(&host) {
+        assert_eq!(module(&manifest.id).title, manifest.name, "{}", manifest.id);
     }
     for module in MODULES {
         assert_eq!(
@@ -191,12 +94,6 @@ fn the_catalog_lists_exactly_the_loaded_modules() {
                 .count(),
             1,
             "{} is listed twice",
-            module.name
-        );
-        assert_eq!(
-            module.kind == Kind::Service,
-            !module.target.is_empty(),
-            "{}: services name their target, panels don't",
             module.name
         );
     }
@@ -210,7 +107,6 @@ async fn every_request_gets_an_envelope_echoing_its_id() {
         match module.kind {
             Kind::Service => {
                 requests.push(json!({"service":module.name,"params":{}}));
-                requests.push(json!({"type":"discover","service":module.name,"params":{}}));
             }
             Kind::Panel => {
                 for (op, fields) in module.reads {
@@ -232,107 +128,17 @@ async fn every_request_gets_an_envelope_echoing_its_id() {
             }
         }
     }
-    let anonymous = host.call("graphql", json!({})).await;
+    let anonymous = host.send(json!({"service":"artemis","params":{}})).await;
     assert_eq!(anonymous["id"], Value::Null, "{anonymous}");
 }
 
+/// Services run in the App: the host answers a service request like any unknown one.
 #[tokio::test]
-async fn requests_for_a_missing_module_fail_clearly() {
+async fn requests_for_a_service_or_a_missing_module_fail_clearly() {
     let host = Host::new();
-    let reply = host.call("kafka", json!({})).await;
-    assert_eq!(reply.error(), "Unknown service \"kafka\"");
-    let discovery = host.discover("kafka", json!({})).await;
-    assert_eq!(
-        discovery.discovery_error().unwrap_or_default(),
-        "Unknown service \"kafka\""
-    );
-}
-
-#[tokio::test]
-async fn cancelled_requests_never_reach_a_service() {
-    let host = Host::new();
-    let (server, seen) = http::services().await;
-    for module in services() {
-        let params = aimed(module, &format!("{}/echo", server.url));
-        let call = host
-            .call_cancellable(module.name, params.clone(), cancelled())
-            .await;
-        assert_eq!(
-            call.ok(),
-            &json!({"cancelled":true,"phase":"before-dispatch","outcome":"Stopped"}),
-            "{call}"
-        );
-        let discovery = host
-            .send_cancellable(
-                json!({"type":"discover","service":module.name,"params":params}),
-                cancelled(),
-            )
-            .await;
-        assert_eq!(discovery.ok(), &json!({"cancelled":true}), "{discovery}");
-    }
-    assert_eq!(*seen.lock().unwrap(), Vec::<Value>::new());
-}
-
-#[tokio::test]
-async fn unresolved_variables_fail_before_the_service_runs() {
-    let host = Host::new();
-    let (server, seen) = http::services().await;
-    for module in services() {
-        let params = aimed(module, &format!("{}/echo?{{{{var:MISSING}}}}", server.url));
-        let call = host.call(module.name, params.clone()).await;
-        assert_eq!(
-            call.error(),
-            "Unknown variable \"MISSING\" in profile \"var\"",
-            "{call}"
-        );
-        assert_eq!(call["debug"]["request"], params, "{call}");
-        if module.discovery {
-            let discovery = host.discover(module.name, params).await;
-            assert_eq!(
-                discovery.discovery_error().unwrap_or_default(),
-                "Unknown variable \"MISSING\" in profile \"var\"",
-                "{discovery}"
-            );
-        }
-    }
-    assert_eq!(*seen.lock().unwrap(), Vec::<Value>::new());
-}
-
-#[tokio::test]
-async fn discovery_and_streaming_match_the_catalog() {
-    let host = Host::new();
-    for module in services() {
-        let discovery = host.discover(module.name, json!({})).await;
-        assert_eq!(
-            discovery
-                .discovery_error()
-                .unwrap_or_default()
-                .contains("doesn't support discovery"),
-            !module.discovery,
-            "{discovery}"
-        );
-        let call = host.call(module.name, json!({})).await;
-        assert_eq!(
-            call.is_ok() || !call.error().contains("is streaming-only"),
-            !module.streaming,
-            "{call}"
-        );
-        let streamed = host
-            .stream(
-                json!({"service":module.name,"params":{}}),
-                CancellationToken::new(),
-            )
-            .await;
-        let error = match &streamed.result {
-            Ok(_) => "",
-            Err(error) => error["error"].as_str().unwrap_or_default(),
-        };
-        assert_eq!(
-            error.contains("is not streaming"),
-            !module.streaming,
-            "{}: {error}",
-            module.name
-        );
+    for name in ["kafka", "artemis"] {
+        let reply = host.send(json!({"service":name,"params":{}})).await;
+        assert_eq!(reply.error(), format!("Unknown service \"{name}\""));
     }
 }
 
@@ -369,16 +175,9 @@ async fn panel_state_survives_a_restart() {
             json!("kept"),
         ),
         (
-            "templates",
-            json!({"op":"save","serviceName":"graphql","section":"variables","text":"@kept\n{}","base":""}),
-            ("get", json!({})),
-            "/templates/graphql/variables",
-            json!("@kept\n{}"),
-        ),
-        (
             "hints",
-            json!({"op":"save","serviceName":"graphql","text":"#kept\n"}),
-            ("get", json!({"serviceName":"graphql"})),
+            json!({"op":"save","serviceName":"artemis","text":"#kept\n"}),
+            ("get", json!({"serviceName":"artemis"})),
             "/text",
             json!("#kept\n"),
         ),
@@ -391,8 +190,9 @@ async fn panel_state_survives_a_restart() {
         ),
     ];
     // History keeps its own state (tests/core/history.rs); sessions and agent_sessions derive
-    // theirs from other services' storage.
-    let mut covered = vec!["history", "sessions", "agent_sessions"];
+    // theirs from other services' storage; templates only read until modules declare
+    // sections (tests/modules/templates.rs).
+    let mut covered = vec!["history", "sessions", "agent_sessions", "templates"];
     for (panel, mut write, (op, fields), pointer, expected) in cases {
         module(panel);
         write["service"] = json!(panel);

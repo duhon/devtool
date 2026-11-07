@@ -1,6 +1,4 @@
-use serde_json::Value;
-use services_contracts::manifest::Shape;
-pub use services_module_ui::{curl, imported_body, pairs, pretty, quote};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
 pub fn validate_hints(text: &str) -> Result<(), String> {
@@ -35,109 +33,46 @@ pub fn validate_hints(text: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// The `#marker` sections of a service, in manifest order; a Kernel service's are what its
-/// module completes, then the console's `#options`.
+/// The `#marker` sections of a service: what its module completes, then the console's
+/// `#options` unless the module has its own.
 pub fn markers(service: &str) -> Vec<String> {
-    if crate::kernel::is_service(service) {
-        let mut markers = crate::kernel::markers(service);
-        markers.push("options".into());
-        return markers;
+    if !crate::kernel::is_service(service) {
+        return Vec::new();
     }
-    crate::services::get(service)
-        .map(|service| {
-            service
-                .console
-                .sections
-                .iter()
-                .map(|section| section.name.clone())
-                .collect()
-        })
-        .unwrap_or_default()
+    let mut markers = crate::kernel::markers(service);
+    if !markers.iter().any(|marker| marker == "options") {
+        markers.push("options".into());
+    }
+    markers
 }
 
 pub fn is_marker(service: &str, marker: &str) -> bool {
-    if crate::kernel::is_service(service) {
-        return markers(service)
-            .iter()
-            .any(|known| known.eq_ignore_ascii_case(marker));
-    }
-    crate::services::get(service).is_some_and(|service| service.section(marker).is_some())
+    markers(service)
+        .iter()
+        .any(|known| known.eq_ignore_ascii_case(marker))
 }
 
-fn header_shaped(line: &str) -> bool {
-    let line = line.trim();
-    !line.contains("://")
-        && line.split_once(':').is_some_and(|(k, _)| {
-            k.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
-                && k.trim()
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-        })
-}
-
+/// A check's sections by marker; text before any marker is `leftover`. The module owns the
+/// section shapes, so a section runs to the next marker.
 pub fn sections(service: &str, source: &str) -> BTreeMap<String, String> {
     let mut result: BTreeMap<String, String> = BTreeMap::new();
-    if crate::kernel::is_service(service) {
-        // The module owns the section shapes: a section runs to the next marker.
-        let mut current = String::from("leftover");
-        for raw in source.lines() {
-            if let Some((marker, _)) = services_kernel::document::marker(raw)
-                && is_marker(service, &marker)
-            {
-                current = marker.to_ascii_lowercase();
-                result.entry(current.clone()).or_default();
-                continue;
-            }
-            let entry = result.entry(current.clone()).or_default();
-            if !entry.is_empty() {
-                entry.push('\n');
-            }
-            entry.push_str(raw);
-        }
-        result.values_mut().for_each(|s| *s = s.trim().to_owned());
-        return result;
-    }
-    let service = crate::services::get(service);
     let mut current = String::from("leftover");
-    let mut single = false;
-    let mut headers = false;
     for raw in source.lines() {
-        let line = raw.trim();
-        let marker = line.strip_prefix('#').unwrap_or("").to_ascii_lowercase();
-        if let Some(section) = service.as_ref().and_then(|s| s.section(&marker)) {
-            single = section.shape == Shape::Line;
-            headers = section.shape == Shape::Pairs;
-            current = marker;
+        if let Some((marker, _)) = services_kernel::document::marker(raw)
+            && is_marker(service, &marker)
+        {
+            current = marker.to_ascii_lowercase();
             result.entry(current.clone()).or_default();
             continue;
-        }
-        if single && line.is_empty() {
-            continue;
-        }
-        if headers && (line.is_empty() || !header_shaped(raw)) {
-            current = "leftover".into();
-            headers = false;
         }
         let entry = result.entry(current.clone()).or_default();
         if !entry.is_empty() {
             entry.push('\n');
         }
         entry.push_str(raw);
-        if single {
-            current = "leftover".into();
-            single = false;
-        }
     }
     result.values_mut().for_each(|s| *s = s.trim().to_owned());
     result
-}
-
-/// How the console shows a table response (`Format:` in `#options`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Format {
-    Table,
-    Vertical,
-    Json,
 }
 
 /// The `#options` keys the console handles itself; the module never receives them.
@@ -148,36 +83,10 @@ pub struct RunOptions {
     pub repeat: Option<u32>,
     /// `Repeat-Until: changed`: a repeat stops when the shown response changes.
     pub until_changed: bool,
-    pub format: Option<Format>,
-}
-
-/// Takes the console's own keys out of `#options`. What remains goes to a module that
-/// declares the section; one that does not only has the console's keys.
-fn run_options(
-    manifest: &services_contracts::manifest::Manifest,
-    sections: &mut BTreeMap<String, String>,
-) -> Result<RunOptions, String> {
-    let Some(text) = sections.remove("options") else {
-        return Ok(RunOptions::default());
-    };
-    let grid = manifest.console.response == services_contracts::manifest::View::Grid;
-    let own = manifest
-        .section("options")
-        .is_some_and(|section| section.param.is_some());
-    let (options, rest) = console_options(&text, &manifest.name, grid, own)?;
-    if !rest.is_empty() {
-        sections.insert("options".into(), rest);
-    }
-    Ok(options)
 }
 
 /// The console's keys of an `#options` text and the lines left for the module.
-fn console_options(
-    text: &str,
-    name: &str,
-    grid: bool,
-    own: bool,
-) -> Result<(RunOptions, String), String> {
+fn console_options(text: &str, name: &str) -> Result<RunOptions, String> {
     let mut options = RunOptions::default();
     let mut rest = vec![];
     for line in text.lines() {
@@ -198,48 +107,27 @@ fn console_options(
             "repeat-until" => {
                 return Err(format!("Repeat-Until takes \"changed\", not {value:?}"));
             }
-            "format" if !grid => {
-                return Err(format!(
-                    "Format applies to table responses; {name} answers with a body"
-                ));
-            }
-            "format" => {
-                options.format = Some(match value.to_ascii_lowercase().as_str() {
-                    "table" => Format::Table,
-                    "vertical" => Format::Vertical,
-                    "json" => Format::Json,
-                    _ => {
-                        return Err(format!(
-                            "Format takes table, vertical or json, not {value:?}"
-                        ));
-                    }
-                });
-            }
             _ => rest.push(line),
         }
     }
     if options.until_changed && options.repeat.is_none() {
         return Err("Repeat-Until needs Repeat, like Repeat: 5s".into());
     }
-    if let Some(line) = rest.first().filter(|_| !own) {
+    if let Some(line) = rest.first() {
         let option = line
             .split_once(':')
             .map_or(*line, |(option, _)| option)
             .trim();
         return Err(format!(
-            "Unknown option {option:?}; {name} takes {}",
-            if grid {
-                "Repeat, Repeat-Until and Format"
-            } else {
-                "Repeat and Repeat-Until"
-            }
+            "Unknown option {option:?}; {name} takes Repeat and Repeat-Until"
         ));
     }
-    Ok((options, rest.join("\n")))
+    Ok(options)
 }
 
 /// A Kernel service's check (the text after its `#check` line) as its module gets it, and
-/// the options the console runs it with: the console owns `#options`, so it is cut out.
+/// the options the console runs it with. The console owns Repeat and Repeat-Until; a module
+/// that runs its checks itself gets the rest of `#options`, others none.
 pub fn kernel_run(
     service: &str,
     source: &str,
@@ -249,23 +137,32 @@ pub fn kernel_run(
     }
     let name = crate::kernel::manifest(service)
         .map_or_else(|| service.to_owned(), |manifest| manifest.name);
+    let runs = crate::kernel::with(|modules| modules.runs(service));
     let mut text = Vec::new();
     let mut options = Vec::new();
     let mut in_options = false;
     for line in source.lines() {
         if let Some((marker, _)) = services_kernel::document::marker(line) {
             in_options = marker == "options";
-            if in_options {
+            if in_options && !runs {
                 continue;
             }
+            text.push(line);
+            continue;
         }
-        if in_options {
+        let console = line.split_once(':').is_some_and(|(name, _)| {
+            matches!(
+                name.trim().to_ascii_lowercase().as_str(),
+                "repeat" | "repeat-until"
+            )
+        });
+        if in_options && (console || !runs) {
             options.push(line);
         } else {
             text.push(line);
         }
     }
-    let (run, _) = console_options(&options.join("\n"), &name, false, false)?;
+    let run = console_options(&options.join("\n"), &name)?;
     let check = crate::kernel::check(service, &text.join("\n"), &serde_json::json!({}));
     Ok((check, run))
 }
@@ -291,29 +188,14 @@ pub fn parse(service: &str, source: &str) -> Result<Value, String> {
 
 /// The module request of a check and the options the console runs it with.
 pub fn parse_run(service: &str, source: &str) -> Result<(Value, RunOptions), String> {
-    if crate::kernel::is_service(service) {
-        let (check, options) = kernel_run(service, source)?;
-        let call = crate::kernel::with(|modules| modules.prepare(service, check))?;
-        return Ok((crate::kernel::call_value(&call), options));
+    let (check, options) = kernel_run(service, source)?;
+    if crate::kernel::with(|modules| modules.runs(service)) {
+        // The module checks it when it runs; `endpoint` shows in approvals.
+        let endpoint = check.text_of("endpoint").to_owned();
+        return Ok((json!({"check": check.text, "endpoint": endpoint}), options));
     }
-    let Some(manifest) = crate::services::get(service) else {
-        return Err(format!("Unsupported console service: {service}"));
-    };
-    let ui = crate::services::ui_of(&manifest)?;
-    ui.check(source)?;
-    let mut sections = sections(service, source);
-    let options = run_options(&manifest, &mut sections)?;
-    let s = crate::services::Sections(sections);
-    if s.text("endpoint").is_empty() {
-        return Err(format!("{service} request needs a #endpoint block"));
-    }
-    let payload = &manifest.console.payload;
-    if !manifest.console.implicit_payload && !s.has(payload) && !s.text("leftover").is_empty() {
-        return Err(format!(
-            "{service} request needs an explicit #{payload} marker before its body"
-        ));
-    }
-    ui.request(&s).map(|params| (params, options))
+    let call = crate::kernel::with(|modules| modules.prepare(service, check))?;
+    Ok((crate::kernel::call_value(&call), options))
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -325,9 +207,14 @@ pub struct RequestBlock {
 }
 
 fn marker(line: &str, name: &str) -> bool {
-    let line = line.trim_start().to_ascii_lowercase();
-    line.strip_prefix(&format!("#{name}"))
-        .is_some_and(|s| s.is_empty() || s.starts_with(char::is_whitespace))
+    // Only the marker's own bytes are compared: result lines can be megabytes long.
+    let rest = line.trim_start().strip_prefix('#').unwrap_or_default();
+    rest.get(..name.len())
+        .is_some_and(|head| head.eq_ignore_ascii_case(name))
+        && rest[name.len()..]
+            .chars()
+            .next()
+            .is_none_or(char::is_whitespace)
 }
 
 pub fn is_check(line: &str) -> bool {
@@ -373,44 +260,18 @@ pub fn replace_response(source: &str, request_line: usize, status: &str, body: &
     )
 }
 
-/// The program a service imports and exports checks as.
-fn command_line(service: &str) -> Option<String> {
-    crate::services::get(service)?.console.command.clone()
-}
-
-/// Kernel services always import and export (their module does).
 /// Whether `service` exports and imports checks now: a Kernel service once its module runs.
 pub fn transfers(service: &str) -> bool {
-    crate::kernel::loaded(service) || command_line(service).is_some()
+    crate::kernel::loaded(service)
 }
 
 pub fn import(service: &str, command: &str) -> Result<String, String> {
-    if crate::kernel::is_service(service) {
-        return crate::kernel::with(|modules| modules.import(service, command.to_owned()));
-    }
-    if command_line(service).is_none() {
-        return Err(format!("Import isn't supported for {service}"));
-    }
-    let ui = crate::services::ui_of(&crate::services::get(service).expect("command line"))?;
-    let imported = ui.import(command)?;
-    let mut lines = vec!["#endpoint".into(), imported.endpoint];
-    for (section, text) in imported.sections {
-        lines.extend([format!("#{section}"), text]);
-    }
-    Ok(lines.join("\n"))
+    crate::kernel::with(|modules| modules.import(service, command.to_owned()))
 }
 
 pub fn export(service: &str, source: &str) -> Result<String, String> {
-    if crate::kernel::is_service(service) {
-        let (check, _) = kernel_run(service, source)?;
-        return crate::kernel::with(|modules| modules.export(service, check));
-    }
-    let p = parse(service, source)?;
-    if command_line(service).is_none() {
-        return Err(format!("Export isn't supported for {service}"));
-    }
-    let ui = crate::services::ui_of(&crate::services::get(service).expect("parsed"))?;
-    ui.export(&p)
+    let (check, _) = kernel_run(service, source)?;
+    crate::kernel::with(|modules| modules.export(service, check))
 }
 
 pub fn fuzzy_match(candidate: &str, query: &str) -> bool {

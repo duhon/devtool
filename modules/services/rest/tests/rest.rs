@@ -746,6 +746,7 @@ fn linked_module_answers_requests_and_events() {
             check: Some(check("#endpoint\nGET http://svc")),
             pos: 0,
         })),
+        now: 0.0,
     };
     let answer::Kind::Updated(updated) = call(request::Kind::Update(wire::UpdateRequest {
         event: Some(document),

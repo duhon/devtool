@@ -1,4 +1,4 @@
-//! Helpers shared by the `core` and `modules` UI test binaries.
+//! Helpers of the UI test binaries.
 
 use services_ui::syntax::{Language, State, token};
 

@@ -9,9 +9,14 @@
 
 pub mod cmd;
 pub mod driver;
+pub mod grpc;
 pub mod http;
 pub mod lang;
 pub mod manifest;
+pub mod mysql;
+pub mod process;
+pub mod run;
+pub mod tcp;
 pub mod ui;
 pub mod wire;
 
@@ -78,6 +83,27 @@ pub enum Event<M> {
         name: String,
         args: Value,
     },
+    /// Run `check` (for a module that subscribes `run`): call drivers, then finish with
+    /// [`cmd::result`] under `tag`. Commands sent while handling this event or a reply to
+    /// a call made for it belong to the run.
+    Run {
+        tag: String,
+        check: Check,
+    },
+    /// The user stopped the run `tag`. Its locks are still held while this is handled; then
+    /// the Kernel cancels the run's calls and releases them.
+    Cancel {
+        tag: String,
+    },
+}
+
+thread_local! {
+    static NOW: std::cell::Cell<f64> = const { std::cell::Cell::new(0.0) };
+}
+
+/// When the Kernel sent the event being handled, in milliseconds since 1970.
+pub fn now() -> f64 {
+    NOW.with(std::cell::Cell::get)
 }
 
 /// A module: its model, how it changes, and the blocks the Kernel calls synchronously.
@@ -192,6 +218,11 @@ fn decode_event<M: DeserializeOwned>(event: wire::Event) -> Result<Event<M>, Str
             name: call.name,
             args: wire::value(&call.args),
         },
+        event::Kind::Run(run) => Event::Run {
+            tag: run.tag,
+            check: run.check.unwrap_or_default(),
+        },
+        event::Kind::Cancel(tag) => Event::Cancel { tag },
     })
 }
 
@@ -204,7 +235,9 @@ fn handle<T: Module>(state: &RefCell<Option<T>>, request: &[u8]) -> Result<answe
     let module = state.get_or_insert_with(T::default);
     Ok(match kind {
         request::Kind::Update(update) => {
-            let event = decode_event(update.event.unwrap_or_default())?;
+            let event = update.event.unwrap_or_default();
+            NOW.with(|now| now.set(event.now));
+            let event = decode_event(event)?;
             let cmds = module.update(event);
             answer::Kind::Updated(wire::Updated {
                 cmds,

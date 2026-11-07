@@ -799,7 +799,7 @@ fn scenarios() -> Vec<Scenario> {
             "templates",
             Core,
             60,
-            "Global Templates: save, insert, rename, delete and persistence",
+            "Templates panel without service sections, kept drafts, exclusive tool panels; Splunk sections",
             script(include_str!("browser-templates.js")),
         ),
         scenario(
@@ -1129,11 +1129,11 @@ fn module_source(modules: &Path, root: &Path) -> Result<()> {
     let directory = root.join("modules");
     fs::create_dir_all(&directory)?;
     fs::write(directory.join("broken.module.tgz"), "not a package")?;
-    let graphql = modules.join("graphql");
-    let package = Package::read(&graphql).map_err(anyhow::Error::msg)?;
+    let terminal = modules.join("terminal");
+    let package = Package::read(&terminal).map_err(anyhow::Error::msg)?;
     fs::write(
         directory.join(archive_name(&package)),
-        archive::pack(&graphql).map_err(anyhow::Error::msg)?,
+        archive::pack(&terminal).map_err(anyhow::Error::msg)?,
     )?;
     let example = EXAMPLE.get().context("The example module is not built")?;
     fs::copy(

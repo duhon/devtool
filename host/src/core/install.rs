@@ -1,11 +1,8 @@
 //! Installing a package file into the modules folder and removing packages. Folders are
-//! swapped by renames: a running host keeps the library it mapped, and a failed install
-//! leaves the previous package in place.
+//! swapped by renames: a failed install leaves the previous package in place.
 
-use services_contracts::{
-    manifest::Manifest,
-    package::{LIBRARY_FILE, Package, archive},
-};
+use services_contracts::package::{Package, archive};
+use services_sdk::manifest::Manifest;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -61,27 +58,10 @@ pub fn remove(modules: &Path, name: &str) -> Result<(), String> {
     fs::rename(&target, &removed.0).map_err(|e| format!("Cannot remove {}: {e}", target.display()))
 }
 
-/// macOS loads only signed code: the library gets an ad-hoc signature, like the libraries
-/// the app update installs. Chrome quarantines every file its host writes, and loading a
-/// quarantined library waits for a Gatekeeper prompt; like the app update, the install
-/// clears the quarantine of the package the user chose. Signing rewrites the library, so
-/// the quarantine is cleared after it.
+/// Chrome quarantines every file its host writes; like the app update, the install clears
+/// the quarantine of the package the user chose.
 #[cfg(target_os = "macos")]
 fn prepare(package: &Path) -> Result<(), String> {
-    if !package.join(LIBRARY_FILE).is_file() {
-        return clear_quarantine(package);
-    }
-    let output = std::process::Command::new("/usr/bin/codesign")
-        .args(["--force", "--sign", "-"])
-        .arg(package.join(LIBRARY_FILE))
-        .output()
-        .map_err(|e| format!("Cannot run codesign: {e}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "Cannot sign {LIBRARY_FILE}: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
     clear_quarantine(package)
 }
 
@@ -184,7 +164,7 @@ mod tests {
     fn a_package_written_under_quarantine_is_cleared_for_loading() {
         let package = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(package.path().join("skills/module-x")).unwrap();
-        let files = ["package.json", "module.dylib", "skills/module-x/SKILL.md"]
+        let files = ["package.json", "module.wasm", "skills/module-x/SKILL.md"]
             .map(|name| package.path().join(name));
         for path in files
             .iter()

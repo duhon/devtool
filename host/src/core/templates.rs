@@ -3,12 +3,9 @@ use super::{
     sources,
 };
 use serde_json::{Value, json};
-use services_contracts::{
-    manifest::Manifest,
-    templates::{self, Library},
-};
+use services_contracts::templates::{self, Library};
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs::{self, OpenOptions},
     io::{ErrorKind, Write},
     path::{Path, PathBuf},
@@ -20,12 +17,15 @@ use std::{
 #[derive(Clone)]
 pub struct Templates {
     path: PathBuf,
-    /// Template sections come from the loaded modules.
-    manifests: Arc<Vec<Manifest>>,
+    /// The template sections of each module.
+    sections: Arc<BTreeMap<String, Vec<String>>>,
 }
 impl Templates {
-    pub fn new(path: PathBuf, manifests: Arc<Vec<Manifest>>) -> Self {
-        Self { path, manifests }
+    pub fn new(path: PathBuf, sections: BTreeMap<String, Vec<String>>) -> Self {
+        Self {
+            path,
+            sections: Arc::new(sections),
+        }
     }
     fn read(&self) -> Result<Library> {
         let bytes = match fs::read(&self.path) {
@@ -111,7 +111,11 @@ impl Templates {
         let section = required("section")?;
         let text = required("text")?;
         let base = required("base")?;
-        if !templates::has_section(&self.manifests, service, section) {
+        if !self
+            .sections
+            .get(service)
+            .is_some_and(|sections| sections.iter().any(|name| name == section))
+        {
             return Err(Error::new("Unknown template service or section"));
         }
         templates::parse(text).map_err(Error::new)?;
@@ -242,11 +246,9 @@ mod tests {
             .unwrap()
             .block_on(sources.apply("team"))
             .unwrap();
-        let manifest: Manifest =
-            serde_json::from_value(json!({"id": "rest", "name": "REST"})).unwrap();
         let templates = Templates::new(
             data.path().join(".console-templates.json"),
-            Arc::new(vec![manifest]),
+            BTreeMap::from([("rest".into(), vec!["check".into()])]),
         );
         let team_text = "@team\nGET /\n";
         let got = templates.get().unwrap();

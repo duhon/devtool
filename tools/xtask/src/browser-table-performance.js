@@ -1,6 +1,12 @@
 (async () => {
-  const {assert, wait} = testDriver;
+  const {assert, wait, click, testid, editorOf, setSource} = testDriver;
   await wait(() => document.querySelector('.console-editor-host .editor'), 'Console editor shown');
+  await click(testid('console-service-mysql'));
+  const mysqlConsole = editorOf('console-editor'), previous = mysqlConsole.getValue();
+  setSource(mysqlConsole, '#check Module ready\n#query\nselect 1');
+  await wait(() => mysqlConsole.getLineTokens(2, true).some(token => token.type === 'keyword'),
+    'The MySQL module must highlight before the standalone editor uses it');
+  setSource(mysqlConsole, previous);
   // TEMPORARY: a standalone editor until this scenario is rewritten after the editor rewrite.
   assert(typeof window.__servicesMountEditor === 'function', 'The standalone editor hook must exist');
   const payload = JSON.stringify({name:'Unicode 😀', escaped:'a"b\\c',
@@ -8,12 +14,10 @@
   const width = Array.from(payload).length;
   const border = `+-------+${'-'.repeat(width+2)}+`;
   const header = `| id    | payload${' '.repeat(width-7)} |`;
-  const prefix = ['#check Performance','#query','select fixture','#responce OK',
-    border,header,border];
+  const prefix = ['#check Performance','#options','Columns-Type: id=number payload=json',
+    '#query','select fixture','#responce OK',border,header,border];
   const row = i => `| ${String(i).padEnd(5)} | ${payload} |`;
-  const region = {request:0,header:3,end:10008,table:{
-    columns:['id','payload'],types:{id:'number',payload:'json'},header_lines:1,
-  }};
+  const region = {request:0,header:5,end:prefix.length+10001};
   const source = [...prefix,...Array.from({length:10000},(_,i)=>row(i)),border].join('\n');
   const host=document.createElement('div');
   host.style.cssText='position:fixed;inset:0;z-index:2147483647;background:#282a36';
@@ -30,7 +34,7 @@
     await new Promise(resolve=>requestAnimationFrame(resolve));
     editor.setSize(1000,400);
     const foldStart=performance.now();
-    for(let line=7;line<37;line++)
+    for(let line=prefix.length;line<prefix.length+30;line++)
       assert(!editor.foldRange({line,ch:0}),'Data rows must never fold');
     const foldMs=performance.now()-foldStart;
     assert(foldMs<30,`Owned output fold checks must not re-tokenize rows: ${foldMs}ms`);
@@ -47,7 +51,7 @@
       'Cold scrolling must preserve JSON colors without replaying the whole response');
     assert(editor.getValue()===source,'Performance optimization must not truncate or alter text');
     editor.setSelection({line:9000,ch:0},{line:9001,ch:0});
-    assert(editor.getSelection()===`${row(8993)}\n`,
+    assert(editor.getSelection()===`${row(9000-prefix.length)}\n`,
       'A distant row must remain exactly copyable, including Unicode and JSON escapes');
     editor.setCursor({line:9000,ch:0},{scroll:false});
     await new Promise(resolve=>setTimeout(resolve,0));
@@ -68,25 +72,25 @@
     assert(editor.getAllMarks().length===0&&editor.getValue()===source,
       'Selection painting must not allocate document markers or modify large result data');
     const pretty = JSON.stringify({values:Array.from({length:10000},(_,id)=>({id}))},null,2);
-    const verticalLines = ['#check Vertical performance','#query','select fixture\\G',
+    const verticalLines = ['#check Vertical performance','#options','Columns-Type: payload=json',
+      '#query','select fixture\\G',
       '#responce OK','*************************** 1. row ***************************',
       ...(`payload: ${pretty.replace(/\n/g,'\n         ')}`).split('\n')];
-    const verticalRegion = {request:0,header:3,end:verticalLines.length,table:{
-      columns:['payload'],types:{payload:'json'},header_lines:1,
-    }};
+    const root = 7;
+    const verticalRegion = {request:0,header:5,end:verticalLines.length};
     editor.setValue(verticalLines.join('\n'));
     editor.setOption('servicesResponses',[verticalRegion]);
     const coldLine = verticalLines.findIndex((line,i)=>i>20000 && line.trim()==='{');
     assert(coldLine>20000,'The vertical fixture must exercise a cold, distant JSON object');
     const jsonStart=performance.now();
-    const rootFold=editor.foldRange({line:5,ch:0});
-    assert(rootFold?.from.line===5 && rootFold.to.line===verticalLines.length-1,
+    const rootFold=editor.foldRange({line:root,ch:0});
+    assert(rootFold?.from.line===root && rootFold.to.line===verticalLines.length-1,
       'A large vertical JSON root must fold to its own closing brace');
     const coldFold=editor.foldRange({line:coldLine,ch:0});
     assert(coldFold?.from.line===coldLine && coldFold.to.line===coldLine+2,
       'Cold nested JSON must fold without replaying preceding syntax state');
     for(let i=0;i<100;i++)
-      assert(editor.foldRange({line:5,ch:0}).to.line===rootFold.to.line,
+      assert(editor.foldRange({line:root,ch:0}).to.line===rootFold.to.line,
         'Repeated gutter checks must reuse the bounded fold cache');
     const verticalFoldMs=performance.now()-jsonStart;
     assert(verticalFoldMs<200,
@@ -95,14 +99,9 @@
     const changedFold=editor.foldRange({line:coldLine,ch:0});
     assert(changedFold.to.ch===coldFold.to.ch+2,
       'Editing the document must invalidate cached JSON fold coordinates');
-    editor.setOption('servicesResponses',[{...verticalRegion,end:coldLine+1}]);
+    editor.replaceRange('+---+',{line:coldLine+1,ch:0},{line:coldLine+1,ch:editor.getLine(coldLine+1).length});
     assert(!editor.foldRange({line:coldLine,ch:0}),
-      'A JSON fold must never consume a closing bracket outside its response');
-    editor.setOption('servicesResponses',[{...verticalRegion,table:{
-      ...verticalRegion.table,types:{payload:'text'},
-    }}]);
-    assert(!editor.foldRange({line:coldLine,ch:0}),
-      'Changing column metadata must disable previously cached JSON folds');
+      'A JSON fold must never consume a closing bracket outside its record');
     globalThis.tablePerformanceReceipt={rows:10000,characters:source.length,
       tokenizeMs,foldMs,verticalFoldMs,selectionMs,selectionPaintMs};
   } finally {

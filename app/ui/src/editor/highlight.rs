@@ -1,12 +1,10 @@
 //! Syntax highlighting: a line-state tokenizer with a per-line cache.
-//! A console line's language follows its section (`#headers`, a template `@section`) or the
-//! response region it is in; JSON and SQL have their own tokenizers, the rest use `syntax`.
-use super::text::{Utf16Cursor, indentation, utf16_len};
-use super::{json, sql};
+//! A console is highlighted by its service's module (through the Kernel); single-language
+//! editors use JSON's own tokenizer or `syntax`.
+use super::json;
+use super::text::{indentation, utf16_len};
 use crate::document::ResponseRegion;
 use crate::syntax::{self, Language};
-use services_contracts::manifest::View;
-use std::cell::RefCell;
 use std::rc::Rc;
 
 pub type Style = Option<&'static str>;
@@ -23,68 +21,26 @@ pub struct Span {
     pub style: Style,
 }
 
-/// What a mode highlights. A console mode reads its service's manifest once.
+/// What a mode highlights: a console's service or a single language.
 #[derive(Clone, Debug, Default)]
 pub struct Config {
     /// The console service; empty for a single-language mode.
     service: String,
     /// The language of a single-language mode.
     base: String,
-    /// `(section, language)` of the console sections.
-    sections: Vec<(String, String)>,
-    payload: String,
-    response: View,
-    /// The service's module highlights it (through the Kernel).
-    kernel: bool,
 }
 
 impl Config {
     pub fn new(mode: &str) -> Self {
-        let Some(id) = mode.strip_prefix("console-") else {
-            return Self {
+        match mode.strip_prefix("console-") {
+            Some(id) => Self {
+                service: id.to_owned(),
+                ..Self::default()
+            },
+            None => Self {
                 base: mode.to_owned(),
                 ..Self::default()
-            };
-        };
-        if crate::kernel::is_service(id) {
-            return Self {
-                service: id.to_owned(),
-                kernel: true,
-                ..Self::default()
-            };
-        }
-        let service = crate::services::get(id);
-        Self {
-            service: id.to_owned(),
-            base: String::new(),
-            sections: service
-                .iter()
-                .flat_map(|service| &service.console.sections)
-                .map(|section| (section.name.clone(), section.language.clone()))
-                .collect(),
-            payload: service
-                .as_ref()
-                .map(|service| service.language("").to_owned())
-                .unwrap_or_default(),
-            response: service
-                .map(|service| service.console.response)
-                .unwrap_or_default(),
-            kernel: false,
-        }
-    }
-
-    #[cfg(test)]
-    pub fn console_for_tests(sections: &[(&str, &str)], payload: &str, response: View) -> Self {
-        Self {
-            service: "test".into(),
-            base: String::new(),
-            sections: sections
-                .iter()
-                .map(|(name, language)| ((*name).to_owned(), (*language).to_owned()))
-                .collect(),
-            payload: payload.into(),
-            response,
-            kernel: false,
+            },
         }
     }
 
@@ -94,43 +50,16 @@ impl Config {
 
     /// The console service whose module highlights it.
     pub fn kernel(&self) -> Option<&str> {
-        self.kernel.then_some(self.service.as_str())
-    }
-
-    /// Responses are tables.
-    pub fn grid(&self) -> bool {
-        self.console() && self.response == View::Grid
-    }
-
-    pub fn section(&self, name: &str) -> bool {
-        self.sections.iter().any(|(section, _)| section == name)
-    }
-
-    /// The language of `area` (a section; empty or unknown means the payload) or of a response.
-    pub fn language(&self, area: &str, response: bool) -> &str {
-        if !self.console() {
-            &self.base
-        } else if response {
-            self.response.language()
-        } else {
-            self.sections
-                .iter()
-                .find(|(name, _)| name == area)
-                .map_or(&self.payload, |(_, language)| language)
-        }
+        self.console().then_some(self.service.as_str())
     }
 }
 
 /// The tokenizer state between lines.
 #[derive(Clone, Debug, Default)]
 pub struct LineState {
-    area: String,
     response: bool,
     json: Option<json::State>,
-    sql: Option<sql::State>,
     lex: syntax::State,
-    /// The region whose table metadata the table tokenizer uses.
-    table: Option<usize>,
     /// A Kernel module's state; empty at the start of a check.
     module: Rc<[u8]>,
 }
@@ -142,23 +71,11 @@ impl LineState {
     pub fn lex(&self) -> &syntax::State {
         &self.lex
     }
-    fn reset_lex(&mut self) {
-        self.lex = syntax::State::default();
-        self.table = None;
-    }
 }
 
 struct Region {
     header: usize,
     end: usize,
-    table: Option<RefCell<crate::tables::Metadata>>,
-}
-
-enum Step {
-    /// A token's byte end and style; `sql` when the SQL tokenizer produced it.
-    Token(usize, Style, bool),
-    /// A table line's spans (UTF-16 ends).
-    Table(Vec<(usize, Style)>),
 }
 
 pub struct Highlighter {
@@ -173,7 +90,6 @@ pub struct Highlighter {
     frontier: usize,
     /// Bumps when cached spans are repainted without an edit.
     revision: u64,
-    pub(super) json_folds: super::fold::JsonFolds,
     /// A Kernel module's folds of the check at a line: `(start, end)` document lines.
     pub(super) module_folds: Option<(usize, ModuleFolds)>,
 }
@@ -196,7 +112,6 @@ impl Highlighter {
             spans: Vec::new(),
             frontier: 0,
             revision: 0,
-            json_folds: Default::default(),
             module_folds: None,
         }
     }
@@ -225,7 +140,6 @@ impl Highlighter {
             .map(|region| Region {
                 header: region.header,
                 end: region.end,
-                table: region.table.clone().map(RefCell::new),
             })
             .collect();
         self.reset();
@@ -246,7 +160,6 @@ impl Highlighter {
         self.spans.clear();
         self.frontier = 0;
         self.revision += 1;
-        self.json_folds.clear();
         self.module_folds = None;
     }
 
@@ -255,13 +168,11 @@ impl Highlighter {
         self.spans.truncate(line);
         self.states.truncate(line + 1);
         self.frontier = self.frontier.min(line);
-        self.json_folds.clear();
         self.module_folds = None;
     }
 
     fn start(&self) -> LineState {
         LineState {
-            area: self.template_section.clone().unwrap_or_default(),
             module: self.section_state(),
             ..LineState::default()
         }
@@ -280,11 +191,10 @@ impl Highlighter {
         .map_or_else(|| Rc::from([]), |line| line.state.into())
     }
 
-    fn region(&self, line: usize) -> Option<(usize, &Region)> {
+    fn region(&self, line: usize) -> Option<&Region> {
         let index = self.regions.partition_point(|region| region.header <= line);
-        let index = index.checked_sub(1)?;
-        let region = &self.regions[index];
-        (line < region.end).then_some((index, region))
+        let region = &self.regions[index.checked_sub(1)?];
+        (line < region.end).then_some(region)
     }
 
     /// The spans of `line`, from the nearest cached state.
@@ -391,48 +301,30 @@ impl Highlighter {
         let text = lines[index].as_str();
         if let Some(service) = self.config.kernel() {
             let tokens = self.module_line(service, index, text, state);
-            return spans(text, merge(&tokens, &overlay(text, false)));
+            return spans(text, merge(&tokens, &overlay(text)));
         }
         if text.is_empty() {
             return Vec::new();
         }
         let mut tokens: Vec<(usize, Style)> = Vec::new();
         let (mut pos, mut chars, mut utf16) = (0, 0, 0);
-        let mut sql = false;
         while pos < text.len() {
             if utf16 > MAX_HIGHLIGHT {
                 tokens.push((text.len(), None));
                 break;
             }
-            match self.token(lines, index, text, (pos, chars), state) {
-                Step::Token(end, style, child) => {
-                    let end = if end > pos {
-                        end.min(text.len())
-                    } else {
-                        pos + text[pos..].chars().next().map_or(1, char::len_utf8)
-                    };
-                    sql |= pos == 0 && child;
-                    chars += text[pos..end].chars().count();
-                    utf16 += utf16_len(&text[pos..end]);
-                    tokens.push((end, style));
-                    pos = end;
-                }
-                Step::Table(spans) => {
-                    let mut start = 0;
-                    let mut bytes = Utf16Cursor::new(text);
-                    for (end, style) in spans {
-                        if start > MAX_HIGHLIGHT {
-                            tokens.push((text.len(), None));
-                            break;
-                        }
-                        tokens.push((bytes.byte_at(end), style));
-                        start = end;
-                    }
-                    break;
-                }
-            }
+            let (end, style) = self.token(text, (pos, chars), state);
+            let end = if end > pos {
+                end.min(text.len())
+            } else {
+                pos + text[pos..].chars().next().map_or(1, char::len_utf8)
+            };
+            chars += text[pos..end].chars().count();
+            utf16 += utf16_len(&text[pos..end]);
+            tokens.push((end, style));
+            pos = end;
         }
-        spans(text, merge(&tokens, &overlay(text, sql)))
+        spans(text, merge(&tokens, &overlay(text)))
     }
 
     /// A line of a Kernel service: `#check` and template `@` lines are the App's, the rest
@@ -486,146 +378,22 @@ impl Highlighter {
         tokens
     }
 
-    /// The token at byte `pos`, which is character `chars`.
+    /// The token at byte `pos`, which is character `chars`: its byte end and style.
     fn token(
         &self,
-        lines: &[String],
-        line: usize,
         text: &str,
         (pos, chars): (usize, usize),
         state: &mut LineState,
-    ) -> Step {
-        let console = self.config.console();
-        if pos > 0 && console {
-            match self.config.language(&state.area, state.response) {
-                "json" if state.json.is_some() => {
-                    let (end, style) = json::token(text, pos, state.json.as_mut().unwrap());
-                    return Step::Token(end, style, false);
-                }
-                "sql" if state.sql.is_some() => {
-                    let (end, style) = sql::token(text, pos, state.sql.as_mut().unwrap());
-                    return Step::Token(end, style, true);
-                }
-                _ => {}
-            }
-        }
-        if pos == 0
-            && let Some(section) = &self.template_section
-            && text.starts_with('@')
-            && !text.starts_with("@@")
-        {
-            state.area = section.clone();
-            state.response = false;
-            state.json = None;
-            state.sql = None;
-            state.reset_lex();
-            return Step::Token(text.len(), Some("comment"), false);
-        }
-        let output = self.region(line);
-        if let Some((_, region)) = output {
-            state.response = true;
-            if line == region.header {
-                state.reset_lex();
-                return Step::Token(text.len(), Some("comment"), false);
-            }
-        }
-        if pos == 0 && output.is_none() && console && text.trim_start().starts_with('#') {
-            let marker = text
-                .split_whitespace()
-                .next()
-                .unwrap_or("")
-                .trim_start_matches('#')
-                .to_ascii_lowercase();
-            let check = crate::console::is_check(text);
-            let response = matches!(marker.as_str(), "response" | "responce");
-            if !check && !response && !self.config.section(&marker) {
-                let (n, style) = syntax::token(Language::Graphql, text, 0, &mut state.lex);
-                return Step::Token(char_end(text, 0, n), style, false);
-            }
-            if response {
-                state.response = true;
-                state.area = "body".into();
-            } else if check {
-                state.response = false;
-                state.area.clear();
-            } else {
-                state.area = marker;
-            }
-            state.json = None;
-            state.sql = None;
-            state.reset_lex();
-            return Step::Token(text.len(), Some("comment"), false);
-        }
-        let language = self.config.language(&state.area, state.response);
-        match language {
-            "json" => {
-                let (end, style) = json::token(text, pos, state.json.get_or_insert_default());
-                return Step::Token(end, style, false);
-            }
-            "sql" => {
-                let (end, style) = sql::token(text, pos, state.sql.get_or_insert_default());
-                return Step::Token(end, style, true);
-            }
-            _ => {}
+    ) -> (usize, Style) {
+        let language = self.config.base.as_str();
+        if language == "json" {
+            return json::token(text, pos, state.json.get_or_insert_default());
         }
         let Some(language) = Language::named(language) else {
-            let (end, style) = fallback(text, pos);
-            return Step::Token(end, style, false);
+            return fallback(text, pos);
         };
-        if language == Language::Table {
-            return Step::Table(self.table(lines, line, text, output, state));
-        }
         let (n, style) = syntax::token(language, text, chars, &mut state.lex);
-        Step::Token(char_end(text, pos, n), style, false)
-    }
-
-    fn table(
-        &self,
-        lines: &[String],
-        line: usize,
-        text: &str,
-        output: Option<(usize, &Region)>,
-        state: &mut LineState,
-    ) -> Vec<(usize, Style)> {
-        if let Some((index, region)) = output
-            && region.table.is_some()
-        {
-            state.table = Some(index);
-        }
-        let metadata = state
-            .table
-            .and_then(|index| self.regions.get(index)?.table.as_ref());
-        if let Some(metadata) = metadata {
-            std::mem::swap(&mut state.lex.table, &mut *metadata.borrow_mut());
-        }
-        if state.lex.table_cuts.is_empty()
-            && text.starts_with('|')
-            && let Some((_, region)) = output
-        {
-            for border_line in region.header + 1..(region.header + 8).min(region.end) {
-                let border = lines.get(border_line).map_or("", String::as_str);
-                if border.starts_with('+') && border.chars().all(|c| c == '+' || c == '-') {
-                    let lex = &mut state.lex;
-                    lex.table_cuts = border
-                        .chars()
-                        .enumerate()
-                        .filter_map(|(i, c)| (c == '+').then_some(i))
-                        .collect();
-                    lex.table_borders = if line <= border_line + lex.table.header_lines {
-                        1
-                    } else {
-                        2
-                    };
-                    lex.table_json = vec![Default::default(); lex.table.columns.len().max(1)];
-                    break;
-                }
-            }
-        }
-        let spans = syntax::table_line(text, &mut state.lex);
-        if let Some(metadata) = metadata {
-            std::mem::swap(&mut state.lex.table, &mut *metadata.borrow_mut());
-        }
-        spans
+        (char_end(text, pos, n), style)
     }
 }
 
@@ -649,13 +417,8 @@ fn char_end(text: &str, pos: usize, n: usize) -> usize {
         .map_or(text.len(), |(index, _)| pos + index)
 }
 
-/// `{{variable}}` everywhere, plus `name(` function calls in SQL. The overlay's style
-/// replaces the base style where it has one.
-fn overlay(text: &str, sql: bool) -> Vec<(usize, usize, &'static str)> {
-    const NOT_FUNCTIONS: [&str; 14] = [
-        "in", "not", "and", "or", "on", "as", "values", "is", "all", "any", "some", "when", "then",
-        "else",
-    ];
+/// `{{variable}}` everywhere; the overlay's style replaces the base style.
+fn overlay(text: &str) -> Vec<(usize, usize, &'static str)> {
     let mut out = Vec::new();
     let (mut pos, mut open) = (0, false);
     while pos < text.len() {
@@ -689,28 +452,7 @@ fn overlay(text: &str, sql: bool) -> Vec<(usize, usize, &'static str)> {
             }
             open = false;
         }
-        let ordinary = if sql {
-            let identifier = if rest.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_') {
-                rest.bytes()
-                    .take_while(|b| b.is_ascii_alphanumeric() || *b == b'_' || *b == b'$')
-                    .count()
-            } else {
-                0
-            };
-            if identifier > 0 {
-                if rest[identifier..].starts_with('(')
-                    && !NOT_FUNCTIONS.contains(&rest[..identifier].to_ascii_lowercase().as_str())
-                {
-                    out.push((pos, pos + identifier, "sql-function"));
-                }
-                pos += identifier;
-                continue;
-            }
-            rest.find(|c: char| c.is_ascii_alphabetic() || c == '_' || c == '{')
-                .unwrap_or(rest.len())
-        } else {
-            rest.find("{{").unwrap_or(rest.len())
-        };
+        let ordinary = rest.find("{{").unwrap_or(rest.len());
         pos += if ordinary > 0 {
             ordinary
         } else {
@@ -871,10 +613,6 @@ fn fallback(text: &str, pos: usize) -> (usize, Style) {
 mod tests {
     use super::*;
 
-    fn console(sections: &[(&str, &str)], payload: &str, response: View) -> Highlighter {
-        Highlighter::with_config(Config::console_for_tests(sections, payload, response))
-    }
-
     fn lines(text: &str) -> Vec<String> {
         text.split('\n').map(str::to_owned).collect()
     }
@@ -900,21 +638,11 @@ mod tests {
     }
 
     #[test]
-    fn sections_switch_languages_and_overlays_apply() {
-        let mut highlighter = console(
-            &[("headers", "headers"), ("sql", "sql")],
-            "json",
-            View::BodyHeaders,
-        );
-        let doc = lines(
-            "#check one\n{\"id\": \"{{user:id}}\"}\n#sql\nSELECT count(id) FROM t WHERE x IN (1)",
-        );
+    fn placeholders_overlay_the_language() {
+        let mut highlighter = Highlighter::new("json");
+        let doc = lines("{\"id\": \"{{user:id}}\"}");
         assert_eq!(
             styled(&mut highlighter, &doc, 0),
-            [("#check one".to_owned(), "comment")]
-        );
-        assert_eq!(
-            styled(&mut highlighter, &doc, 1),
             [
                 ("\"id\"".to_owned(), "string property"),
                 ("\"".to_owned(), "string"),
@@ -924,99 +652,40 @@ mod tests {
                 ("\"".to_owned(), "string"),
             ]
         );
-        assert_eq!(
-            styled(&mut highlighter, &doc, 3),
-            [
-                ("SELECT".to_owned(), "keyword"),
-                ("count".to_owned(), "sql-function"),
-                ("(".to_owned(), "bracket"),
-                (")".to_owned(), "bracket"),
-                ("FROM".to_owned(), "keyword"),
-                ("WHERE".to_owned(), "keyword"),
-                ("IN".to_owned(), "keyword"),
-                ("(".to_owned(), "bracket"),
-                ("1".to_owned(), "number"),
-                (")".to_owned(), "bracket"),
-            ]
-        );
-    }
-
-    #[test]
-    fn response_regions_use_the_response_language() {
-        let mut highlighter = console(&[], "graphql", View::BodyHeaders);
-        let doc = lines("#check\nquery { a }\n#response 200\n{\"a\": 1}\n#check\n{ b }");
-        highlighter.set_regions(&[ResponseRegion {
-            request: 0,
-            header: 2,
-            end: 4,
-            table: None,
-        }]);
-        assert_eq!(
-            styled(&mut highlighter, &doc, 2),
-            [("#response 200".to_owned(), "comment")]
-        );
-        assert_eq!(
-            styled(&mut highlighter, &doc, 3),
-            [
-                ("\"a\"".to_owned(), "string property"),
-                ("1".to_owned(), "number")
-            ]
-        );
-        // After the next check the payload language returns.
-        let state = highlighter.state_before(&doc, 5);
-        assert!(!state.response());
     }
 
     #[test]
     fn a_cold_line_restarts_from_a_fresh_state_and_work_makes_it_exact() {
-        let mut highlighter = console(&[("sql", "sql")], "json", View::BodyHeaders);
-        let mut text = String::from("#sql\n");
+        let mut highlighter = Highlighter::new("shell");
+        let mut text = String::from("'\n");
         for _ in 0..300 {
-            text.push_str("SELECT 1\n");
+            text.push_str("  1\n");
         }
         let doc = lines(&text);
-        // 200 lines past the section header, the restart reads the line as the payload.
+        // 200 lines past the open quote, the restart reads the line as a number.
         assert_eq!(
             styled(&mut highlighter, &doc, 250)[0],
-            ("SELECT".to_owned(), "variable")
+            ("1".to_owned(), "number")
         );
         let revision = highlighter.revision();
         assert!(!highlighter.work(&doc, doc.len(), || true));
         assert!(highlighter.revision() > revision);
         assert_eq!(
             styled(&mut highlighter, &doc, 250),
-            [("SELECT".to_owned(), "keyword"), ("1".to_owned(), "number")]
+            [("1".to_owned(), "string")]
         );
     }
 
     #[test]
     fn edits_invalidate_the_following_lines() {
-        let mut highlighter = console(&[("sql", "sql")], "json", View::BodyHeaders);
-        let mut doc = lines("#check\nSELECT 1");
-        assert_eq!(
-            styled(&mut highlighter, &doc, 1)[0],
-            ("SELECT".to_owned(), "variable")
-        );
-        doc[0] = "#sql".into();
+        let mut highlighter = Highlighter::new("shell");
+        let mut doc = lines("echo\nx");
+        assert_eq!(styled(&mut highlighter, &doc, 1), []);
+        doc[0] = "echo 'a".into();
         highlighter.edited(0);
         assert_eq!(
-            styled(&mut highlighter, &doc, 1)[0],
-            ("SELECT".to_owned(), "keyword")
-        );
-    }
-
-    #[test]
-    fn template_sections_start_in_their_section() {
-        let mut highlighter = console(&[("sql", "sql")], "json", View::BodyHeaders);
-        highlighter.set_template_section(Some("sql"));
-        let doc = lines("SELECT 1\n@other\nSELECT 1");
-        assert_eq!(
-            styled(&mut highlighter, &doc, 0)[0],
-            ("SELECT".to_owned(), "keyword")
-        );
-        assert_eq!(
             styled(&mut highlighter, &doc, 1),
-            [("@other".to_owned(), "comment")]
+            [("x".to_owned(), "string")]
         );
     }
 }

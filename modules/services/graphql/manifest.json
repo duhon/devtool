@@ -1,26 +1,11 @@
 {
   "id": "graphql",
+  "kind": "service",
   "name": "GraphQL",
+  "version": "3.2.2",
   "description": "Send a GraphQL query or mutation and inspect the response.",
-  "params": [
-    {"name": "url", "type": "string", "required": true},
-    {"name": "headers", "type": "json"},
-    {"name": "query", "type": "string", "required": true},
-    {"name": "variables", "type": "json"}
-  ],
-  "console": {
-    "order": 3,
-    "sections": [
-      {"name": "endpoint", "shape": "line", "language": "endpoint", "param": "url", "connection": true, "hints": [{"text": "http://"}, {"text": "https://"}]},
-      {"name": "headers", "shape": "pairs", "language": "headers", "param": "headers", "connection": true},
-      {"name": "variables", "shape": "block", "language": "json", "param": "variables"},
-      {"name": "query", "shape": "block", "language": "graphql", "param": "query"}
-    ],
-    "payload": "query",
-    "response": "body-headers",
-    "command": "curl",
-    "discovery": {"kind": "graphql", "schemes": ["http", "https"]},
-    "keywords": ["query", "mutation", "subscription", "fragment", "__typename"],
-    "hints": "#endpoint\nhttp://\nhttps://\n\n#headers\nAccept: */*\nAccept-Encoding: gzip, deflate, br\nAuthorization: ****** application/json\nCookie:\nHost:\nUser-Agent:\nX-Api-Key:\nX-Forwarded-For:\nX-Requested-With: XMLHttpRequest\n"
-  }
+  "abi": 1,
+  "app": ">=3.7",
+  "drivers": {"http": "1"},
+  "order": 3
 }

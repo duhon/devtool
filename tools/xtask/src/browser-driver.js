@@ -262,7 +262,8 @@
     if(toggle.getAttribute('aria-pressed')!=='true') await click(toggle);
     await sessionsIdle(root);
     await click(testid(`session-switch-${id}`,root));
-    await wait(()=>testid('console-session-name',root).dataset.sessionId===String(id));
+    await wait(()=>testid('console-session-name',root).dataset.sessionId===String(id),
+      ()=>`Session ${id} must become current: ${root.querySelector('[data-testid="console-sessions"]')?.innerText.slice(0,300)}`);
   };
   let sessionInitialized=false;
   const openConsole = async () => {

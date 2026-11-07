@@ -127,14 +127,6 @@ fn decorations(session: &Session, lines: std::ops::RangeInclusive<usize>) -> Dec
         };
         add(at.line, at.ch, at.ch + 1, AttrValue::Static(class));
     }
-    for (line, from, to) in session.objects() {
-        add(
-            *line,
-            *from,
-            *to,
-            AttrValue::Static("tok-graphql-object-field"),
-        );
-    }
     out
 }
 

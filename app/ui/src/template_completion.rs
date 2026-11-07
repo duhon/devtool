@@ -93,6 +93,5 @@ pub fn suggest(
         candidates,
         comma: None,
         automatic: true,
-        automatic_directives_only: false,
     })
 }

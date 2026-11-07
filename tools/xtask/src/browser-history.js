@@ -196,7 +196,7 @@
   assert(!document.querySelector('[data-testid="history-more-text"]'),
     'History must load all snapshot chunks automatically without a Load more snapshot text button');
   assert(new TextEncoder().encode(largeSnapshot).length>3*128*1024,
-    'The large History regression must span at least four native UTF-8 snapshot chunks');
+    `The large History regression must span at least four native UTF-8 snapshot chunks: ${largeSnapshot.length} chars, ${largeSnapshot.slice(0, 300)}`);
   const largeResponse=JSON.parse(largeSnapshot.split(/\n#responce[^\n]*\n/)[1]);
   assert(largeResponse.tail==='history-auto-loaded-end' && largeResponse.rows.length===3000
     && largeResponse.rows.every((row,index)=>row.id===index && row.text==='chunk-é-🦀 '.repeat(10)),

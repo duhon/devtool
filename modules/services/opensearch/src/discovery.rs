@@ -2,45 +2,29 @@
 //! mount, and reads its mappings and aliases with the check's headers. It never writes.
 
 use crate::schema;
-use serde_json::Value;
-use services_module_api::error::{Error, Result, headers};
-use services_module_api::http::header_list;
-use services_module_api::proto::host::HttpRequest;
-use services_module_api::sdk::Host;
+use serde_json::{Value, json};
+use services_sdk::Failure;
+use services_sdk::driver::{DriverFailure, Stage};
+use services_sdk::http::{Request, Response};
+use services_sdk::lang::rest::discovery::{Probe, Step};
 use url::Url;
 
 /// API families that need only their paths: discovering them skips the mappings.
 const SERVICE_APIS: [&str; 5] = ["_cluster", "_cat", "_nodes", "_tasks", "_snapshot"];
-/// Discovery reads metadata only; a slow cluster must not hold the console.
-const TIMEOUT_MS: u64 = 5000;
 
-/// The console's discovery for the request in `params`.
-pub async fn discover(host: &Host, params: &Value) -> Result<Value> {
-    let url = Url::parse(&crate::request(params)?.url).map_err(|e| Error::new(e.to_string()))?;
-    let headers = headers(params)?;
-    let base = cluster(host, &url, &headers).await?;
-    if let Some(scope) = service_scope(&base, &url) {
-        return Ok(schema::services(&base, &scope));
-    }
-    let mappings = metadata(host, &base, "_mapping", "mappings", &headers).await?;
-    let aliases = metadata(host, &base, "_alias", "aliases", &headers).await?;
-    Ok(schema::indices(&base, &mappings, &aliases))
-}
+#[derive(Debug, Default)]
+pub struct Cluster;
 
-/// The first of the URL's roots whose `GET` answers with OpenSearch's cluster info.
-async fn cluster(host: &Host, url: &Url, headers: &Value) -> Result<Url> {
-    let mut failure = None;
-    for root in roots(url) {
-        let (status, info) = fetch(host, &root, headers).await?;
-        if status == 200 && opensearch(&info) {
-            return Ok(root);
-        }
-        // A refused authorization explains the miss better than a proxy path's 404.
-        if status != 200 && (failure.is_none() || matches!(status, 401 | 403)) {
-            failure = Some(http_error(status));
-        }
-    }
-    Err(failure.unwrap_or_else(|| Error::new("No OpenSearch cluster found at this endpoint")))
+#[derive(Debug)]
+pub struct Run {
+    address: Option<Url>,
+    /// The roots not tried yet, longest first.
+    roots: Vec<Url>,
+    /// The cluster root once found.
+    base: Option<Url>,
+    attempts: Vec<Value>,
+    /// The first failure, a 401/403 one preferred.
+    failure: Option<String>,
 }
 
 /// Where the cluster may be mounted: the URL's path prefixes before its first `_api`
@@ -87,53 +71,167 @@ fn service_scope(base: &Url, url: &Url) -> Option<Url> {
     Some(scope)
 }
 
-/// `GET base/path`: an object of `{name: {key: {...}}}` for every index.
-async fn metadata(
-    host: &Host,
-    base: &Url,
-    path: &str,
-    key: &str,
-    headers: &Value,
-) -> Result<Value> {
-    let url = base.join(path).map_err(|e| Error::new(e.to_string()))?;
-    let (status, document) = fetch(host, &url, headers).await?;
-    if status != 200 {
-        return Err(http_error(status));
-    }
-    let valid = document
-        .as_object()
-        .is_some_and(|indices| indices.values().all(|index| index[key].is_object()));
-    if !valid {
-        return Err(Error::new(format!(
-            "OpenSearch returned invalid discovery metadata for /{path}"
-        )));
-    }
-    Ok(document)
-}
-
-/// `GET url`: the status and the body as JSON, `null` when it is not.
-async fn fetch(host: &Host, url: &Url, headers: &Value) -> Result<(u32, Value)> {
-    let response = host
-        .http(&HttpRequest {
-            method: "GET".into(),
-            url: url.to_string(),
-            headers: header_list(headers),
-            timeout_ms: TIMEOUT_MS,
-            no_redirects: true,
-            no_retries: true,
-            ..Default::default()
-        })
-        .await?;
-    Ok((
-        response.status,
-        serde_json::from_slice(&response.body).unwrap_or(Value::Null),
-    ))
-}
-
-fn http_error(status: u32) -> Error {
-    Error::new(format!(
+fn http_error(status: u16) -> String {
+    format!(
         "OpenSearch discovery failed (HTTP {status}); check the endpoint and metadata permissions"
-    ))
+    )
+}
+
+/// A reply as its status and body as JSON (`null` when it is not), or why it failed and
+/// whether the server was unreachable.
+fn answer(reply: Result<Value, Failure>) -> Result<(u16, Value), (String, bool)> {
+    match reply {
+        Ok(value) => {
+            let response = Response::parse(&value).map_err(|error| (error, false))?;
+            let body = response.body.as_deref().unwrap_or("");
+            Ok((
+                response.status,
+                serde_json::from_str(body).unwrap_or(Value::Null),
+            ))
+        }
+        Err(failure) => {
+            let stage = DriverFailure::parse(&failure.details()).map(|f| f.stage);
+            let unreachable = matches!(stage, Some(Stage::Dns | Stage::Connect | Stage::Tls));
+            Err((failure.message, unreachable))
+        }
+    }
+}
+
+impl Run {
+    fn failed(&mut self, message: String, unreachable: bool) -> Step {
+        let address = self.address.as_ref().map(Url::as_str);
+        Step::Failed {
+            message,
+            warning: false,
+            log: json!({"url": address, "attempts": self.attempts}),
+            unreachable,
+        }
+    }
+
+    /// The next root, or the failure that explains why none answered.
+    fn next_root(&mut self) -> Step {
+        if self.roots.is_empty() {
+            let message = self
+                .failure
+                .take()
+                .unwrap_or_else(|| "No OpenSearch cluster found at this endpoint".to_owned());
+            return self.failed(message, false);
+        }
+        Step::Fetch(vec![self.roots.remove(0).to_string()])
+    }
+
+    fn root(&mut self, url: String, reply: Result<Value, Failure>) -> Step {
+        let (status, info) = match answer(reply) {
+            Ok(answer) => answer,
+            Err((message, unreachable)) => {
+                self.attempts.push(json!({"url": url, "error": message}));
+                return self.failed(message, unreachable);
+            }
+        };
+        self.attempts.push(json!({"url": url, "status": status}));
+        let Ok(root) = Url::parse(&url) else {
+            return self.next_root();
+        };
+        if status == 200 && opensearch(&info) {
+            let address = self.address.clone().unwrap_or_else(|| root.clone());
+            if let Some(scope) = service_scope(&root, &address) {
+                return found(&address, &root, schema::services(&root, &scope));
+            }
+            let metadata = ["_mapping", "_alias"]
+                .iter()
+                .filter_map(|path| root.join(path).ok())
+                .map(String::from)
+                .collect();
+            self.base = Some(root);
+            return Step::Fetch(metadata);
+        }
+        // A refused authorization explains the miss better than a proxy path's 404.
+        if status != 200 && (self.failure.is_none() || matches!(status, 401 | 403)) {
+            self.failure = Some(http_error(status));
+        }
+        self.next_root()
+    }
+
+    fn metadata(&mut self, base: Url, replies: Vec<(String, Result<Value, Failure>)>) -> Step {
+        let mut documents = vec![];
+        for ((url, reply), (path, key)) in replies
+            .into_iter()
+            .zip([("_mapping", "mappings"), ("_alias", "aliases")])
+        {
+            let (status, document) = match answer(reply) {
+                Ok(answer) => answer,
+                Err((message, unreachable)) => {
+                    self.attempts.push(json!({"url": url, "error": message}));
+                    return self.failed(message, unreachable);
+                }
+            };
+            self.attempts.push(json!({"url": url, "status": status}));
+            if status != 200 {
+                return self.failed(http_error(status), false);
+            }
+            let valid = document
+                .as_object()
+                .is_some_and(|indices| indices.values().all(|index| index[key].is_object()));
+            if !valid {
+                return self.failed(
+                    format!("OpenSearch returned invalid discovery metadata for /{path}"),
+                    false,
+                );
+            }
+            documents.push(document);
+        }
+        let [mappings, aliases] = &documents[..] else {
+            return self.failed("OpenSearch discovery metadata is incomplete".into(), false);
+        };
+        let address = self.address.clone().unwrap_or_else(|| base.clone());
+        found(&address, &base, schema::indices(&base, mappings, aliases))
+    }
+}
+
+fn found(address: &Url, base: &Url, summary: Value) -> Step {
+    Step::Found {
+        details: json!({"address": address.as_str(), "cluster": base.as_str()}),
+        log: format!("OpenSearch cluster: {base}"),
+        summary,
+    }
+}
+
+impl Probe for Cluster {
+    type Run = Run;
+
+    fn start(&self, address: &str) -> (Run, Vec<String>) {
+        let address = Url::parse(address).ok();
+        let mut run = Run {
+            roots: address.as_ref().map(roots).unwrap_or_default(),
+            address,
+            base: None,
+            attempts: vec![],
+            failure: None,
+        };
+        let first = match run.next_root() {
+            Step::Fetch(urls) => urls,
+            _ => vec![],
+        };
+        (run, first)
+    }
+
+    /// Discovery reads metadata only: it is neither redirected nor slow.
+    fn request(&self, request: Request) -> Request {
+        Request {
+            redirects: Some(0),
+            ..request
+        }
+    }
+
+    fn step(&self, run: &mut Run, replies: Vec<(String, Result<Value, Failure>)>) -> Step {
+        if let Some(base) = run.base.take() {
+            return run.metadata(base, replies);
+        }
+        match replies.into_iter().next() {
+            Some((url, reply)) => run.root(url, reply),
+            None => run.next_root(),
+        }
+    }
 }
 
 #[cfg(test)]

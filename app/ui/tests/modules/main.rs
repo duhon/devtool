@@ -2,19 +2,9 @@
 //! One file per module; run one with
 //! `cargo test -p services-ui --test modules -- rest::`.
 
-#[path = "../support/mod.rs"]
-mod support;
-
 mod agent;
-mod artemis;
-mod graphql;
-mod grpc;
 mod history;
-mod mysql;
-mod opensearch;
 mod rest;
 mod sessions;
-mod splunk;
 mod templates;
-mod terminal;
 mod variables;

@@ -5,40 +5,43 @@ use services_ui::template_completion::suggest;
 use std::collections::BTreeMap;
 
 #[test]
+#[ignore = "no service has Template sections until the Templates module (step 5)"]
 fn inserts_only_body_and_normalizes_inline_sections() {
     let templates = BTreeMap::from([(
         "body".into(),
         "@my_create_book comment\n{\n  \"id\": 123\n}\n@my_create_book2 second\n{\"id\":1,}".into(),
     )]);
-    let completion = suggest("opensearch", "", "#check test\n#body @", 1, 7, &templates).unwrap();
+    let completion = suggest("artemis", "", "#check test\n#body @", 1, 7, &templates).unwrap();
     assert_eq!((completion.from, completion.to), (5, 7));
     assert_eq!(completion.candidates[0].text, "\n{\n  \"id\": 123\n}");
     assert_eq!(
         completion.candidates[0].label.as_deref(),
         Some("@my_create_book")
     );
-    assert!(suggest("opensearch", "", "#body\n@m", 1, 2, &templates).is_none());
-    assert!(suggest("opensearch", "", "#headers\n@", 1, 1, &templates).is_none());
-    assert!(suggest("opensearch", "", "#body\nmail@", 1, 5, &templates).is_none());
+    assert!(suggest("artemis", "", "#body\n@m", 1, 2, &templates).is_none());
+    assert!(suggest("artemis", "", "#headers\n@", 1, 1, &templates).is_none());
+    assert!(suggest("artemis", "", "#body\nmail@", 1, 5, &templates).is_none());
 }
 
 #[test]
+#[ignore = "no service has Template sections until the Templates module (step 5)"]
 fn full_checks_and_unicode_are_literal() {
     let templates = BTreeMap::from([(
         "check".into(),
         "@готово full\n#check new\n#endpoint\nGET /books\n#body\n{}".into(),
     )]);
-    let completion = suggest("opensearch", "", "#check @гот", 0, 11, &templates).unwrap();
+    let completion = suggest("artemis", "", "#check @гот", 0, 11, &templates).unwrap();
     assert_eq!(completion.from, 0);
     assert_eq!(
         completion.candidates[0].text,
         "#check new\n#endpoint\nGET /books\n#body\n{}"
     );
     assert!(completion.candidates[0].literal);
-    assert!(suggest("opensearch", "", "@", 0, 1, &templates).is_none());
+    assert!(suggest("artemis", "", "@", 0, 1, &templates).is_none());
 }
 
 #[test]
+#[ignore = "no service has Template sections until the Templates module (step 5)"]
 fn check_header_uses_description_without_copying_template_definition() {
     let body = r#"#endpoint
 PUT https://fakerestapi.azurewebsites.net/api/v1/Books/123
@@ -56,15 +59,16 @@ Accept: application/json
 }"#;
     let templates = BTreeMap::from([("check".into(), format!("@test1 mmm\n{body}"))]);
     let source = "#check @test1";
-    let completion = suggest("opensearch", "", source, 0, source.len(), &templates).unwrap();
+    let completion = suggest("artemis", "", source, 0, source.len(), &templates).unwrap();
     assert_eq!((completion.from, completion.to), (0, source.len()));
     assert_eq!(completion.candidates[0].text, format!("#check mmm\n{body}"));
     assert_eq!(completion.candidates[0].label.as_deref(), Some("@test1"));
     assert_eq!(completion.candidates[0].detail, "mmm");
-    assert!(suggest("opensearch", "", "@test1", 0, 6, &templates).is_none());
+    assert!(suggest("artemis", "", "@test1", 0, 6, &templates).is_none());
 }
 
 #[test]
+#[ignore = "no service has Template sections until the Templates module (step 5)"]
 fn check_names_fall_back_to_template_name_and_keep_explicit_headers() {
     for (definition, expected) in [
         (
@@ -89,12 +93,13 @@ fn check_names_fall_back_to_template_name_and_keep_explicit_headers() {
         ),
     ] {
         let templates = BTreeMap::from([("check".into(), definition.into())]);
-        let completion = suggest("opensearch", "", "#check @", 0, 8, &templates).unwrap();
+        let completion = suggest("artemis", "", "#check @", 0, 8, &templates).unwrap();
         assert_eq!(completion.candidates[0].text, expected, "{definition}");
     }
 }
 
 #[test]
+#[ignore = "no service has Template sections until the Templates module (step 5)"]
 fn templates_are_only_suggested_after_a_section_marker_on_the_same_line() {
     let templates = BTreeMap::from([("body".into(), "@example Body\n{}".into())]);
     for source in [
@@ -109,17 +114,18 @@ fn templates_are_only_suggested_after_a_section_marker_on_the_same_line() {
         let line = source.lines().count() - 1;
         let ch = source.lines().last().unwrap().encode_utf16().count();
         assert!(
-            suggest("opensearch", "", source, line, ch, &templates).is_none(),
+            suggest("artemis", "", source, line, ch, &templates).is_none(),
             "{source}"
         );
     }
-    assert!(suggest("opensearch", "body", "#body @", 0, 7, &templates).is_none());
-    let completion = suggest("opensearch", "", "  #body \t@", 0, 10, &templates).unwrap();
+    assert!(suggest("artemis", "body", "#body @", 0, 7, &templates).is_none());
+    let completion = suggest("artemis", "", "  #body \t@", 0, 10, &templates).unwrap();
     assert_eq!(completion.candidates[0].text, "\n{}");
     assert_eq!((completion.from, completion.to), (7, 10));
 }
 
 #[test]
+#[ignore = "no service has Template sections until the Templates module (step 5)"]
 fn space_after_section_marker_offers_templates_without_an_at_sign() {
     let templates = BTreeMap::from([
         ("body".into(), "@example Body\n{}".into()),
@@ -128,19 +134,19 @@ fn space_after_section_marker_offers_templates_without_an_at_sign() {
             "@create Create book\n#endpoint\nPUT /books\n#body\n{}".into(),
         ),
     ]);
-    let completion = suggest("opensearch", "", "#body ", 0, 6, &templates).unwrap();
+    let completion = suggest("artemis", "", "#body ", 0, 6, &templates).unwrap();
     assert!(completion.automatic);
     assert_eq!((completion.from, completion.to), (5, 6));
     assert_eq!(completion.candidates[0].text, "\n{}");
     assert_eq!(completion.candidates[0].label.as_deref(), Some("@example"));
     assert_eq!(
-        suggest("opensearch", "", "#check ", 0, 7, &templates)
+        suggest("artemis", "", "#check ", 0, 7, &templates)
             .unwrap()
             .candidates[0]
             .text,
         "#check Create book\n#endpoint\nPUT /books\n#body\n{}"
     );
-    let existing = suggest("opensearch", "", "#body @example", 0, 6, &templates).unwrap();
+    let existing = suggest("artemis", "", "#body @example", 0, 6, &templates).unwrap();
     assert_eq!((existing.from, existing.to), (5, 14));
     for source in [
         "#body",
@@ -152,8 +158,16 @@ fn space_after_section_marker_offers_templates_without_an_at_sign() {
         let line = source.lines().count() - 1;
         let ch = source.lines().last().unwrap().encode_utf16().count();
         assert!(
-            suggest("opensearch", "", source, line, ch, &templates).is_none(),
+            suggest("artemis", "", source, line, ch, &templates).is_none(),
             "{source}"
         );
+    }
+}
+
+#[test]
+fn kernel_services_offer_no_templates_until_the_templates_module() {
+    let templates = BTreeMap::from([("body".into(), "@example Body\n{}".into())]);
+    for service in services_ui::services::ids() {
+        assert!(suggest(&service, "", "#body @", 0, 7, &templates).is_none());
     }
 }

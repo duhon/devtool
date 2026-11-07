@@ -413,11 +413,10 @@ impl Transport {
                     if message["service"] == "updates" && message["op"] == "install" {
                         600
                     } else {
-                        message["service"]
-                            .as_str()
-                            .and_then(crate::services::get)
-                            .and_then(|service| service.console.timeout)
-                            .unwrap_or(120)
+                        // A driver call's own deadline, with a margin for the Host to report it.
+                        message["request"]["timeoutMs"]
+                            .as_u64()
+                            .map_or(120, |ms| (ms.div_ceil(1000) + 5).max(120))
                     };
                 let weak = Rc::downgrade(self);
                 let timeout = Closure::once_into_js(move || {

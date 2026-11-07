@@ -13,7 +13,6 @@ path = "src/main.rs"
 
 [dependencies]
 services-contracts = { path = "../api/protocol", features = ["archive"] }
-services-module-api = { path = "../api/module-api" }
 services-sdk = { path = "../api/sdk" }
 tempfile = "3"
 sha2 = "0.10"
@@ -31,13 +30,16 @@ libc = "0.2"
 github-copilot-sdk = { version = "=1.0.26", default-features = false, features = ["runtime"] }
 async-trait = "0.1"
 rusqlite = { version = "0.38", features = ["bundled"] }
-libloading = "0.8"
-stabby = { version = "72.1", features = ["libloading"] }
 base64 = "0.22"
+tonic = { version = "0.12", features = ["tls", "tls-roots"] }
+mysql_async = { version = "0.34", default-features = false, features = ["minimal-rust", "rustls-tls"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+rustls-native-certs = "0.8"
 
 [dev-dependencies]
 axum = { version = "0.8", features = ["http2"] }
 http-body = "1"
 http-body-util = "0.1"
 url = "2"
+prost = "0.13"
 services-testkit = { path = "../tools/testkit" }

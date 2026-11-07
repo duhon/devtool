@@ -1,5 +1,4 @@
 use serde_json::Value;
-use services_contracts::manifest::View;
 pub const MAX_RESPONSE_CHARS: usize = 300_000;
 pub fn display(value: &Value) -> String {
     match value {
@@ -8,107 +7,46 @@ pub fn display(value: &Value) -> String {
         v => v.to_string(),
     }
 }
-pub fn table(result: &Value, vertical: bool) -> String {
-    crate::tables::render(result, vertical)
-}
-pub fn console_response(service: &str, result: &Value, vertical: bool) -> String {
+/// A finished run's text: what its module rendered, cut to what the editor can show.
+pub fn console_response(result: &Value) -> String {
     if result["cancelled"] == true {
-        return result["warning"]
+        let warning = result["warning"]
             .as_str()
-            .unwrap_or("Request stopped before dispatch.")
-            .into();
+            .unwrap_or("Request stopped before dispatch.");
+        // A run stops with what it showed so far.
+        return match result["body"].as_str() {
+            Some(body) => stream_body(&serde_json::json!({"warning": warning}), body, ""),
+            None => warning.into(),
+        };
     }
-    let view = crate::services::view(service);
-    if view == View::Grid {
-        if result["preview"] == true {
-            return format!(
-                "{}\n\n{}",
-                services_contracts::SPLUNK_PREVIEW_WARNING,
-                table(result, vertical)
-            );
-        }
-        return table(result, vertical);
-    }
-    let raw = result["body"].as_str().unwrap_or("").trim_end_matches('\n');
-    let pretty = if raw.chars().count() <= MAX_RESPONSE_CHARS {
-        pretty_body(view, raw)
-    } else {
-        raw.into()
-    };
-    let count = pretty.chars().count();
+    truncated(result["body"].as_str().unwrap_or("").trim_end_matches('\n'))
+}
+fn truncated(text: &str) -> String {
+    let count = text.chars().count();
     if count > MAX_RESPONSE_CHARS {
         format!(
             "{}\n\n… response truncated ({} more characters omitted) — too large to display inline without freezing the editor.",
-            pretty.chars().take(MAX_RESPONSE_CHARS).collect::<String>(),
+            text.chars().take(MAX_RESPONSE_CHARS).collect::<String>(),
             count - MAX_RESPONSE_CHARS
         )
     } else {
-        pretty
+        text.into()
     }
 }
-fn pretty_body(view: View, raw: &str) -> String {
-    if view == View::BodyHeaders {
-        serde_json::from_str::<Value>(raw)
-            .ok()
-            .and_then(|v| serde_json::to_string_pretty(&v).ok())
-            .unwrap_or_else(|| raw.into())
-    } else {
-        raw.into()
-    }
-}
-pub fn check_response(
-    service: &str,
-    result: &Value,
-    vertical: bool,
-    stdout: &str,
-    stderr: &str,
-) -> String {
-    if crate::services::view(service) == View::Stream {
+/// A check's response: the run's result, its error, or (still running) its output so far.
+pub fn check_response(result: &Value, stdout: &str, stderr: &str) -> String {
+    if result.is_null() {
         stream_body(result, stdout, stderr)
-    } else if result.get("error").is_some()
-        && crate::services::get(service).is_none_or(|service| !service.console.error_body)
-    {
-        result["error"]
+    } else if result.get("error").is_some() {
+        // A failed streamed run keeps the output it showed before its error.
+        let error = result["error"]
             .as_str()
             .or(result["message"].as_str())
-            .unwrap_or("Unknown request error")
-            .into()
+            .unwrap_or("Unknown request error");
+        format!("{stdout}{stderr}{error}")
     } else {
-        console_response(service, result, vertical)
+        console_response(result)
     }
-}
-/// Whether `format` shows `result` as a JSON array of rows instead of a table.
-pub fn shows_json(result: &Value, format: Option<crate::console::Format>) -> bool {
-    format == Some(crate::console::Format::Json)
-        && result["columns"].is_array()
-        && result.get("error").is_none()
-        && result["cancelled"] != true
-}
-/// A check response as the Console and History show it with `Format:`; the Agent keeps
-/// [`check_response`].
-pub fn formatted_response(
-    service: &str,
-    result: &Value,
-    vertical: bool,
-    format: Option<crate::console::Format>,
-    stdout: &str,
-    stderr: &str,
-) -> String {
-    use crate::console::Format;
-    if shows_json(result, format) {
-        let json = crate::tables::json(result);
-        return if result["preview"] == true {
-            format!("{}\n\n{json}", services_contracts::SPLUNK_PREVIEW_WARNING)
-        } else {
-            json
-        };
-    }
-    let vertical = match format {
-        Some(Format::Table) => false,
-        Some(Format::Vertical) => true,
-        _ => vertical,
-    };
-    check_response(service, result, vertical, stdout, stderr)
 }
 /// A streamed response: its output, then the error or a warning.
 fn stream_body(result: &Value, stdout: &str, stderr: &str) -> String {
@@ -122,56 +60,12 @@ fn stream_body(result: &Value, stdout: &str, stderr: &str) -> String {
     }
     body
 }
-fn stream_history_body(raw: &str, complete: bool) -> Result<String, String> {
-    let mut stdout = String::new();
-    let mut stderr = String::new();
-    let result_text = if let Some(output) = raw.strip_prefix("#terminal-output\n") {
-        let (events, result) = match output.split_once("\n\n") {
-            Some((events, result)) => (events, Some(result)),
-            None if !complete => (output, None),
-            None => return Err("Saved Terminal output has no completion result".into()),
-        };
-        for line in events.split_inclusive('\n') {
-            if !line.ends_with('\n') && result.is_none() && !complete {
-                break;
-            }
-            let event: Value = serde_json::from_str(line)
-                .map_err(|error| format!("Invalid saved Terminal output: {error}"))?;
-            let data = event["data"]
-                .as_str()
-                .ok_or("Saved Terminal output has no text")?;
-            match event["type"].as_str() {
-                Some("stdout") => stdout.push_str(data),
-                Some("stderr") => stderr.push_str(data),
-                _ => return Err("Saved Terminal output has an unknown stream".into()),
-            }
-        }
-        result
-    } else {
-        Some(raw)
-    };
-    let result = if complete {
-        serde_json::from_str(result_text.ok_or("Saved Terminal result is missing")?)
-            .map_err(|error| format!("Invalid saved Terminal result: {error}"))?
-    } else {
-        Value::Null
-    };
-    Ok(stream_body(&result, &stdout, &stderr))
-}
-pub fn history_snapshot(
-    service: &str,
-    snapshot: &str,
-    time: &str,
-    complete: bool,
-) -> Result<String, String> {
-    history_document(service, snapshot, time, complete).map(|(text, _)| text)
-}
+/// A saved run as History shows it: its source, then `#responce <time> · <outcome>` and the
+/// rendered body it saved, which is its response region.
 pub fn history_document(
-    service: &str,
     snapshot: &str,
     time: &str,
-    complete: bool,
-) -> Result<(String, Vec<crate::document::ResponseRegion>), String> {
+) -> (String, Vec<crate::document::ResponseRegion>) {
     let headers = [
         ("\n\n#response success\n", "OK"),
         ("\n\n#response error\n", "ERROR"),
@@ -191,51 +85,20 @@ pub fn history_document(
         })
         .min_by_key(|(offset, _, _)| *offset)
     else {
-        return Ok((snapshot.into(), vec![]));
+        return (snapshot.into(), vec![]);
     };
     let request = snapshot[..offset].trim_end_matches('\n');
-    let raw = &snapshot[offset + marker.len()..];
-    let mut table = None;
-    let view = crate::services::view(service);
-    let body = if view == View::Stream {
-        stream_history_body(raw, complete)?
-    } else if view == View::Grid {
-        if complete {
-            let result: Value = serde_json::from_str(raw)
-                .map_err(|error| format!("Invalid saved {service} result: {error}"))?;
-            // A record the current module no longer parses shows its plain table.
-            let (vertical, format) = crate::console::parse_run(service, request)
-                .map(|(params, options)| (params["vertical"] == true, options.format))
-                .unwrap_or_default();
-            if result["columns"].is_array() {
-                table = Some(crate::tables::Metadata {
-                    json: shows_json(&result, format),
-                    ..crate::tables::Metadata::from_result(&result)
-                });
-            }
-            formatted_response(service, &result, vertical, format, "", "")
-        } else {
-            String::new()
-        }
-    } else if complete && raw.chars().count() <= MAX_RESPONSE_CHARS {
-        pretty_body(view, raw.trim_end_matches('\n'))
-    } else {
-        raw.into()
-    };
+    let body = &snapshot[offset + marker.len()..];
     let text = format!("{request}\n#responce {time} · {outcome}\n{body}");
-    let regions = table
-        .map(|table| crate::document::ResponseRegion {
-            request: request
-                .lines()
-                .position(crate::console::is_check)
-                .unwrap_or(0),
-            header: request.lines().count(),
-            end: text.split('\n').count(),
-            table: Some(table),
-        })
-        .into_iter()
-        .collect();
-    Ok((text, regions))
+    let region = crate::document::ResponseRegion {
+        request: request
+            .lines()
+            .position(crate::console::is_check)
+            .unwrap_or(0),
+        header: request.lines().count(),
+        end: text.split('\n').count(),
+    };
+    (text, vec![region])
 }
 pub fn duration(ms: f64) -> String {
     if ms < 1000.0 {
@@ -273,47 +136,14 @@ pub fn outcome(result: &Value) -> &str {
         _ => "NOTICE",
     }
 }
-pub fn status(service: &str, result: &Value) -> String {
+pub fn status(result: &Value) -> String {
     let mut parts = Vec::new();
     if let Some(ms) = result["durationMs"].as_f64() {
         parts.push(duration(ms));
     }
     parts.push(outcome(result).into());
-    if crate::services::view(service) == View::Stream {
-        parts.extend(exit_summary(result));
-    }
-    if crate::services::view(service) == View::Grid {
-        let n = result["resultCount"]
-            .as_u64()
-            .or_else(|| result["rows"].as_array().map(|a| a.len() as u64));
-        if let Some(n) = n {
-            parts.push(format!("{n} {}", if n == 1 { "row" } else { "rows" }));
-        }
+    if let Some(summary) = result["summary"].as_str() {
+        parts.push(summary.into());
     }
     parts.join(" · ")
-}
-/// Characters of a command's last stderr line shown in its status.
-const STATUS_STDERR_CHARS: usize = 160;
-/// A failed command's exit code or signal, then the last line the command wrote to stderr
-/// (also after a successful exit, where stderr makes it a warning).
-fn exit_summary(result: &Value) -> Vec<String> {
-    let mut parts = match (result["code"].as_i64(), result["signal"].as_str()) {
-        (None, None) => return Vec::new(),
-        (Some(0), _) => Vec::new(),
-        (Some(code), _) => vec![format!("exit {code}")],
-        (None, Some(signal)) => vec![signal.to_owned()],
-    };
-    let last = result["stderr"]
-        .as_str()
-        .and_then(|stderr| stderr.lines().map(str::trim).rfind(|line| !line.is_empty()));
-    if let Some(line) = last {
-        parts.push(if line.chars().count() > STATUS_STDERR_CHARS {
-            let mut short: String = line.chars().take(STATUS_STDERR_CHARS - 1).collect();
-            short.push('…');
-            short
-        } else {
-            line.to_owned()
-        });
-    }
-    parts
 }

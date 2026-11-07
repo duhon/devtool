@@ -1,7 +1,7 @@
 //! The http driver: one client without automatic redirects or retries; the driver follows
 //! redirects itself and records each hop.
 
-use super::{CONNECT_MS, Failure, millis};
+use super::{CONNECT_MS, Failure, micros, millis};
 use base64::{Engine, engine::general_purpose::STANDARD as B64};
 use reqwest::{Method, StatusCode, Url, header};
 use serde_json::{Value, json};
@@ -221,13 +221,9 @@ fn head(response: &reqwest::Response, redirects: Vec<Hop>, first_byte_us: u64) -
     }
 }
 
-fn micros(started: Instant) -> u64 {
-    started.elapsed().as_micros() as u64
-}
-
 /// The valid UTF-8 prefix of `pending`; an incomplete character at the end waits for the next
 /// chunk, invalid bytes become U+FFFD.
-fn complete_text(pending: &mut Vec<u8>) -> String {
+pub(super) fn complete_text(pending: &mut Vec<u8>) -> String {
     match std::str::from_utf8(pending) {
         Ok(text) => {
             let text = text.to_owned();

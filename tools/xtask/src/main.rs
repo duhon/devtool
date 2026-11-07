@@ -67,11 +67,10 @@ fn target(root: &Path) -> PathBuf {
         .unwrap_or(root.join("target"))
 }
 
-/// A module built as a package: a `cdylib` crate with a `manifest.json` (the shipped ones are
-/// in `modules/services/<dir>`), its console part (`ui/`, built for `wasm32-unknown-unknown`),
-/// Agent skill (`skill/SKILL.md`) and `RELEASE_NOTES.md` when it has them. A manifest with
-/// `abi` is an SDK module: the crate is built for `wasm32-unknown-unknown` as `module.wasm`
-/// and its `package.json` is the manifest.
+/// A module built as a package: a `cdylib` SDK crate with a `manifest.json` (the shipped ones
+/// are in `modules/services/<dir>`), its Agent skill (`skill/SKILL.md`) and `RELEASE_NOTES.md`
+/// when it has them. The crate is built for `wasm32-unknown-unknown` as `module.wasm` and its
+/// `package.json` is the manifest.
 #[derive(Clone)]
 struct Package {
     id: String,
@@ -83,35 +82,25 @@ struct Package {
     description: String,
     dir: PathBuf,
     library: String,
-    ui: Option<String>,
-    /// The SDK manifest of a module the App runs.
-    sdk: Option<Value>,
+    /// The SDK manifest.
+    sdk: Value,
 }
 
 impl Package {
-    /// Its `package.json`: the SDK manifest with the crate's version, or the description
-    /// of a library built for this computer's platform.
+    /// Its `package.json`: the SDK manifest with the crate's version.
     fn package_json(&self) -> Result<Vec<u8>> {
-        Ok(match &self.sdk {
-            Some(manifest) => {
-                let mut manifest = manifest.clone();
-                manifest["version"] = Value::String(self.version.clone());
-                serde_json::to_vec_pretty(&manifest)?
-            }
-            None => serde_json::to_vec_pretty(&self.described())?,
-        })
+        let mut manifest = self.sdk.clone();
+        manifest["version"] = Value::String(self.version.clone());
+        Ok(serde_json::to_vec_pretty(&manifest)?)
     }
 
-    /// Its description; a library is built for this computer's platform.
+    /// Its description.
     fn described(&self) -> services_contracts::package::Package {
         services_contracts::package::Package {
             id: self.id.clone(),
             version: self.version.clone(),
             min_core: self.min_core.clone(),
-            platform: self
-                .sdk
-                .is_none()
-                .then(services_contracts::package::host_platform),
+            platform: None,
             name: Some(self.name.clone()),
             description: Some(self.description.clone()).filter(|text| !text.is_empty()),
         }
@@ -177,7 +166,11 @@ fn package_at(root: &Path, dir: &Path) -> Result<Package> {
     let manifest: Value = serde_json::from_slice(
         &fs::read(&manifest).with_context(|| format!("Reading {}", manifest.display()))?,
     )?;
-    let ui = dir.join("ui/Cargo.toml");
+    ensure!(
+        manifest.get("abi").is_some(),
+        "{} is not an SDK module manifest (it has no abi)",
+        dir.join("manifest.json").display()
+    );
     let package = Package {
         id: manifest["id"]
             .as_str()
@@ -195,8 +188,7 @@ fn package_at(root: &Path, dir: &Path) -> Result<Package> {
             .to_owned(),
         dir: dir.to_path_buf(),
         library: crate_name(&cargo)?,
-        ui: ui.exists().then(|| crate_name(&ui)).transpose()?,
-        sdk: manifest.get("abi").is_some().then(|| manifest.clone()),
+        sdk: manifest.clone(),
     };
     services_contracts::package::check_id(&package.id).map_err(anyhow::Error::msg)?;
     services_contracts::package::version(&package.version).map_err(anyhow::Error::msg)?;
@@ -229,33 +221,18 @@ fn packages(root: &Path) -> Result<Vec<Package>> {
     Ok(packages)
 }
 
-/// Builds `packages` and lays each out as `<modules>/<id>/{package.json,module.dylib,ui.wasm,
+/// Builds `packages` and lays each out as `<modules>/<id>/{package.json,module.wasm,
 /// RELEASE_NOTES.md,skills/module-<id>/}`.
 fn build_packages(root: &Path, packages: &[Package], modules: &Path, release: bool) -> Result<()> {
     let profile = if release { "release" } else { "debug" };
-    for wasm in [false, true] {
-        let mut args = vec!["build", "--lib"];
-        if release {
-            args.push("--release");
-        }
-        if wasm {
-            args.extend(["--target", "wasm32-unknown-unknown"]);
-        }
-        let crates: Vec<&str> = packages
-            .iter()
-            .filter_map(|package| match (wasm, &package.sdk) {
-                (true, Some(_)) => Some(package.library.as_str()),
-                (true, None) => package.ui.as_deref(),
-                (false, Some(_)) => None,
-                (false, None) => Some(package.library.as_str()),
-            })
-            .collect();
-        if crates.is_empty() {
-            continue;
-        }
-        for name in crates {
-            args.extend(["-p", name]);
-        }
+    let mut args = vec!["build", "--lib", "--target", "wasm32-unknown-unknown"];
+    if release {
+        args.push("--release");
+    }
+    for package in packages {
+        args.extend(["-p", package.library.as_str()]);
+    }
+    if !packages.is_empty() {
         run(root, "cargo", &args)?;
     }
     for package in packages {
@@ -290,39 +267,22 @@ fn build_packages(root: &Path, packages: &[Package], modules: &Path, release: bo
             );
             copy_tree(&skill, &skills.join(name))?;
         }
-        let wasm_dir = target(root).join("wasm32-unknown-unknown").join(profile);
-        let mut files = vec![match package.sdk {
-            Some(_) => (
-                wasm_dir.join(format!("{}.wasm", package.library.replace('-', "_"))),
-                services_contracts::package::WASM_FILE,
-            ),
-            None => (
-                target(root)
-                    .join(profile)
-                    .join(format!("lib{}.dylib", package.library.replace('-', "_"))),
-                services_contracts::package::LIBRARY_FILE,
-            ),
-        }];
-        if let Some(ui) = &package.ui {
-            files.push((
-                wasm_dir.join(format!("{}.wasm", ui.replace('-', "_"))),
-                services_contracts::package::UI_FILE,
-            ));
+        let built = target(root)
+            .join("wasm32-unknown-unknown")
+            .join(profile)
+            .join(format!("{}.wasm", package.library.replace('-', "_")));
+        let placed = dir.join(services_contracts::package::WASM_FILE);
+        if fs::symlink_metadata(&placed).is_ok() {
+            fs::remove_file(&placed)?;
         }
-        for (built, name) in files {
-            let placed = dir.join(name);
-            if fs::symlink_metadata(&placed).is_ok() {
-                fs::remove_file(&placed)?;
-            }
-            fs::copy(&built, &placed)?;
-        }
+        fs::copy(&built, &placed)?;
     }
     Ok(())
 }
 
 const PACKAGE_USAGE: &str = "package <module id | module crate folder>... [--out FOLDER]";
 
-/// Package files (`<id>-<version>-<platform>.module.tgz`, offered by a folder source's `modules/`) of
+/// Package files (`<id>-<version>.module.tgz`, offered by a folder source's `modules/`) of
 /// shipped modules (by id) and module crates (by folder), built for release into `--out`
 /// (`target/packages` by default). Returns the files it writes.
 fn package_files(root: &Path, args: &[String]) -> Result<Vec<PathBuf>> {

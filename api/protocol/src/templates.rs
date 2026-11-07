@@ -1,4 +1,3 @@
-use crate::manifest::Manifest;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -66,14 +65,6 @@ pub fn parse(text: &str) -> Result<Vec<Template>, String> {
     Ok(result)
 }
 
-/// Whether `service` has a template section `section` (`check` or a console section).
-pub fn has_section(manifests: &[Manifest], service: &str, section: &str) -> bool {
-    manifests
-        .iter()
-        .find(|manifest| manifest.id == service)
-        .is_some_and(|manifest| manifest.template_sections().any(|name| name == section))
-}
-
 /// Checks every template text. Sections of services or sections no loaded module has are
 /// kept as they are: a module may be removed, fail to load or come back in another version.
 pub fn validate(library: &Library) -> Result<(), String> {
@@ -88,29 +79,6 @@ pub fn validate(library: &Library) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn only_manifest_sections_are_template_sections() {
-        let manifests = [Manifest {
-            id: "splunk".into(),
-            console: crate::manifest::Console {
-                sections: ["endpoint", "headers", "options", "search"]
-                    .map(|name| crate::manifest::Section {
-                        name: name.into(),
-                        ..Default::default()
-                    })
-                    .into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        }];
-        for section in ["check", "endpoint", "headers", "options", "search"] {
-            assert!(has_section(&manifests, "splunk", section));
-        }
-        for section in ["from", "to", "app", "count"] {
-            assert!(!has_section(&manifests, "splunk", section));
-        }
-        assert!(!has_section(&manifests, "redis", "check"));
-    }
     #[test]
     fn templates_of_unloaded_services_and_sections_are_kept_but_still_checked() {
         let library = BTreeMap::from([

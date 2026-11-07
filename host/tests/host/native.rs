@@ -12,6 +12,23 @@ use services_testkit::{
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 
+/// A process stream that prints `ready`, then sleeps.
+fn sleeper(id: u32) -> serde_json::Value {
+    json!({"id":id,"service":"drivers","driver":"process","op":"stream",
+        "request":{"program":"sh","args":["-c","printf ready; sleep 30"],"text":true}})
+}
+
+/// Reads frames up to the process's `ready`.
+async fn ready(output: &mut tokio::io::DuplexStream) {
+    loop {
+        let frame = read_frame(output).await;
+        assert_eq!(frame["type"], "data", "{frame}");
+        if frame["event"]["stdout"] == "ready" {
+            return;
+        }
+    }
+}
+
 #[test]
 fn frames_accept_fragments_and_unicode_and_drop_malformed_json() {
     let a = json!({"id":"α","params":{"body":"🦀"}});
@@ -44,7 +61,7 @@ async fn clipboard_is_reachable_only_through_the_native_adapter() {
 }
 
 #[tokio::test]
-async fn large_responses_are_chunked_without_stopping_terminal_and_old_clients_are_told_to_update()
+async fn large_responses_are_chunked_without_stopping_a_process_and_old_clients_are_told_to_update()
 {
     use services_contracts::native_messaging::ResponseAssembler;
     let data = DataDir::new();
@@ -62,8 +79,11 @@ async fn large_responses_are_chunked_without_stopping_terminal_and_old_clients_a
     let (output_host, mut output) = tokio::io::duplex(65536);
     let host = tokio::spawn(native::run(data.runtime(), input_host, output_host));
     let roundtrip = async {
-        input.write_all(&encode(&json!({"id":1,"service":"terminal","params":{"endpoint":"sh -c","command":"printf ready; sleep 30"}})).unwrap()).await.unwrap();
-        assert_eq!(read_frame(&mut output).await["event"]["data"], "ready");
+        input
+            .write_all(&encode(&sleeper(1)).unwrap())
+            .await
+            .unwrap();
+        ready(&mut output).await;
         let request = |id| json!({"id":id,"service":"drivers","driver":"http","op":"call","request":{"method":"GET","url":format!("{}/large",server.url),"text":true}});
         input
             .write_all(&encode(&request(2)).unwrap())
@@ -107,7 +127,7 @@ async fn large_responses_are_chunked_without_stopping_terminal_and_old_clients_a
                     result = Some(value);
                 }
             } else {
-                assert_eq!(message["id"], 5, "Unrelated Terminal must not exit");
+                assert_eq!(message["id"], 5, "An unrelated process must not exit");
                 assert_eq!(message["result"]["protocolVersion"], 1);
                 healthy = true;
             }
@@ -120,8 +140,7 @@ async fn large_responses_are_chunked_without_stopping_terminal_and_old_clients_a
             .unwrap();
         let exit = read_frame(&mut output).await;
         assert_eq!(exit["id"], 1);
-        assert_eq!(exit["type"], "exit");
-        assert_eq!(exit["info"]["cancelled"], true);
+        assert_eq!(exit["failure"]["stage"], "cancelled", "{exit}");
         input.shutdown().await.unwrap();
     };
     tokio::time::timeout(Duration::from_secs(10), roundtrip)
@@ -173,10 +192,11 @@ async fn concurrent_requests_stop_and_health_are_routed_by_id() {
     let slow = read_frame(&mut output).await;
     assert_eq!(slow["id"], "slow");
     assert_eq!(slow["result"]["status"], 201);
-    input.write_all(&encode(&json!({"id":3,"service":"terminal","params":{"endpoint":"sh -c","command":"printf ready; sleep 30"}})).unwrap()).await.unwrap();
-    let data = read_frame(&mut output).await;
-    assert_eq!(data["type"], "data");
-    assert_eq!(data["event"]["data"], "ready");
+    input
+        .write_all(&encode(&sleeper(3)).unwrap())
+        .await
+        .unwrap();
+    ready(&mut output).await;
     input
         .write_all(&encode(&json!({"id":3,"type":"stop"})).unwrap())
         .await
@@ -184,8 +204,8 @@ async fn concurrent_requests_stop_and_health_are_routed_by_id() {
     let exit = tokio::time::timeout(Duration::from_secs(4), read_frame(&mut output))
         .await
         .unwrap();
-    assert_eq!(exit["type"], "exit");
-    assert_eq!(exit["info"]["signal"], "SIGTERM");
+    assert_eq!(exit["id"], 3);
+    assert_eq!(exit["failure"]["stage"], "cancelled", "{exit}");
     input
         .write_all(&encode(&json!({"id":4,"service":"vars","op":"list"})).unwrap())
         .await
@@ -201,19 +221,22 @@ async fn concurrent_requests_stop_and_health_are_routed_by_id() {
 }
 
 #[tokio::test]
-async fn eof_cancels_terminal_and_flushes_its_exit() {
+async fn eof_cancels_a_process_and_flushes_its_end() {
     let data = DataDir::new();
     let (mut input, input_host) = tokio::io::duplex(65536);
     let (output_host, mut output) = tokio::io::duplex(65536);
     let host = tokio::spawn(native::run(data.runtime(), input_host, output_host));
-    input.write_all(&encode(&json!({"id":1,"service":"terminal","params":{"endpoint":"sh -c","command":"printf ready; sleep 30"}})).unwrap()).await.unwrap();
-    assert_eq!(read_frame(&mut output).await["type"], "data");
+    input
+        .write_all(&encode(&sleeper(1)).unwrap())
+        .await
+        .unwrap();
+    ready(&mut output).await;
     input.shutdown().await.unwrap();
     assert_eq!(
         tokio::time::timeout(Duration::from_secs(4), read_frame(&mut output))
             .await
-            .unwrap()["type"],
-        "exit"
+            .unwrap()["failure"]["stage"],
+        "cancelled"
     );
     host.await.unwrap().unwrap();
 }

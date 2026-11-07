@@ -243,4 +243,3 @@
 .theme-dracula span.tok-error, .tok-invalidchar { color: var(--editor-red); }
 
 /* A mark over a `property` token, so it must follow the theme. */
-.theme-dracula span.tok-graphql-object-field { color: var(--editor-field); }

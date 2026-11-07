@@ -1,25 +1,11 @@
 {
   "id": "grpc",
+  "kind": "service",
   "name": "gRPC",
+  "version": "3.2.2",
   "description": "Make a gRPC call and inspect the response.",
-  "params": [
-    {"name": "endpoint", "type": "string", "required": true},
-    {"name": "proto", "type": "string"},
-    {"name": "headers", "type": "json"},
-    {"name": "requestMessage", "type": "string"}
-  ],
-  "console": {
-    "order": 4,
-    "sections": [
-      {"name": "endpoint", "shape": "line", "language": "grpc", "param": "endpoint", "connection": true, "hints": [{"text": "grpc://"}, {"text": "grpcs://"}]},
-      {"name": "headers", "shape": "pairs", "language": "headers", "param": "headers", "connection": true},
-      {"name": "proto", "shape": "block", "language": "proto", "param": "proto"},
-      {"name": "message", "shape": "block", "language": "json", "param": "requestMessage"}
-    ],
-    "payload": "message",
-    "response": "body-headers",
-    "command": "grpcurl",
-    "discovery": {"kind": "grpc-reflection", "schemes": ["grpc", "grpcs"]},
-    "hints": "#endpoint\nhttp://\nhttps://\n\n#headers\nAccept: */*\nAccept-Encoding: gzip, deflate, br\nAuthorization: ****** application/json\nCookie:\nHost:\nUser-Agent:\nX-Api-Key:\nX-Forwarded-For:\nX-Requested-With: XMLHttpRequest\n"
-  }
+  "abi": 1,
+  "app": ">=3.7",
+  "drivers": {"grpc": "1"},
+  "order": 4
 }

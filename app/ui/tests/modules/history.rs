@@ -1,23 +1,17 @@
-//! History panel: saved snapshots keep typed result metadata and render
-//! partial, plain and large responses intact. UI-behaviour tests.
+//! History panel: a saved run shows its source, the time and outcome, then the body its
+//! module rendered, intact. UI-behaviour tests.
 
-use serde_json::json;
-use services_ui::format::{MAX_RESPONSE_CHARS, history_document, history_snapshot, table};
+use services_ui::format::{MAX_RESPONSE_CHARS, history_document};
 
 #[test]
-fn typed_history_keeps_result_metadata_and_exact_wrapped_text() {
-    let result = json!({"columns":["payload"],"columnTypes":{"payload":"json"},"columnSizes":{"payload":8},
-        "rows":[{"payload":"{\"n\":12,\"ok\":true}"}]});
-    let source = format!(
-        "#check saved\n#endpoint\nhttps://fixture.invalid\n#search\nindex=fixture\n\n#responce OK\n{result}"
-    );
-    let (text, regions) = history_document("splunk", &source, "1:00:00 PM", true).unwrap();
-    assert!(text.ends_with(&table(&result, false)));
+fn a_saved_run_shows_its_rendered_body_under_a_timed_outcome() {
+    let source = "#check saved\n#endpoint\nhttps://fixture.invalid\n#search\nindex=fixture";
+    let body = "| n |\n| 1 |";
+    let (text, regions) =
+        history_document(&format!("{source}\n\n#responce OK\n{body}"), "1:00:00 PM");
+    assert_eq!(text, format!("{source}\n#responce 1:00:00 PM · OK\n{body}"));
     assert_eq!(regions.len(), 1);
-    assert_eq!(
-        regions[0].table.as_ref().unwrap().types["payload"],
-        services_contracts::columns::Kind::Json
-    );
+    assert_eq!(regions[0].request, 0);
     assert!(
         text.lines()
             .nth(regions[0].header)
@@ -28,63 +22,42 @@ fn typed_history_keeps_result_metadata_and_exact_wrapped_text() {
 }
 
 #[test]
-fn saved_vertical_query_renders_its_grid_vertically() {
-    let result = json!({"columns":["n"],"rows":[{"n":1}],"resultCount":1});
-    for (query, vertical) in [("SELECT 1\\G", true), ("SELECT 1", false)] {
-        let source = format!(
-            "#check saved\n#endpoint\nmysql://root@127.0.0.1/db\n#query\n{query}\n\n#responce OK\n{result}"
-        );
-        let (text, _) = history_document("mysql", &source, "1:00:00 PM", true).unwrap();
-        assert!(text.ends_with(&table(&result, vertical)), "{query}: {text}");
-    }
-}
-
-#[test]
-fn saved_format_renders_history_like_the_console() {
-    let result = json!({"columns":["n"],"rows":[{"n":1}],"resultCount":1});
-    for (options, query, shown, json) in [
-        (
-            "Format: json",
-            "SELECT 1",
-            services_ui::tables::json(&result),
-            true,
-        ),
-        ("Format: vertical", "SELECT 1", table(&result, true), false),
-        ("Format: table", "SELECT 1\\G", table(&result, false), false),
-    ] {
-        let source = format!(
-            "#check saved\n#endpoint\nmysql://root@127.0.0.1/db\n#options\n{options}\n#query\n{query}\n\n#responce OK\n{result}"
-        );
-        let (text, regions) = history_document("mysql", &source, "1:00:00 PM", true).unwrap();
-        assert!(text.ends_with(&shown), "{options}: {text}");
-        assert_eq!(regions[0].table.as_ref().unwrap().json, json, "{options}");
-    }
-}
-
-#[test]
-fn history_display_handles_partial_plain_and_large_responses_without_truncating() {
+fn history_display_handles_partial_plain_and_large_responses() {
     let prefix = "#check example";
     let partial = format!("{prefix}\n\n#responce OK\n{{\"debug\":");
     assert_eq!(
-        history_snapshot("graphql", &partial, "1:00:00 PM", false).unwrap(),
+        history_document(&partial, "1:00:00 PM").0,
         format!("{prefix}\n#responce 1:00:00 PM · OK\n{{\"debug\":")
     );
+    // Only the first response marker belongs to the run.
     let plain = "line one\n\n#response error\nThis is part of the actual response.";
     let snapshot = format!("{prefix}\n\n#responce OK\n{plain}");
-    assert!(
-        history_snapshot("rest", &snapshot, "1:00:00 PM", true)
-            .unwrap()
-            .ends_with(plain)
-    );
-    let large = format!("{{\"value\":\"{}\"}}", "é".repeat(MAX_RESPONSE_CHARS));
+    assert!(history_document(&snapshot, "1:00:00 PM").0.ends_with(plain));
+    let large = "é".repeat(MAX_RESPONSE_CHARS + 4);
     let snapshot = format!("{prefix}\n\n#responce OK\n{large}");
-    let display = history_snapshot("rest", &snapshot, "1:00:00 PM", true).unwrap();
-    assert!(display.ends_with(&large));
-    assert!(!display.contains("response truncated"));
-    for outcome in ["WARNING", "ERROR", "NOTICE", "Stopped"] {
-        let snapshot = format!("{prefix}\n\n#responce {outcome}\n{{\"debug\":true}}");
-        let display = history_snapshot("graphql", &snapshot, "1:00:00 PM", true).unwrap();
-        assert!(display.contains(&format!("#responce 1:00:00 PM · {outcome}")));
-        assert!(display.ends_with("{\n  \"debug\": true\n}"));
+    // A large saved body shows whole, unlike the console's response.
+    assert!(
+        history_document(&snapshot, "1:00:00 PM")
+            .0
+            .ends_with(&large)
+    );
+    for (header, outcome) in [
+        ("#responce WARNING", "WARNING"),
+        ("#responce ERROR", "ERROR"),
+        ("#responce NOTICE", "NOTICE"),
+        ("#responce Stopped", "Stopped"),
+        ("#response error", "ERROR"),
+    ] {
+        let snapshot = format!("{prefix}\n\n{header}\nbody");
+        let display = history_document(&snapshot, "1:00:00 PM").0;
+        assert_eq!(
+            display,
+            format!("{prefix}\n#responce 1:00:00 PM · {outcome}\nbody")
+        );
     }
+    let unanswered = format!("{prefix}\n#endpoint\nx");
+    assert_eq!(
+        history_document(&unanswered, "1:00:00 PM"),
+        (unanswered.clone(), vec![])
+    );
 }

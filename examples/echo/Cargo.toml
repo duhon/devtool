@@ -5,10 +5,9 @@ edition.workspace = true
 publish.workspace = true
 description = "Example module: sends the text of a check back"
 
-[dependencies]
-stabby = "72.1"
-services-module-api = { path = "../../api/module-api" }
-serde_json.workspace = true
-
 [lib]
-crate-type = ["rlib", "cdylib"]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+services-sdk = { path = "../../api/sdk" }
+serde_json.workspace = true

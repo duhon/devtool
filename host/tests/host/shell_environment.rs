@@ -153,16 +153,16 @@ async fn login_and_interactive_environment_reaches_variables_substitution_and_ch
     );
     let replies = request(
         &mut child,
-        json!({"id":3,"service":"terminal","params":{
-            "endpoint":"/bin/sh -c",
-            "command":"sdt-shell-probe; printf '|%s|%s' \"$SDT_LOGIN_VALUE\" \"$SDT_INTERACTIVE_VALUE\""
+        json!({"id":3,"service":"drivers","driver":"process","op":"stream","request":{
+            "program":"/bin/sh","text":true,"args":["-c",
+            "sdt-shell-probe; printf '|%s|%s' \"$SDT_LOGIN_VALUE\" \"$SDT_INTERACTIVE_VALUE\""]
         }}),
     )
     .await;
     let output = replies
         .iter()
-        .filter(|reply| reply["type"] == "data" && reply["event"]["type"] == "stdout")
-        .filter_map(|reply| reply["event"]["data"].as_str())
+        .filter(|reply| reply["type"] == "data")
+        .filter_map(|reply| reply["event"]["stdout"].as_str())
         .collect::<String>();
     assert_eq!(
         output,

@@ -24,7 +24,7 @@
       await click(testid('console-settings-toggle'));
   };
   const kept = '#check kept\n#endpoint\nhttps://kept.fixture.invalid\n';
-  await click(tab('graphql'));
+  await click(tab('terminal'));
   setSource(editorOf('console-editor'), kept);
   await settings(true);
   await wait(() => listed() === shipped.join() && !status().includes('Running'),
@@ -55,48 +55,47 @@
     await wait(() => confirmPart(id, 'remove-confirm', source) && part(row(id, source), 'remove').disabled,
       () => `Removal of ${id} must ask first`);
   };
-  await ask('graphql');
-  const question = confirmation('graphql').querySelector('p').textContent;
-  assert(question.includes('Remove module "GraphQL"') && question.includes('kept') && !confirmPart('graphql', 'forget').checked,
+  await ask('terminal');
+  const question = confirmation('terminal').querySelector('p').textContent;
+  assert(question.includes('Remove module "Terminal"') && question.includes('kept') && !confirmPart('terminal', 'forget').checked,
     `Removal must say consoles are kept and keep them by default: ${question}`);
-  await click(confirmPart('graphql', 'remove-cancel'));
-  await wait(() => !confirmation('graphql') && !part(row('graphql'), 'remove').disabled, 'Cancel must close the confirmation');
+  await click(confirmPart('terminal', 'remove-cancel'));
+  await wait(() => !confirmation('terminal') && !part(row('terminal'), 'remove').disabled, 'Cancel must close the confirmation');
   await testDriver.sleep(300);
-  assert(row('graphql') && tab('graphql') && !status().includes('Remove'), 'A cancelled removal must change nothing');
-  await ask('graphql');
-  await click(confirmPart('graphql', 'remove-confirm'));
-  await wait(() => status() === 'Removed graphql' && !row('graphql') && !tab('graphql') && !part(row('rest'), 'remove').disabled,
+  assert(row('terminal') && tab('terminal') && !status().includes('Remove'), 'A cancelled removal must change nothing');
+  await ask('terminal');
+  await click(confirmPart('terminal', 'remove-confirm'));
+  await wait(() => status() === 'Removed terminal' && !row('terminal') && !tab('terminal') && !part(row('rest'), 'remove').disabled,
     () => `Removal must restart the host without the module: ${status()}; ${listed()}`);
-  assert(listed() === shipped.filter(id => id !== 'graphql').join() && tab('rest'), 'Other modules must stay');
+  assert(listed() === shipped.filter(id => id !== 'terminal').join() && tab('rest'), 'Other modules must stay');
 
   // A folder source offering modules; its invalid file is a problem of the source, not a module.
   await addFolderSource('Modules', fixtureModules);
   const source = () => document.querySelector('[data-testid="source"][data-source="modules"]');
-  await wait(() => part(row('graphql', 'modules'), 'install') && part(row('echo', 'modules'), 'install'),
+  await wait(() => part(row('terminal', 'modules'), 'install') && part(row('echo', 'modules'), 'install'),
     () => `The source must offer its modules: ${testid('settings-modules').textContent}; ${status()}`);
   assert(source().querySelector('[data-testid="source-problems"]')?.textContent.includes('broken.module.tgz')
     && !rows().some(row => row.dataset.module === 'broken'),
     () => `An invalid package file must be a source problem: ${source().textContent}`);
-  const offered = row('graphql', 'modules');
+  const offered = row('terminal', 'modules');
   assert(part(offered, 'source').textContent === 'Modules' && part(offered, 'source').title === fixtureModules
     && part(offered, 'version').textContent === '—' && !part(offered, 'remove'),
     `A module offered but not installed has no version: ${offered.textContent}`);
   await click(part(offered, 'new-version'));
-  await wait(() => detail(row('graphql', 'modules'), 'new-notes'), 'The new version must show its release notes');
-  await click(part(row('graphql', 'modules'), 'install'));
-  await wait(() => /^Installed GraphQL \d+\.\d+\.\d+$/.test(status()) && tab('graphql'),
+  await wait(() => detail(row('terminal', 'modules'), 'new-notes'), 'The new version must show its release notes');
+  await click(part(row('terminal', 'modules'), 'install'));
+  await wait(() => /^Installed Terminal \d+\.\d+\.\d+$/.test(status()) && tab('terminal'),
     () => `The source must install its module: ${status()}; ${listed()}`);
   const version = status().split(' ').pop();
-  await wait(() => part(row('graphql', 'modules'), 'version')?.textContent === version
-    && !part(row('graphql', 'modules'), 'remove').disabled && !part(row('graphql', 'modules'), 'install'),
-    () => `The installed module must show its version from the source: ${row('graphql', 'modules')?.textContent}`);
-  assert(listed() === shipped.join() && !row('graphql'), `Its row must now be the source's: ${listed()}`);
+  await wait(() => part(row('terminal', 'modules'), 'version')?.textContent === version
+    && !part(row('terminal', 'modules'), 'remove').disabled && !part(row('terminal', 'modules'), 'install'),
+    () => `The installed module must show its version from the source: ${row('terminal', 'modules')?.textContent}`);
+  assert(listed() === shipped.join() && !row('terminal'), `Its row must now be the source's: ${listed()}`);
   await settings(false);
-  await click(tab('graphql'));
+  await click(tab('terminal'));
   const editor = editorOf('console-editor');
   assert(editor.getValue() === kept, `The console of a removed module must come back: ${JSON.stringify(editor.getValue())}`);
-  setSource(editor, `#check installed\n#endpoint\n${fixtureUrl}/graphql-materialization\n#variables\n{"skus":["{{var:sku}}"]}\n`
-    + '#query\nquery ($skus: [String]) { products(skus: $skus) { sku images { url } } }');
+  setSource(editor, '#check installed\n#endpoint\nbash -c\n#command\necho "{{var:sku}}"');
   await key('Shift+Enter');
   await wait(() => editor.getValue().includes('#responce') && editor.getValue().includes('fixture-materialized-sku'),
     () => `The installed module must run requests: ${editor.getValue().slice(-500)}`);

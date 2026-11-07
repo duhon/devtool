@@ -283,6 +283,9 @@ pub struct Subscriptions {
     pub tools: bool,
     #[prost(bool, tag = "7")]
     pub hints: bool,
+    /// The module runs its checks itself: `Run` and `Cancel` instead of `build`.
+    #[prost(bool, tag = "8")]
+    pub run: bool,
 }
 
 /// An event from the Kernel (the `Msg` table of the design).
@@ -290,9 +293,12 @@ pub struct Subscriptions {
 pub struct Event {
     #[prost(
         oneof = "event::Kind",
-        tags = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14"
+        tags = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16"
     )]
     pub kind: Option<event::Kind>,
+    /// When the Kernel sent it, in milliseconds since 1970: modules have no clock.
+    #[prost(double, tag = "20")]
+    pub now: f64,
 }
 
 pub mod event {
@@ -330,7 +336,21 @@ pub mod event {
         ToolCall(ToolCall),
         #[prost(message, tag = "14")]
         Hints(CompleteRequest),
+        /// Run a check: the module calls drivers and finishes with `run.result`.
+        #[prost(message, tag = "15")]
+        Run(RunEvent),
+        /// Stop the run with this tag; its driver calls, timers and locks are already gone.
+        #[prost(string, tag = "16")]
+        Cancel(String),
     }
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct RunEvent {
+    #[prost(string, tag = "1")]
+    pub tag: String,
+    #[prost(message, optional, tag = "2")]
+    pub check: Option<Check>,
 }
 
 #[derive(Clone, PartialEq, Message)]

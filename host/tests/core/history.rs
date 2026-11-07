@@ -7,19 +7,11 @@ use services_native::{
     },
 };
 use services_testkit::{DataDir, http::Server};
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    sync::mpsc,
-};
-use tokio_util::sync::CancellationToken;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const CHECK: &str = "019a1234-5678-7890-abcd-012345678901";
 
 const OTHER: &str = "019a1234-5678-7890-abcd-012345678902";
-
-fn context(source: &str) -> Value {
-    json!({"checkId":CHECK,"sessionId":OTHER,"title":"#check immutable","source":source})
-}
 
 async fn list(runtime: &Runtime, check: &str) -> Value {
     let reply = runtime
@@ -37,25 +29,37 @@ async fn get(runtime: &Runtime, id: &Value) -> String {
     reply["result"]["text"].as_str().unwrap().into()
 }
 
-async fn terminal(
-    runtime: &Runtime,
-    command: &str,
-    context: Value,
-    cancel: CancellationToken,
-) -> Value {
-    let (tx, mut rx) = mpsc::channel(128);
-    let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
-    let reply = runtime
-        .execute(
-            &json!({"service":"terminal","history":context,
-        "params":{"endpoint":"sh -c","command":command}}),
-            cancel,
-            Some(tx),
+/// Records a run the way the App does: `vars.resolve` gives the check's masked source and
+/// title, then `history.insert` saves them with the run's response.
+async fn record(runtime: &Runtime, source: &str, status: &str, response: &str) -> Value {
+    let resolved = runtime
+        .dispatch(&json!({"service":"vars","op":"resolve","value":"",
+            "source":source,"title":"#check immutable"}))
+        .await;
+    assert_eq!(resolved["ok"], true, "{resolved}");
+    let outcome = match status {
+        "success" => "OK",
+        "stopped" => "Stopped",
+        _ => "ERROR",
+    };
+    let source = resolved["result"]["source"].as_str().unwrap();
+    runtime
+        .dispatch(
+            &json!({"service":"history","op":"insert","checkId":CHECK,"sessionId":OTHER,
+            "title":resolved["result"]["title"],"module":"terminal","started":1000,"ended":1002,
+            "status":status,"text":format!("{source}\n\n#responce {outcome}\n{response}")}),
         )
         .await
-        .unwrap();
-    drain.await.unwrap();
-    reply
+}
+
+/// Runs `command` with the process driver and returns its stdout.
+async fn shell(runtime: &Runtime, command: &str) -> String {
+    let reply = runtime
+        .dispatch(&json!({"service":"drivers","driver":"process","op":"call",
+            "request":{"program":"sh","args":["-c",command],"text":true}}))
+        .await;
+    assert_eq!(reply["ok"], true, "{reply}");
+    reply["result"]["stdout"].as_str().unwrap_or("").to_owned()
 }
 
 #[tokio::test]
@@ -103,6 +107,18 @@ async fn only_used_secrets_and_authorization_are_masked() {
         resolved["value"]["body"],
         "companion-fixture-only used-private-token"
     );
+    runtime
+        .dictionary_store
+        .dispatch(&json!({"op":"save","name":"quoting","variables":{"TEXT":"a \"quoted\"\nline"}}))
+        .unwrap();
+    let json_mode = runtime
+        .dispatch(&json!({"service":"vars","op":"resolve","mode":"json",
+            "value":"{\"query\":\"{{quoting:TEXT}}\"}"}))
+        .await;
+    assert_eq!(
+        json_mode["result"]["value"], "{\"query\":\"a \\\"quoted\\\"\\nline\"}",
+        "{json_mode}"
+    );
     let called = runtime
         .dispatch(
             &json!({"service":"drivers","driver":"http","op":"call","request":resolved["value"]}),
@@ -129,15 +145,14 @@ async fn only_used_secrets_and_authorization_are_masked() {
     let listed = list(&runtime, CHECK).await;
     assert_eq!(listed["entries"][0]["service"], "rest", "{listed}");
     assert_eq!(listed["entries"][0]["durationMs"], 2, "{listed}");
-    let (tx, mut rx) = mpsc::channel(128);
-    let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
-    let reply = runtime.execute(&json!({
-        "service":"terminal",
-        "history":context("#check environment fixture\n#env\n{\"VALUE\":\"{{var:VALUE}}\"}\n#command\nprintf \"$VALUE\""),
-        "params":{"endpoint":"sh -c","env":{"VALUE":"{{var:VALUE}}"},"command":"printf \"$VALUE\""}
-    }),CancellationToken::new(),Some(tx)).await.unwrap();
-    drain.await.unwrap();
-    let text = get(&runtime, &reply["history"]["id"]).await;
+    let saved = record(
+        &runtime,
+        "#check environment fixture\n#env\n{\"VALUE\":\"{{var:VALUE}}\"}\n#command\nprintf \"$VALUE\"",
+        "success",
+        "",
+    )
+    .await;
+    let text = get(&runtime, &saved["result"]["id"]).await;
     assert!(text.contains("companion-fixture-only"), "{text}");
 }
 
@@ -156,15 +171,13 @@ async fn executions_are_immutable_masked_and_survive_restart() {
             "VALUE":format!("edit-{n}"),"API_TOKEN":"private-variable","ALIAS":"{{var:API_TOKEN}}"
         }})).unwrap();
         let source = "#check immutable\n#endpoint\nsh -c\n#env\n{\"VALUE\":\"{{var:VALUE}}\"}\n#command\nprintf '%s %s %s' '{{var:VALUE}}' '{{shared:ORDINARY}}' '{{var:ALIAS}}'";
-        let result = terminal(
-            &runtime,
-            "printf '%s %s %s' '{{var:VALUE}}' '{{shared:ORDINARY}}' '{{var:ALIAS}}'",
-            context(source),
-            CancellationToken::new(),
-        )
-        .await;
-        assert_eq!(result["code"], 0);
-        assert_eq!(result["history"]["saved"], true, "{result}");
+        let resolved = runtime
+            .dispatch(&json!({"service":"vars","op":"resolve",
+                "value":"printf '%s %s %s' '{{var:VALUE}}' '{{shared:ORDINARY}}' '{{var:ALIAS}}'"}))
+            .await;
+        let output = shell(&runtime, resolved["result"]["value"].as_str().unwrap()).await;
+        let saved = record(&runtime, source, "success", &output).await;
+        assert_eq!(saved["result"]["saved"], true, "{saved}");
     }
     drop(runtime);
     let runtime = data.runtime();
@@ -174,9 +187,7 @@ async fn executions_are_immutable_masked_and_survive_restart() {
     for (index, entry) in entries["entries"].as_array().unwrap().iter().enumerate() {
         let text = get(&runtime, &entry["id"]).await;
         assert!(text.contains(&format!("edit-{}", 3 - index)), "{text}");
-        assert!(
-            text.contains("#env") && text.contains("#command") && text.contains("#terminal-output")
-        );
+        assert!(text.contains("#env") && text.contains("#command"));
         assert!(text.contains("dictionary-visible"), "{text}");
         let (request, response) = text.split_once("\n\n#responce OK\n").unwrap();
         assert!(!request.contains("private-variable"), "{request}");
@@ -196,41 +207,28 @@ async fn executions_are_immutable_masked_and_survive_restart() {
 }
 
 #[tokio::test]
-async fn terminal_error_stop_and_stream_capture_stdout_and_stderr() {
+async fn failed_and_stopped_runs_keep_their_status_and_inserts_cross_native_messaging() {
     let data = DataDir::new();
     let runtime = data.runtime();
-    let result = terminal(
+    let saved = record(
         &runtime,
-        "printf out; printf err >&2; exit 7",
-        context("#check fail\n#command\nexit 7"),
-        CancellationToken::new(),
+        "#check fail\n#command\nexit 7",
+        "error",
+        "out\nerr",
     )
     .await;
-    let text = get(&runtime, &result["history"]["id"]).await;
-    assert!(
-        text.contains("stdout")
-            && text.contains("stderr")
-            && text.contains("out")
-            && text.contains("err")
-    );
+    let text = get(&runtime, &saved["result"]["id"]).await;
+    assert!(text.contains("#responce ERROR\nout\nerr"), "{text}");
     assert_eq!(list(&runtime, CHECK).await["entries"][0]["status"], "error");
-    let cancel = CancellationToken::new();
-    let token = cancel.clone();
-    let stopping = tokio::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
-        token.cancel();
-    });
-    let result = terminal(
+    let saved = record(
         &runtime,
-        "printf ready; sleep 30",
-        context("#check stopped\n#command\nsleep 30"),
-        cancel,
+        "#check stopped\n#command\nsleep 30",
+        "stopped",
+        "ready",
     )
     .await;
-    stopping.await.unwrap();
-    assert_eq!(result["cancelled"], true);
     assert!(
-        get(&runtime, &result["history"]["id"])
+        get(&runtime, &saved["result"]["id"])
             .await
             .contains("ready")
     );
@@ -241,8 +239,15 @@ async fn terminal_error_stop_and_stream_capture_stdout_and_stderr() {
     let (mut input, host_input) = tokio::io::duplex(65536);
     let (host_output, mut output) = tokio::io::duplex(65536);
     let host = tokio::spawn(native::run(runtime.clone(), host_input, host_output));
-    input.write_all(&encode(&json!({"id":17,"service":"terminal","history":context("#check native\n#command\nprintf native-stream"),
-        "params":{"endpoint":"sh -c","command":"printf native-stream"}})).unwrap()).await.unwrap();
+    input
+        .write_all(
+            &encode(&json!({"id":17,"service":"history","op":"insert","checkId":CHECK,
+                "sessionId":OTHER,"title":"#check native","module":"terminal","started":1000,
+                "ended":1001,"status":"success","text":"#check native\n\n#responce OK\nnative-stream"}))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
     let mut frames = FrameReader::default();
     let mut buffer = [0; 8192];
     loop {
@@ -251,15 +256,11 @@ async fn terminal_error_stop_and_stream_capture_stdout_and_stderr() {
             .unwrap()
             .unwrap();
         assert!(n > 0);
-        if let Some(exit) = frames
-            .feed(&buffer[..n])
-            .unwrap()
-            .into_iter()
-            .find(|v| v["type"] == "exit")
-        {
-            assert_eq!(exit["info"]["history"]["saved"], true);
+        if let Some(reply) = frames.feed(&buffer[..n]).unwrap().into_iter().next() {
+            assert_eq!(reply["id"], 17);
+            assert_eq!(reply["result"]["saved"], true, "{reply}");
             assert!(
-                get(&runtime, &exit["info"]["history"]["id"])
+                get(&runtime, &reply["result"]["id"])
                     .await
                     .contains("native-stream")
             );
@@ -271,37 +272,13 @@ async fn terminal_error_stop_and_stream_capture_stdout_and_stderr() {
 }
 
 #[tokio::test]
-async fn broken_history_never_fails_or_repeats_the_execution() {
+async fn broken_history_fails_the_insert_and_is_left_alone() {
     let data = DataDir::new();
     let runtime = data.runtime();
-    let mut message =
-        json!({"service":"terminal","params":{"endpoint":"sh -c","command":"printf legacy"}});
-    let (tx, mut rx) = mpsc::channel(128);
-    let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
-    assert!(
-        runtime
-            .execute(&message, CancellationToken::new(), Some(tx))
-            .await
-            .unwrap()
-            .get("history")
-            .is_none()
-    );
-    drain.await.unwrap();
     assert!(!data.path().join(".console-history.sqlite3").exists());
     std::fs::write(data.path().join(".console-history.sqlite3"), "not sqlite").unwrap();
-    let marker = data.path().join("executed");
-    message["params"]["command"] = json!(format!("printf x >> '{}'", marker.display()));
-    message["history"] = context("#check storage failure");
-    let (tx, mut rx) = mpsc::channel(128);
-    let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
-    let result = runtime
-        .execute(&message, CancellationToken::new(), Some(tx))
-        .await
-        .unwrap();
-    drain.await.unwrap();
-    assert_eq!(result["code"], 0);
-    assert_eq!(result["history"]["saved"], false);
-    assert_eq!(std::fs::read_to_string(marker).unwrap(), "x");
+    let saved = record(&runtime, "#check storage failure", "success", "x").await;
+    assert_eq!(saved["ok"], false, "{saved}");
     assert_eq!(
         std::fs::read_to_string(data.path().join(".console-history.sqlite3")).unwrap(),
         "not sqlite"
@@ -314,13 +291,6 @@ async fn broken_history_never_fails_or_repeats_the_execution() {
     );
     std::fs::remove_file(data.path().join(".console-history.sqlite3")).unwrap();
     std::fs::create_dir(data.path().join(".console-history.sqlite3")).unwrap();
-    let result = terminal(
-        &runtime,
-        "printf still-real",
-        context("#check unavailable"),
-        CancellationToken::new(),
-    )
-    .await;
-    assert_eq!(result["code"], 0);
-    assert_eq!(result["history"]["saved"], false);
+    let saved = record(&runtime, "#check unavailable", "success", "still-real").await;
+    assert_eq!(saved["ok"], false, "{saved}");
 }

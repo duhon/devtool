@@ -2548,7 +2548,7 @@ mod tests {
                 serde_json::to_vec(&described(version, min_core)).unwrap(),
             )
             .unwrap();
-            fs::write(package.path().join(package::LIBRARY_FILE), b"library").unwrap();
+            fs::write(package.path().join(package::WASM_FILE), b"\0asm").unwrap();
             fs::write(
                 package.path().join(package::NOTES_FILE),
                 format!("## {version}\n- Notes of {version}\n\n## 0.1.0\n- Old\n"),
@@ -2730,7 +2730,7 @@ mod tests {
             serde_json::to_vec(&described).unwrap(),
         )
         .unwrap();
-        fs::write(folder.path().join(package::LIBRARY_FILE), b"library").unwrap();
+        fs::write(folder.path().join(package::WASM_FILE), b"\0asm").unwrap();
         fs::write(folder.path().join(package::NOTES_FILE), "## 1.2.0\n- Fix\n").unwrap();
         let bytes = archive::pack(folder.path()).unwrap();
         let name = package::archive_name(&described);

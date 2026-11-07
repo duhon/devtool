@@ -78,7 +78,7 @@ async fn http_call_follows_redirects_itself_and_reports_each_hop() {
     let (data, server) = (DataDir::new(), server().await);
     let runtime = data.runtime();
     let health = runtime.dispatch(&json!({"id": 0, "type": "health"})).await;
-    assert_eq!(health["result"]["drivers"], json!({"http": "1"}));
+    assert_eq!(health["result"]["drivers"]["http"], "1");
 
     let request = json!({"method": "POST", "url": format!("{}/see-other", server.url),
         "headers": [["Authorization", "Bearer x"]], "body": "hi", "text": true});

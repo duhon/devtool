@@ -14,6 +14,5 @@ The response shows stdout then stderr. Exit code 0 is OK; any non-zero exit
 code or termination by a signal is ERROR (Stop is Stopped), so `grep` without
 matches or `diff` with differences are ERROR too. Exit 0 is WARNING when the
 command wrote anything besides whitespace to stderr, or when detached background
-processes keep the output open. The status adds `exit N` (or the signal) after
-a failure and the last stderr line; the result keeps the last 4 KiB of stderr in
-`stderr`, shown in Debug.
+processes keep the output open. Debug shows the process answer with its exit
+`code` or `signal`, `stdout` and `stderr`.

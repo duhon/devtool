@@ -7,8 +7,7 @@
   const typedOptions = 'Columns-Type: message.timestamp=datetime message.message=json score=number enabled=boolean\nColumns-Size: message.message=20';
   const assertTyped = target => {
     const region = (target.getOption('servicesResponses') || [])[0];
-    assert(region?.table?.types['message.message'] === 'json'
-      && region.table.types.score === 'number', 'Returned column metadata must reach the text editor');
+    assert(region, 'The response must be an owned output region');
     const tokens = [];
     for (let line = region.header + 1; line < region.end; line++) {
       tokens.push(...target.getLineTokens(line, true));
@@ -32,7 +31,8 @@
         dataLines.push(target.getLine(line));
     }
     const border = dataLines[0], cuts = [...border.matchAll(/\+/g)].map(m => m.index);
-    const jsonColumn = region.table.columns.indexOf('message.message');
+    const columns = dataLines.find(line => line.startsWith('|')).split('|').slice(1, -1).map(cell => cell.trim());
+    const jsonColumn = columns.indexOf('message.message');
     assert(cuts[jsonColumn + 1] - cuts[jsonColumn] - 3 === 20,
       'Columns-Size must set a 20-character content width, not pixels');
     assert(dataLines.filter(line => line.startsWith('|')).length > 3,
@@ -121,15 +121,11 @@
   setSource(restored, previous);
   await click(testid('console-service-mysql'));
   const mysql = editorOf('console-editor'), oldMysql = mysql.getValue();
-  const rendered = '#check MySQL rendering fixture\n#endpoint\nmysql://fixture.invalid/db\n#query\nselect fixture\\G\n\n#responce OK\n*************************** 1. row ***************************\n       id: 42\n  enabled: 1\n  created: 2026-10-27T09:00:00Z\nfeed_data: {\n             "n": 12,\n             "ok": true,\n             "nested": {\n               "label": "😀 braces { [ and escaped \\" quote",\n               "items": [\n                 1,\n                 2\n               ]\n             }\n           }\n    plain: {"not":"typed"}\n           untyped {\n             "inner": [1, 2]\n           }';
+  const rendered = '#check MySQL rendering fixture\n#endpoint\nmysql://fixture.invalid/db\n#options\nColumns-Type: id=number enabled=boolean created=datetime feed_data=json plain=text\n#query\nselect fixture\\G\n\n#responce OK\n*************************** 1. row ***************************\n       id: 42\n  enabled: 1\n  created: 2026-10-27T09:00:00Z\nfeed_data: {\n             "n": 12,\n             "ok": true,\n             "nested": {\n               "label": "😀 braces { [ and escaped \\" quote",\n               "items": [\n                 1,\n                 2\n               ]\n             }\n           }\n    plain: {"not":"typed"}\n           untyped {\n             "inner": [1, 2]\n           }';
   setSource(mysql, rendered);
   await settle();
-  const mysqlRegion = {request:0,header:6,end:mysql.lineCount(),table:{
-    columns:['id','enabled','created','feed_data','plain'],
-    types:{id:'number',enabled:'boolean',created:'datetime',feed_data:'json',plain:'text'},
-  }};
+  const mysqlRegion = {request:0,header:8,end:mysql.lineCount()};
   mysql.setOption('servicesResponses',[mysqlRegion]);
-  mysql.setOption('mode',{name:'services-console-mysql',responses:[mysqlRegion]});
   const mysqlTokens = [];
   const lines = rendered.split('\n');
   const rootLine = lines.indexOf('feed_data: {');
@@ -171,10 +167,6 @@
   const property=mysql.getWrapperElement().querySelector('.tok-property');
   assert(number && property && getComputedStyle(number).color !== getComputedStyle(property).color,
     'Typed tokens must have visibly distinct syntax colors, not just class names');
-  mysql.setOption('servicesResponses',[]);
-  const braceLine = rendered.split('\n').indexOf('feed_data: {');
-  assert(!mysql.foldRange({line:braceLine,ch:0}),
-    'Pasted MySQL response JSON without ownership metadata must not fold either');
   setSource(mysql,oldMysql);
   await click(testid('console-service-rest'));
   return true;

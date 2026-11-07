@@ -1,11 +1,6 @@
 //! BEHAVIOR: what each module does for the user, exercised through the host
 //! protocol. One file per module; run one with
-//! `cargo test -p services-native --test modules -- rest::`.
+//! `cargo test -p services-native --test modules -- variables::`.
 
-mod graphql;
-mod mysql;
-mod opensearch;
-mod splunk;
 mod templates;
-mod terminal;
 mod variables;

@@ -432,14 +432,12 @@
     'A real native manual discovery error must appear only in status/debug');
   const authenticated = `#check protected-schema\n#endpoint\n${discoveryEndpoint}\n#headers\nX-Token: {{second:TOKEN}}\n#query\n{\n  `;
   setSource(discoveryEditor, authenticated);
-  discoveryEditor.setCursor(4, discoveryEditor.getLine(4).length);
-  await key('Enter');
   discoveryEditor.setCursor(discoveryEditor.lastLine(), discoveryEditor.getLine(discoveryEditor.lastLine()).length);
+  // Discovery is lazy: asking for hints introspects the new connection.
+  await key('Control+Space');
   await wait(() => find('.console-status').textContent.includes('Discovery · OK'),
     'GraphQL Console discovery must retry with materialized request headers');
-  await key('Control+Space');
-  await wait(() => candidates().includes('products'),
-    'Authenticated native discovery must restore real root fields, not just __typename');
+  await testDriver.suggest(discoveryEditor, 'products');
   await pick(discoveryEditor, 'products');
   await key('Space');
   await pick(discoveryEditor, '{\n    \n  }');

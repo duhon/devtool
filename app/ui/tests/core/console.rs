@@ -2,10 +2,8 @@
 //! export and response replacement. UI-behaviour tests.
 
 use serde_json::json;
-use services_module_ui::command::shell_words;
-use services_ui::console::{
-    self, Format, RunOptions, export, import, parse, parse_run, replace_response,
-};
+use services_sdk::lang::curl::shell_words;
+use services_ui::console::{self, RunOptions, export, import, parse, parse_run, replace_response};
 
 #[test]
 fn hints_allow_free_text_but_reject_storage_boundaries_and_broken_references() {
@@ -28,21 +26,6 @@ fn hints_allow_free_text_but_reject_storage_boundaries_and_broken_references() {
 }
 
 #[test]
-fn request_content_requires_an_explicit_section_marker() {
-    for (service, source, required) in [
-        (
-            "mysql",
-            "#endpoint\nmysql://localhost/db\nSELECT 1",
-            "#query",
-        ),
-        ("grpc", "#endpoint\ngrpc://a/b/c\n{}", "#message"),
-        ("graphql", "#endpoint\nhttps://a\nquery { a }", "#query"),
-    ] {
-        assert!(parse(service, source).unwrap_err().contains(required));
-    }
-}
-
-#[test]
 fn every_service_console_parses_into_its_request_shape() {
     assert_eq!(
         parse(
@@ -53,19 +36,13 @@ fn every_service_console_parses_into_its_request_shape() {
         json!({"driver":"http","stream":false,"request":{"method":"POST","url":"https://a",
             "headers":[["X","y"]],"body":"{}","text":true}})
     );
+    // A module that runs its checks itself gets the check text; its endpoint shows in
+    // approvals.
+    let splunk = "#endpoint\nhttps://a\n#options\nFrom: -1h\nCount: 4\n#search\nindex=main";
     assert_eq!(
-        parse("terminal", "#endpoint\nbash -c\necho hi").unwrap()["command"],
-        "echo hi"
+        parse("splunk", splunk).unwrap(),
+        json!({"check": splunk, "endpoint": "https://a"})
     );
-    assert_eq!(
-        parse(
-            "splunk",
-            "#endpoint\nhttps://a\n#options\nFrom: -1h\nCount: 4\n#search\nindex=main"
-        )
-        .unwrap()["count"],
-        "4"
-    );
-    assert!(parse("graphql", "#endpoint\nhttps://a\n#variables\nbad").is_err());
 }
 
 #[test]
@@ -81,7 +58,6 @@ fn console_options_run_the_check_and_never_reach_the_module() {
         RunOptions {
             repeat: Some(120_000),
             until_changed: true,
-            format: None
         }
     );
     // A module with its own options keeps them; the console's are taken out first.
@@ -90,18 +66,11 @@ fn console_options_run_the_check_and_never_reach_the_module() {
         "#endpoint\nhttp://broker:8161\n#action\nSEND /orders\n#options\nRepeat: 2s\nPersistent: false\n#body\n{}",
     )
     .unwrap();
-    assert_eq!(params["persistent"], "false");
-    assert_eq!(options.repeat, Some(2000));
-    let (params, options) = parse_run(
-        "mysql",
-        "#endpoint\nmysql://fixture/db\n#options\nFormat: JSON\n#query\nselect 1",
-    )
-    .unwrap();
     assert_eq!(
-        params,
-        parse("mysql", "#endpoint\nmysql://fixture/db\n#query\nselect 1").unwrap()
+        params["check"],
+        "#endpoint\nhttp://broker:8161\n#action\nSEND /orders\n#options\nPersistent: false\n#body\n{}"
     );
-    assert_eq!(options.format, Some(Format::Json));
+    assert_eq!(options.repeat, Some(2000));
     for (service, options, error) in [
         ("rest", "Repeat-Until: changed", "Repeat-Until needs Repeat"),
         // A time has its unit: s, m or h, 1s to 24h.
@@ -118,20 +87,9 @@ fn console_options_run_the_check_and_never_reach_the_module() {
             "Repeat: 5s\nUntil: changed",
             "Unknown option \"Until\"; REST takes Repeat and Repeat-Until",
         ),
-        ("rest", "Format: json", "Format applies to table responses"),
         ("rest", "X-Debug: 1", "Unknown option \"X-Debug\""),
-        (
-            "mysql",
-            "Format: csv",
-            "Format takes table, vertical or json",
-        ),
     ] {
-        let endpoint = if service == "rest" {
-            "GET https://a"
-        } else {
-            "mysql://fixture/db\n#query\nselect 1"
-        };
-        let source = format!("#endpoint\n{endpoint}\n#options\n{options}");
+        let source = format!("#endpoint\nGET https://a\n#options\n{options}");
         let result = parse_run(service, &source).unwrap_err();
         assert!(result.contains(error), "{options}: {result}");
     }
@@ -143,10 +101,6 @@ fn import_export_roundtrip() {
         (
             "rest",
             "curl -X POST 'https://a' -H 'X: y' -d '{\"a\":\"it is\"}'",
-        ),
-        (
-            "graphql",
-            "curl https://a -H 'Content-Type: application/json' -d '{\"query\":\"query { a }\",\"variables\":{\"x\":1}}'",
         ),
         (
             "grpc",

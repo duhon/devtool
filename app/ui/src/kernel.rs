@@ -25,16 +25,34 @@ thread_local! {
     static FAILED: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
 }
 
-/// Natively the REST module is linked, so tests run it without a browser.
+/// Natively the SDK modules are linked, so tests run them without a browser.
 #[cfg(not(target_arch = "wasm32"))]
-fn linked() -> Manifest {
-    Manifest::parse(include_str!("../../../modules/services/rest/manifest.json"))
-        .expect("REST manifest")
+fn linked() -> Vec<(Manifest, Box<dyn Instance>)> {
+    use services_sdk::Linked;
+    let manifest = |json: &str| Manifest::parse(json).expect("linked module manifest");
+    macro_rules! linked {
+        ($($id:literal => $module:ty),* $(,)?) => {
+            vec![$((
+                manifest(include_str!(concat!("../../../modules/services/", $id, "/manifest.json"))),
+                Box::new(Linked::<$module>::default()) as Box<dyn Instance>,
+            )),*]
+        };
+    }
+    linked![
+        "rest" => services_module_rest::Rest,
+        "mysql" => services_module_mysql::Mysql,
+        "graphql" => services_module_graphql::Graphql,
+        "grpc" => services_module_grpc::Grpc,
+        "splunk" => services_module_splunk::Splunk,
+        "terminal" => services_module_terminal::Terminal,
+        "artemis" => services_module_artemis::Artemis,
+        "opensearch" => services_module_opensearch::OpenSearch,
+    ]
 }
 
 fn seed() -> Vec<Manifest> {
     #[cfg(not(target_arch = "wasm32"))]
-    return vec![linked()];
+    return linked().into_iter().map(|(manifest, _)| manifest).collect();
     #[cfg(target_arch = "wasm32")]
     Vec::new()
 }
@@ -52,19 +70,21 @@ fn start(drivers: BTreeMap<String, String>) -> Modules {
     #[allow(unused_mut)]
     let mut modules = Modules::new(VERSION, drivers, Box::new(now));
     #[cfg(not(target_arch = "wasm32"))]
-    modules
-        .load(
-            linked(),
-            Box::new(services_sdk::Linked::<services_module_rest::Rest>::default()),
-            Value::Null,
-        )
-        .expect("REST loads");
+    for (manifest, instance) in linked() {
+        let id = manifest.id.clone();
+        modules
+            .load(manifest, instance, Value::Null)
+            .unwrap_or_else(|error| panic!("{id} loads: {error:?}"));
+    }
     modules
 }
 
 fn native_drivers() -> BTreeMap<String, String> {
     #[cfg(not(target_arch = "wasm32"))]
-    return BTreeMap::from([("http".into(), "1".into())]);
+    return ["grpc", "http", "mysql", "process", "tcp"]
+        .into_iter()
+        .map(|driver| (driver.into(), "1".into()))
+        .collect();
     #[cfg(target_arch = "wasm32")]
     BTreeMap::new()
 }
@@ -197,6 +217,11 @@ pub fn loaded(id: &str) -> bool {
     with(|modules| modules.get(id).is_some())
 }
 
+/// The declared module of `id` has neither started nor failed yet.
+pub fn loading(id: &str) -> bool {
+    is_service(id) && !loaded(id) && !FAILED.with(|failed| failed.borrow().contains_key(id))
+}
+
 /// Why a declared service cannot answer yet.
 pub fn unavailable(id: &str) -> String {
     if let Some(failure) = FAILED.with(|failed| failed.borrow().get(id).cloned()) {
@@ -229,12 +254,14 @@ pub fn check(service: &str, text: &str, options: &Value) -> Check {
 pub fn document(check: Check) -> wire::Event {
     wire::Event {
         kind: Some(event::Kind::Document(check)),
+        now: 0.0,
     }
 }
 
 pub fn discover(check: Check) -> wire::Event {
     wire::Event {
         kind: Some(event::Kind::Discover(check)),
+        now: 0.0,
     }
 }
 
@@ -245,6 +272,7 @@ pub fn hints(check: Check, pos: u32) -> wire::Event {
             check: Some(check),
             pos,
         })),
+        now: 0.0,
     }
 }
 

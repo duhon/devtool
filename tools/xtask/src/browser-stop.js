@@ -68,7 +68,7 @@
       && ![...document.querySelectorAll('.banner[role="alert"]')].some(el => el.textContent.includes('already running')),
       'Duplicate execution must report its error only in the owning check status');
     assert((section(name).match(new RegExp(`${name}-pid:\\d+`, 'g')) || []).length === 1,
-      'Rejecting a repeated run must not start a replacement process');
+      `Rejecting a repeated run must not start a replacement process: ${section(name).slice(0, 600)}`);
     await click(status());
     const debug = testid('console-main-status-debug').textContent;
     assert(debug.includes('"phase": "duplicate-run"') && debug.includes('"previousOperation"')
@@ -175,7 +175,7 @@
   const failedStatus = status().textContent;
   await click(status());
   assert(testid('console-main-status-debug').textContent.includes('"code": 1'),
-    'Acknowledging a failure must preserve its actual Debug diagnostics');
+    () => `Acknowledging a failure must preserve its actual Debug diagnostics: ${failedStatus} ${testid('console-main-status-debug').textContent.slice(0, 1500)}`);
   await click(status());
   await seen();
   await select(0);

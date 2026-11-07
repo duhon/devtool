@@ -1,163 +1,257 @@
-//! GraphQL: queries and introspection over HTTP through the host.
+//! The GraphQL service: a `#endpoint` URL, `#headers`, `#variables` (JSON) and a `#query`
+//! (also the text before the first marker) POSTed through the Host `http` driver, with
+//! introspection for completion when the user asks for hints.
 
-use serde_json::{Map, Value, json};
-use services_module_api::error::{self, Error, Result, required, text};
-use services_module_api::http;
-use services_module_api::sdk::{self, Call, Host, Manifest, Service, Threads};
-use services_module_api::transport::{EndpointArc, EndpointBox, Status};
+mod complete;
+mod discovery;
+mod highlight;
+mod language;
 
-pub struct Graphql;
+use discovery::Connection;
+use serde_json::{Value, json};
+use services_sdk::http::Response;
+use services_sdk::lang::{curl, headers};
+use services_sdk::run::{self, OneCall};
+use services_sdk::{
+    Check, Cmd, Completions, Event, Failure, Fold, Line, Module, Rendered, Subscriptions, cmd,
+};
+use std::collections::BTreeSet;
 
-impl Service for Graphql {
-    fn manifest(&self) -> Manifest {
-        Manifest {
-            execute: true,
-            discover: true,
-            stream: false,
-            ..Manifest::from_json(include_str!("../manifest.json"), env!("CARGO_PKG_VERSION"))
+pub use complete::HEADERS;
+pub use discovery::{INTROSPECTION_QUERY, schema};
+
+#[derive(Debug, Default)]
+pub struct Graphql {
+    discovery: discovery::Discovery,
+    resolving: BTreeSet<String>,
+    calls: OneCall,
+}
+
+const RESOLVE: &str = ":resolve";
+
+/// The query of a check: its `#query`, else the text before the first marker.
+fn query(check: &Check) -> &str {
+    match check.section("query") {
+        Some(query) => query,
+        None => check.text_of("leftover"),
+    }
+}
+
+/// What a check sends.
+struct Parts<'a> {
+    url: &'a str,
+    headers: Vec<(String, String)>,
+    query: &'a str,
+    variables: Option<Value>,
+}
+
+fn parts(check: &Check) -> Result<Parts<'_>, String> {
+    let url = check.text_of("endpoint").trim();
+    if url.contains(char::is_whitespace) {
+        return Err("#endpoint must be a GraphQL URL".into());
+    }
+    let variables = check.text_of("variables").trim();
+    let variables = (!variables.is_empty())
+        .then(|| serde_json::from_str(variables).map_err(|_| "Variables must be valid JSON"))
+        .transpose()?;
+    Ok(Parts {
+        url,
+        headers: headers::pairs(check.text_of("headers")),
+        query: query(check),
+        variables,
+    })
+}
+
+/// The JSON document a run resolves: the variables are spliced in as JSON text, so the
+/// values the App inserts into their strings are escaped where they land.
+fn document(check: &Check) -> String {
+    let variables = check.text_of("variables").trim();
+    format!(
+        "{{\"endpoint\":{},\"headers\":{},\"query\":{},\"variables\":{}}}",
+        json!(check.text_of("endpoint")),
+        json!(check.text_of("headers")),
+        json!(query(check)),
+        if variables.is_empty() {
+            "null"
+        } else {
+            variables
+        }
+    )
+}
+
+/// The request of a resolved document.
+fn resolved_request(document: Value) -> Result<services_sdk::DriverCall, String> {
+    let url = document["endpoint"].as_str().unwrap_or("").trim();
+    if url.contains(char::is_whitespace) {
+        return Err("#endpoint must be a GraphQL URL".into());
+    }
+    let connection = Connection {
+        url: url.to_owned(),
+        headers: headers::pairs(document["headers"].as_str().unwrap_or("")),
+    };
+    let query = document["query"].as_str().unwrap_or("");
+    let variables = Some(document["variables"].clone()).filter(|v| !v.is_null());
+    Ok(discovery::request(&connection, query, variables).call())
+}
+
+/// A GraphQL response: pretty JSON, else its text; 4xx warns, 5xx fails.
+pub fn render(response: &Value) -> Result<Rendered, String> {
+    let response = Response::parse(response)?;
+    let body = response.body.unwrap_or_default();
+    let pretty = serde_json::from_str::<Value>(&body)
+        .ok()
+        .and_then(|value| serde_json::to_string_pretty(&value).ok());
+    let outcome = match response.status {
+        ..400 => "OK",
+        400..500 => "WARNING",
+        _ => "ERROR",
+    };
+    let (text, language) = match pretty {
+        Some(text) => (text, "json"),
+        None => (body, "text"),
+    };
+    Ok(Rendered {
+        text,
+        language: language.into(),
+        outcome: outcome.into(),
+    })
+}
+
+impl Graphql {
+    fn run(&mut self, run: String, check: Check) -> Vec<Cmd> {
+        let valid = run::no_options(&check, "GraphQL").and_then(|()| {
+            if query(&check).trim().is_empty() {
+                return Err("query is required".to_owned());
+            }
+            Ok(())
+        });
+        if let Err(error) = valid {
+            return vec![cmd::fail(&run, &error, &Value::Null)];
+        }
+        self.resolving.insert(run.clone());
+        vec![cmd::resolve_json(
+            format!("{run}{RESOLVE}"),
+            &document(&check),
+        )]
+    }
+
+    fn resolved(&mut self, run: &str, result: Result<Value, Failure>) -> Vec<Cmd> {
+        if !self.resolving.remove(run) {
+            return vec![];
+        }
+        let call = result
+            .map_err(|failure| failure.message)
+            .and_then(|text| {
+                serde_json::from_str::<Value>(text.as_str().unwrap_or(""))
+                    .map_err(|_| "Variables must be valid JSON".to_owned())
+            })
+            .and_then(resolved_request);
+        match call {
+            Ok(call) => vec![self.calls.call(run, call)],
+            Err(error) => vec![cmd::fail(run, &error, &Value::Null)],
         }
     }
 
-    async fn execute(&self, call: Call) -> Result<Value> {
-        send(&call.host, &call.params).await
-    }
-
-    async fn discover(&self, call: Call) -> Result<Value> {
-        discover(&call.host, &call.params).await
+    fn reply(&mut self, tag: &str, result: Result<Value, Failure>) -> Vec<Cmd> {
+        if let Some(run) = tag.strip_suffix(RESOLVE) {
+            return self.resolved(run, result);
+        }
+        let mut calls = std::mem::take(&mut self.calls);
+        let answered = calls.reply(tag, result.clone(), |_, response| {
+            render(response).map(Into::into)
+        });
+        self.calls = calls;
+        match answered {
+            Some(cmds) => cmds,
+            None => self.discovery.reply(tag, result).unwrap_or_default(),
+        }
     }
 }
 
-pub fn endpoint(host: EndpointArc) -> std::result::Result<EndpointBox, Status> {
-    sdk::serve(Graphql, host, Threads::Host)
-}
+impl Module for Graphql {
+    type Msg = ();
 
-services_module_api::export!(endpoint);
-
-pub const INTROSPECTION_QUERY: &str = r#"
-query IntrospectionQuery {
-  __schema {
-    queryType { name }
-    mutationType { name }
-    subscriptionType { name }
-    directives {
-      name locations isRepeatable
-      args { name defaultValue type { ...CompletionType } }
-    }
-    types {
-      kind name
-      possibleTypes { name }
-      fields {
-        name type { ...CompletionType }
-        args { name defaultValue type { ...CompletionType } }
-      }
-      inputFields { name defaultValue type { ...CompletionType } }
-      enumValues { name }
-    }
-  }
-}
-fragment CompletionType on __Type {
-  kind name
-  ofType { kind name ofType { kind name ofType { kind name
-    ofType { kind name ofType { kind name ofType { kind name } } }
-  } } }
-}
-"#;
-pub async fn send(host: &Host, params: &Value) -> Result<Value> {
-    let query = required(params, "query")?;
-    let mut body = json!({"query":query});
-    if let Some(v) = params
-        .get("variables")
-        .filter(|v| !v.is_null() && **v != "")
-    {
-        body["variables"] = if let Some(v) = v.as_str() {
-            serde_json::from_str(v).map_err(|_| Error::new("variables must be valid JSON"))?
-        } else {
-            v.clone()
-        };
-    }
-    let mut headers = json!({"Content-Type":"application/json"});
-    headers
-        .as_object_mut()
-        .unwrap()
-        .extend(error::headers(params)?.as_object().unwrap().clone());
-    http::request(
-        host,
-        "POST",
-        &text(params, "url"),
-        &headers,
-        Some(body.to_string()),
-    )
-    .await
-}
-pub async fn discover(host: &Host, params: &Value) -> Result<Value> {
-    let mut params = params.clone();
-    params["query"] = json!(INTROSPECTION_QUERY);
-    params.as_object_mut().map(|p| p.remove("variables"));
-    let result = send(host, &params).await?;
-    let failure = |message: String| {
-        let mut error = Error::new(message);
-        error.debug = result.get("debug").cloned().map(Box::new);
-        error.duration_ms = result["durationMs"].as_u64().map(u128::from);
-        error
-    };
-    if let Some(status) = result["status"].as_u64().filter(|status| *status >= 400) {
-        return Err(failure(format!("GraphQL discovery HTTP {status}")));
-    }
-    let data: Value = serde_json::from_str(result["body"].as_str().unwrap_or(""))
-        .map_err(|e| failure(format!("Invalid GraphQL introspection JSON: {e}")))?;
-    if let Some(errors) = data.get("errors").filter(|errors| {
-        !errors.is_null() && errors.as_array().is_none_or(|errors| !errors.is_empty())
-    }) {
-        let messages = errors
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(|error| error["message"].as_str())
-            .collect::<Vec<_>>()
-            .join("; ");
-        return Err(failure(format!(
-            "GraphQL introspection failed: {}",
-            if messages.is_empty() {
-                "server returned errors"
-            } else {
-                &messages
+    fn update(&mut self, event: Event<()>) -> Vec<Cmd> {
+        match event {
+            Event::Hints { check, .. } => self.discovery.hints(&check),
+            Event::Discover(check) => self.discovery.manual(&check),
+            Event::Reply { tag, result } => self.reply(&tag, result),
+            Event::Run { tag, check } => self.run(tag, check),
+            Event::Cancel { tag } => {
+                self.resolving.remove(&tag);
+                self.calls.cancel(&tag);
+                vec![]
             }
-        )));
+            _ => vec![],
+        }
     }
-    let schema = &data["data"]["__schema"];
-    if !schema.is_object() {
-        return Err(failure("GraphQL introspection returned no schema".into()));
+
+    fn subscriptions(&self) -> Subscriptions {
+        Subscriptions {
+            hints: true,
+            discover: true,
+            run: true,
+            ..Subscriptions::default()
+        }
     }
-    let mut types = Map::new();
-    for t in schema["types"].as_array().into_iter().flatten() {
-        let Some(name) = t["name"].as_str() else {
-            continue;
-        };
-        let fields:Vec<_> = t["fields"].as_array().into_iter().flatten().map(|field| {
-            let mut named = &field["type"];
-            for _ in 0..32 {
-                if named["kind"] == "NON_NULL" || named["kind"] == "LIST" { named=&named["ofType"]; } else {break}
-            }
-            json!({"name":field["name"],"type":field["type"],"typeName":named["name"],"isObject":matches!(named["kind"].as_str(),Some("OBJECT"|"INTERFACE"|"UNION")),"args":field["args"].as_array().cloned().unwrap_or_default()})
-        }).collect();
-        types.insert(name.into(), json!({
-            "kind":t["kind"],"fields":fields,
-            "possibleTypes":t["possibleTypes"].as_array().into_iter().flatten().filter_map(|value|value["name"].as_str()).collect::<Vec<_>>(),
-            "inputFields":t["inputFields"].as_array().cloned().unwrap_or_default(),
-            "enumValues":t["enumValues"].as_array().into_iter().flatten().filter_map(|value|value["name"].as_str()).collect::<Vec<_>>()
-        }));
+
+    fn highlight(&self, state: &[u8], lines: &[String]) -> Vec<Line> {
+        highlight::highlight(state, lines)
     }
-    if schema["queryType"]["name"]
-        .as_str()
-        .and_then(|name| types.get(name))
-        .and_then(|root| root["fields"].as_array())
-        .is_none_or(|fields| fields.is_empty())
-    {
-        return Err(failure(
-            "GraphQL introspection returned no query fields".into(),
-        ));
+
+    fn complete(&self, check: &Check, pos: u32) -> Completions {
+        complete::complete(self.discovery.schema(check), check, pos as usize)
     }
-    Ok(
-        json!({"queryType":schema["queryType"]["name"],"mutationType":schema["mutationType"]["name"],"subscriptionType":schema["subscriptionType"]["name"],"directives":schema["directives"].as_array().cloned().unwrap_or_default(),"types":types}),
-    )
+
+    fn fold(&self, check: &Check) -> Vec<Fold> {
+        highlight::folds(&check.text)
+    }
+
+    fn export(&self, check: &Check) -> Result<String, String> {
+        let parts = parts(check)?;
+        let mut headers = parts.headers;
+        if !headers
+            .iter()
+            .any(|(name, _)| name.eq_ignore_ascii_case("content-type"))
+        {
+            headers.push(("Content-Type".into(), "application/json".into()));
+        }
+        let mut body = json!({});
+        if !parts.query.is_empty() {
+            body["query"] = json!(parts.query);
+        }
+        if let Some(variables) = parts.variables {
+            body["variables"] = variables;
+        }
+        let body = serde_json::to_string_pretty(&body).map_err(|e| e.to_string())?;
+        Ok(curl::export("POST", parts.url, &headers, &body))
+    }
+
+    fn import(&self, text: &str) -> Result<String, String> {
+        let command = curl::parse(text)?;
+        let body = command.body.as_deref().unwrap_or("");
+        let parsed = serde_json::from_str::<Value>(body).unwrap_or(Value::Null);
+        let query = parsed["query"].as_str().unwrap_or(body);
+        if query.trim().is_empty() {
+            return Err("Could not find a GraphQL query in the curl command".into());
+        }
+        let mut sections = vec![format!("#endpoint\n{}", command.url)];
+        if let Some(headers) = curl::imported_headers(&command) {
+            sections.push(format!("#headers\n{headers}"));
+        }
+        if let Some(variables) = parsed
+            .get("variables")
+            .filter(|v| v.as_object().is_some_and(|m| !m.is_empty()))
+        {
+            let variables = serde_json::to_string_pretty(variables).map_err(|e| e.to_string())?;
+            sections.push(format!("#variables\n{variables}"));
+        }
+        sections.push(format!("#query\n{}", query.trim()));
+        Ok(sections.join("\n"))
+    }
 }
+
+services_sdk::export!(Graphql);
+
+#[cfg(test)]
+mod tests;

@@ -7,7 +7,6 @@ use services_ui::document::{
     TextChange, active_check, check_lines, mask_output, migrate_check_markers, remap,
     replace_response, request_at,
 };
-use services_ui::tables;
 
 #[test]
 fn response_touches_request_but_next_check_has_one_empty_line() {
@@ -301,10 +300,7 @@ fn separate_newlines_preserve_check_identity_and_exact_clipboard_matching() {
         );
     }
     assert_eq!(separated.regions.len(), 1);
-    assert_eq!(
-        separated.regions[0].table,
-        clipboard.unwrap().regions()[0].table
-    );
+    assert_eq!(clipboard.unwrap().regions().len(), 1);
 }
 
 #[test]
@@ -549,7 +545,6 @@ fn check_navigation_follows_document_order_and_excludes_output() {
         request: 1,
         header: 4,
         end: 6,
-        table: None,
     }];
     let lines = check_lines(source, &regions);
     assert_eq!(lines, [1, 6, 9]);
@@ -595,7 +590,6 @@ fn legacy_headers_migrate_without_rewriting_output_or_line_boundaries() {
         request: 0,
         header: 5,
         end: 9,
-        table: None,
     }];
     let expected = "  #check first\r\n#endpoint\r\nbash -c\r\n#command\r\necho '#request inline'\r\n#responce OK\r\n#request output\r\n#check output\r\n\r\n#check second\r\n#command\r\necho next\r\n#requestSuffix";
     let migrated = migrate_check_markers(source, &regions);
@@ -652,15 +646,12 @@ fn literal_markers_are_output_not_requests() {
 fn output_ranges_follow_edits_and_restore() {
     let mut regions = vec![];
     let text = replace_response("#check\n#command\necho", 0, "OK", "#check", &mut regions);
-    regions[0].table = Some(tables::Metadata::from_result(
-        &serde_json::json!({"columns":["feed"],"columnTypes":{"feed":"json"}}),
-    ));
     let new = format!("\n{text}");
     remap(&text, &new, &mut regions);
     assert_eq!(regions[0].request, 1);
     let json = serde_json::to_string(&regions).unwrap();
     let loaded: Vec<ResponseRegion> = serde_json::from_str(&json).unwrap();
-    assert_eq!(loaded[0].table, regions[0].table);
+    assert_eq!(loaded, regions);
     let mut copied = EditHistory::default();
     copied.synchronize(&new, &loaded, 0);
     let fragment = copied
@@ -672,10 +663,7 @@ fn output_ranges_follow_edits_and_restore() {
             },
         )
         .unwrap();
-    assert_eq!(fragment.regions()[0].table, loaded[0].table);
-    let legacy: ResponseRegion =
-        serde_json::from_str(r#"{"request":0,"header":2,"end":4}"#).unwrap();
-    assert!(legacy.table.is_none());
+    assert_eq!(fragment.regions().len(), 1);
     assert_eq!(
         request_at(&new, loaded[0].header + 1, &loaded)
             .unwrap()
@@ -698,19 +686,16 @@ fn invalid_restored_ranges_never_hide_or_slice_requests() {
             request: 0,
             header: 999,
             end: 1000,
-            table: None,
         },
         ResponseRegion {
             request: 0,
             header: 0,
             end: 2,
-            table: None,
         },
         ResponseRegion {
             request: 0,
             header: 1,
             end: 3,
-            table: None,
         },
     ] {
         let block = request_at(source, 0, &[region]).unwrap();

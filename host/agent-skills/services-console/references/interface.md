@@ -154,7 +154,7 @@ tabs also move the cursor. Execution, status, Debug, Stop, export and Agent
 context use the same active check.
 Enter inserts a newline. Ctrl+Space requests completions. Ctrl+Q toggles a fold
 at the cursor. Tab indents a selection or inserts two spaces.
-For MySQL, GraphQL and gRPC, Alt+Space requests discovery. REST does not bind it.
+Alt+Space requests discovery for services that have it.
 These are the application's bindings; do not substitute Command for Control
 when explaining Ctrl+Space on macOS.
 

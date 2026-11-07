@@ -41,6 +41,8 @@ pub const NAMES: &[&str] = &[
     "lock.release",
     "timer.after",
     "status.set",
+    "run.output",
+    "run.result",
     "notify",
     "log",
     "diagnostics",
@@ -78,6 +80,41 @@ pub fn cancel(target: &str) -> Cmd {
 /// Resolves the `{{…}}` variables in `text`; the reply is the resolved text as a string.
 pub fn resolve(tag: impl Into<String>, text: &str) -> Cmd {
     Cmd::new(tag, "vars.resolve", &json!({"text": text}))
+}
+
+/// Like [`resolve`], but each value is escaped as the content of a JSON string.
+pub fn resolve_json(tag: impl Into<String>, text: &str) -> Cmd {
+    Cmd::new(tag, "vars.resolve", &json!({"text": text, "mode": "json"}))
+}
+
+/// Appends `text` to the response the run `run` shows while it runs.
+pub fn output(run: &str, text: &str) -> Cmd {
+    Cmd::new(run, "run.output", &json!({"text": text}))
+}
+
+/// The status of the run `run` (like "3 rows"), shown after its duration and outcome.
+pub fn run_status(run: &str, text: &str) -> Cmd {
+    Cmd::new(run, "status.set", &json!({"text": text, "indicator": ""}))
+}
+
+/// Finishes the run `run`: the response it shows and saves; the Kernel cancels the run's
+/// calls still open and releases its locks.
+pub fn result(run: &str, rendered: &crate::Rendered, debug: &Value) -> Cmd {
+    Cmd::new(
+        run,
+        "run.result",
+        &json!({"body": rendered.text, "language": rendered.language,
+            "outcome": rendered.outcome, "debug": debug}),
+    )
+}
+
+/// Finishes the run `run` with an error.
+pub fn fail(run: &str, error: &str, debug: &Value) -> Cmd {
+    Cmd::new(
+        run,
+        "run.result",
+        &json!({"error": error, "outcome": "ERROR", "debug": debug}),
+    )
 }
 
 pub fn kv_get(tag: impl Into<String>, key: &str) -> Cmd {

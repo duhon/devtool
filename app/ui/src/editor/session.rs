@@ -11,7 +11,6 @@ use crate::document::{
     CheckViewport, ClipboardFragment, DocumentEdit, EditHistory, Position, ResponseRegion,
     TextChange,
 };
-use services_contracts::manifest::DiscoveryKind;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -112,16 +111,13 @@ pub enum Command {
 /// Work deferred to after the current task.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Signal {
-    AutoDiscover,
     RefreshHints,
-    FocusDiscover,
-    RestBodyDiscover,
     /// Reopens hints after a completion that continues.
     Reshow,
 }
 
 impl Signal {
-    const ALL: usize = 5;
+    const ALL: usize = 2;
     fn index(self) -> usize {
         self as usize
     }
@@ -165,7 +161,6 @@ pub enum Event {
         line: usize,
     },
     Discover,
-    AutoDiscover(Option<String>),
     /// The user asked a Kernel service for hints: the check at the cursor and the cursor's
     /// UTF-8 offset in it.
     Hints(services_sdk::Check, u32),
@@ -231,12 +226,11 @@ struct Press {
 }
 
 /// Collects what one operation did, so events go out in a fixed order:
-/// changes, viewport, cursor, then discovery.
+/// changes, viewport, cursor, then hints.
 #[derive(Default)]
 struct Operation {
     changes: Vec<TextChange>,
     cursor: bool,
-    discover: Vec<Option<String>>,
     /// A typed `/` asks a Kernel service for hints.
     hints: bool,
     scroll: bool,
@@ -258,10 +252,7 @@ pub struct Session {
     focused: bool,
     metrics: Option<Metrics>,
     viewport: Option<CheckViewport>,
-    was_connection: bool,
-    cursor_generation: Option<u64>,
     brackets: Vec<(Position, bool)>,
-    objects: Vec<(usize, usize, usize)>,
     marks: BTreeMap<u64, Mark>,
     next_mark: u64,
     signals: [Option<(u64, Option<u64>)>; Signal::ALL],
@@ -269,8 +260,6 @@ pub struct Session {
     agent_serial: u64,
     press: Option<Press>,
     syncing: bool,
-    synced_text: bool,
-    objects_dirty: bool,
     source: RefCell<Option<Rc<str>>>,
     op: Option<Operation>,
     /// Open `start_operation` calls, and whether the outermost one opened `op`.
@@ -295,7 +284,7 @@ impl Session {
             history.synchronize(text, &[], state.generation());
             history
         });
-        let mut session = Self {
+        Self {
             state,
             highlighter,
             setup,
@@ -309,10 +298,7 @@ impl Session {
             focused: false,
             metrics: None,
             viewport: None,
-            was_connection: false,
-            cursor_generation: None,
             brackets: Vec::new(),
-            objects: Vec::new(),
             marks: BTreeMap::new(),
             next_mark: 0,
             signals: [None; Signal::ALL],
@@ -320,8 +306,6 @@ impl Session {
             agent_serial: 0,
             press: None,
             syncing: false,
-            synced_text: false,
-            objects_dirty: false,
             source: RefCell::new(None),
             op: None,
             batch: (0, false),
@@ -330,10 +314,7 @@ impl Session {
             changes: Vec::new(),
             revision: 0,
             edits: 0,
-        };
-        session.objects_dirty = true;
-        session.refresh_objects();
-        session
+        }
     }
 
     pub fn state(&self) -> &State {
@@ -379,11 +360,6 @@ impl Session {
 
     pub fn brackets(&self) -> &[(Position, bool)] {
         &self.brackets
-    }
-
-    /// GraphQL fields that select an object: `(line, from, to)`.
-    pub fn objects(&self) -> &[(usize, usize, usize)] {
-        &self.objects
     }
 
     pub fn marks(&self) -> impl Iterator<Item = (u64, &Mark)> {
@@ -511,14 +487,11 @@ impl Session {
             }
         }
         let extend = key.shift;
-        let lazy = crate::services::lazy_discovery(&self.setup.service);
         let command = match name.as_str() {
             "Enter" if key.shift && !key.ctrl && !key.alt && !key.meta => Command::Run,
             "Enter" if !key.ctrl && !key.alt && !key.meta => Command::Newline,
             "Space" if key.ctrl && !key.alt && !key.meta && !key.shift => Command::Complete,
-            "Space" if key.alt && !key.ctrl && !key.meta && !key.shift && !lazy => {
-                Command::Discover
-            }
+            "Space" if key.alt && !key.ctrl && !key.meta && !key.shift => Command::Discover,
             "Q" if key.ctrl && !key.alt && !key.meta && !key.shift => Command::ToggleFold,
             "Tab" if !key.ctrl && !key.alt && !key.meta => {
                 if key.shift {
@@ -632,10 +605,8 @@ impl Session {
         let selection = self.state.selection();
         let changes =
             self.change(|state| state.set_text(text, preserve_after, "+services-response", now));
-        self.synced_text = !changes.is_empty();
         self.set_regions(regions);
         self.changes.extend(changes);
-        self.refresh_objects();
         if checks != self.checks {
             self.checks = checks.to_vec();
             self.check_lines = checks.iter().map(|check| check.line).collect();
@@ -687,23 +658,17 @@ impl Session {
         }
         self.regions = regions.to_vec();
         self.highlighter.set_regions(regions);
-        self.objects_dirty = true;
         self.revision += 1;
         true
     }
 
-    /// Updates what completion reads; open hints follow it. Returns whether it changed; it
-    /// pairs with a [`Session::sync`] earlier in the same pass.
+    /// Updates what completion reads; open hints follow it. Returns whether it changed.
     pub fn set_context(&mut self, context: Context) -> bool {
-        let synced_text = std::mem::take(&mut self.synced_text);
         if context == self.context {
             return false;
         }
-        self.objects_dirty |= context.discovery != self.context.discovery;
         self.context = context;
-        self.refresh_objects();
-        let lazy = crate::services::lazy_discovery(&self.setup.service);
-        if (!lazy || !synced_text) && self.hints.enabled && self.focused {
+        if self.hints.enabled && self.focused {
             self.show_hints(self.hints.automatic);
         }
         self.revision += 1;
@@ -937,18 +902,11 @@ impl Session {
             Command::Run => self.run(),
             Command::Complete => {
                 self.show_hints(false);
-                self.request_body_discovery();
                 self.kernel_hints();
             }
             Command::Newline => {
-                let commit = !crate::services::lazy_discovery(&self.setup.service)
-                    && self.connection_position();
                 self.operation(|session| session.change(|state| state.newline_and_indent(now)));
                 self.show_hints(true);
-                self.request_body_discovery();
-                if commit {
-                    self.signal(Signal::AutoDiscover);
-                }
             }
             Command::ToggleFold => self.toggle_fold(self.state.cursor().line),
             Command::Backspace | Command::Delete => {
@@ -1114,7 +1072,6 @@ impl Session {
         };
         let mut tracked = true;
         if !op.changes.is_empty() {
-            self.refresh_objects();
             self.update_brackets();
             if self.setup.console {
                 tracked = self.track(&op.changes);
@@ -1132,12 +1089,8 @@ impl Session {
         if op.cursor {
             self.events.push(Event::Cursor(self.state.cursor().line));
         }
-        if tracked {
-            self.events
-                .extend(op.discover.into_iter().map(Event::AutoDiscover));
-            if op.hints {
-                self.kernel_hints();
-            }
+        if tracked && op.hints {
+            self.kernel_hints();
         }
     }
 
@@ -1156,7 +1109,6 @@ impl Session {
         match result {
             Ok(edit) => {
                 self.set_regions(&edit.regions.clone());
-                self.refresh_objects();
                 self.check_lines = edit.checks.iter().map(|check| check.line).collect();
                 self.checks = edit.checks.clone();
                 self.events.push(Event::Edited(edit));
@@ -1195,31 +1147,8 @@ impl Session {
         }
         self.marks
             .retain(|_, mark| !matches!(mark, Mark::Line { anchor, .. } if self.state.anchor_line(*anchor).is_none()));
-        self.objects_dirty = true;
         self.revision += 1;
         self.edits += 1;
-    }
-
-    fn refresh_objects(&mut self) {
-        if !std::mem::take(&mut self.objects_dirty) {
-            return;
-        }
-        let objects = if self.setup.field.is_empty()
-            && crate::services::discovery(&self.setup.service) == Some(DiscoveryKind::Graphql)
-        {
-            let masked = crate::document::mask_output(&self.source(), &self.regions);
-            crate::graphql_completion::object_fields(
-                &masked,
-                &self.context.discovery,
-                Some(self.setup.service.as_str()),
-            )
-        } else {
-            Vec::new()
-        };
-        if objects != self.objects {
-            self.objects = objects;
-            self.revision += 1;
-        }
     }
 
     fn input(&mut self, text: &str, origin: &str, now: f64) {
@@ -1298,13 +1227,8 @@ impl Session {
         .unwrap_or_default()
     }
 
-    /// Discovery and hints after typing or pasting.
+    /// Hints after typing or pasting.
     fn input_read(&mut self, origin: &str) {
-        let service = self.setup.service.clone();
-        let lazy = crate::services::lazy_discovery(&service);
-        if lazy && origin == "paste" {
-            return;
-        }
         let cursor = self.state.cursor();
         if origin != "paste"
             && cursor.ch > 0
@@ -1318,23 +1242,8 @@ impl Session {
         {
             op.hints = true;
         }
-        if crate::services::path_discovery(&service) && self.connection_position() {
-            let endpoint = crate::completion::discovery_endpoint(
-                &service,
-                &self.setup.field,
-                &self.source(),
-                cursor.line,
-                cursor.ch,
-            );
-            if let Some(endpoint) = endpoint.filter(|endpoint| endpoint.ends_with('/'))
-                && let Some(op) = &mut self.op
-            {
-                op.discover.push(lazy.then_some(endpoint));
-            }
-        }
         if self.state.line(cursor.line).len() < HINT_LINE_LIMIT {
             self.show_hints(true);
-            self.request_body_discovery();
         }
     }
 
@@ -1343,13 +1252,6 @@ impl Session {
             return;
         }
         let text = text.replace("\r\n", "\n").replace('\r', "\n");
-        let committed = self.connection_position()
-            || text
-                .lines()
-                .any(|line| line.trim().eq_ignore_ascii_case("#endpoint"));
-        if committed && !crate::services::lazy_discovery(&self.setup.service) {
-            self.signal(Signal::AutoDiscover);
-        }
         self.input(&text, "paste", now);
     }
 
@@ -1454,18 +1356,6 @@ impl Session {
         if !focused {
             self.close_hints();
         }
-        let signal = if crate::services::lazy_discovery(&self.setup.service) {
-            None
-        } else if focused {
-            Some(Signal::FocusDiscover)
-        } else if self.connection_position() {
-            Some(Signal::AutoDiscover)
-        } else {
-            None
-        };
-        if let Some(signal) = signal {
-            self.signal(signal);
-        }
     }
 
     /// Folds `from..to`, like `markText` with `collapsed`.
@@ -1546,19 +1436,11 @@ impl Session {
         Some(self.change(|state| state.apply(Transaction::replace(from, to, "\n", "+delete"), now)))
     }
 
-    /// After the cursor moves: brackets, discovery when the cursor leaves the
-    /// connection, and the open hints follow the cursor.
+    /// After the cursor moves: brackets, and the open hints follow the cursor.
     fn cursor_activity(&mut self) {
         self.update_brackets();
-        let current = self.connection_position();
-        let previous = std::mem::replace(&mut self.was_connection, current);
-        let generation = self.state.generation();
-        let moved = self.cursor_generation.replace(generation) == Some(generation);
         if self.syncing {
             return;
-        }
-        if !crate::services::lazy_discovery(&self.setup.service) && previous && !current && moved {
-            self.signal(Signal::AutoDiscover);
         }
         if self.popup.is_some() && !self.op.as_ref().is_some_and(|op| op.hinted) {
             if self.hints.enabled && self.focused {
@@ -1591,20 +1473,6 @@ impl Session {
             .any(|region| line >= region.header && line < region.end)
     }
 
-    /// The cursor is where the connection (`#endpoint`) is typed.
-    fn connection_position(&self) -> bool {
-        let line = self.state.cursor().line;
-        if self.in_output(line) || crate::services::discovery(&self.setup.service).is_none() {
-            return false;
-        }
-        crate::discovery::connection_position(
-            &self.setup.service,
-            &self.setup.field,
-            &self.source(),
-            line,
-        )
-    }
-
     /// A Kernel service hears that hints were asked for; its module may fetch what they need.
     fn kernel_hints(&mut self) {
         let service = &self.setup.service;
@@ -1620,27 +1488,6 @@ impl Session {
             crate::completion::kernel_check(service, &masked, cursor.line, cursor.ch)
         {
             self.events.push(Event::Hints(check, pos));
-        }
-    }
-
-    fn request_body_discovery(&mut self) {
-        if !crate::services::lazy_discovery(&self.setup.service) || !self.focused {
-            return;
-        }
-        let line = self.state.cursor().line;
-        if self.in_output(line) {
-            return;
-        }
-        if crate::discovery::body_position(
-            &self.setup.service,
-            &self.setup.field,
-            &self.source(),
-            line,
-        ) && self.context.discovery["paths"]
-            .as_array()
-            .is_none_or(|paths| paths.is_empty())
-        {
-            self.signal(Signal::RestBodyDiscover);
         }
     }
 
@@ -1670,24 +1517,8 @@ impl Session {
             }
             return;
         }
-        let lazy = crate::services::lazy_discovery(&self.setup.service);
-        if lazy && matches!(signal, Signal::AutoDiscover | Signal::FocusDiscover) {
-            return;
-        }
-        if !matches!(signal, Signal::FocusDiscover | Signal::RestBodyDiscover)
-            && self.hints.enabled
-            && self.focused
-        {
+        if self.hints.enabled && self.focused {
             self.show_hints(true);
-        }
-        if signal == Signal::RefreshHints && self.hints.enabled {
-            self.request_body_discovery();
-        }
-        if signal != Signal::RefreshHints
-            && (!lazy || signal == Signal::RestBodyDiscover)
-            && (signal != Signal::FocusDiscover || !self.connection_position())
-        {
-            self.events.push(Event::AutoDiscover(None));
         }
     }
 
@@ -1715,7 +1546,7 @@ impl Session {
         let service = self.setup.service.clone();
         let field = self.setup.field.clone();
         let masked = crate::document::mask_output(&self.source(), &self.regions);
-        let mut completion = crate::template_completion::suggest(
+        let completion = crate::template_completion::suggest(
             &service,
             &field,
             &masked,
@@ -1731,25 +1562,21 @@ impl Session {
                 cursor.line,
                 cursor.ch,
                 &self.context.hints,
-                &self.context.discovery,
             )
         });
-        if automatic && completion.automatic_directives_only {
-            completion
-                .candidates
-                .retain(|candidate| candidate.text.starts_with('@'));
-        }
         if completion.candidates.is_empty() || (automatic && !completion.automatic) {
             self.close_hints();
             return;
         }
-        let payload = crate::services::language(&service, "");
         let comma = completion.comma.map(|(line, ch)| Position { line, ch });
         let items: Vec<Item> = completion
             .candidates
             .iter()
             .map(|candidate| {
-                let label = label(&payload, candidate);
+                let label = candidate
+                    .label
+                    .clone()
+                    .unwrap_or_else(|| candidate.text.clone());
                 Item {
                     text: candidate.text.clone(),
                     display: if candidate.detail.is_empty() {
@@ -1812,16 +1639,10 @@ impl Session {
         let field = self.setup.field.clone();
         let console = field.is_empty();
         let candidate = item.text.clone();
-        let before_connection = crate::discovery::connection_position(
-            &service,
-            &field,
-            &self.source(),
-            self.state.cursor().line,
-        );
         let (mut text, target) = if item.literal {
             (candidate.clone(), None)
         } else {
-            crate::completion::prepare_insertion(&service, &candidate, console)
+            crate::completion::prepare_insertion(&candidate, console)
         };
         let from = popup.from;
         if !item.literal && console && candidate.starts_with('#') {
@@ -1834,18 +1655,7 @@ impl Session {
                 text = candidate.clone();
             }
         }
-        let mut to = popup.to;
-        let graphql = crate::services::language(&service, "") == "graphql";
-        let discovery = crate::services::discovery(&service);
-        if graphql && matches!(candidate.as_str(), ")" | "]" | "}") {
-            let next = Position {
-                line: to.line,
-                ch: to.ch + 1,
-            };
-            if self.state.range(to, next) == candidate {
-                to = next;
-            }
-        }
+        let to = popup.to;
         let previous =
             super::checks::Previous::capture(self.state.lines(), from.line, &self.regions);
         let checks = self.check_lines.clone();
@@ -1878,65 +1688,12 @@ impl Session {
         let continuation = item.continue_hint
             || text.ends_with([':', '/', ' '])
             || (text.contains('\n') && target.is_some())
-            || (discovery == Some(DiscoveryKind::GrpcReflection) && text.ends_with("[]"))
-            || (graphql && (text.ends_with("()") || matches!(text.as_str(), ")" | "]" | "}")))
             || (candidate.starts_with('#') && candidate != "#check");
-        let cursor = self.state.cursor();
-        let grpc_endpoint = discovery == Some(DiscoveryKind::GrpcReflection)
-            && crate::completion::discovery_endpoint(
-                &service,
-                &field,
-                &self.source(),
-                cursor.line,
-                cursor.ch,
-            )
-            .is_some();
-        if discovery.is_some() {
-            if if grpc_endpoint {
-                text.ends_with('/')
-            } else {
-                continuation
-            } {
-                self.hints.enabled = true;
-                self.hints.automatic = true;
-            }
-            self.signal(
-                if before_connection && !discovery.is_some_and(DiscoveryKind::lazy) {
-                    Signal::AutoDiscover
-                } else {
-                    Signal::RefreshHints
-                },
-            );
-            return;
-        }
         if continuation {
             self.hints.enabled = true;
             self.hints.automatic = true;
             self.signal(Signal::Reshow);
         }
-    }
-}
-
-/// A hint's label: JSON snippets on one line, GraphQL brackets compact.
-fn label(payload: &str, candidate: &crate::completion::Candidate) -> String {
-    if let Some(label) = &candidate.label {
-        label.clone()
-    } else if payload == "json" && candidate.text.contains('\n') {
-        candidate
-            .text
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ")
-            .replace("{ }", "{}")
-            .replace("[ ]", "[]")
-    } else if payload == "graphql" && candidate.text.split_whitespace().eq(["{", "}"]) {
-        "{}".to_owned()
-    } else if payload == "graphql" && candidate.text.split_whitespace().eq(["[", "]"]) {
-        "[]".to_owned()
-    } else if payload == "graphql" && candidate.text == "... on " {
-        "... on".to_owned()
-    } else {
-        candidate.text.clone()
     }
 }
 
@@ -2086,7 +1843,6 @@ mod tests {
             request: 0,
             header: 3,
             end: 6,
-            table: None,
         };
         session.set_responses(std::slice::from_ref(&region));
         session.apply(
@@ -2184,15 +1940,15 @@ mod tests {
     fn signals_drop_when_the_text_changed() {
         let mut editor = session("x");
         editor.signal(Signal::Reshow);
-        editor.signal(Signal::AutoDiscover);
+        editor.signal(Signal::RefreshHints);
         let effects = editor.take_effects();
         let Some(Effect::Later(_, token)) = effects.last().copied() else {
             panic!("no signal");
         };
         editor.update(Msg::Input("y".into()), 0.0);
-        assert!(editor.signals[Signal::AutoDiscover.index()].is_some());
-        editor.update(Msg::Signal(Signal::AutoDiscover, token), 0.0);
-        assert!(editor.signals[Signal::AutoDiscover.index()].is_none());
+        assert!(editor.signals[Signal::RefreshHints.index()].is_some());
+        editor.update(Msg::Signal(Signal::RefreshHints, token), 0.0);
+        assert!(editor.signals[Signal::RefreshHints.index()].is_none());
     }
 
     #[test]

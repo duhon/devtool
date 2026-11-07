@@ -1,5 +1,19 @@
 use serde_json::{Value, json};
+use services_contracts::ParamConfig;
 use services_testkit::DataDir;
+
+/// A request param: a `type` (`json` params resolve inside their JSON) and a `resolve` mode.
+fn param(name: &str, kind: &str, resolve: Option<&str>) -> ParamConfig {
+    ParamConfig {
+        name: name.into(),
+        kind: kind.into(),
+        required: false,
+        multi: false,
+        default: None,
+        resolve: resolve.map(Into::into),
+        keys: Default::default(),
+    }
+}
 
 #[tokio::test]
 async fn session_variables_are_request_local_and_never_replace_stored_ones() {
@@ -25,7 +39,7 @@ async fn session_variables_are_request_local_and_never_replace_stored_ones() {
             view["context"]["resolvedProfiles"]["shared"]["REF"],
             expected
         );
-        let params = runtime.registry.resolve("terminal",&json!({
+        let params = runtime.variable_store.resolve_params(&[param("command", "string", None)],&json!({
             "endpoint":"sh -c","command":"printf '{{var:TOKEN}} {{shared:REF}}'","__consoleVariables":variables
         })).unwrap();
         assert_eq!(params["command"], format!("printf '{expected} {expected}'"));
@@ -63,9 +77,9 @@ async fn session_variables_are_request_local_and_never_replace_stored_ones() {
     );
     assert!(
         runtime
-            .registry
-            .resolve(
-                "terminal",
+            .variable_store
+            .resolve_params(
+                &[param("command", "string", None)],
                 &json!({"command":"{{var:TOKEN}}","__consoleVariables":{}})
             )
             .is_err()
@@ -110,70 +124,36 @@ fn nested_json_keeps_keys_and_types_and_reports_resolution_errors() {
         "booleanText":"true","numberText":"42",
         "{{var:sku}}":"literal key"
     });
-    for (service, field) in [
-        ("graphql", "variables"),
-        ("graphql", "headers"),
-        ("grpc", "headers"),
-        ("grpc", "requestMessage"),
-        ("splunk", "headers"),
-        ("terminal", "env"),
-    ] {
-        let mut params = json!({});
-        params[field] = input.clone();
-        assert_eq!(
-            rt.registry.resolve(service, &params).unwrap()[field],
-            expected,
-            "{service}.{field}"
-        );
-        if field != "requestMessage" {
-            params[field] = json!(input.to_string());
-            let resolved = rt.registry.resolve(service, &params).unwrap();
-            assert_eq!(
-                serde_json::from_str::<Value>(resolved[field].as_str().unwrap()).unwrap(),
-                expected,
-                "{service}.{field} JSON string"
-            );
-        }
-    }
+    let headers = [
+        param("headers", "json", None),
+        param("count", "string", Some("none")),
+    ];
+    let resolve = |params: Value| rt.variable_store.resolve_params(&headers, &params);
     assert_eq!(
-        rt.registry
-            .resolve("graphql", &json!({"variables":""}))
-            .unwrap()["variables"],
-        ""
+        resolve(json!({"headers":input})).unwrap()["headers"],
+        expected
     );
+    let resolved = resolve(json!({"headers":input.to_string()})).unwrap();
     assert_eq!(
-        rt.registry
-            .resolve("graphql", &json!({"variables":null}))
-            .unwrap()["variables"],
+        serde_json::from_str::<Value>(resolved["headers"].as_str().unwrap()).unwrap(),
+        expected,
+        "JSON string"
+    );
+    assert_eq!(resolve(json!({"headers":""})).unwrap()["headers"], "");
+    assert_eq!(
+        resolve(json!({"headers":null})).unwrap()["headers"],
         Value::Null
     );
     assert_eq!(
-        rt.registry
-            .resolve("splunk", &json!({"count":"{{var:count}}"}))
-            .unwrap()["count"],
+        resolve(json!({"count":"{{var:count}}"})).unwrap()["count"],
         "{{var:count}}"
     );
-    let error = rt
-        .registry
-        .resolve(
-            "graphql",
-            &json!({"variables":{"items":[{"sku":"{{var:missing}}"}]}}),
-        )
-        .unwrap_err();
+    let error = resolve(json!({"headers":{"items":[{"sku":"{{var:missing}}"}]}})).unwrap_err();
     assert!(error.message.contains("missing") && error.message.contains("var"));
-    let error = rt
-        .registry
-        .resolve(
-            "graphql",
-            &json!({"variables":{"items":[{"sku":"{{unknown:sku}}"}]}}),
-        )
-        .unwrap_err();
+    let error = resolve(json!({"headers":{"items":[{"sku":"{{unknown:sku}}"}]}})).unwrap_err();
     assert!(error.message.contains("Unknown profile"));
-    let error = rt
-        .registry
-        .resolve("graphql", &json!({"variables":"{\"skus\":["}))
-        .unwrap_err();
-    assert!(error.message.starts_with("variables must be valid JSON"));
+    let error = resolve(json!({"headers":"{\"skus\":["})).unwrap_err();
+    assert!(error.message.starts_with("headers must be valid JSON"));
 }
 
 #[test]
@@ -181,7 +161,7 @@ fn cycles_display_tolerantly_and_fall_back_to_globals() {
     let data = DataDir::new();
     let runtime = data.runtime();
     let vars = runtime.dictionary_store.clone();
-    let graphql = runtime.registry.params("graphql").unwrap();
+    let artemis = &[param("url", "string", None)];
     vars.dispatch(&json!({"op":"save","name":"default","variables":{"value":"{{default:value}}"}}))
         .unwrap();
     vars.dispatch(
@@ -203,13 +183,13 @@ fn cycles_display_tolerantly_and_fall_back_to_globals() {
     );
     assert_eq!(list["resolvedProfiles"]["fallback"]["indirect"], "ok");
     assert!(
-        vars.resolve_params(graphql, &json!({"url":"literal"}))
+        vars.resolve_params(artemis, &json!({"url":"literal"}))
             .is_err()
     );
     vars.dispatch(&json!({"op":"reorder","order":["fallback","default"]}))
         .unwrap();
     assert_eq!(
-        vars.resolve_params(graphql, &json!({"url":"{{:value}}"}))
+        vars.resolve_params(artemis, &json!({"url":"{{:value}}"}))
             .unwrap()["url"],
         "ok"
     );

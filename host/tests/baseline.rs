@@ -19,7 +19,6 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     process::{Child, ChildStdin, ChildStdout, Command},
 };
-use tokio_util::sync::CancellationToken;
 
 const WARMUP: usize = 5;
 const SAMPLES: usize = 40;
@@ -101,65 +100,43 @@ async fn service_latency() {
             .ok();
     })
     .await;
-    latency("graphql.echo", || async {
-        host.call(
-            "graphql",
-            json!({"url":format!("{url}/graphql"),"query":"query Echo { echo }","variables":{}}),
-        )
-        .await
-        .ok();
-    })
-    .await;
-    // Splunk allows one export per origin every 13 s (`splunk_rate_limit.rs`),
-    // persisted in the data directory, so every sample uses a fresh host.
-    let mut samples = vec![];
-    for round in 0..WARMUP + SAMPLES {
-        let fresh = Host::new();
-        let started = Instant::now();
-        fresh.call("splunk", json!({"baseUrl":url,"search":"index=fixture","app":"search","count":"0","earliestTime":"-1h","latestTime":"now","headers":{"Authorization":"Splunk fixture-token"}}))
-            .await
-            .ok();
-        if round >= WARMUP {
-            samples.push(ms(started.elapsed()));
-        }
-    }
-    report("splunk.export", "ms", samples);
     let dsn = isolated_mysql();
-    latency("mysql.select", || async {
-        host.call(
-            "mysql",
-            json!({"connectionString":dsn,"sql":"SELECT answer_fixture"}),
-        )
-        .await
-        .ok();
-    })
-    .await;
-    latency("mysql.large_2048_rows", || async {
-        host.call(
-            "mysql",
-            json!({"connectionString":dsn,"sql":"SELECT large_fixture"}),
-        )
-        .await
-        .ok();
-    })
-    .await;
+    for (name, sql) in [
+        ("mysql.select", "SELECT answer_fixture"),
+        ("mysql.large_2048_rows", "SELECT large_fixture"),
+    ] {
+        latency(name, || async {
+            host.send(driver("mysql", json!({"url":dsn,"sql":sql})))
+                .await
+                .ok();
+        })
+        .await;
+    }
     let grpc = grpc_echo().await;
     latency("grpc.unary", || async {
-        host.call("grpc", json!({"endpoint":format!("{}/fixture.Echo/Call",grpc.url),"proto":GRPC_PROTO,"requestMessage":"{\"text\":\"hello\"}"}))
-            .await
-            .ok();
+        // `Text { text: "hello" }` encoded.
+        host.send(driver(
+            "grpc",
+            json!({"target":grpc.url,"path":"/fixture.Echo/Call",
+            "messages":["CgVoZWxsbw=="]}),
+        ))
+        .await
+        .ok();
     })
     .await;
-    latency("terminal.short", || async {
-        let streamed = host
-            .stream(
-                json!({"service":"terminal","params":{"endpoint":"sh -c","env":{},"command":"echo fixture"}}),
-                CancellationToken::new(),
-            )
-            .await;
-        assert!(streamed.result.is_ok(), "{:?}", streamed.result);
+    latency("process.short", || async {
+        host.send(driver(
+            "process",
+            json!({"program":"sh","args":["-c","echo fixture"],"text":true}),
+        ))
+        .await
+        .ok();
     })
     .await;
+}
+
+fn driver(driver: &str, request: Value) -> Value {
+    json!({"service":"drivers","driver":driver,"op":"call","request":request})
 }
 
 #[tokio::test]
@@ -188,35 +165,32 @@ async fn large_payloads() {
     .await;
     let mut samples = vec![];
     for round in 0..WARMUP + 10 {
+        let data = services_testkit::DataDir::new();
+        let mut pipe = services_testkit::native::Pipe::start(data.runtime());
         let started = Instant::now();
-        let streamed = host
-            .stream(
-                json!({"service":"terminal","params":{"endpoint":"sh -c","env":{},
-                    "command":"head -c 20971520 /dev/zero | tr '\\0' a"}}),
-                CancellationToken::new(),
-            )
-            .await;
+        pipe.send(
+            &json!({"id":1,"service":"drivers","driver":"process","op":"stream",
+            "request":{"program":"sh","args":["-c","head -c 20971520 /dev/zero | tr '\\0' a"],
+                "text":true}}),
+        )
+        .await;
+        let mut bytes = 0;
+        loop {
+            let message = pipe.read().await;
+            if message["type"] != "data" {
+                assert_eq!(message["type"], "exit", "{message}");
+                break;
+            }
+            bytes += message["event"]["stdout"].as_str().map_or(0, str::len);
+        }
         let elapsed = started.elapsed();
-        assert!(streamed.result.is_ok(), "{:?}", streamed.result);
-        let bytes: usize = streamed
-            .events
-            .iter()
-            .filter_map(|e| e["data"].as_str())
-            .map(str::len)
-            .sum();
         assert_eq!(bytes, 20 * MIB);
         if round >= WARMUP {
             samples.push(20.0 / elapsed.as_secs_f64());
         }
     }
-    report("terminal.stream_20mib", "MiB/s", samples);
+    report("process.stream_20mib", "MiB/s", samples);
 }
-
-const GRPC_PROTO: &str = r#"syntax = "proto3";
-package fixture;
-message Text { string text = 1; }
-service Echo { rpc Call(Text) returns (Text); }
-"#;
 
 struct GrpcEcho {
     url: String,
@@ -453,7 +427,7 @@ async fn host_large_response() {
         while samples.len() < count {
             let started = Instant::now();
             let reply = native
-                .request(json!({"service":"mysql","params":{"connectionString":dsn,"sql":sql}}))
+                .request(driver("mysql", json!({"url":dsn,"sql":sql})))
                 .await;
             let elapsed = started.elapsed();
             assert_eq!(reply["ok"], true, "{reply}");

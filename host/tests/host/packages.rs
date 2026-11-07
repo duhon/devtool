@@ -1,51 +1,49 @@
-//! Packaged modules: the host loads `<data>/modules/<id>/module.dylib`, reports the
-//! packages it could not load and serves each package's console part.
+//! Packaged modules: the host serves `<data>/modules/<id>/{package.json,module.wasm}` to the
+//! App, reports the packages it cannot serve, installs package files and removes packages.
 
 use serde_json::json;
+use services_contracts::package::{PACKAGE_FILE, WASM_FILE, archive};
 use services_testkit::{DataDir, Host, packages};
 
-fn library() -> String {
-    format!("module{}", std::env::consts::DLL_SUFFIX)
-}
-
-#[tokio::test]
-async fn a_broken_misnamed_or_misdescribed_package_is_reported_and_skipped() {
-    let data = DataDir::new();
-    let modules = data.path().join("modules");
-    let describe = |dir: &str, package: serde_json::Value| {
-        std::fs::write(modules.join(dir).join("package.json"), package.to_string()).unwrap()
-    };
-    std::fs::create_dir_all(modules.join("broken")).unwrap();
-    std::fs::write(modules.join("broken").join(library()), "not a library").unwrap();
-    describe("broken", json!({"id":"broken","version":"1.0.0"}));
-    for (dir, package) in [
-        ("second-grpc", "services-module-grpc"),
-        ("undescribed", "services-module-graphql"),
-    ] {
-        std::fs::create_dir_all(modules.join(dir)).unwrap();
-        std::os::unix::fs::symlink(
-            packages::library(package),
-            modules.join(dir).join(library()),
-        )
-        .unwrap();
-    }
-    describe(
-        "second-grpc",
-        json!({"id":"grpc","version":packages::version("grpc")}),
-    );
-    describe("graphql", json!({"id":"graphql","version":"0.0.1"}));
-    let host = Host::on(data);
-
-    let reply = host.send(json!({"service":"modules"})).await;
-    let ids: Vec<_> = reply.ok()["modules"]
+fn listed(reply: &services_testkit::Reply) -> Vec<String> {
+    reply.ok()["wasm"]
         .as_array()
         .unwrap()
         .iter()
-        .map(|module| module["id"].as_str().unwrap())
-        .collect();
-    assert_eq!(ids.iter().filter(|id| **id == "grpc").count(), 1);
-    assert!(!ids.contains(&"graphql"));
-    let failed: Vec<_> = reply.ok()["failed"]
+        .map(|module| module["id"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+async fn ids(host: &Host) -> Vec<String> {
+    listed(&host.send(json!({"service":"modules"})).await)
+}
+
+#[tokio::test]
+async fn a_broken_misnamed_or_undescribed_package_is_reported_and_skipped() {
+    let data = DataDir::new();
+    let modules = data.path().join("modules");
+    let describe = |dir: &str, package: serde_json::Value| {
+        std::fs::write(modules.join(dir).join(PACKAGE_FILE), package.to_string()).unwrap()
+    };
+    std::fs::create_dir_all(modules.join("broken")).unwrap();
+    std::fs::write(modules.join("broken").join(WASM_FILE), b"\0asm").unwrap();
+    describe("broken", json!({"id":"broken","version":"1.0.0"}));
+    for (dir, package) in [
+        ("second-grpc", "services-module-grpc"),
+        ("undescribed", "services-module-artemis"),
+    ] {
+        std::fs::create_dir_all(modules.join(dir)).unwrap();
+        std::os::unix::fs::symlink(packages::wasm(package), modules.join(dir).join(WASM_FILE))
+            .unwrap();
+    }
+    let grpc = std::fs::read_to_string(modules.join("grpc").join(PACKAGE_FILE)).unwrap();
+    std::fs::write(modules.join("second-grpc").join(PACKAGE_FILE), grpc).unwrap();
+    let host = Host::on(data);
+
+    let reply = host.send(json!({"service":"modules"})).await;
+    let ids = listed(&reply);
+    assert_eq!(ids.iter().filter(|id| *id == "grpc").count(), 1);
+    let mut failed: Vec<_> = reply.ok()["failed"]
         .as_array()
         .unwrap()
         .iter()
@@ -58,28 +56,19 @@ async fn a_broken_misnamed_or_misdescribed_package_is_reported_and_skipped() {
             )
         })
         .collect();
-    assert_eq!(failed.len(), 4, "{failed:?}");
+    failed.sort();
+    assert_eq!(failed.len(), 3, "{failed:?}");
     assert_eq!(failed[0].0, "broken");
     assert_eq!(
         failed[1],
-        (
-            "graphql".into(),
-            format!(
-                "package.json describes graphql 0.0.1 but the module is graphql {}",
-                packages::version("graphql")
-            )
-        )
-    );
-    assert_eq!(
-        failed[2],
         (
             "second-grpc".into(),
             "the folder of module \"grpc\" is named \"second-grpc\"; it must be named by the module id"
                 .into()
         )
     );
-    assert_eq!(failed[3].0, "undescribed");
-    assert!(failed[3].1.contains("package.json"), "{}", failed[3].1);
+    assert_eq!(failed[2].0, "undescribed");
+    assert!(failed[2].1.contains(PACKAGE_FILE), "{}", failed[2].1);
 }
 
 fn hidden(modules: &std::path::Path) -> Vec<String> {
@@ -90,20 +79,11 @@ fn hidden(modules: &std::path::Path) -> Vec<String> {
         .collect()
 }
 
-fn ids(reply: &services_testkit::Reply) -> Vec<String> {
-    reply.ok()["modules"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|module| module["id"].as_str().unwrap().to_owned())
-        .collect()
-}
-
-/// A checked folder source "Team" offering the package `file` of `id` `version`.
-async fn team(host: &Host, id: &str, version: &str) -> tempfile::TempDir {
+/// A checked folder source "Team" offering the package `file`.
+async fn team_offering(host: &Host, file: Vec<u8>) -> tempfile::TempDir {
     let folder = tempfile::tempdir().unwrap();
     std::fs::create_dir(folder.path().join("modules")).unwrap();
-    std::fs::write(package(&folder), packages::file(id, version)).unwrap();
+    std::fs::write(package(&folder), file).unwrap();
     host.send(json!({"service":"sources","op":"save",
         "sources":[{"name":"Team","kind":"folder","path":folder.path()}]}))
         .await
@@ -112,6 +92,11 @@ async fn team(host: &Host, id: &str, version: &str) -> tempfile::TempDir {
         .await
         .ok();
     folder
+}
+
+/// A checked folder source "Team" offering the package file of `id` `version`.
+async fn team(host: &Host, id: &str, version: &str) -> tempfile::TempDir {
+    team_offering(host, packages::file(id, version)).await
 }
 
 fn package(team: &tempfile::TempDir) -> std::path::PathBuf {
@@ -126,56 +111,45 @@ fn install(id: &str, version: &str) -> serde_json::Value {
 async fn a_package_file_installs_replaces_and_is_removed_for_the_next_host() {
     let data = DataDir::new();
     let modules = data.path().join("modules");
-    std::fs::remove_dir_all(modules.join("graphql")).unwrap();
+    std::fs::remove_dir_all(modules.join("artemis")).unwrap();
     let host = Host::on(data);
-    let version = packages::version("graphql");
-    let _team = team(&host, "graphql", version).await;
+    let version = packages::version("artemis");
+    let _team = team(&host, "artemis", version).await;
 
-    let installed = host.send(install("graphql", version)).await;
+    let installed = host.send(install("artemis", version)).await;
     assert_eq!(
         installed.ok(),
-        &json!({"installed":{"id":"graphql","name":"GraphQL","version":version},"replaced":null})
+        &json!({"installed":{"id":"artemis","name":"Artemis","version":version},"replaced":null})
     );
-    let installed_library = modules.join("graphql").join(library());
+    let installed_module = modules.join("artemis").join(WASM_FILE);
     assert!(
-        std::fs::symlink_metadata(&installed_library)
+        std::fs::symlink_metadata(&installed_module)
             .unwrap()
             .is_file()
     );
-    let signature = std::process::Command::new("/usr/bin/codesign")
-        .args(["--verify", "--strict"])
-        .arg(&installed_library)
-        .output()
-        .unwrap();
-    assert!(signature.status.success(), "{signature:?}");
     assert_eq!(hidden(&modules), Vec::<String>::new());
     // This host keeps what it loaded; the next one loads the change.
-    assert!(!ids(&host.send(json!({"service":"modules"})).await).contains(&"graphql".into()));
+    assert!(!ids(&host).await.contains(&"artemis".into()));
     let next = host.reopen();
-    assert!(ids(&next.send(json!({"service":"modules"})).await).contains(&"graphql".into()));
-    let graphql = next
-        .call(
-            "graphql",
-            json!({"endpoint":"http://127.0.0.1:9/graphql","query":"{ a }"}),
-        )
+    assert!(ids(&next).await.contains(&"artemis".into()));
+    let served = next
+        .send(json!({"service":"modules","op":"wasm","module":"artemis"}))
         .await;
-    assert!(graphql.value().get("error").is_some(), "the module runs");
+    assert!(served.ok()["wasm"].as_str().unwrap().starts_with("AGFzbQ"));
 
-    let again = next.send(install("graphql", version)).await;
+    let again = next.send(install("artemis", version)).await;
     assert_eq!(again.ok()["replaced"], version);
     assert_eq!(hidden(&modules), Vec::<String>::new());
 
     let removed = next
-        .send(json!({"service":"modules","op":"remove","module":"graphql"}))
+        .send(json!({"service":"modules","op":"remove","module":"artemis"}))
         .await;
-    assert_eq!(removed.ok(), &json!({"removed":"graphql"}));
-    assert!(!modules.join("graphql").exists());
+    assert_eq!(removed.ok(), &json!({"removed":"artemis"}));
+    assert!(!modules.join("artemis").exists());
     assert_eq!(hidden(&modules), Vec::<String>::new());
-    assert!(
-        !ids(&next.reopen().send(json!({"service":"modules"})).await).contains(&"graphql".into())
-    );
+    assert!(!ids(&next.reopen()).await.contains(&"artemis".into()));
     for (module, error) in [
-        ("graphql", "Module \"graphql\" is not installed"),
+        ("artemis", "Module \"artemis\" is not installed"),
         ("..", "\"..\" is not a package folder"),
         ("rest/../mysql", "\"rest/../mysql\" is not a package folder"),
         ("", "\"\" is not a package folder"),
@@ -186,7 +160,7 @@ async fn a_package_file_installs_replaces_and_is_removed_for_the_next_host() {
         assert_eq!(reply.error(), error);
     }
     // A development package is a symlink: removing it keeps the build it points to.
-    let grpc = std::fs::read_link(modules.join("grpc").join(library())).unwrap();
+    let grpc = std::fs::read_link(modules.join("grpc").join(WASM_FILE)).unwrap();
     next.send(json!({"service":"modules","op":"remove","module":"grpc"}))
         .await
         .ok();
@@ -195,7 +169,7 @@ async fn a_package_file_installs_replaces_and_is_removed_for_the_next_host() {
 }
 
 #[tokio::test]
-async fn a_module_written_with_the_sdk_installs_from_its_package_file_and_runs() {
+async fn a_module_written_with_the_sdk_installs_from_its_package_file_and_is_served() {
     let data = DataDir::new();
     let modules = data.path().join("modules");
     let host = Host::on(data);
@@ -208,22 +182,19 @@ async fn a_module_written_with_the_sdk_installs_from_its_package_file_and_runs()
     );
     let next = host.reopen();
     let listed = next.send(json!({"service":"modules"})).await;
-    let echo = listed.ok()["modules"]
+    let echo = listed.ok()["wasm"]
         .as_array()
         .unwrap()
         .iter()
         .find(|module| module["id"] == "echo")
-        .expect("the installed module is listed");
-    assert_eq!(echo["console"]["payload"], "text");
-    let reply = next
-        .call("echo", json!({"endpoint":"local","text":"hello"}))
+        .expect("the installed module is listed")
+        .clone();
+    assert_eq!(echo["kind"], "service");
+    assert_eq!(echo["version"], "0.1.0");
+    let served = next
+        .send(json!({"service":"modules","op":"wasm","module":"echo"}))
         .await;
-    assert_eq!(reply.ok()["body"], "hello", "{reply}");
-    assert_eq!(reply.ok()["headers"]["x-echo-endpoint"], "local");
-    assert_eq!(
-        next.call("echo", json!({"endpoint":"local"})).await.error(),
-        "text is required"
-    );
+    assert_eq!(served.ok()["digest"], echo["digest"]);
 
     let removed = next
         .send(json!({"service":"modules","op":"remove","module":"echo"}))
@@ -233,13 +204,13 @@ async fn a_module_written_with_the_sdk_installs_from_its_package_file_and_runs()
 }
 
 #[tokio::test]
-async fn removing_a_module_with_its_data_deletes_its_history_templates_and_hints() {
-    const GRAPHQL: &str = "019a1234-5678-7890-abcd-0123456789a1";
+async fn removing_a_module_with_its_data_deletes_its_history_and_hints() {
+    const ARTEMIS: &str = "019a1234-5678-7890-abcd-0123456789a1";
     const MYSQL: &str = "019a1234-5678-7890-abcd-0123456789a2";
     let data = DataDir::new();
     let modules = data.path().join("modules");
     let host = Host::on(data);
-    for (service, check) in [("graphql", GRAPHQL), ("mysql", MYSQL)] {
+    for (service, check) in [("artemis", ARTEMIS), ("mysql", MYSQL)] {
         host.runtime()
             .history
             .save(services_native::core::history::Snapshot {
@@ -255,15 +226,6 @@ async fn removing_a_module_with_its_data_deletes_its_history_templates_and_hints
             })
             .await
             .unwrap();
-    }
-    for (service, section, text) in [
-        ("graphql", "variables", "@graphql\n{}"),
-        ("mysql", "query", "@mysql\nSELECT 1;"),
-    ] {
-        host.send(json!({"service":"templates","op":"save",
-            "serviceName":service,"section":section,"text":text,"base":""}))
-            .await
-            .ok();
         host.send(json!({"service":"hints","op":"save","serviceName":service,"text":format!("{service} hint\n")}))
             .await
             .ok();
@@ -278,17 +240,12 @@ async fn removing_a_module_with_its_data_deletes_its_history_templates_and_hints
     assert_eq!(total(host.op("history", "list", check(MYSQL)).await), 1);
 
     let removed = host
-        .send(json!({"service":"modules","op":"remove","module":"graphql","forget":true}))
+        .send(json!({"service":"modules","op":"remove","module":"artemis","forget":true}))
         .await;
-    assert_eq!(removed.ok(), &json!({"removed":"graphql","forgotten":true}));
-    assert!(!modules.join("graphql").exists());
-    assert_eq!(total(host.op("history", "list", check(GRAPHQL)).await), 0);
+    assert_eq!(removed.ok(), &json!({"removed":"artemis","forgotten":true}));
+    assert!(!modules.join("artemis").exists());
+    assert_eq!(total(host.op("history", "list", check(ARTEMIS)).await), 0);
     assert_eq!(total(host.op("history", "list", check(MYSQL)).await), 1);
-    let templates = host.op("templates", "get", json!({})).await;
-    assert_eq!(
-        templates.ok()["templates"],
-        json!({"mysql":{"query":"@mysql\nSELECT 1;"}})
-    );
     let hints = std::fs::read_to_string(host.path().join(".console-hints.txt")).unwrap();
     assert_eq!(hints, "## mysql\nmysql hint\n");
 }
@@ -298,20 +255,29 @@ async fn an_invalid_package_file_leaves_the_installed_package_alone() {
     let data = DataDir::new();
     let modules = data.path().join("modules");
     let host = Host::on(data);
-    let before = std::fs::read(modules.join("graphql/package.json")).unwrap();
+    let before = std::fs::read(modules.join("artemis").join(PACKAGE_FILE)).unwrap();
 
-    let team = team(&host, "graphql", "0.0.1").await;
-    let misdescribed = host.send(install("graphql", "0.0.1")).await;
+    let staged = tempfile::tempdir().unwrap();
+    std::fs::write(
+        staged.path().join(PACKAGE_FILE),
+        json!({"id":"artemis","kind":"service","name":"Artemis","version":"0.0.1",
+            "abi":99,"drivers":{"http":"1"}})
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(staged.path().join(WASM_FILE), b"\0asm").unwrap();
+    let team = team_offering(&host, archive::pack(staged.path()).unwrap()).await;
+    let unsupported = host.send(install("artemis", "0.0.1")).await;
     assert_eq!(
-        misdescribed.error(),
+        unsupported.error(),
         format!(
-            "package.json describes graphql 0.0.1 but the module is graphql {}",
-            packages::version("graphql")
+            "Artemis was built for module ABI 99, the App runs ABI {}",
+            services_sdk::ABI
         )
     );
     // The file changed after the check.
     std::fs::write(package(&team), "not a package").unwrap();
-    let garbage = host.send(install("graphql", "0.0.1")).await;
+    let garbage = host.send(install("artemis", "0.0.1")).await;
     assert!(
         garbage.error().starts_with("Invalid package file"),
         "{}",
@@ -319,46 +285,15 @@ async fn an_invalid_package_file_leaves_the_installed_package_alone() {
     );
 
     assert_eq!(
-        std::fs::read(modules.join("graphql/package.json")).unwrap(),
+        std::fs::read(modules.join("artemis").join(PACKAGE_FILE)).unwrap(),
         before
     );
     assert!(
-        std::fs::symlink_metadata(modules.join("graphql").join(library()))
+        std::fs::symlink_metadata(modules.join("artemis").join(WASM_FILE))
             .unwrap()
             .is_symlink()
     );
     assert_eq!(hidden(&modules), Vec::<String>::new());
-}
-
-#[tokio::test]
-async fn the_host_serves_a_package_console_part_by_its_hash() {
-    let data = DataDir::new();
-    std::fs::write(data.path().join("modules/graphql/ui.wasm"), b"\0asm-ui").unwrap();
-    let host = Host::on(data);
-
-    let reply = host.send(json!({"service":"modules"})).await;
-    assert!(reply.ok().get("failed").is_none());
-    let graphql = reply.ok()["modules"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|module| module["id"] == "graphql")
-        .unwrap()
-        .clone();
-    let hash = graphql["ui"].as_str().unwrap();
-    assert_eq!(hash.len(), 64);
-
-    let ui = host
-        .send(json!({"service":"modules","op":"ui","module":"graphql"}))
-        .await;
-    assert_eq!(ui.ok()["module"], "graphql");
-    assert_eq!(ui.ok()["ui"], hash);
-    assert_eq!(ui.ok()["wasm"], "AGFzbS11aQ==");
-
-    let built_in = host
-        .send(json!({"service":"modules","op":"ui","module":"mysql"}))
-        .await;
-    assert_eq!(built_in.error(), "Module \"mysql\" has no console part");
 }
 
 #[tokio::test]
@@ -367,8 +302,8 @@ async fn the_host_lists_and_serves_wasm_modules_it_can_run_and_reports_the_rest(
     let modules = data.path().join("modules");
     let place = |id: &str, manifest: serde_json::Value| {
         std::fs::create_dir_all(modules.join(id)).unwrap();
-        std::fs::write(modules.join(id).join("package.json"), manifest.to_string()).unwrap();
-        std::fs::write(modules.join(id).join("module.wasm"), b"\0asm").unwrap();
+        std::fs::write(modules.join(id).join(PACKAGE_FILE), manifest.to_string()).unwrap();
+        std::fs::write(modules.join(id).join(WASM_FILE), b"\0asm").unwrap();
     };
     let manifest = |id: &str, abi: u32, driver: &str| {
         json!({"id":id,"kind":"service","name":id.to_uppercase(),"version":"1.0.0",
@@ -376,7 +311,7 @@ async fn the_host_lists_and_serves_wasm_modules_it_can_run_and_reports_the_rest(
     };
     place("wasm-ok", manifest("wasm-ok", 1, "http"));
     place("wasm-old", manifest("wasm-old", 99, "http"));
-    place("wasm-grpc", manifest("wasm-grpc", 1, "grpc"));
+    place("wasm-kafka", manifest("wasm-kafka", 1, "kafka"));
     let host = Host::on(data);
 
     let reply = host.send(json!({"service":"modules"})).await;
@@ -396,7 +331,7 @@ async fn the_host_lists_and_serves_wasm_modules_it_can_run_and_reports_the_rest(
         .iter()
         .map(|failure| failure["module"].as_str().unwrap())
         .collect();
-    assert!(failed.contains(&"wasm-old") && failed.contains(&"wasm-grpc"));
+    assert!(failed.contains(&"wasm-old") && failed.contains(&"wasm-kafka"));
 
     let served = host
         .send(json!({"service":"modules","op":"wasm","module":"wasm-ok"}))
@@ -404,7 +339,7 @@ async fn the_host_lists_and_serves_wasm_modules_it_can_run_and_reports_the_rest(
     assert_eq!(served.ok()["wasm"], "AGFzbQ==");
     assert_eq!(served.ok()["digest"], wasm[0]["digest"]);
     let missing = host
-        .send(json!({"service":"modules","op":"wasm","module":"mysql"}))
+        .send(json!({"service":"modules","op":"wasm","module":"kafka"}))
         .await;
-    assert_eq!(missing.error(), "Module \"mysql\" is not a wasm module");
+    assert_eq!(missing.error(), "Module \"kafka\" is not a wasm module");
 }

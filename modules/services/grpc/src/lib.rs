@@ -1,1033 +1,883 @@
-//! gRPC: dynamic calls from a .proto source or server reflection, on a module-owned runtime.
+//! The gRPC service: a `#endpoint` (`grpc[s]://target/package.Service/Method`), metadata
+//! `#headers`, an optional `#proto` and a JSON `#message`, called through the Host `grpc`
+//! driver. Without `#proto` the descriptors come from server reflection, asked while the
+//! check is edited; the response prints as JSON. `grpcurl` command lines are imported and
+//! exported.
 
-use base64::Engine;
-use bytes::Buf;
-use futures_util::stream;
-use prost::Message;
-use prost_reflect::{
-    DescriptorPool, DeserializeOptions, DynamicMessage, Kind, MessageDescriptor, ReflectMessage,
-    SerializeOptions,
+pub mod proto;
+pub mod reflection;
+
+use prost_reflect::DescriptorPool;
+use reflection::{Found, Goal, Run, Server, Step};
+use serde_json::{Value, json};
+use services_sdk::grpc::{self, Request, Response};
+use services_sdk::lang::check::At;
+use services_sdk::lang::{curl, endpoint, finish, headers, item, json, marker, placeholder};
+use services_sdk::run::{self, Answer, OneCall};
+use services_sdk::{
+    Check, Cmd, Completions, DriverCall, Event, Failure, Fold, Line, Module, Rendered,
+    Subscriptions, Token, cmd,
 };
-use serde_json::{Map, Value, json};
-use services_module_api::error::{self, Error, Result, string, text};
-use services_module_api::sdk::{self, Call, Manifest, RunStatus, Service, Threads};
-use services_module_api::transport::{EndpointArc, EndpointBox};
-use std::{
-    collections::{BTreeMap, HashSet, VecDeque},
-    time::{Duration, Instant},
-};
-use tonic::{
-    Status,
-    codec::{Codec, DecodeBuf, Decoder, EncodeBuf, Encoder},
-    metadata::{KeyAndValueRef, MetadataMap},
-    transport::{Channel, ClientTlsConfig, Endpoint},
-};
+use std::collections::BTreeMap;
 
-pub struct Grpc;
+pub const SECTIONS: [&str; 4] = ["endpoint", "headers", "proto", "message"];
 
-impl Service for Grpc {
-    fn manifest(&self) -> Manifest {
-        Manifest {
-            execute: true,
-            discover: true,
-            stream: false,
-            ..Manifest::from_json(include_str!("../manifest.json"), env!("CARGO_PKG_VERSION"))
-        }
-    }
+pub const HEADERS: [&str; 9] = [
+    "Accept: */*",
+    "Accept-Encoding: gzip, deflate, br",
+    "Authorization: ****** application/json",
+    "Cookie:",
+    "Host:",
+    "User-Agent:",
+    "X-Api-Key:",
+    "X-Forwarded-For:",
+    "X-Requested-With: XMLHttpRequest",
+];
 
-    async fn execute(&self, call: Call) -> Result<Value> {
-        send(&call.params).await
-    }
+/// A call may take this long.
+pub const TIMEOUT_MS: u64 = 120_000;
+pub const CONNECT_MS: u64 = 5000;
 
-    async fn discover(&self, call: Call) -> Result<Value> {
-        discover(&call.params).await
-    }
+/// The field of a driver request with what its answer is decoded with (`proto`, the
+/// `#proto` source): the parts of a check the driver does not take, and ignores.
+pub const CONSOLE: &str = "console";
 
-    fn status(&self, result: &Value) -> RunStatus {
-        match sdk::status(result) {
-            RunStatus::Success if result["status"].as_i64().is_some_and(|s| s != 0) => {
-                RunStatus::Error
-            }
-            status => status,
-        }
-    }
+const RESOLVE: &str = ":resolve";
 
-    fn outcome(&self, result: &Value) -> &'static str {
-        sdk::common_outcome(result).unwrap_or(if result["status"] == 0 { "OK" } else { "ERROR" })
-    }
-}
+/// Reflection results kept, the most recent last.
+const KEPT: usize = 16;
 
-pub fn endpoint(
-    host: EndpointArc,
-) -> std::result::Result<EndpointBox, services_module_api::transport::Status> {
-    // The host may have installed the process-wide provider already.
-    let _ = rustls::crypto::ring::default_provider().install_default();
-    sdk::serve(Grpc, host, Threads::Own("grpc-module"))
-}
-
-services_module_api::export!(endpoint);
-
-struct Source(String);
-impl protox::file::FileResolver for Source {
-    fn open_file(&self, name: &str) -> std::result::Result<protox::file::File, protox::Error> {
-        if name == "input.proto" {
-            protox::file::File::from_source(name, &self.0)
-        } else {
-            protox::file::FileResolver::open_file(&protox::file::GoogleFileResolver::new(), name)
-        }
-    }
-}
-pub fn compile_proto(source: &str) -> Result<DescriptorPool> {
-    let mut compiler = protox::Compiler::with_file_resolver(Source(source.into()));
-    compiler
-        .include_imports(true)
-        .open_file("input.proto")
-        .map_err(|e| Error::new(format!("Invalid proto: {e}")))?;
-    DescriptorPool::from_file_descriptor_set(compiler.file_descriptor_set())
-        .map_err(|e| Error::new(format!("Invalid proto: {e}")))
-}
-#[derive(Clone)]
-pub struct DynamicCodec {
-    pub output: MessageDescriptor,
-}
-pub struct DynamicEncoder;
-pub struct DynamicDecoder(MessageDescriptor);
-impl Codec for DynamicCodec {
-    type Encode = DynamicMessage;
-    type Decode = DynamicMessage;
-    type Encoder = DynamicEncoder;
-    type Decoder = DynamicDecoder;
-    fn encoder(&mut self) -> Self::Encoder {
-        DynamicEncoder
-    }
-    fn decoder(&mut self) -> Self::Decoder {
-        DynamicDecoder(self.output.clone())
-    }
-}
-impl Encoder for DynamicEncoder {
-    type Item = DynamicMessage;
-    type Error = Status;
-    fn encode(
-        &mut self,
-        item: Self::Item,
-        buf: &mut EncodeBuf<'_>,
-    ) -> std::result::Result<(), Status> {
-        item.encode(buf)
-            .map_err(|e| Status::internal(e.to_string()))
-    }
-}
-impl Decoder for DynamicDecoder {
-    type Item = DynamicMessage;
-    type Error = Status;
-    fn decode(
-        &mut self,
-        buf: &mut DecodeBuf<'_>,
-    ) -> std::result::Result<Option<Self::Item>, Status> {
-        DynamicMessage::decode(self.0.clone(), buf.copy_to_bytes(buf.remaining()))
-            .map(Some)
-            .map_err(|e| Status::internal(e.to_string()))
-    }
-}
+/// `target`, `package.Service` and `Method` of an endpoint; the last two are empty
+/// without a `/Service/Method` path.
 pub fn parse_endpoint(endpoint: &str) -> (String, String, String) {
     let endpoint = endpoint.trim();
-    let offset = endpoint.find("://").map(|i| i + 3).unwrap_or(0);
-    match endpoint[offset..].find('/') {
-        None => (endpoint.into(), String::new(), String::new()),
-        Some(i) => {
-            let i = i + offset;
-            let path = &endpoint[i + 1..];
-            if let Some((service, method)) = path.rsplit_once('/') {
-                (
-                    endpoint[..i].into(),
-                    service.trim().into(),
-                    method.trim().into(),
-                )
-            } else {
-                (endpoint[..i].into(), String::new(), String::new())
-            }
-        }
-    }
-}
-async fn channel(target: &str) -> Result<Channel> {
-    let lower = target.to_lowercase();
-    let (secure, address) = if lower.starts_with("grpcs://") {
-        (true, &target[8..])
-    } else if lower.starts_with("grpc://") {
-        (false, &target[7..])
-    } else {
-        (false, target)
+    let offset = endpoint.find("://").map_or(0, |i| i + 3);
+    let Some(slash) = endpoint[offset..].find('/').map(|i| i + offset) else {
+        return (endpoint.into(), String::new(), String::new());
     };
-    let mut endpoint = Endpoint::from_shared(format!(
-        "{}://{address}",
-        if secure { "https" } else { "http" }
-    ))
-    .map_err(|e| Error::new(e.to_string()))?
-    .connect_timeout(Duration::from_secs(5))
-    .timeout(Duration::from_secs(120));
-    if secure {
-        endpoint = endpoint
-            .tls_config(ClientTlsConfig::new().with_native_roots())
-            .map_err(|e| Error::new(e.to_string()))?;
-    }
-    Ok(endpoint.connect_lazy())
-}
-pub fn messages(raw: Option<&Value>) -> Result<Vec<Value>> {
-    let Some(raw) = raw.filter(|v| !v.is_null() && **v != "") else {
-        return Ok(vec![json!({})]);
-    };
-    let parsed = if let Some(s) = raw.as_str() {
-        serde_json::from_str(s).map_err(|_| Error::new("request message must be valid JSON"))?
-    } else {
-        raw.clone()
-    };
-    Ok(if let Value::Array(a) = parsed {
-        a
-    } else {
-        vec![parsed]
-    })
-}
-fn metadata(params: &Value) -> Result<MetadataMap> {
-    let headers = error::headers(params)?;
-    let mut metadata = MetadataMap::new();
-    for (name, value) in headers.as_object().unwrap() {
-        let name = name.to_lowercase();
-        if name.ends_with("-bin") {
-            let key = tonic::metadata::MetadataKey::<tonic::metadata::Binary>::from_bytes(
-                name.as_bytes(),
-            )
-            .map_err(|e| Error::new(e.to_string()))?;
-            let bytes = base64::engine::general_purpose::STANDARD
-                .decode(string(value))
-                .map_err(|e| Error::new(e.to_string()))?;
-            metadata.append_bin(key, tonic::metadata::MetadataValue::from_bytes(&bytes));
-        } else {
-            let key =
-                tonic::metadata::MetadataKey::<tonic::metadata::Ascii>::from_bytes(name.as_bytes())
-                    .map_err(|e| Error::new(e.to_string()))?;
-            let value = string(value)
-                .parse::<tonic::metadata::MetadataValue<tonic::metadata::Ascii>>()
-                .map_err(|e| Error::new(e.to_string()))?;
-            metadata.append(key, value);
-        }
-    }
-    Ok(metadata)
-}
-fn metadata_json(metadata: &MetadataMap) -> Value {
-    let mut out = Map::new();
-    for item in metadata.iter() {
-        match item {
-            KeyAndValueRef::Ascii(key, v) => {
-                out.entry(key.to_string())
-                    .or_insert(json!(v.to_str().unwrap_or("")));
-            }
-            KeyAndValueRef::Binary(key, v) => {
-                out.entry(key.to_string()).or_insert(json!(
-                    base64::engine::general_purpose::STANDARD
-                        .encode(v.to_bytes().unwrap_or_default())
-                ));
-            }
-        }
-    }
-    Value::Object(out)
-}
-fn response_json(message: &DynamicMessage) -> std::result::Result<Value, serde_json::Error> {
-    let mut bytes = Vec::new();
-    message.serialize_with_options(
-        &mut serde_json::Serializer::new(&mut bytes),
-        &SerializeOptions::new()
-            .use_proto_field_name(true)
-            .skip_default_fields(false),
-    )?;
-    let mut value: Value = serde_json::from_slice(&bytes)?;
-    if !value.is_object()
-        || message
-            .descriptor()
-            .full_name()
-            .starts_with("google.protobuf.")
-    {
-        return Ok(value);
-    }
-    fn nested(
-        raw: &prost_reflect::Value,
-        serialized: &mut Value,
-    ) -> std::result::Result<(), serde_json::Error> {
-        if serialized.is_null() {
-            return Ok(());
-        }
-        match raw {
-            prost_reflect::Value::Message(message) => *serialized = response_json(message)?,
-            prost_reflect::Value::Bytes(bytes) => {
-                *serialized = json!({"type":"Buffer","data":bytes.as_ref()})
-            }
-            prost_reflect::Value::List(items) => {
-                if let Some(values) = serialized.as_array_mut() {
-                    for (raw, value) in items.iter().zip(values) {
-                        nested(raw, value)?;
-                    }
-                }
-            }
-            prost_reflect::Value::Map(items) => {
-                if let Some(values) = serialized.as_object_mut() {
-                    for (key, raw) in items {
-                        let key = match key {
-                            prost_reflect::MapKey::Bool(v) => v.to_string(),
-                            prost_reflect::MapKey::I32(v) => v.to_string(),
-                            prost_reflect::MapKey::I64(v) => v.to_string(),
-                            prost_reflect::MapKey::U32(v) => v.to_string(),
-                            prost_reflect::MapKey::U64(v) => v.to_string(),
-                            prost_reflect::MapKey::String(v) => v.clone(),
-                        };
-                        if let Some(value) = values.get_mut(&key) {
-                            nested(raw, value)?;
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
-        Ok(())
-    }
-    for field in message.descriptor().fields() {
-        if let Some(value) = value.get_mut(field.name()) {
-            nested(message.get_field(&field).as_ref(), value)?;
-        }
-    }
-    for oneof in message.descriptor().oneofs() {
-        if let Some(field) = oneof.fields().find(|field| message.has_field(field)) {
-            value[oneof.name()] = json!(field.name());
-        }
-    }
-    Ok(value)
-}
-pub fn status_name(code: tonic::Code) -> &'static str {
-    match code {
-        tonic::Code::Ok => "OK",
-        tonic::Code::Cancelled => "CANCELLED",
-        tonic::Code::Unknown => "UNKNOWN",
-        tonic::Code::InvalidArgument => "INVALID_ARGUMENT",
-        tonic::Code::DeadlineExceeded => "DEADLINE_EXCEEDED",
-        tonic::Code::NotFound => "NOT_FOUND",
-        tonic::Code::AlreadyExists => "ALREADY_EXISTS",
-        tonic::Code::PermissionDenied => "PERMISSION_DENIED",
-        tonic::Code::ResourceExhausted => "RESOURCE_EXHAUSTED",
-        tonic::Code::FailedPrecondition => "FAILED_PRECONDITION",
-        tonic::Code::Aborted => "ABORTED",
-        tonic::Code::OutOfRange => "OUT_OF_RANGE",
-        tonic::Code::Unimplemented => "UNIMPLEMENTED",
-        tonic::Code::Internal => "INTERNAL",
-        tonic::Code::Unavailable => "UNAVAILABLE",
-        tonic::Code::DataLoss => "DATA_LOSS",
-        tonic::Code::Unauthenticated => "UNAUTHENTICATED",
-    }
-}
-pub async fn send(params: &Value) -> Result<Value> {
-    let (mut target, mut service, mut method) = parse_endpoint(&text(params, "endpoint"));
-    if target.is_empty() {
-        target = text(params, "target");
-    }
-    if service.is_empty() {
-        service = text(params, "serviceName");
-    }
-    if method.is_empty() {
-        method = text(params, "methodName");
-    }
-    let request = json!({"target":target,"serviceName":service,"methodName":method,"headers":error::headers(params)?});
-    let started = Instant::now();
-    let setup = async {
-        if target.is_empty() {
-            return Err(Error::new("target is required"));
-        }
-        if service.is_empty() || method.is_empty() {
-            return Err(Error::new("serviceName and methodName are required"));
-        }
-        let channel = channel(&target).await?;
-        let proto = text(params, "proto");
-        let pool = if proto.trim().is_empty() {
-            reflection_pool(channel.clone(), &service, &metadata(params)?).await?
-        } else {
-            compile_proto(&proto)?
-        };
-        let descriptor = pool
-            .get_service_by_name(&service)
-            .ok_or_else(|| Error::new(format!("Service not found: {service}")))?;
-        let method = descriptor
-            .methods()
-            .find(|m| m.name() == method)
-            .ok_or_else(|| Error::new(format!("Method not found: {service}/{method}")))?;
-        let mut messages = messages(params.get("requestMessage"))?;
-        if !method.is_client_streaming() {
-            messages.truncate(1);
-            if messages.is_empty() {
-                messages.push(json!({}));
-            }
-        }
-        let mut encoded = vec![];
-        for message in messages {
-            let raw = message.to_string();
-            let mut deserializer = serde_json::Deserializer::from_str(&raw);
-            encoded.push(
-                DynamicMessage::deserialize_with_options(
-                    method.input(),
-                    &mut deserializer,
-                    &DeserializeOptions::new().deny_unknown_fields(false),
-                )
-                .map_err(|e| Error::new(format!("Invalid request message: {e}")))?,
-            );
-        }
-        let metadata = metadata(params)?;
-        Ok((channel, method, encoded, metadata))
-    }
-    .await;
-    let (channel, descriptor, messages, metadata) = setup.map_err(|mut e| {
-        e = e.with_debug(request.clone());
-        e.duration_ms = Some(started.elapsed().as_millis());
-        e
-    })?;
-    let started = Instant::now();
-    let mut client = tonic::client::Grpc::new(channel)
-        .max_decoding_message_size(64 * 1024 * 1024)
-        .max_encoding_message_size(64 * 1024 * 1024);
-    client
-        .ready()
-        .await
-        .map_err(|e| Error::new(e.to_string()).with_debug(request.clone()))?;
-    let path =
-        http::uri::PathAndQuery::from_maybe_shared(format!("/{service}/{}", descriptor.name()))
-            .map_err(|e| Error::new(e.to_string()))?;
-    let mut req = tonic::Request::new(stream::iter(messages));
-    *req.metadata_mut() = metadata;
-    let mut headers = json!({});
-    let mut events = vec![];
-    let mut responses = vec![];
-    let mut trailers = json!({});
-    let result=async {
-        let response=client.streaming(req,path,DynamicCodec{output:descriptor.output()}).await?;
-        headers=metadata_json(response.metadata());
-        events.push(json!({"event":"metadata","atMs":started.elapsed().as_millis(),"data":headers}));
-        let mut stream=response.into_inner();
-        while let Some(message)=stream.message().await? {
-            responses.push(response_json(&message).map_err(|e|Status::internal(e.to_string()))?);
-            if descriptor.is_server_streaming(){events.push(json!({"event":"data","atMs":started.elapsed().as_millis(),"data":{"index":responses.len()-1}}));}
-        }
-        if let Some(metadata)=stream.trailers().await?{trailers=metadata_json(&metadata);}
-        Ok::<(),Status>(())
-    }.await;
-    let (code, details, body) = match result {
-        Ok(()) => (
-            tonic::Code::Ok,
-            String::new(),
-            if descriptor.is_server_streaming() {
-                json!(responses)
-            } else {
-                responses.into_iter().next().unwrap_or(json!({}))
-            },
+    match endpoint[slash + 1..].rsplit_once('/') {
+        Some((service, method)) => (
+            endpoint[..slash].into(),
+            service.trim().into(),
+            method.trim().into(),
         ),
-        Err(status) => {
-            trailers = metadata_json(status.metadata());
-            events.push(json!({"event":"error","atMs":started.elapsed().as_millis(),"data":{"name":"Error","message":status.message(),"code":status.code() as i32}}));
-            (
-                status.code(),
-                status.message().to_string(),
-                json!({"error":status.message()}),
-            )
-        }
-    };
-    events.push(json!({"event":"status","atMs":started.elapsed().as_millis(),"data":{"code":code as i32,"details":details,"metadata":trailers}}));
-    let response = json!({"status":code as i32,"statusText":status_name(code),"headers":headers});
-    Ok(
-        json!({"status":code as i32,"statusText":status_name(code),"headers":headers,"body":body.to_string(),"durationMs":started.elapsed().as_millis(),"debug":{"request":request,"connection":{"events":events},"response":response}}),
-    )
+        None => (endpoint[..slash].into(), String::new(), String::new()),
+    }
 }
 
-#[derive(Clone, PartialEq, Message)]
-struct ReflectionRequest {
-    #[prost(string, tag = "1")]
-    host: String,
-    #[prost(oneof = "reflection_request::Request", tags = "3,4,7")]
-    request: Option<reflection_request::Request>,
-}
-mod reflection_request {
-    #[derive(Clone, PartialEq, prost::Oneof)]
-    pub enum Request {
-        #[prost(string, tag = "3")]
-        FileByFilename(String),
-        #[prost(string, tag = "4")]
-        FileContainingSymbol(String),
-        #[prost(string, tag = "7")]
-        ListServices(String),
+/// The target and the path after it (`""` without one).
+fn target_path(endpoint: &str) -> (&str, &str) {
+    let offset = endpoint.find("://").map_or(0, |i| i + 3);
+    match endpoint[offset..].find('/').map(|i| offset + i) {
+        Some(slash) => (&endpoint[..slash], &endpoint[slash + 1..]),
+        None => (endpoint, ""),
     }
 }
-#[derive(Clone, PartialEq, Message)]
-struct ReflectionResponse {
-    #[prost(message, optional, tag = "4")]
-    file_descriptor_response: Option<FileDescriptorResponse>,
-    #[prost(message, optional, tag = "6")]
-    list_services_response: Option<ListServiceResponse>,
-    #[prost(message, optional, tag = "7")]
-    error_response: Option<ReflectionError>,
+
+/// The request metadata: `#headers` with lowercased names; a `-bin` value is base64.
+pub fn metadata(check: &Check) -> Vec<(String, String)> {
+    headers::pairs(check.text_of("headers"))
+        .into_iter()
+        .map(|(name, value)| (name.to_ascii_lowercase(), value))
+        .collect()
 }
-#[derive(Clone, PartialEq, Message)]
-struct FileDescriptorResponse {
-    #[prost(bytes = "vec", repeated, tag = "1")]
-    file_descriptor_proto: Vec<Vec<u8>>,
+
+fn server(check: &Check, target: &str) -> Server {
+    Server {
+        target: target.into(),
+        metadata: metadata(check),
+    }
 }
-#[derive(Clone, PartialEq, Message)]
-struct ListServiceResponse {
-    #[prost(message, repeated, tag = "1")]
-    service: Vec<ServiceResponse>,
-}
-#[derive(Clone, PartialEq, Message)]
-struct ServiceResponse {
-    #[prost(string, tag = "1")]
-    name: String,
-}
-#[derive(Clone, PartialEq, Message)]
-struct ReflectionError {
-    #[prost(int32, tag = "1")]
-    error_code: i32,
-    #[prost(string, tag = "2")]
-    error_message: String,
-}
-async fn reflect(
-    channel: Channel,
-    request: reflection_request::Request,
-    metadata: &MetadataMap,
-) -> Result<ReflectionResponse> {
-    let mut last = String::new();
-    for version in ["v1", "v1alpha"] {
-        let mut client =
-            tonic::client::Grpc::new(channel.clone()).max_decoding_message_size(64 * 1024 * 1024);
-        client
-            .ready()
-            .await
-            .map_err(|e| Error::new(format!("Reflection failed: {e}")))?;
-        let path = http::uri::PathAndQuery::from_maybe_shared(format!(
-            "/grpc.reflection.{version}.ServerReflection/ServerReflectionInfo"
-        ))
-        .unwrap();
-        let message = ReflectionRequest {
-            host: String::new(),
-            request: Some(request.clone()),
-        };
-        let mut request = tonic::Request::new(stream::iter([message]));
-        *request.metadata_mut() = metadata.clone();
-        let result = async {
-            let response = client
-                .streaming(
-                    request,
-                    path,
-                    tonic::codec::ProstCodec::<ReflectionRequest, ReflectionResponse>::default(),
-                )
-                .await?;
-            response
-                .into_inner()
-                .message()
-                .await?
-                .ok_or_else(|| Status::unknown("reflection returned no response"))
-        };
-        match tokio::time::timeout(Duration::from_secs(5), result).await {
-            Ok(Ok(response)) => {
-                if let Some(error) = response.error_response {
-                    return Err(Error::new(format!(
-                        "Reflection failed: {}",
-                        error.error_message
-                    )));
-                }
-                return Ok(response);
-            }
-            Ok(Err(status)) => last = status.to_string(),
-            Err(_) => last = "reflection timed out".into(),
+
+/// The `grpc` request of a check whose variables are resolved, with descriptors from
+/// `pool`.
+pub fn request(check: &Check, pool: &DescriptorPool, message: &str) -> Result<Value, String> {
+    let (target, service, method) = parse_endpoint(check.text_of("endpoint"));
+    if target.is_empty() {
+        return Err("target is required".into());
+    }
+    if service.is_empty() || method.is_empty() {
+        return Err("serviceName and methodName are required".into());
+    }
+    let method = proto::method(pool, &service, &method)?;
+    let mut messages = proto::messages(message)?;
+    if !method.is_client_streaming() {
+        messages.truncate(1);
+        if messages.is_empty() {
+            messages.push(json!({}));
         }
     }
-    Err(Error::new(format!("Reflection failed: {last}")))
+    let mut request = Request {
+        metadata: metadata(check),
+        timeout_ms: Some(TIMEOUT_MS),
+        connect_ms: Some(CONNECT_MS),
+        ..Request::new(&target, &service, method.name())
+    };
+    for message in &messages {
+        request = request.message(&proto::encode(&method.input(), message)?);
+    }
+    let mut value = serde_json::to_value(&request).map_err(|error| error.to_string())?;
+    let source = check.text_of("proto");
+    value[CONSOLE] = if source.trim().is_empty() {
+        json!({})
+    } else {
+        json!({"proto": source})
+    };
+    Ok(value)
 }
-async fn reflection_pool(
-    channel: Channel,
-    service: &str,
-    metadata: &MetadataMap,
-) -> Result<DescriptorPool> {
-    let mut queue = VecDeque::from([reflection_request::Request::FileContainingSymbol(
-        service.into(),
-    )]);
-    let mut files = BTreeMap::new();
-    let mut requested = HashSet::new();
-    while let Some(request) = queue.pop_front() {
-        let response = reflect(channel.clone(), request, metadata).await?;
-        let descriptors = response
-            .file_descriptor_response
-            .ok_or_else(|| Error::new("Reflection failed: missing file descriptors"))?;
-        for bytes in descriptors.file_descriptor_proto {
-            let file = prost_types::FileDescriptorProto::decode(bytes.as_slice())
-                .map_err(|e| Error::new(e.to_string()))?;
-            files.insert(file.name().to_string(), file);
-        }
-        for file in files.values() {
-            for dep in &file.dependency {
-                if !files.contains_key(dep) && requested.insert(dep.clone()) {
-                    queue.push_back(reflection_request::Request::FileByFilename(dep.clone()));
-                }
+
+/// A response printed as JSON: the message, every message of a server stream, or
+/// `{"error": …}` for a non-zero status. Without descriptors the messages print in base64.
+pub fn render(
+    path: &str,
+    pool: Option<&DescriptorPool>,
+    response: &Value,
+) -> Result<Rendered, String> {
+    let response = Response::parse(response)?;
+    let outcome = if response.status == 0 { "OK" } else { "ERROR" };
+    let (service, method) = path
+        .trim_start_matches('/')
+        .rsplit_once('/')
+        .unwrap_or_default();
+    let method = pool.map(|pool| proto::method(pool, service, method));
+    let body = match method {
+        _ if response.status != 0 => json!({"error": response.message}),
+        Some(Ok(method)) => {
+            let mut messages = response
+                .messages()?
+                .iter()
+                .map(|bytes| proto::decode(&method.output(), bytes))
+                .collect::<Result<Vec<_>, _>>()?;
+            if method.is_server_streaming() {
+                json!(messages)
+            } else if messages.is_empty() {
+                json!({})
+            } else {
+                messages.remove(0)
             }
         }
-        if files.len() > 4096 {
-            return Err(Error::new("Reflection descriptor limit exceeded"));
-        }
-    }
-    DescriptorPool::from_file_descriptor_set(prost_types::FileDescriptorSet {
-        file: files.into_values().collect(),
+        Some(Err(message)) => return Err(message),
+        None => json!({"messages": response.messages}),
+    };
+    Ok(Rendered {
+        text: serde_json::to_string_pretty(&body).unwrap_or_default(),
+        language: "json".into(),
+        outcome: outcome.into(),
     })
-    .map_err(|e| Error::new(format!("Reflection failed: {e}")))
 }
-pub fn message_fields(descriptor: MessageDescriptor, depth: usize) -> Vec<Value> {
-    descriptor
-        .fields()
-        .map(|field| {
-            let element_kind = match field.kind() {
-                Kind::Message(_) => "object",
-                Kind::String | Kind::Bytes | Kind::Enum(_) => "string",
-                Kind::Bool => "boolean",
-                _ => "number",
-            };
-            let kind = if field.is_list() {
-                "array"
-            } else if field.is_map() {
-                "object"
+
+/// A `grpcurl` command line for a check.
+pub fn export(check: &Check) -> Result<String, String> {
+    let endpoint = check.text_of("endpoint").trim();
+    let secure = endpoint.to_ascii_lowercase().starts_with("grpcs://");
+    let bare = endpoint
+        .get(..8)
+        .filter(|scheme| scheme.eq_ignore_ascii_case("grpcs://"))
+        .map(|_| &endpoint[8..])
+        .or_else(|| {
+            endpoint
+                .get(..7)
+                .filter(|scheme| scheme.eq_ignore_ascii_case("grpc://"))
+                .map(|_| &endpoint[7..])
+        })
+        .unwrap_or(endpoint);
+    let (target, symbol) = bare
+        .split_once('/')
+        .ok_or("#endpoint must be target/Service/Method")?;
+    let mut lines = vec!["grpcurl".to_owned()];
+    if !secure {
+        lines.push("  -plaintext".into());
+    }
+    lines.push("  -emit-defaults".into());
+    for (name, value) in headers::pairs(check.text_of("headers")) {
+        lines.push(format!("  -H {}", curl::quote(&format!("{name}: {value}"))));
+    }
+    let message = check.text_of("message");
+    if !message.trim().is_empty() {
+        let value: Value =
+            serde_json::from_str(message).map_err(|_| "Request message must be valid JSON")?;
+        let pretty = serde_json::to_string_pretty(&value).unwrap_or_default();
+        lines.push(format!("  -d {}", curl::quote(&pretty)));
+    }
+    lines.extend([format!("  {target}"), format!("  {symbol}")]);
+    Ok(lines.join(" \\\n"))
+}
+
+/// A check from a `grpcurl` command line; `-plaintext` picks `grpc://`, else `grpcs://`.
+pub fn import(command: &str) -> Result<String, String> {
+    let words = curl::shell_words(command)?;
+    if !words
+        .first()
+        .is_some_and(|word| word.eq_ignore_ascii_case("grpcurl"))
+    {
+        return Err("Command must start with \"grpcurl\"".into());
+    }
+    let mut headers: Vec<(String, String)> = vec![];
+    let mut data = None;
+    let mut positional = vec![];
+    let mut plaintext = false;
+    let mut i = 1;
+    while i < words.len() {
+        let word = &words[i];
+        let value = words.get(i + 1).cloned().unwrap_or_default();
+        match word.to_ascii_lowercase().as_str() {
+            "-h" | "--header" | "-header" | "-rpc-header" | "-metadata" => {
+                if let Some((name, value)) = value.split_once(':') {
+                    let (name, value) = (name.trim(), value.trim());
+                    match headers.iter_mut().find(|(known, _)| known == name) {
+                        Some(pair) => pair.1 = value.into(),
+                        None => headers.push((name.into(), value.into())),
+                    }
+                }
+                i += 1;
+            }
+            "-d" | "-data" | "--data" => {
+                data = Some(value);
+                i += 1;
+            }
+            "-plaintext" => plaintext = true,
+            "-insecure"
+            | "-v"
+            | "-verbose"
+            | "-vv"
+            | "-format-error"
+            | "-emit-defaults"
+            | "-unix"
+            | "-keepalive-time"
+            | "-allow-unknown-fields" => {}
+            _ if word.starts_with('-') => {
+                if !value.is_empty() && !value.starts_with('-') {
+                    i += 1;
+                }
+            }
+            _ => positional.push(word.clone()),
+        }
+        i += 1;
+    }
+    let (Some(mut symbol), Some(target)) = (positional.pop(), positional.pop()) else {
+        return Err(
+            "Could not find both a target and a Service/Method in the grpcurl command".into(),
+        );
+    };
+    if !symbol.contains('/')
+        && let Some(dot) = symbol.rfind('.')
+    {
+        symbol.replace_range(dot..=dot, "/");
+    }
+    let scheme = if plaintext { "grpc" } else { "grpcs" };
+    let mut sections = vec![format!("#endpoint\n{scheme}://{target}/{symbol}")];
+    if !headers.is_empty() {
+        let lines: Vec<_> = headers.iter().map(|(k, v)| format!("{k}: {v}")).collect();
+        sections.push(format!("#headers\n{}", lines.join("\n")));
+    }
+    if let Some(data) = data.filter(|data| !data.is_empty() && data != "@") {
+        sections.push(format!("#message\n{}", curl::pretty(&data)));
+    }
+    Ok(sections.join("\n"))
+}
+
+#[derive(Debug, Default)]
+pub struct Grpc {
+    /// Services of servers, the most recent last.
+    services: Vec<(Server, Result<Vec<String>, String>)>,
+    /// Descriptors of a server's service, the most recent last.
+    pools: Vec<((Server, String), Result<DescriptorPool, String>)>,
+    runs: Vec<Run>,
+    count: u64,
+    /// A quiet reflection asked for while another ran.
+    waiting: Option<(Server, Goal)>,
+    /// Runs resolving their variables: the check and its descriptors.
+    resolving: BTreeMap<String, (Check, DescriptorPool)>,
+    calls: OneCall,
+}
+
+fn keep<K: PartialEq, V>(list: &mut Vec<(K, V)>, key: K, value: V) {
+    list.retain(|(known, _)| *known != key);
+    list.push((key, value));
+    if list.len() > KEPT {
+        list.remove(0);
+    }
+}
+
+impl Grpc {
+    fn known_pool(
+        &self,
+        server: &Server,
+        service: &str,
+    ) -> Option<&Result<DescriptorPool, String>> {
+        self.pools
+            .iter()
+            .rev()
+            .find(|((known, name), _)| known == server && name == service)
+            .map(|(_, pool)| pool)
+    }
+
+    fn running(&self, server: &Server, goal: &Goal) -> bool {
+        self.runs
+            .iter()
+            .any(|run| run.server == *server && run.goal == *goal)
+    }
+
+    /// The descriptors of the check's service: its `#proto` compiled, or what reflection
+    /// found.
+    pub fn pool(&self, check: &Check) -> Result<DescriptorPool, String> {
+        let source = check.text_of("proto");
+        if !source.trim().is_empty() {
+            return proto::compile(source);
+        }
+        let (target, service, _) = parse_endpoint(check.text_of("endpoint"));
+        if target.is_empty() || service.is_empty() {
+            return Err("serviceName and methodName are required".into());
+        }
+        let server = server(check, &target);
+        match self.known_pool(&server, &service) {
+            Some(pool) => pool.clone(),
+            None if self.running(&server, &Goal::Service(service.clone())) => Err(format!(
+                "The descriptors of {service} are being loaded through server reflection; run again in a moment"
+            )),
+            None => Err(format!(
+                "The descriptors of {service} are not loaded; add #proto or run Discover"
+            )),
+        }
+    }
+
+    /// The services reflection found on the check's server.
+    pub fn services(&self, check: &Check, target: &str) -> Vec<String> {
+        let server = server(check, target);
+        self.services
+            .iter()
+            .rev()
+            .find(|(known, _)| *known == server)
+            .and_then(|(_, services)| services.as_ref().ok().cloned())
+            .unwrap_or_default()
+    }
+
+    fn start(&mut self, server: Server, goal: Goal, loud: bool) -> Vec<Cmd> {
+        if self.running(&server, &goal) {
+            return vec![];
+        }
+        if !loud && !self.runs.is_empty() {
+            self.waiting = Some((server, goal));
+            return vec![];
+        }
+        self.count += 1;
+        let (run, ask) = Run::start(self.count, server, goal, loud);
+        self.runs.push(run);
+        let mut cmds = vec![ask];
+        if loud {
+            cmds.insert(0, cmd::status("Discovery…", "busy"));
+        }
+        cmds
+    }
+
+    /// The descriptors of a service for a run, unless known or `#proto` has them.
+    fn descriptors(&mut self, check: &Check, retry: bool, loud: bool) -> Vec<Cmd> {
+        let (target, service, _) = parse_endpoint(check.text_of("endpoint"));
+        if !check.text_of("proto").trim().is_empty() || target.is_empty() || service.is_empty() {
+            return vec![];
+        }
+        let server = server(check, &target);
+        match self.known_pool(&server, &service) {
+            Some(Ok(_)) if !retry => vec![],
+            Some(Err(_)) if !retry => vec![],
+            _ => self.start(server, Goal::Service(service), loud),
+        }
+    }
+
+    fn document(&mut self, check: &Check) -> Vec<Cmd> {
+        let (_, _, method) = parse_endpoint(check.text_of("endpoint"));
+        if method.is_empty() {
+            return vec![];
+        }
+        self.descriptors(check, false, false)
+    }
+
+    /// A run: the descriptors must be known; the endpoint, metadata and message are
+    /// resolved when it starts.
+    fn run(&mut self, run: String, check: Check) -> Vec<Cmd> {
+        let pool = match run::no_options(&check, "gRPC").and_then(|()| self.pool(&check)) {
+            Ok(pool) => pool,
+            Err(error) => return vec![cmd::fail(&run, &error, &Value::Null)],
+        };
+        let sections = json!({"endpoint": check.text_of("endpoint"),
+            "headers": check.text_of("headers"), "message": check.text_of("message")});
+        self.resolving.insert(run.clone(), (check, pool));
+        vec![run::resolve_value(format!("{run}{RESOLVE}"), &sections)]
+    }
+
+    fn resolved(&mut self, run: &str, result: Result<Value, Failure>) -> Vec<Cmd> {
+        let Some((check, pool)) = self.resolving.remove(run) else {
+            return vec![];
+        };
+        let call = run::resolved_value(result).and_then(|sections| {
+            let check = run::with_sections(&check, &sections);
+            request(&check, &pool, sections["message"].as_str().unwrap_or(""))
+        });
+        match call {
+            Ok(request) => vec![
+                self.calls
+                    .call(run, DriverCall::new(grpc::DRIVER, &request)),
+            ],
+            Err(error) => vec![cmd::fail(run, &error, &Value::Null)],
+        }
+    }
+
+    fn hints(&mut self, check: &Check, pos: usize) -> Vec<Cmd> {
+        let at = At::new(&check.text, pos);
+        let endpoint = if at.name() == Some("endpoint") {
+            at.before.trim()
+        } else {
+            check.text_of("endpoint").trim()
+        };
+        let (target, path) = target_path(endpoint);
+        if !discoverable(target) {
+            return vec![];
+        }
+        if !path.contains('/') {
+            let server = server(check, target);
+            let known = self
+                .services
+                .iter()
+                .any(|(known, found)| *known == server && found.is_ok());
+            return if known {
+                vec![]
             } else {
-                match element_kind {
-                    "boolean" | "number" => "bare",
-                    kind => kind,
+                self.start(server, Goal::Services, true)
+            };
+        }
+        let (target, service, _) = parse_endpoint(check.text_of("endpoint"));
+        let failed = matches!(
+            self.known_pool(&server(check, &target), &service),
+            Some(Err(_))
+        );
+        self.descriptors(check, failed, true)
+    }
+
+    fn manual(&mut self, check: &Check) -> Vec<Cmd> {
+        let source = check.text_of("proto");
+        if !source.trim().is_empty() {
+            return vec![match proto::compile(source) {
+                Ok(_) => cmd::status("Discovery · OK", "ok"),
+                Err(message) => cmd::status(&format!("Discovery · ERROR · {message}"), "error"),
+            }];
+        }
+        let (target, service, _) = parse_endpoint(check.text_of("endpoint"));
+        if !discoverable(&target) {
+            return vec![cmd::status(
+                "Discovery · WARNING · Invalid or incomplete service address for discovery",
+                "warning",
+            )];
+        }
+        let goal = if service.is_empty() {
+            Goal::Services
+        } else {
+            Goal::Service(service)
+        };
+        self.start(server(check, &target), goal, true)
+    }
+
+    fn reflected(&mut self, id: u64, result: Result<Value, Failure>) -> Vec<Cmd> {
+        let Some(at) = self.runs.iter().position(|run| run.id == id) else {
+            return vec![];
+        };
+        let step = self.runs[at].reply(result);
+        if let Ok(Step::Ask(ask)) = step {
+            return vec![ask];
+        }
+        let run = self.runs.remove(at);
+        let mut cmds = match (step, &run.goal) {
+            (Ok(Step::Done(Found::Services(services))), _) => {
+                let count = services.len();
+                keep(&mut self.services, run.server.clone(), Ok(services));
+                vec![
+                    cmd::status_with("Discovery · OK", "ok", &json!({"services": count})),
+                    cmd::log("info", &format!("gRPC reflection found {count} services")),
+                ]
+            }
+            (Ok(Step::Done(Found::Pool(pool))), Goal::Service(service)) => {
+                let count = pool
+                    .get_service_by_name(service)
+                    .map_or(0, |found| found.methods().len());
+                keep(
+                    &mut self.pools,
+                    (run.server.clone(), service.clone()),
+                    Ok(pool),
+                );
+                vec![
+                    cmd::status_with("Discovery · OK", "ok", &json!({"methods": count})),
+                    cmd::log(
+                        "info",
+                        &format!("gRPC reflection found {count} methods of {service}"),
+                    ),
+                ]
+            }
+            (Err(message), goal) => {
+                match goal {
+                    Goal::Services => {
+                        keep(&mut self.services, run.server.clone(), Err(message.clone()))
+                    }
+                    Goal::Service(service) => keep(
+                        &mut self.pools,
+                        (run.server.clone(), service.clone()),
+                        Err(message.clone()),
+                    ),
+                }
+                vec![
+                    cmd::status(&format!("Discovery · ERROR · {message}"), "error"),
+                    cmd::log("error", &format!("gRPC reflection failed: {message}")),
+                ]
+            }
+            _ => vec![],
+        };
+        if !run.loud {
+            cmds.retain(|cmd| cmd.name != "status.set");
+        }
+        if self.runs.is_empty()
+            && let Some((server, goal)) = self.waiting.take()
+        {
+            cmds.extend(self.start(server, goal, false));
+        }
+        cmds
+    }
+
+    fn reply(&mut self, tag: &str, result: Result<Value, Failure>) -> Vec<Cmd> {
+        if let Some(id) = reflection::id(tag) {
+            return self.reflected(id, result);
+        }
+        if let Some(run) = tag.strip_suffix(RESOLVE) {
+            return self.resolved(run, result);
+        }
+        let mut calls = std::mem::take(&mut self.calls);
+        let render = |call: &DriverCall, response: &Value| {
+            let call = call.request();
+            render(
+                call["path"].as_str().unwrap_or(""),
+                self.response_pool(&call).as_ref(),
+                response,
+            )
+            .map(Answer::from)
+        };
+        let cmds = calls.reply(tag, result, render).unwrap_or_default();
+        self.calls = calls;
+        cmds
+    }
+
+    /// The descriptors a response is decoded with: its call's `#proto`, else what
+    /// reflection found for its service.
+    fn response_pool(&self, call: &Value) -> Option<DescriptorPool> {
+        if let Some(source) = call[CONSOLE]["proto"].as_str() {
+            return proto::compile(source).ok();
+        }
+        let service = call["path"]
+            .as_str()?
+            .trim_start_matches('/')
+            .rsplit_once('/')?
+            .0;
+        self.pools
+            .iter()
+            .rev()
+            .find_map(|((_, name), pool)| (name == service).then(|| pool.as_ref().ok()).flatten())
+            .cloned()
+    }
+}
+
+/// A target reflection can ask: a host, without spaces.
+fn discoverable(target: &str) -> bool {
+    let authority = target.split_once("://").map_or(target, |(_, rest)| rest);
+    !authority.is_empty() && !target.contains(char::is_whitespace)
+}
+
+/// The part of a check a line is in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+enum Area {
+    /// Before the first marker, or a rendered response highlighted alone: JSON.
+    Prelude,
+    Endpoint,
+    Headers,
+    Proto,
+    Message,
+    Other,
+    Response,
+}
+
+impl Area {
+    const ALL: [Area; 7] = [
+        Area::Prelude,
+        Area::Endpoint,
+        Area::Headers,
+        Area::Proto,
+        Area::Message,
+        Area::Other,
+        Area::Response,
+    ];
+
+    fn json(self) -> bool {
+        matches!(self, Area::Prelude | Area::Message | Area::Response)
+    }
+}
+
+fn token(start: usize, end: usize, kind: &str) -> Token {
+    Token {
+        start: start as u32,
+        len: (end - start) as u32,
+        kind: kind.into(),
+    }
+}
+
+/// An endpoint line: the scheme `keyword`, the target `def`, the service `property` and the
+/// method `variable-3`.
+pub fn endpoint_tokens(line: &str) -> Vec<Token> {
+    let (target, _) = target_path(line);
+    let mut out: Vec<Token> = endpoint::tokens(target, false)
+        .into_iter()
+        .filter(|token| token.kind != "string")
+        .collect();
+    let mut separators = 0;
+    let mut pos = target.len();
+    while pos < line.len() {
+        if let Some(end) = placeholder(line, pos) {
+            pos = end;
+            continue;
+        }
+        if line[pos..].starts_with('/') {
+            separators += 1;
+            pos += 1;
+            continue;
+        }
+        let end = line[pos..]
+            .find(['/', '{'])
+            .map_or(line.len(), |end| pos + end.max(1));
+        let kind = if separators > 1 {
+            "variable-3"
+        } else {
+            "property"
+        };
+        out.push(token(pos, end, kind));
+        pos = end;
+    }
+    out
+}
+
+fn whole(line: &str, kind: &str) -> Vec<Token> {
+    if line.is_empty() {
+        return vec![];
+    }
+    vec![token(0, line.len(), kind)]
+}
+
+/// Highlighting of a gRPC check: the endpoint, metadata, the JSON message and response.
+pub fn highlight(state: &[u8], lines: &[String]) -> Vec<Line> {
+    let (mut area, rest) = match state.split_first() {
+        Some((area, rest)) => (
+            Area::ALL
+                .get(*area as usize)
+                .copied()
+                .unwrap_or(Area::Other),
+            rest,
+        ),
+        None => (Area::Prelude, &[][..]),
+    };
+    let mut body = json::State::decode(rest);
+    lines
+        .iter()
+        .map(|line| {
+            let named = marker(line).map(|(name, _)| name);
+            let is_marker = named.as_deref().is_some_and(|name| {
+                area != Area::Response || matches!(name, "responce" | "response")
+            });
+            let tokens = if is_marker {
+                area = match named.as_deref() {
+                    Some("endpoint") => Area::Endpoint,
+                    Some("headers") => Area::Headers,
+                    Some("proto") => Area::Proto,
+                    Some("message") => Area::Message,
+                    Some("responce" | "response") => Area::Response,
+                    _ => Area::Other,
+                };
+                body = json::State::default();
+                whole(line, "comment")
+            } else {
+                match area {
+                    Area::Endpoint => endpoint_tokens(line),
+                    Area::Headers => headers::tokens(line),
+                    Area::Prelude | Area::Message | Area::Response => json::tokens(line, &mut body),
+                    Area::Proto | Area::Other => vec![],
                 }
             };
-            let mut value = json!({"name":field.name(),"kind":kind});
-            let shape = if field.is_list() {
-                value["items"] = json!({"kind":element_kind});
-                &mut value["items"]
-            } else {
-                &mut value
-            };
-            if shape["kind"] == "object"
-                && !field.is_map()
-                && depth <= 5
-                && let Kind::Message(nested) = field.kind()
-            {
-                shape["fields"] = json!(message_fields(nested, depth + 1));
+            let mut state = vec![area as u8];
+            if area.json() {
+                body.encode(&mut state);
             }
-            value
+            Line { tokens, state }
         })
         .collect()
 }
-pub async fn discover(params: &Value) -> Result<Value> {
-    let (target, service, method) = parse_endpoint(&text(params, "endpoint"));
-    async {
-        let channel = channel(&target).await?;
-        let metadata = metadata(params)?;
-        if service.is_empty() {
-            let response = reflect(
-                channel,
-                reflection_request::Request::ListServices("*".into()),
-                &metadata,
-            )
-            .await?;
-            let services: Vec<_> = response
-                .list_services_response
-                .ok_or_else(|| Error::new("Reflection returned no service list"))?
-                .service
-                .into_iter()
-                .map(|s| s.name)
-                .filter(|s| !s.starts_with("grpc.reflection."))
-                .collect();
-            return Ok(json!({"services":services}));
+
+/// Folds of the `{`/`[` blocks in `#proto`, `#message` and the response.
+pub fn folds(text: &str) -> Vec<Fold> {
+    let mut out = vec![];
+    let mut region: Vec<&str> = vec![];
+    let mut start = 0;
+    let mut flush = |region: &mut Vec<&str>, start: usize| {
+        out.extend(json::folds(region.drain(..)).into_iter().map(|fold| Fold {
+            start: fold.start + start as u32,
+            end: fold.end + start as u32,
+        }));
+    };
+    let mut blocks = false;
+    for (i, line) in text.split('\n').enumerate() {
+        if let Some((name, _)) = marker(line) {
+            flush(&mut region, start);
+            blocks = matches!(name.as_str(), "proto" | "message" | "responce" | "response");
+            start = i + 1;
+            continue;
         }
-        let proto = text(params, "proto");
-        let pool = if proto.trim().is_empty() {
-            reflection_pool(channel, &service, &metadata).await?
-        } else {
-            compile_proto(&proto)?
-        };
-        let service = pool
-            .get_service_by_name(&service)
-            .ok_or_else(|| Error::new("Unknown service"))?;
-        let methods: Vec<_> = service.methods().map(|m| m.name().to_string()).collect();
-        let mut result = json!({"methods":methods});
-        if !method.is_empty() {
-            result["fields"] = json!(
-                service
-                    .methods()
-                    .find(|m| m.name() == method)
-                    .map(|m| message_fields(m.input(), 0))
-                    .unwrap_or_default()
-            );
+        if blocks {
+            region.push(line);
         }
-        Ok::<_, Error>(result)
     }
-    .await
+    flush(&mut region, start);
+    out
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use axum::{
-        Router,
-        body::{Body, to_bytes},
-        extract::{Request, State},
-        response::Response,
-    };
-    use std::sync::{Arc, Mutex};
-    type Seen = Arc<Mutex<Vec<(String, Vec<Value>, String)>>>;
-    const PROTO: &str = r#"syntax = "proto3";
-        package fixture;
-        import "google/protobuf/timestamp.proto";
-        message Message { string text = 1; int64 count = 2; Nested child = 3; repeated string tags = 4; google.protobuf.Timestamp at = 5; bytes payload = 6; oneof choice { string selected = 7; int32 number = 8; } repeated StoreView products_by_store_view = 9; repeated bool flags = 10; repeated int32 ids = 11; }
-        message Nested { bool enabled = 1; }
-        message StoreView { string store_view_code = 1; repeated Product products = 2; }
-        message Product { string sku = 1; repeated string tags = 2; }
-        service Echo {
-            rpc Unary(Message) returns (Message);
-            rpc Server(Message) returns (stream Message);
-            rpc Client(stream Message) returns (Message);
-            rpc Bidi(stream Message) returns (stream Message);
-            rpc Fails(Message) returns (Message);
-        }"#;
-    #[derive(Clone)]
-    struct Fixture {
-        pool: DescriptorPool,
-        alpha_only: bool,
-        reflection_auth: bool,
-        seen: Seen,
+/// Completion in a gRPC check: markers, schemes, services and methods from reflection,
+/// metadata and `#message` fields of the method's input.
+pub fn complete(module: &Grpc, check: &Check, pos: usize) -> Completions {
+    let at = At::new(&check.text, pos);
+    if at.in_placeholder() || at.in_response() {
+        return at.none();
     }
-    struct Server {
-        target: String,
-        task: tokio::task::JoinHandle<()>,
-        fixture: Fixture,
+    if let Some(markers) = at.markers(&SECTIONS) {
+        return markers;
     }
-    impl Drop for Server {
-        fn drop(&mut self) {
-            self.task.abort();
-        }
-    }
-    fn frames(bytes: &[u8]) -> Vec<&[u8]> {
-        let mut input = bytes;
-        let mut out = vec![];
-        while input.len() >= 5 {
-            assert_eq!(input[0], 0);
-            let len = u32::from_be_bytes(input[1..5].try_into().unwrap()) as usize;
-            assert!(input.len() >= len + 5);
-            out.push(&input[5..len + 5]);
-            input = &input[len + 5..];
-        }
-        out
-    }
-    fn framed(message: impl Message) -> Vec<u8> {
-        let raw = message.encode_to_vec();
-        let mut bytes = vec![0];
-        bytes.extend_from_slice(&(raw.len() as u32).to_be_bytes());
-        bytes.extend(raw);
-        bytes
-    }
-    fn response(bytes: Vec<u8>, status: i32) -> Response {
-        Response::builder()
-            .header("content-type", "application/grpc")
-            .header("grpc-status", status.to_string())
-            .header(
-                "grpc-message",
-                if status == 3 { "fixture-invalid" } else { "" },
+    let line_start = at.line_start(at.line);
+    match at.name() {
+        Some("endpoint") => {
+            if let Some(next) = at.next_section(&SECTIONS) {
+                return next;
+            }
+            let value = at.before.trim_start();
+            let from = line_start + at.before.len() - value.len();
+            let (target, path) = target_path(value);
+            if value.len() > target.len() {
+                let method = path.contains('/');
+                let names = if method {
+                    let service = path.rsplit_once('/').map_or("", |(service, _)| service);
+                    module
+                        .known_pool(&server(check, target), service)
+                        .and_then(|pool| pool.as_ref().ok())
+                        .and_then(|pool| pool.get_service_by_name(service))
+                        .map(|found| found.methods().map(|m| m.name().to_owned()).collect())
+                        .unwrap_or_default()
+                } else {
+                    module
+                        .services(check, target)
+                        .into_iter()
+                        .map(|service| format!("{service}/"))
+                        .collect::<Vec<_>>()
+                };
+                let start = if method {
+                    value.rfind('/').map_or(0, |i| i + 1)
+                } else {
+                    target.len() + 1
+                };
+                let items = names
+                    .into_iter()
+                    .map(|name| item(name, "gRPC reflection", "path"))
+                    .collect();
+                return finish(from + start, at.pos, &value[start..], items);
+            }
+            finish(
+                from,
+                at.pos,
+                value,
+                vec![
+                    item("grpc://", "Plain text", "url"),
+                    item("grpcs://", "TLS", "url"),
+                ],
             )
-            .header("x-reply", "fixture")
-            .body(Body::from(bytes))
-            .unwrap()
-    }
-    async fn handle(State(fixture): State<Fixture>, request: Request) -> Response {
-        let path = request.uri().path().to_string();
-        let token = request
-            .headers()
-            .get("x-token")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("")
-            .to_string();
-        let bytes = to_bytes(request.into_body(), 1024 * 1024).await.unwrap();
-        let messages = frames(&bytes);
-        if path.contains(".ServerReflection/") {
-            if fixture.reflection_auth && token != "reflection-token" {
-                return response(vec![], 16);
-            }
-            if fixture.alpha_only && path.contains(".v1.") {
-                return response(vec![], 12);
-            }
-            let request = ReflectionRequest::decode(messages[0]).unwrap();
-            let mut reply = ReflectionResponse::default();
-            match request.request.unwrap() {
-                reflection_request::Request::ListServices(_) => {
-                    reply.list_services_response = Some(ListServiceResponse {
-                        service: vec![
-                            ServiceResponse {
-                                name: "fixture.Echo".into(),
-                            },
-                            ServiceResponse {
-                                name: "grpc.reflection.v1alpha.ServerReflection".into(),
-                            },
-                        ],
-                    });
-                }
-                _ => {
-                    reply.file_descriptor_response = Some(FileDescriptorResponse {
-                        file_descriptor_proto: fixture
-                            .pool
-                            .file_descriptor_protos()
-                            .map(|f| f.encode_to_vec())
-                            .collect(),
-                    });
-                }
-            }
-            return response(framed(reply), 0);
         }
-        let descriptor = fixture.pool.get_message_by_name("fixture.Message").unwrap();
-        let decoded: Vec<DynamicMessage> = messages
-            .iter()
-            .map(|m| DynamicMessage::decode(descriptor.clone(), *m).unwrap())
-            .collect();
-        let values = decoded
-            .iter()
-            .map(|m| serde_json::to_value(m).unwrap())
-            .collect::<Vec<_>>();
-        fixture
-            .seen
-            .lock()
-            .unwrap()
-            .push((path.clone(), values.clone(), token));
-        if path.ends_with("/Fails") {
-            return response(vec![], 3);
-        }
-        let mut out = Vec::new();
-        if path.ends_with("/Client") {
-            let value = json!({"text":values.iter().map(|v|v["text"].as_str().unwrap_or("")).collect::<Vec<_>>().join("+"),"count":values.len().to_string()});
-            let raw = value.to_string();
-            out.extend(framed(
-                DynamicMessage::deserialize(
-                    descriptor,
-                    &mut serde_json::Deserializer::from_str(&raw),
-                )
-                .unwrap(),
-            ));
-        } else if path.ends_with("/Server") {
-            for _ in 0..3 {
-                out.extend(framed(decoded[0].clone()));
-            }
-        } else {
-            for message in decoded {
-                out.extend(framed(message));
-            }
-        }
-        response(out, 0)
-    }
-    async fn server(alpha_only: bool) -> Server {
-        server_with_auth(alpha_only, false).await
-    }
-    async fn server_with_auth(alpha_only: bool, reflection_auth: bool) -> Server {
-        let fixture = Fixture {
-            pool: compile_proto(PROTO).unwrap(),
-            alpha_only,
-            reflection_auth,
-            seen: Default::default(),
-        };
-        let router = Router::new().fallback(handle).with_state(fixture.clone());
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let target = listener.local_addr().unwrap().to_string();
-        let task = tokio::spawn(async move {
-            axum::serve(listener, router).await.unwrap();
-        });
-        Server {
-            target,
-            task,
-            fixture,
-        }
-    }
-    #[tokio::test]
-    async fn reflection_uses_authentication_for_services_methods_and_calls() {
-        for alpha_only in [false, true] {
-            let server = server_with_auth(alpha_only, true).await;
-            assert!(discover(&json!({"endpoint":server.target})).await.is_err());
-            let headers = json!({"X-Token":"reflection-token"});
-            let services = discover(&json!({"endpoint":server.target,"headers":headers}))
-                .await
-                .unwrap();
-            assert_eq!(services["services"], json!(["fixture.Echo"]));
-            let endpoint = format!("{}/fixture.Echo/Unary", server.target);
-            let schema = discover(&json!({"endpoint":endpoint,"headers":headers}))
-                .await
-                .unwrap();
-            assert_eq!(schema["fields"][0]["name"], "text");
-            let result = send(&json!({"endpoint":endpoint,"headers":headers,"requestMessage":{"text":"authenticated"}})).await.unwrap();
-            assert_eq!(result["status"], 0);
-            assert_eq!(server.fixture.seen.lock().unwrap()[0].2, "reflection-token");
-        }
-    }
-    #[test]
-    fn endpoint_messages_proto_well_known_import_and_nested_discovery() {
-        assert_eq!(
-            parse_endpoint("grpcs://localhost:443/fixture.Echo/Unary"),
-            (
-                "grpcs://localhost:443".into(),
-                "fixture.Echo".into(),
-                "Unary".into()
-            )
-        );
-        assert_eq!(
-            parse_endpoint("localhost:443/fixture.Echo/"),
-            ("localhost:443".into(), "fixture.Echo".into(), "".into())
-        );
-        assert_eq!(
-            messages(Some(&json!("[{\"text\":\"a\"},{\"text\":\"b\"}]")))
-                .unwrap()
-                .len(),
-            2
-        );
-        assert_eq!(messages(None).unwrap(), vec![json!({})]);
-        assert!(messages(Some(&json!("not json"))).is_err());
-        assert!(compile_proto("not proto").is_err());
-        let pool = compile_proto(PROTO).unwrap();
-        let fields = message_fields(pool.get_message_by_name("fixture.Message").unwrap(), 0);
-        assert_eq!(
-            fields[2],
-            json!({"name":"child","kind":"object","fields":[{"name":"enabled","kind":"bare"}]})
-        );
-        assert_eq!(fields[3]["kind"], "array");
-        assert_eq!(fields[3]["items"], json!({"kind":"string"}));
-    }
-    #[test]
-    fn repeated_fields_keep_their_element_types_and_nested_fields() {
-        let pool = compile_proto(PROTO).unwrap();
-        let fields = message_fields(pool.get_message_by_name("fixture.Message").unwrap(), 0);
-        let field = |name: &str| fields.iter().find(|field| field["name"] == name).unwrap();
-        assert_eq!(
-            field("products_by_store_view"),
-            &json!({"name":"products_by_store_view","kind":"array","items":{
-                "kind":"object","fields":[
-                    {"name":"store_view_code","kind":"string"},
-                    {"name":"products","kind":"array","items":{"kind":"object","fields":[
-                        {"name":"sku","kind":"string"},
-                        {"name":"tags","kind":"array","items":{"kind":"string"}}
-                    ]}}
-                ]
-            }})
-        );
-        assert_eq!(field("flags")["items"], json!({"kind":"boolean"}));
-        assert_eq!(field("ids")["items"], json!({"kind":"number"}));
-        let bounded = message_fields(pool.get_message_by_name("fixture.Message").unwrap(), 6);
-        assert_eq!(bounded[8]["items"], json!({"kind":"object"}));
-    }
-    #[tokio::test]
-    async fn pasted_proto_all_four_call_shapes_metadata_status_and_wkt() {
-        let server = server(false).await;
-        let call = |method: &str, message: Value| json!({"endpoint":format!("grpc://{}/fixture.Echo/{method}",server.target),"proto":PROTO,"headers":{"x-token":"sent-token"},"requestMessage":message});
-        let result = send(&call(
-            "Unary",
-            json!({"text":"one","count":"9007199254740993","at":"2026-10-17T01:00:00Z","payload":"AQID","selected":"yes"}),
-        ))
-        .await
-        .unwrap();
-        assert_eq!(result["status"], 0);
-        assert_eq!(result["statusText"], "OK");
-        assert_eq!(result["headers"]["x-reply"], "fixture");
-        let body: Value = serde_json::from_str(result["body"].as_str().unwrap()).unwrap();
-        assert_eq!(body["count"], "9007199254740993");
-        assert_eq!(body["at"], "2026-10-17T01:00:00Z");
-        assert_eq!(body["tags"], json!([]));
-        assert_eq!(body["payload"], json!({"type":"Buffer","data":[1,2,3]}));
-        assert_eq!(body["choice"], "selected");
-        assert_eq!(server.fixture.seen.lock().unwrap()[0].2, "sent-token");
-        let result = send(&call("Server", json!({"text":"server"})))
-            .await
-            .unwrap();
-        assert_eq!(
-            serde_json::from_str::<Value>(result["body"].as_str().unwrap())
-                .unwrap()
-                .as_array()
-                .unwrap()
-                .len(),
-            3
-        );
-        let result = send(&call("Client", json!([{"text":"a"},{"text":"b"}])))
-            .await
-            .unwrap();
-        let body: Value = serde_json::from_str(result["body"].as_str().unwrap()).unwrap();
-        assert_eq!(body["text"], "a+b");
-        assert_eq!(body["count"], "2");
-        let result = send(&call("Bidi", json!([{"text":"a"},{"text":"b"}])))
-            .await
-            .unwrap();
-        assert_eq!(
-            serde_json::from_str::<Value>(result["body"].as_str().unwrap())
-                .unwrap()
-                .as_array()
-                .unwrap()
-                .len(),
-            2
-        );
-        let result = send(&call("Fails", json!({}))).await.unwrap();
-        assert_eq!(result["status"], 3);
-        assert_eq!(result["statusText"], "INVALID_ARGUMENT");
-        assert_eq!(
-            serde_json::from_str::<Value>(result["body"].as_str().unwrap()).unwrap()["error"],
-            "fixture-invalid"
-        );
-    }
-    #[tokio::test]
-    async fn reflection_v1_and_v1alpha_discover_and_invoke_without_proto() {
-        for alpha_only in [false, true] {
-            let server = server(alpha_only).await;
-            let result = discover(&json!({"endpoint":server.target})).await.unwrap();
-            assert_eq!(result, json!({"services":["fixture.Echo"]}));
-            let methods = discover(&json!({"endpoint":format!("{}/fixture.Echo/",server.target)}))
-                .await
-                .unwrap();
-            assert_eq!(methods["methods"].as_array().unwrap().len(), 5);
-            assert!(methods.get("fields").is_none());
-            let endpoint = format!("{}/fixture.Echo/Unary", server.target);
-            let schema = discover(&json!({"endpoint":endpoint})).await.unwrap();
-            assert_eq!(schema["methods"].as_array().unwrap().len(), 5);
-            assert_eq!(schema["fields"][0], json!({"name":"text","kind":"string"}));
-            assert_eq!(
-                schema["fields"][8]["items"]["fields"][0]["name"],
-                "store_view_code"
+        Some("headers") => {
+            let used = headers::used(at.other_lines());
+            let mut result = finish(
+                line_start,
+                at.pos,
+                at.before.trim(),
+                headers::items(&HEADERS, &[], &used),
             );
-            assert_eq!(
-                schema["fields"][8]["items"]["fields"][1]["items"]["fields"][0]["name"],
-                "sku"
-            );
-            let result = send(&json!({"endpoint":endpoint,"requestMessage":{"text":"reflected"}}))
-                .await
-                .unwrap();
-            assert_eq!(result["status"], 0);
-            assert_eq!(
-                serde_json::from_str::<Value>(result["body"].as_str().unwrap()).unwrap()["text"],
-                "reflected"
-            );
+            if at.before.trim().is_empty() && !used.is_empty() {
+                let mut items = finish(line_start, at.pos, "", at.unused(&SECTIONS)).items;
+                items.append(&mut result.items);
+                result.items = items;
+            }
+            result
         }
-    }
-    #[tokio::test]
-    async fn discovery_errors_are_not_reported_as_successful_empty_lists() {
-        let server = server(false).await;
-        let error = discover(&json!({"endpoint":format!("{}/fixture.Missing/",server.target)}))
-            .await
-            .unwrap_err();
-        assert!(error.to_string().contains("Unknown service"), "{error}");
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        drop(listener);
-        assert!(
-            discover(&json!({"endpoint":address.to_string()}))
-                .await
-                .is_err()
-        );
-    }
-    #[tokio::test]
-    async fn unreachable_pasted_proto_returns_grpc_status_not_success() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        drop(listener);
-        let result = send(&json!({"endpoint":format!("{addr}/fixture.Echo/Unary"),"proto":PROTO}))
-            .await
-            .unwrap();
-        assert_eq!(result["status"], 14);
-        assert_eq!(result["statusText"], "UNAVAILABLE");
+        Some("message") => {
+            let (_, service, method) = parse_endpoint(check.text_of("endpoint"));
+            let fields = module
+                .pool(check)
+                .and_then(|pool| proto::method(&pool, &service, &method))
+                .map(|method| proto::fields(&method.input(), 0))
+                .unwrap_or_default();
+            let start = at.line_start(at.body_start()).min(at.pos);
+            let mut result = json::complete(&Value::Array(fields), at.whole(), at.pos - start);
+            result.from += start as u32;
+            result.to += start as u32;
+            result
+        }
+        _ => at.none(),
     }
 }
+
+impl Module for Grpc {
+    type Msg = ();
+
+    fn update(&mut self, event: Event<()>) -> Vec<Cmd> {
+        match event {
+            Event::Document(check) => self.document(&check),
+            Event::Hints { check, pos } => self.hints(&check, pos as usize),
+            Event::Discover(check) => self.manual(&check),
+            Event::Reply { tag, result } => self.reply(&tag, result),
+            Event::Run { tag, check } => self.run(tag, check),
+            Event::Cancel { tag } => {
+                self.resolving.remove(&tag);
+                self.calls.cancel(&tag);
+                vec![]
+            }
+            _ => vec![],
+        }
+    }
+
+    fn subscriptions(&self) -> Subscriptions {
+        Subscriptions {
+            document: true,
+            hints: true,
+            discover: true,
+            run: true,
+            ..Subscriptions::default()
+        }
+    }
+
+    fn highlight(&self, state: &[u8], lines: &[String]) -> Vec<Line> {
+        highlight(state, lines)
+    }
+
+    fn complete(&self, check: &Check, pos: u32) -> Completions {
+        complete(self, check, pos as usize)
+    }
+
+    fn fold(&self, check: &Check) -> Vec<Fold> {
+        folds(&check.text)
+    }
+
+    fn export(&self, check: &Check) -> Result<String, String> {
+        export(check)
+    }
+
+    fn import(&self, text: &str) -> Result<String, String> {
+        import(text)
+    }
+}
+
+services_sdk::export!(Grpc);

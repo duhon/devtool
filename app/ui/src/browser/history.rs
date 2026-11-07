@@ -314,17 +314,12 @@ impl Component for History {
                             .iter()
                             .find(|entry| Some(entry.id) == self.selected)
                             .ok_or_else(|| "History execution metadata is missing".to_owned())
-                            .and_then(|entry| {
+                            .map(|entry| {
                                 let time = String::from(
                                     js_sys::Date::new(&entry.ended_at.into())
                                         .to_locale_time_string("en-US"),
                                 );
-                                crate::format::history_document(
-                                    &ctx.props().service,
-                                    &self.text,
-                                    &time,
-                                    true,
-                                )
+                                crate::format::history_document(&self.text, &time)
                             });
                         match display {
                             Ok((text, regions)) => {

@@ -298,7 +298,6 @@ pub struct HostProps {
 }
 pub enum Msg {
     Modules(Reply),
-    ModulesReady,
     Loaded(Result<(Database, Option<Library>), String>),
     Imported(Result<Library, String>),
     Storage,
@@ -388,7 +387,7 @@ impl Component for Host {
             before_unload,
         };
         if ctx.props().restored {
-            super::module_ui::prepare(&this.transport, ctx.link().callback(|_| Msg::ModulesReady));
+            this.modules_ready = true;
         } else {
             this.transport.request(
                 json!({"service":"modules"}),
@@ -408,13 +407,8 @@ impl Component for Host {
                 {
                     web_sys::console::warn_1(&format!("Modules: {error}").into());
                 }
-                super::module_ui::prepare(
-                    &self.transport,
-                    ctx.link().callback(|_| Msg::ModulesReady),
-                );
-                return false;
+                self.modules_ready = true;
             }
-            Msg::ModulesReady => self.modules_ready = true,
             Msg::Storage => {
                 if let Some(store) = &self.store {
                     store.borrow_mut().refresh();
