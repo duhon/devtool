@@ -89,6 +89,7 @@ fn check(text: &str) -> Check {
     }
     close(current, &mut body);
     Check {
+        columns: Vec::new(),
         service: "grpc".into(),
         text: text.into(),
         sections,
@@ -544,7 +545,7 @@ fn highlighting_and_folds() {
     ]
     .map(String::from)
     .to_vec();
-    let highlighted = grpc.highlight(&[], &lines);
+    let highlighted = grpc.highlight(&[], &lines, &[]);
     let styled = |i: usize| -> Vec<(String, String)> {
         highlighted[i]
             .tokens
@@ -569,7 +570,7 @@ fn highlighting_and_folds() {
     );
     assert_eq!(styled(0), vec![("#endpoint".into(), "comment".into())]);
     assert!(styled(6).iter().any(|(_, kind)| kind == "number"));
-    let again = grpc.highlight(&highlighted[5].state, &lines[6..7]);
+    let again = grpc.highlight(&highlighted[5].state, &lines[6..7], &[]);
     assert_eq!(again[0].tokens, highlighted[6].tokens);
     let folds = grpc.fold(&check(&lines.join("\n")));
     assert_eq!(folds.len(), 1);

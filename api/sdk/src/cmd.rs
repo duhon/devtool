@@ -18,6 +18,7 @@ pub const NAMES: &[&str] = &[
     "history.search",
     "os.env",
     "vars.resolve",
+    "vars.profiles",
     "clipboard.read",
     "clipboard.write",
     "sources.read",
@@ -104,7 +105,9 @@ pub fn result(run: &str, rendered: &crate::Rendered, debug: &Value) -> Cmd {
         run,
         "run.result",
         &json!({"body": rendered.text, "language": rendered.language,
-            "outcome": rendered.outcome, "debug": debug}),
+            "outcome": rendered.outcome, "debug": debug,
+            "columns": rendered.columns.iter()
+                .map(|column| [&column.name, &column.kind]).collect::<Vec<_>>()}),
     )
 }
 
@@ -115,6 +118,25 @@ pub fn fail(run: &str, error: &str, debug: &Value) -> Cmd {
         "run.result",
         &json!({"error": error, "outcome": "ERROR", "debug": debug}),
     )
+}
+
+/// Saves a finished run in History: `entry` has `checkId`, `sessionId`, `title`, `module`,
+/// `started`, `ended` (ms), `status` (`success`, `error`, `stopped`), `text` and `defer`
+/// (kept back like a repeat's earlier runs).
+pub fn history_insert(tag: impl Into<String>, entry: &Value) -> Cmd {
+    Cmd::new(tag, "history.insert", entry)
+}
+
+/// Lists History; `query` as the Host's History `list` takes it.
+pub fn history_search(tag: impl Into<String>, query: &Value) -> Cmd {
+    Cmd::new(tag, "history.search", query)
+}
+
+/// Interim until the Dictionary panel module: the profiles variables resolve from, as
+/// `{order, profiles}` — the session `var`, the Dictionary of the sources with its local
+/// layer, and `env`.
+pub fn vars_profiles(tag: impl Into<String>) -> Cmd {
+    Cmd::new(tag, "vars.profiles", &json!({}))
 }
 
 pub fn kv_get(tag: impl Into<String>, key: &str) -> Cmd {

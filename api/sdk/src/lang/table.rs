@@ -359,6 +359,9 @@ pub struct State {
     pub json: Option<json::State>,
     /// Column kinds named by `Columns-Type` lines ([`State::declare`]); they outlive tables.
     pub declared: BTreeMap<String, Kind>,
+    /// Column kinds the server reported for the current response (`render` metadata); a
+    /// declared kind wins. They end with the response.
+    pub reported: BTreeMap<String, Kind>,
     /// The declared kinds of the current table's columns, from its header row.
     pub columns: Vec<Option<Kind>>,
     /// Undeclared cells that look like JSON are styled as JSON.
@@ -501,6 +504,19 @@ impl State {
         }
     }
 
+    /// Takes the column types the server reported for the response that starts here.
+    pub fn report(&mut self, columns: &[crate::ColumnType]) {
+        self.reported = reported(columns);
+    }
+
+    /// The kind of column `name`: declared by `Columns-Type`, else reported by the server.
+    pub fn kind_of(&self, name: &str) -> Option<Kind> {
+        self.declared
+            .get(name)
+            .or_else(|| self.reported.get(name))
+            .copied()
+    }
+
     /// Takes the kinds of a `Columns-Type: column=kind…` line; other lines change nothing.
     pub fn declare(&mut self, line: &str) {
         let Some((name, value)) = line.split_once(':') else {
@@ -551,6 +567,12 @@ impl State {
                 Some(cell) => cell.encode(out),
                 None => out.push(0),
             }
+        }
+        len(out, self.reported.len());
+        for (name, kind) in &self.reported {
+            len(out, name.len());
+            out.extend(name.as_bytes());
+            out.push(kind_byte(Some(*kind)));
         }
     }
 
@@ -603,7 +625,14 @@ impl State {
                     atom: String::from_utf8(take(&mut rest, n)?.to_vec()).ok()?,
                 }));
             }
+            let mut reported = BTreeMap::new();
+            for _ in 0..count(&mut rest)? {
+                let n = count(&mut rest)?;
+                let name = String::from_utf8(take(&mut rest, n)?.to_vec()).ok()?;
+                reported.insert(name, byte_kind(take(&mut rest, 1)?[0])?);
+            }
             let state = State {
+                reported,
                 cuts,
                 borders,
                 vertical: flags & 1 != 0,
@@ -728,11 +757,43 @@ fn row_cuts(line: &str) -> Vec<u32> {
         .collect()
 }
 
+/// Reported kinds other than text: a text column may still hold JSON the tokenizer guesses.
+fn reported(columns: &[crate::ColumnType]) -> BTreeMap<String, Kind> {
+    columns
+        .iter()
+        .filter_map(|column| Some((column.name.clone(), Kind::parse(&column.kind)?)))
+        .filter(|(_, kind)| *kind != Kind::Text)
+        .collect()
+}
+
+/// The [`crate::ColumnType`]s of `columns`, for `render` metadata.
+pub fn types(columns: &[Column]) -> Vec<crate::ColumnType> {
+    columns
+        .iter()
+        .map(|column| crate::ColumnType::new(&column.name, kind_name(column.kind)))
+        .collect()
+}
+
+/// The name [`Kind::parse`] reads back.
+pub fn kind_name(kind: Kind) -> &'static str {
+    match kind {
+        Kind::Text => "text",
+        Kind::Number => "number",
+        Kind::Boolean => "boolean",
+        Kind::Datetime => "datetime",
+        Kind::Json => "json",
+    }
+}
+
 /// The folds of the JSON values of vertical records (`name: {` to its closing bracket) in a
-/// check's text, except of columns `Columns-Type` declares another kind; table rows never fold.
-pub fn folds(text: &str) -> Vec<crate::Fold> {
+/// check's text, except of columns `Columns-Type` declares, or the server reported
+/// (`columns`), as another kind; table rows never fold.
+pub fn folds(text: &str, columns: &[crate::ColumnType]) -> Vec<crate::Fold> {
     let lines: Vec<&str> = text.split('\n').collect();
-    let mut declared = State::default();
+    let mut declared = State {
+        reported: reported(columns),
+        ..State::default()
+    };
     for line in lines
         .iter()
         .take_while(|line| !line.trim_start().starts_with("#respon"))
@@ -764,9 +825,8 @@ pub fn folds(text: &str) -> Vec<crate::Fold> {
                 at += 1;
             }
             if declared
-                .declared
-                .get(name)
-                .is_some_and(|kind| *kind != Kind::Json)
+                .kind_of(name)
+                .is_some_and(|kind| kind != Kind::Json)
             {
                 continue;
             }
@@ -832,7 +892,7 @@ pub fn tokens(line: &str, state: &mut State) -> Vec<Token> {
             };
             if header {
                 let name = line[start..end].trim();
-                state.columns.push(state.declared.get(name).copied());
+                state.columns.push(state.kind_of(name));
             } else if state.borders >= 2 {
                 let kind = state.columns.get(index).copied().flatten();
                 let cell = &line[start..end];
@@ -873,7 +933,7 @@ pub fn tokens(line: &str, state: &mut State) -> Vec<Token> {
         && !line[..colon].trim().is_empty()
     {
         let mut out = vec![super::token(0, colon + 2, "property")];
-        let kind = state.declared.get(line[..colon].trim()).copied();
+        let kind = state.kind_of(line[..colon].trim());
         if let Some(json) = cell_tokens(
             &line[colon + 2..],
             colon + 2,
@@ -1078,11 +1138,46 @@ mod tests {
         assert!(styles.contains(&("\"a\"".into(), "property".into())));
         let text = "#query\nx\\G\n#responce OK\n*************************** 1. row ***************************\n doc: {\n        \"a\": [\n          1\n        ]\n      }\n  id: 1\n+---+\n| { |\n+---+\n| } |";
         let ranges = |text| -> Vec<(u32, u32)> {
-            folds(text).into_iter().map(|f| (f.start, f.end)).collect()
+            folds(text, &[])
+                .into_iter()
+                .map(|f| (f.start, f.end))
+                .collect()
         };
         assert_eq!(ranges(text), [(4, 8), (5, 7)]);
         let typed = "#options\nColumns-Type: doc=text\n#responce OK\n***** 1. row *****\n doc: {\n        \"a\": 1\n      }\nmore: {\n      }";
         assert_eq!(ranges(typed), [(7, 8)]);
+    }
+
+    #[test]
+    fn reported_kinds_style_and_fold_unless_columns_type_overrides_them() {
+        let reported = [
+            crate::ColumnType::new("doc", "json"),
+            crate::ColumnType::new("n", "number"),
+        ];
+        let mut state = State::default();
+        state.report(&reported);
+        let mut styles = Vec::new();
+        for line in [
+            "+----+---------+",
+            "| n  | doc     |",
+            "+----+---------+",
+            "| 7  | {\"a\":1} |",
+        ] {
+            styles.extend(styled(line, &tokens(line, &mut state)));
+        }
+        assert!(styles.contains(&("7".into(), "number".into())));
+        assert!(styles.contains(&("\"a\"".into(), "property".into())));
+        let mut declared = State::default();
+        declared.report(&reported);
+        declared.declare("Columns-Type: doc=text");
+        assert_eq!(declared.kind_of("doc"), Some(Kind::Text));
+        assert_eq!(declared.kind_of("n"), Some(Kind::Number));
+        let text =
+            "#query\nx\\G\n#responce OK\n***** 1. row *****\n doc: {\n        \"a\": 1\n      }";
+        let folded = |columns: &[crate::ColumnType]| folds(text, columns).len();
+        assert_eq!(folded(&[]), 1);
+        assert_eq!(folded(&[crate::ColumnType::new("doc", "text")]), 1);
+        assert_eq!(folded(&[crate::ColumnType::new("doc", "number")]), 0);
     }
 
     #[test]

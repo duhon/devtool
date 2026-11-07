@@ -208,13 +208,15 @@ fn package_at(root: &Path, dir: &Path) -> Result<Package> {
     Ok(package)
 }
 
-/// The shipped modules: the module crates in `modules/services`.
+/// The shipped modules: the module crates in `modules/services` and `modules/panels`.
 fn packages(root: &Path) -> Result<Vec<Package>> {
     let mut packages = Vec::new();
-    for entry in fs::read_dir(root.join("modules/services"))? {
-        let dir = entry?.path();
-        if is_module(&dir) {
-            packages.push(package_at(root, &dir)?);
+    for folder in ["modules/services", "modules/panels"] {
+        for entry in fs::read_dir(root.join(folder))? {
+            let dir = entry?.path();
+            if is_module(&dir) {
+                packages.push(package_at(root, &dir)?);
+            }
         }
     }
     packages.sort_by(|a, b| a.id.cmp(&b.id));

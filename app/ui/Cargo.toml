@@ -17,7 +17,7 @@ regex = "1"
 url = "2"
 uuid = { version = "1.29.0", features = ["v7", "js"] }
 
-# Service modules load from their wasm in the browser; native builds (tests) link them.
+# Service and panel modules load from their wasm in the browser; native builds (tests) link them.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 services-module-rest = { path = "../../modules/services/rest" }
 services-module-graphql = { path = "../../modules/services/graphql" }
@@ -27,6 +27,8 @@ services-module-grpc = { path = "../../modules/services/grpc" }
 services-module-splunk = { path = "../../modules/services/splunk" }
 services-module-terminal = { path = "../../modules/services/terminal" }
 services-module-artemis = { path = "../../modules/services/artemis" }
+services-module-variables = { path = "../../modules/panels/variables" }
+services-module-history = { path = "../../modules/panels/history" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 base64 = "0.22"

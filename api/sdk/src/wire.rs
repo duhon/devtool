@@ -33,6 +33,38 @@ pub struct Check {
     /// The check's Options as JSON.
     #[prost(bytes = "vec", tag = "4")]
     pub options: Vec<u8>,
+    /// The column types of the response shown under the check, as its `render` gave them.
+    #[prost(message, repeated, tag = "5")]
+    pub columns: Vec<ColumnType>,
+}
+
+/// The type of a result column as the server reported it (`render` metadata): `kind` is a
+/// [`crate::lang::table::Kind`] name (`text`, `number`, `boolean`, `datetime`, `json`).
+#[derive(Clone, PartialEq, Message)]
+pub struct ColumnType {
+    #[prost(string, tag = "1")]
+    pub name: String,
+    #[prost(string, tag = "2")]
+    pub kind: String,
+}
+
+impl ColumnType {
+    pub fn new(name: impl Into<String>, kind: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            kind: kind.into(),
+        }
+    }
+}
+
+/// The response column types of the check whose response marker is line `line` of a
+/// highlight batch.
+#[derive(Clone, PartialEq, Message)]
+pub struct LineColumns {
+    #[prost(uint32, tag = "1")]
+    pub line: u32,
+    #[prost(message, repeated, tag = "2")]
+    pub columns: Vec<ColumnType>,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -126,6 +158,11 @@ pub struct Rendered {
     /// The module's verdict for the status line: `OK`, `WARNING` or `ERROR`.
     #[prost(string, tag = "3")]
     pub outcome: String,
+    /// Metadata of the response: the types of its result columns as the server reported
+    /// them. The App keeps them with the response for highlighting and folds; `Columns-Type`
+    /// in the check overrides them.
+    #[prost(message, repeated, tag = "4")]
+    pub columns: Vec<ColumnType>,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -155,6 +192,9 @@ pub struct HighlightRequest {
     pub state: Vec<u8>,
     #[prost(string, repeated, tag = "2")]
     pub lines: Vec<String>,
+    /// Response column types for response markers among the lines.
+    #[prost(message, repeated, tag = "3")]
+    pub columns: Vec<LineColumns>,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -411,6 +451,30 @@ pub struct Updated {
     pub subscriptions: Option<Subscriptions>,
 }
 
+/// Resolve the `{{…}}` variables of `text`; in `json` mode each value is escaped as the
+/// content of a JSON string.
+#[derive(Clone, PartialEq, Message)]
+pub struct ResolveRequest {
+    #[prost(string, tag = "1")]
+    pub text: String,
+    #[prost(bool, tag = "2")]
+    pub json: bool,
+}
+
+/// A panel's answer to [`ResolveRequest`]: `handled` is false when it keeps no variables.
+#[derive(Clone, PartialEq, Message)]
+pub struct Resolved {
+    #[prost(bool, tag = "1")]
+    pub handled: bool,
+    #[prost(string, tag = "2")]
+    pub text: String,
+    #[prost(string, optional, tag = "3")]
+    pub error: Option<String>,
+    /// Values of sensitive variables the text now holds; History masks them.
+    #[prost(string, repeated, tag = "4")]
+    pub secrets: Vec<String>,
+}
+
 #[derive(Clone, PartialEq, Message)]
 pub struct AfterResponse {
     #[prost(message, optional, tag = "1")]
@@ -422,7 +486,10 @@ pub struct AfterResponse {
 /// A call from the Kernel into a module.
 #[derive(Clone, PartialEq, Message)]
 pub struct Request {
-    #[prost(oneof = "request::Kind", tags = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11")]
+    #[prost(
+        oneof = "request::Kind",
+        tags = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12"
+    )]
     pub kind: Option<request::Kind>,
 }
 
@@ -453,6 +520,8 @@ pub mod request {
         BeforeRequest(DriverCall),
         #[prost(message, tag = "11")]
         AfterResponse(AfterResponse),
+        #[prost(message, tag = "12")]
+        Resolve(ResolveRequest),
     }
 }
 
@@ -465,7 +534,7 @@ pub struct OptionalNode {
 /// A module's answer to one [`Request`].
 #[derive(Clone, PartialEq, Message)]
 pub struct Answer {
-    #[prost(oneof = "answer::Kind", tags = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10")]
+    #[prost(oneof = "answer::Kind", tags = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11")]
     pub kind: Option<answer::Kind>,
 }
 
@@ -494,5 +563,7 @@ pub mod answer {
         Text(String),
         #[prost(message, tag = "10")]
         Cmds(Cmds),
+        #[prost(message, tag = "11")]
+        Resolved(Resolved),
     }
 }

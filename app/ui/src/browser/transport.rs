@@ -321,9 +321,7 @@ impl Transport {
                 return id;
             }
             let variables = session.borrow().library.snapshot().variables.clone();
-            if service == "vars" && message["op"] == "resolve" {
-                message["variables"] = variables;
-            } else if service == "vars" || service == "dictionary" {
+            if service == "vars" || service == "dictionary" {
                 message["sessionVariables"] = variables;
             } else if crate::services::contains(service) || service == "agent" {
                 if !message["params"].is_object() {

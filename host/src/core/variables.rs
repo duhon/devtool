@@ -5,7 +5,6 @@ use super::{
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
-use services_contracts::ParamConfig;
 use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
     fs::{File, OpenOptions},
@@ -20,7 +19,6 @@ pub struct VariableStore {
     lock: Arc<Mutex<()>>,
     dictionary: bool,
 }
-pub type HistoryResolution = (Value, Result<(String, Vec<String>)>);
 #[derive(Clone, Serialize, Deserialize)]
 struct State {
     #[serde(default)]
@@ -278,9 +276,6 @@ impl VariableStore {
                     .collect::<Vec<_>>()
             })
             .collect())
-    }
-    fn read(&self) -> Result<State> {
-        self.read_with(&self.base()?)
     }
     fn read_with(&self, base: &Base) -> Result<State> {
         let variables = Self::read_file(&self.path, &|_| false)?;
@@ -781,154 +776,6 @@ impl VariableStore {
         };
         Self::write_file(&path, &state)?;
         Ok(self.scoped(&self.read_with(&base)?, &base))
-    }
-    /// Resolves the declared `config` params of a request; undeclared ones are dropped.
-    pub fn resolve_params(&self, config: &[ParamConfig], params: &Value) -> Result<Value> {
-        self.resolve_for_history(config, params, None)
-            .map(|value| value.0)
-    }
-    pub fn resolve_for_history(
-        &self,
-        config: &[ParamConfig],
-        params: &Value,
-        source: Option<&str>,
-    ) -> Result<HistoryResolution> {
-        use std::cell::RefCell;
-        let _file = self.file_lock()?;
-        let mut state = self.read()?;
-        if let Some(variables) = params.get("__consoleVariables") {
-            if !variables.is_object() {
-                return Err(Error::new("Session variables must be an object"));
-            }
-            state.profiles.insert("var".into(), variables.clone());
-        }
-        // Match the original eager highest-priority validation, even if the request uses no variables.
-        let mut effective: Map<String, Value> =
-            std::env::vars().map(|(k, v)| (k, json!(v))).collect();
-        let environment = effective.clone();
-        let mut resolved_profiles = Map::new();
-        let mut dependencies = std::collections::HashMap::new();
-        let mut effective_profiles = std::collections::HashMap::new();
-        for (index, profile) in state.order.iter().enumerate().rev() {
-            let mut profile_dependencies = std::collections::HashMap::new();
-            match Self::profile_tracking(&state, profile, false, &mut profile_dependencies) {
-                Ok(Value::Object(vars)) => {
-                    for name in vars.keys() {
-                        effective_profiles.insert(name.clone(), profile.clone());
-                    }
-                    for (name, values) in profile_dependencies {
-                        dependencies.insert(format!("{profile}:{name}"), values);
-                    }
-                    resolved_profiles.insert(profile.clone(), json!(vars));
-                    effective.extend(vars);
-                }
-                Err(e) if index <= 1 => return Err(e),
-                _ => {}
-            }
-        }
-        let cache = RefCell::new(std::collections::HashMap::<String, String>::new());
-        let sensitive = RefCell::new(Vec::new());
-        let resolve = |raw: &Value| -> Result<Value> {
-            let Some(s) = raw.as_str() else {
-                return Ok(raw.clone());
-            };
-            replace(s, |profile, var| {
-                let key = format!("{profile}:{var}");
-                if let Some(value) = cache.borrow().get(&key) {
-                    return Ok(value.clone());
-                }
-                let dependency_profile = if profile.is_empty() {
-                    effective_profiles.get(var).map(String::as_str)
-                } else {
-                    Some(profile)
-                };
-                if let Some(values) = dependency_profile
-                    .and_then(|profile| dependencies.get(&format!("{profile}:{var}")))
-                {
-                    sensitive.borrow_mut().extend(values.iter().cloned());
-                }
-                let value = if profile.is_empty() {
-                    effective.get(var).map(string).ok_or_else(|| {
-                        Error::new(format!("Missing environment variable(s): {var}"))
-                    })
-                } else if profile == "env" {
-                    environment.get(var).map(string).ok_or_else(|| {
-                        Error::new(format!("Missing environment variable(s): {var}"))
-                    })
-                } else {
-                    if !state.profiles.contains_key(profile) {
-                        return Err(Error::new(format!("Unknown profile: {profile}")));
-                    }
-                    if let Some(value) = resolved_profiles.get(profile).and_then(|p| p.get(var)) {
-                        Ok(string(value))
-                    } else {
-                        Self::named_tracking(
-                            &state,
-                            profile,
-                            var,
-                            &mut vec![],
-                            &mut sensitive.borrow_mut(),
-                        )
-                        .map(|v| string(&v))
-                    }
-                }?;
-                if crate::agent::Redactor::sensitive_name(var) {
-                    sensitive.borrow_mut().push(value.clone());
-                }
-                cache.borrow_mut().insert(key, value.clone());
-                Ok(value)
-            })
-            .map(Value::String)
-        };
-        let mut out = Map::new();
-        for p in config {
-            let Some(raw) = params.get(&p.name) else {
-                continue;
-            };
-            let mode =
-                p.resolve
-                    .as_deref()
-                    .unwrap_or(if p.kind == "json" { "object" } else { "text" });
-            let v = match mode {
-                "none" => raw.clone(),
-                "text" => resolve_value(raw, &resolve)?,
-                "object" => {
-                    if let Some(text) = raw.as_str().filter(|text| !text.is_empty()) {
-                        let value: Value = serde_json::from_str(text).map_err(|error| {
-                            Error::new(format!("{} must be valid JSON: {error}", p.name))
-                        })?;
-                        Value::String(serde_json::to_string(&resolve_value(&value, &resolve)?)?)
-                    } else {
-                        resolve_value(raw, &resolve)?
-                    }
-                }
-                _ => {
-                    return Err(Error::new(format!(
-                        "Unknown resolve mode \"{mode}\" for param \"{}\"",
-                        p.name
-                    )));
-                }
-            };
-            out.insert(p.name.clone(), v);
-        }
-        let snapshot = resolve(&json!(source.unwrap_or("")))
-            .map(|source| (string(&source), sensitive.into_inner()));
-        Ok((Value::Object(out), snapshot))
-    }
-}
-fn resolve_value(value: &Value, resolve: &impl Fn(&Value) -> Result<Value>) -> Result<Value> {
-    match value {
-        Value::Object(values) => values
-            .iter()
-            .map(|(key, value)| resolve_value(value, resolve).map(|value| (key.clone(), value)))
-            .collect::<Result<Map<_, _>>>()
-            .map(Value::Object),
-        Value::Array(values) => values
-            .iter()
-            .map(|value| resolve_value(value, resolve))
-            .collect::<Result<Vec<_>>>()
-            .map(Value::Array),
-        _ => resolve(value),
     }
 }
 fn replace(input: &str, mut resolve: impl FnMut(&str, &str) -> Result<String>) -> Result<String> {

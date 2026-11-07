@@ -1,0 +1,10 @@
+{
+  "id": "variables",
+  "kind": "panel",
+  "name": "Variables",
+  "version": "3.7.0",
+  "description": "Session variables and the {{profile:name}} references every request resolves.",
+  "abi": 1,
+  "app": ">=3.7",
+  "order": 1
+}

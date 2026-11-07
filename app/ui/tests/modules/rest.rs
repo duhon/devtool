@@ -122,16 +122,20 @@ fn checks_and_sections_fold_where_the_module_says() {
 fn a_run_is_the_modules_http_call_with_the_console_options() {
     let (call, options) = console::parse_run(
         "rest",
-        "#endpoint\nPOST https://a/{{:x}}\n#headers\nX: y\n#options\nRepeat: 5s\n#body\n{}",
+        "#endpoint\nPOST https://a/x\n#headers\nX: y\n#options\nRepeat: 5s\n#body\n{}",
     )
     .unwrap();
-    // Variables stay for the Host to resolve.
     assert_eq!(
         call,
         json!({"driver":"http","stream":false,"request":{"method":"POST",
-            "url":"https://a/{{:x}}","headers":[["X","y"]],"body":"{}","text":true}})
+            "url":"https://a/x","headers":[["X","y"]],"body":"{}","text":true}})
     );
     assert_eq!(options.repeat, Some(5000));
+    // before_request passes the Variables panel, which reports unknown refs.
+    assert_eq!(
+        console::parse_run("rest", "#endpoint\nGET https://a/{{:x}}").unwrap_err(),
+        "Missing environment variable(s): x"
+    );
     assert_eq!(
         console::parse_run("rest", "#endpoint\nhttps://a").unwrap_err(),
         "#endpoint must be METHOD URL"
@@ -167,8 +171,10 @@ fn rest_is_a_kernel_tab_ordered_by_its_manifest() {
         console::markers("rest"),
         ["endpoint", "headers", "body", "options"]
     );
-    // Templates have no sections for a Kernel service yet.
-    assert!(services::template_sections("rest").is_empty());
+    assert_eq!(
+        services::template_sections("rest"),
+        ["check", "endpoint", "headers", "body", "options"]
+    );
 }
 
 #[test]

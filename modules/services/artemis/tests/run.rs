@@ -30,6 +30,7 @@ fn check(text: &str) -> wire::Check {
         }
     }
     wire::Check {
+        columns: Vec::new(),
         text: text.into(),
         sections,
         ..wire::Check::default()

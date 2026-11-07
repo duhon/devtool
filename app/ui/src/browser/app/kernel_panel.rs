@@ -1,6 +1,7 @@
-//! Console services the Kernel runs: their runs (`vars.resolve` → driver → render →
-//! History, or the module's own `Run`), the Document, Hints and Discover events their
-//! modules hear, and the effects the modules ask the App to carry out.
+//! Console services the Kernel runs: their runs (the driver call the panels prepared →
+//! render → `after_response` of the panels, or the module's own `Run`), the Document, Hints
+//! and Discover events their modules hear, and the effects the modules ask the App to
+//! carry out.
 
 use super::*;
 use services_kernel::Effect;
@@ -31,11 +32,10 @@ pub(super) struct KernelState {
     sent: BTreeMap<String, String>,
     /// The check whose Hints (or Discover) started each module's current status.
     owners: BTreeMap<String, CheckOwner>,
-    /// Variables resolved for each module so far: what it completes may have changed.
-    pub(super) resolutions: BTreeMap<String, u64>,
     /// Module loads in progress: sessions wait for them.
     pub(super) loading: u32,
-    /// A console run asked for while its module loads: (service, text, line).
+    /// A console run asked for while its module loads or the panels read what their hooks
+    /// need: (service, text, line).
     pub(super) waiting: Option<(String, String, usize)>,
 }
 
@@ -43,8 +43,9 @@ struct KernelRun {
     /// What the run sends: `params` (the driver call, or the `check` its module runs) and
     /// `history`.
     message: Value,
-    /// After `vars.resolve`: the resolved call and the redacted source and title.
-    resolved: Option<(Value, String, String)>,
+    /// The source and title of the check with their variables resolved, and the values
+    /// of the sensitive ones: History masks them. `None` when they did not resolve.
+    resolved: Option<(String, String, Vec<String>)>,
     /// The module runs the check itself (`Run`): it has started.
     started: bool,
     /// The module's status text for the run, like `3 rows`.
@@ -68,7 +69,8 @@ impl Lock {
 }
 
 impl App {
-    /// A run of a Kernel service: the variables of its call are resolved first.
+    /// A run of a Kernel service: the driver call the panels prepared, or the check its
+    /// module runs itself.
     pub(super) fn kernel_send(
         &mut self,
         ctx: &Context<Self>,
@@ -77,16 +79,17 @@ impl App {
         message: Value,
     ) {
         let history = &message["history"];
-        let request = json!({"service":"vars","op":"resolve","value":message["params"]["request"],
-            "source":history["source"].as_str().unwrap_or(""),
-            "title":history["title"].as_str().unwrap_or("")});
-        let k = key.to_owned();
-        let id = self.transport.request(
-            request,
-            false,
-            ctx.link()
-                .callback(move |reply| Msg::KernelRunResolved(k.clone(), reply)),
-        );
+        let resolve = |text: &str| {
+            crate::kernel::with(|modules| modules.resolve(text, false))
+                .map(|resolution| (resolution.text, resolution.secrets))
+        };
+        let resolved =
+            resolve(history["source"].as_str().unwrap_or("")).and_then(|(source, mut secrets)| {
+                let (title, more) = resolve(history["title"].as_str().unwrap_or(""))?;
+                secrets.extend(more);
+                Ok((source, title, secrets))
+            });
+        let module_runs = message["params"]["check"].as_str().map(str::to_owned);
         self.kernel.runs.insert(
             key.to_owned(),
             KernelRun {
@@ -97,50 +100,26 @@ impl App {
             },
         );
         if let Some(run) = self.runs.get_mut(key) {
-            run.stream = Some(id);
             run.debug["service"] = json!(service);
         }
-    }
-
-    pub(super) fn kernel_run_resolved(&mut self, ctx: &Context<Self>, key: &str, reply: Reply) {
-        let Some(run) = self.runs.get(key) else {
-            self.kernel.runs.remove(key);
-            return;
-        };
-        let stopping = run.stopping;
-        let Some(state) = self.kernel.runs.get_mut(key) else {
-            return;
-        };
-        let value = match reply {
-            Reply::Data(_) => return,
-            _ if stopping => return self.kernel_finish(ctx, key, Finish::Stopped),
-            Reply::Result(value) if value["cancelled"] == true => {
-                return self.kernel_finish(ctx, key, Finish::Stopped);
-            }
-            Reply::Result(value) => value,
-            Reply::Error(value) | Reply::Exit(value) => {
-                let error = format!("Variables could not be resolved: {}", err_text(&value));
-                return self.kernel_finish(ctx, key, Finish::Failed(error, strip(value)));
+        let resolved = match resolved {
+            Ok(resolved) => resolved,
+            Err(error) => {
+                let error = format!("Variables could not be resolved: {error}");
+                return self.kernel_finish(ctx, key, Finish::Failed(error, Value::Null));
             }
         };
-        let source = value["source"].as_str().unwrap_or("").to_owned();
-        let title = value["title"].as_str().unwrap_or("").to_owned();
-        if let Some(text) = state.message["params"]["check"].as_str() {
-            let service = run.editor.trim_start_matches("console:").to_owned();
-            let check = crate::kernel::check(&service, text, &json!({}));
-            state.resolved = Some((state.message["params"].clone(), source, title));
+        let state = self.kernel.runs.get_mut(key).expect("just inserted");
+        state.resolved = Some(resolved);
+        if let Some(text) = module_runs {
+            let check = crate::kernel::check(service, &text, &json!({}));
             state.started = true;
-            if let Some(run) = self.runs.get_mut(key) {
-                run.stream = None;
-            }
-            let effects = crate::kernel::with(|modules| modules.start_run(&service, key, check));
+            let effects = crate::kernel::with(|modules| modules.start_run(service, key, check));
             return self.kernel_effects(ctx, effects);
         }
-        let mut call = state.message["params"].clone();
-        call["request"] = value["value"].clone();
+        let call = &state.message["params"];
         let request = json!({"service":"drivers","driver":call["driver"],"op":"call",
             "request":call["request"]});
-        state.resolved = Some((call, source, title));
         let k = key.to_owned();
         let id = self.transport.request(
             request,
@@ -167,8 +146,8 @@ impl App {
         self.kernel_finish(ctx, key, finish);
     }
 
-    /// The end of a run: its module renders the answer, History saves it and the console
-    /// shows it as any other reply.
+    /// The end of a run: its module renders the answer, the panels hear of it
+    /// (`after_response`: History saves it) and the console shows it as any other reply.
     fn kernel_finish(&mut self, ctx: &Context<Self>, key: &str, finish: Finish) {
         let Some(state) = self.kernel.runs.remove(key) else {
             return;
@@ -182,10 +161,13 @@ impl App {
             .as_f64()
             .unwrap_or(started);
         let ended = js_sys::Date::now();
-        let call = state.resolved.as_ref().map_or_else(
-            || state.message["params"].clone(),
-            |(call, ..)| call.clone(),
-        );
+        let call = state.message["params"].clone();
+        // A check its module ran itself has no driver call of its own.
+        let driver_call = if call["check"].is_string() {
+            services_sdk::DriverCall::default()
+        } else {
+            crate::kernel::call_of(&call)
+        };
         let (reply, status, outcome, text) = match finish {
             Finish::Stopped => {
                 let warning = STOPPED;
@@ -220,7 +202,7 @@ impl App {
                     let body = result["body"].as_str().unwrap_or("").to_owned();
                     let mut reply = json!({"body":body,"outcome":outcome,
                         "language":result["language"],"durationMs":ended - started,
-                        "request":request,"debug":debug});
+                        "request":request,"debug":debug,"columns":result["columns"]});
                     if let Some(summary) = &state.summary {
                         reply["summary"] = json!(summary);
                     }
@@ -244,22 +226,21 @@ impl App {
                 error,
             ),
             Finish::Answered(response) => {
-                let driver_call = crate::kernel::call_of(&call);
-                let effects =
-                    crate::kernel::with(|modules| modules.finished(&driver_call, &response));
                 let chunk = Chunk {
-                    call: Some(driver_call),
+                    call: Some(driver_call.clone()),
                     response: serde_json::to_vec(&response).unwrap_or_default(),
                     index: 0,
                     last: true,
                 };
                 let rendered = crate::kernel::with(|modules| modules.render(&service, chunk));
-                self.kernel_effects(ctx, effects);
                 match rendered {
                     Ok(rendered) => (
                         Reply::Result(json!({"body":rendered.text,"outcome":rendered.outcome,
                             "language":rendered.language,"durationMs":ended - started,
-                            "request":call,"response":response})),
+                            "request":call,"response":response,
+                            "columns":rendered.columns.iter()
+                                .map(|column| [&column.name, &column.kind])
+                                .collect::<Vec<_>>()})),
                         if rendered.outcome == "ERROR" {
                             "error"
                         } else {
@@ -282,20 +263,20 @@ impl App {
             }
         };
         let history = &state.message["history"];
-        // Without the redacted source a run is not saved: its text may hold secrets.
-        if history.is_object()
-            && let Some((_, source, title)) = &state.resolved
-        {
-            self.transport.request(
-                json!({"service":"history","op":"insert","checkId":history["checkId"],
-                    "sessionId":history["sessionId"],"title":title,"module":service,
-                    "started":begun as u64,"ended":ended as u64,"status":status,
-                    "text":format!("{source}\n\n#responce {outcome}\n{text}"),
-                    "defer":history["defer"] == true}),
-                false,
-                ctx.link().callback(Msg::KernelSaved),
-            );
+        let mut record = json!({"service":service,"started":begun as u64,"ended":ended as u64,
+            "status":status,"outcome":outcome,"text":text,"defer":history["defer"] == true});
+        if history.is_object() {
+            record["checkId"] = history["checkId"].clone();
+            record["sessionId"] = history["sessionId"].clone();
         }
+        // Without the resolved source the panels get none: it may hold secrets.
+        if let Some((source, title, secrets)) = &state.resolved {
+            record["source"] = json!(source);
+            record["title"] = json!(title);
+            record["secrets"] = json!(secrets);
+        }
+        let effects = crate::kernel::with(|modules| modules.finished(&driver_call, &record));
+        self.kernel_effects(ctx, effects);
         Component::update(self, ctx, Msg::Reply(key.to_owned(), service, reply));
     }
 
@@ -320,47 +301,8 @@ impl App {
                     driver,
                     request,
                     stream,
-                } if self.kernel_owned(&tag) => {
-                    // A run resolves its own variables.
+                } => {
                     let id = self.kernel_drive(ctx, &module, &tag, &driver, request, stream);
-                    self.kernel.calls.insert((module, tag), id);
-                }
-                Effect::Driver {
-                    module,
-                    tag,
-                    driver,
-                    request,
-                    stream,
-                } => {
-                    let (m, t) = (module.clone(), tag.clone());
-                    // `module` and `tag` only say whose call it is, e.g. in a Host log.
-                    let id = self.transport.request(
-                        json!({"service":"vars","op":"resolve","value":request,"source":"","title":"",
-                            "module":module,"tag":tag}),
-                        false,
-                        ctx.link().callback(move |reply| {
-                            Msg::KernelResolved(m.clone(), t.clone(), driver.clone(), stream, reply)
-                        }),
-                    );
-                    self.kernel.calls.insert((module, tag), id);
-                }
-                Effect::Resolve {
-                    module,
-                    tag,
-                    text,
-                    json,
-                } => {
-                    let (m, t) = (module.clone(), tag.clone());
-                    // Interim until the Variables panel module answers it.
-                    let mode = if json { json!("json") } else { Value::Null };
-                    let id = self.transport.request(
-                        json!({"service":"vars","op":"resolve","value":text,"source":"","title":"",
-                            "mode":mode,"module":module,"tag":tag}),
-                        false,
-                        ctx.link().callback(move |reply| {
-                            Msg::KernelVariables(m.clone(), t.clone(), reply)
-                        }),
-                    );
                     self.kernel.calls.insert((module, tag), id);
                 }
                 Effect::Cancel { module, tag } => {
@@ -403,9 +345,47 @@ impl App {
                     }
                 }
                 Effect::Command { module, cmd } => {
-                    if !cmd.tag.is_empty() {
-                        let message = format!("\"{}\" is not available to modules yet", cmd.name);
-                        queue.extend(refuse(&module, &cmd.tag, &message));
+                    let args = cmd.args();
+                    let request = match cmd.name.as_str() {
+                        "history.insert" => {
+                            let mut request = args;
+                            request["service"] = json!("history");
+                            request["op"] = json!("insert");
+                            Some(request)
+                        }
+                        "history.search" => {
+                            let mut request = args;
+                            request["service"] = json!("history");
+                            if request["op"].is_null() {
+                                request["op"] = json!("list");
+                            }
+                            Some(request)
+                        }
+                        // Interim until the Dictionary panel module keeps the profiles.
+                        "vars.profiles" => Some(json!({"service":"vars","op":"list"})),
+                        _ => None,
+                    };
+                    match request {
+                        Some(request) => {
+                            let saved = cmd.name == "history.insert";
+                            let (m, t) = (module.clone(), cmd.tag.clone());
+                            let id = self.transport.request(
+                                request,
+                                false,
+                                ctx.link().callback(move |reply| {
+                                    Msg::KernelHosted(m.clone(), t.clone(), saved, reply)
+                                }),
+                            );
+                            if !cmd.tag.is_empty() {
+                                self.kernel.calls.insert((module, cmd.tag), id);
+                            }
+                        }
+                        None if !cmd.tag.is_empty() => {
+                            let message =
+                                format!("\"{}\" is not available to modules yet", cmd.name);
+                            queue.extend(refuse(&module, &cmd.tag, &message));
+                        }
+                        None => {}
                     }
                 }
                 Effect::Output { module, run, text } => {
@@ -434,46 +414,37 @@ impl App {
         for module in changed {
             self.kernel_status(&module);
         }
+        self.kernel_resume(ctx);
     }
 
-    /// `vars.resolve` answered a module's driver call: the driver runs it.
-    pub(super) fn kernel_resolved(
-        &mut self,
-        ctx: &Context<Self>,
-        module: String,
-        tag: String,
-        driver: String,
-        stream: bool,
-        reply: Reply,
-    ) {
-        let key = (module, tag);
-        if !self.kernel.calls.contains_key(&key) {
+    /// The profiles variables resolve from changed (a save, another session): the modules
+    /// watching `profiles` read them again.
+    pub(super) fn vars_changed(&mut self, ctx: &Context<Self>, vars: Value) {
+        if self.vars == vars {
             return;
         }
-        match reply {
-            Reply::Data(_) => {}
-            Reply::Result(value) if value["cancelled"] == true => {
-                self.kernel.calls.remove(&key);
-                let (module, tag) = key;
-                let failure = Failure::new(STOPPED);
-                let effects =
-                    crate::kernel::with(|modules| modules.reply(&module, &tag, Err(failure)));
-                self.kernel_effects(ctx, effects);
-            }
-            Reply::Result(value) => {
-                let (module, tag) = &key;
-                let id =
-                    self.kernel_drive(ctx, module, tag, &driver, value["value"].clone(), stream);
-                self.kernel.calls.insert(key, id);
-            }
-            Reply::Error(value) | Reply::Exit(value) => {
-                self.kernel.calls.remove(&key);
-                let (module, tag) = key;
-                let failure = services_kernel::modules::failure(&strip(value));
-                let effects =
-                    crate::kernel::with(|modules| modules.reply(&module, &tag, Err(failure)));
-                self.kernel_effects(ctx, effects);
-            }
+        self.vars = vars;
+        let effects = crate::kernel::broadcast(crate::kernel::storage("profiles"));
+        self.kernel_effects(ctx, effects);
+    }
+
+    /// Whether a console run must wait: its module loads, or the panels read what their
+    /// hooks need.
+    pub(super) fn kernel_busy(&self, service: &str) -> bool {
+        (self.kernel.loading > 0 && crate::kernel::loading(service)) || crate::kernel::settling()
+    }
+
+    /// The console run that waited goes once nothing holds it back.
+    fn kernel_resume(&mut self, ctx: &Context<Self>) {
+        let Some((service, ..)) = &self.kernel.waiting else {
+            return;
+        };
+        if *service != self.console_service {
+            self.kernel.waiting = None;
+        } else if !self.kernel_busy(service)
+            && let Some((_, text, line)) = self.kernel.waiting.take()
+        {
+            ctx.link().send_message(Msg::ConsoleRun(text, line));
         }
     }
 
@@ -490,7 +461,7 @@ impl App {
         let (m, t) = (module.to_owned(), tag.to_owned());
         let op = if stream { "stream" } else { "call" };
         self.transport.request(
-            json!({"service":"drivers","driver":driver,"op":op,"request":request}),
+            json!({"service":"drivers","driver":driver,"op":op,"request":request,"module":module,"tag":tag}),
             stream,
             ctx.link().callback(move |reply| {
                 if stream {
@@ -500,16 +471,6 @@ impl App {
                 }
             }),
         )
-    }
-
-    /// Whether a module's command belongs to one of its runs (tagged `<run key>:…`).
-    fn kernel_owned(&self, tag: &str) -> bool {
-        self.kernel.runs.iter().any(|(key, run)| {
-            run.started
-                && tag
-                    .strip_prefix(key.as_str())
-                    .is_some_and(|rest| rest.starts_with(':'))
-        })
     }
 
     /// A driver stream of a module: each event is a reply, its end an End.
@@ -638,36 +599,25 @@ impl App {
         self.kernel_effects(ctx, effects);
     }
 
-    /// A module's `vars.resolve` was answered: it gets the resolved text, and open hints
-    /// of its editor follow what it may complete now.
-    pub(super) fn kernel_variables(
+    /// The Host answered a module's command; History's saves also count for a repeat.
+    pub(super) fn kernel_hosted(
         &mut self,
         ctx: &Context<Self>,
         module: String,
         tag: String,
+        saved: bool,
         reply: Reply,
     ) {
-        if self
-            .kernel
-            .calls
-            .remove(&(module.clone(), tag.clone()))
-            .is_none()
-        {
+        if matches!(reply, Reply::Data(_)) {
             return;
         }
-        let result = match reply {
-            Reply::Data(_) => return,
-            Reply::Result(value) if value["cancelled"] == true => Err(Failure::new(STOPPED)),
-            Reply::Result(value) => Ok(value["value"].clone()),
-            Reply::Error(value) | Reply::Exit(value) => {
-                Err(services_kernel::modules::failure(&strip(value)))
-            }
-        };
-        if result.is_ok() {
-            *self.kernel.resolutions.entry(module.clone()).or_default() += 1;
+        if saved {
+            self.kernel_saved(reply.clone());
         }
-        let effects = crate::kernel::with(|modules| modules.reply(&module, &tag, result));
-        self.kernel_effects(ctx, effects);
+        if tag.is_empty() {
+            return;
+        }
+        self.kernel_replied(ctx, module, tag, reply);
     }
 
     pub(super) fn kernel_timer(&mut self, ctx: &Context<Self>, module: &str, tag: &str) {

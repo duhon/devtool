@@ -76,6 +76,7 @@ impl LineState {
 struct Region {
     header: usize,
     end: usize,
+    columns: Vec<services_sdk::ColumnType>,
 }
 
 pub struct Highlighter {
@@ -140,6 +141,11 @@ impl Highlighter {
             .map(|region| Region {
                 header: region.header,
                 end: region.end,
+                columns: region
+                    .columns
+                    .iter()
+                    .map(|(name, kind)| services_sdk::ColumnType::new(name, kind))
+                    .collect(),
             })
             .collect();
         self.reset();
@@ -184,7 +190,7 @@ impl Highlighter {
             return Rc::from([]);
         };
         crate::kernel::with(|modules| {
-            modules.highlight(service, Vec::new(), vec![format!("#{section}")])
+            modules.highlight(service, Vec::new(), vec![format!("#{section}")], Vec::new())
         })
         .ok()
         .and_then(|mut lines| lines.pop())
@@ -336,7 +342,18 @@ impl Highlighter {
         text: &str,
         state: &mut LineState,
     ) -> Vec<(usize, Style)> {
-        state.response = self.region(index).is_some();
+        let region = self.region(index);
+        state.response = region.is_some();
+        // The response's header line carries the column types its module reported.
+        let columns = region
+            .filter(|region| region.header == index && !region.columns.is_empty())
+            .map(|region| {
+                vec![services_sdk::LineColumns {
+                    line: 0,
+                    columns: region.columns.clone(),
+                }]
+            })
+            .unwrap_or_default();
         let whole = |style| vec![(text.len(), style)];
         if self.template_section.is_some() && text.starts_with('@') && !text.starts_with("@@") {
             state.module = self.section_state();
@@ -350,7 +367,12 @@ impl Highlighter {
             return whole(None);
         }
         let highlighted = crate::kernel::with(|modules| {
-            modules.highlight(service, state.module.to_vec(), vec![text.to_owned()])
+            modules.highlight(
+                service,
+                state.module.to_vec(),
+                vec![text.to_owned()],
+                columns,
+            )
         });
         let Some(line) = highlighted.ok().and_then(|mut lines| lines.pop()) else {
             let marker = text.trim_start().starts_with('#');

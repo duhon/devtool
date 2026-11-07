@@ -12,12 +12,12 @@ use services_ui::document::{
 fn response_touches_request_but_next_check_has_one_empty_line() {
     let source = "#check first\n#query\nselect 1;\n\n\n#check next\n#query\nselect 2;";
     let mut regions = vec![];
-    let result = replace_response(source, 0, "OK", "first result", &mut regions);
+    let result = replace_response(source, 0, "OK", "first result", Vec::new(), &mut regions);
     assert!(result.contains("select 1;\n#responce OK\nfirst result\n\n#check next"));
     assert!(!result.contains("\n\n#responce"));
     assert_eq!(regions[0].header, 3);
     assert_eq!(regions[0].end, 6);
-    let refreshed = replace_response(&result, 0, "OK", "second result", &mut regions);
+    let refreshed = replace_response(&result, 0, "OK", "second result", Vec::new(), &mut regions);
     assert!(refreshed.contains("select 1;\n#responce OK\nsecond result\n\n#check next"));
     assert!(!refreshed.contains("first result"));
 }
@@ -161,6 +161,7 @@ fn editing_fixture() -> EditHistory {
         0,
         "OK",
         "literal output\n#check literal-output",
+        Vec::new(),
         &mut regions,
     );
     let mut history = EditHistory::default();
@@ -429,7 +430,14 @@ fn inserting_a_check_inside_output_promotes_only_the_user_inserted_marker() {
     );
     assert_eq!(redone.regions, pasted.regions);
     let mut regions = redone.regions.clone();
-    let first_updated = replace_response(&redone.text, 0, "OK", "new first output", &mut regions);
+    let first_updated = replace_response(
+        &redone.text,
+        0,
+        "OK",
+        "new first output",
+        Vec::new(),
+        &mut regions,
+    );
     assert!(!first_updated.contains("#check literal-output"));
     assert_eq!(check_lines(&first_updated, &regions).len(), 4);
     let mut regions = redone.regions;
@@ -438,6 +446,7 @@ fn inserting_a_check_inside_output_promotes_only_the_user_inserted_marker() {
         header + 2,
         "OK",
         "new pasted output",
+        Vec::new(),
         &mut regions,
     );
     assert_eq!(regions.len(), 2);
@@ -545,6 +554,7 @@ fn check_navigation_follows_document_order_and_excludes_output() {
         request: 1,
         header: 4,
         end: 6,
+        columns: Vec::new(),
     }];
     let lines = check_lines(source, &regions);
     assert_eq!(lines, [1, 6, 9]);
@@ -590,6 +600,7 @@ fn legacy_headers_migrate_without_rewriting_output_or_line_boundaries() {
         request: 0,
         header: 5,
         end: 9,
+        columns: Vec::new(),
     }];
     let expected = "  #check first\r\n#endpoint\r\nbash -c\r\n#command\r\necho '#request inline'\r\n#responce OK\r\n#request output\r\n#check output\r\n\r\n#check second\r\n#command\r\necho next\r\n#requestSuffix";
     let migrated = migrate_check_markers(source, &regions);
@@ -629,6 +640,7 @@ fn literal_markers_are_output_not_requests() {
         0,
         "OK",
         "#check\n#responce fake\n#endpoint\nnot a real request",
+        Vec::new(),
         &mut regions,
     );
     let owner = request_at(&text, regions[0].header + 2, &regions).unwrap();
@@ -636,7 +648,7 @@ fn literal_markers_are_output_not_requests() {
     assert!(owner.text.contains("echo hello"));
     let next = request_at(&text, text.lines().count() - 1, &regions).unwrap();
     assert!(next.text.contains("echo next"));
-    let replaced = replace_response(&text, 0, "OK", "replacement", &mut regions);
+    let replaced = replace_response(&text, 0, "OK", "replacement", Vec::new(), &mut regions);
     assert!(!replaced.contains("not a real request"));
     assert!(replaced.contains("echo next"));
     assert_eq!(regions.len(), 1);
@@ -645,7 +657,14 @@ fn literal_markers_are_output_not_requests() {
 #[test]
 fn output_ranges_follow_edits_and_restore() {
     let mut regions = vec![];
-    let text = replace_response("#check\n#command\necho", 0, "OK", "#check", &mut regions);
+    let text = replace_response(
+        "#check\n#command\necho",
+        0,
+        "OK",
+        "#check",
+        Vec::new(),
+        &mut regions,
+    );
     let new = format!("\n{text}");
     remap(&text, &new, &mut regions);
     assert_eq!(regions[0].request, 1);
@@ -686,16 +705,19 @@ fn invalid_restored_ranges_never_hide_or_slice_requests() {
             request: 0,
             header: 999,
             end: 1000,
+            columns: Vec::new(),
         },
         ResponseRegion {
             request: 0,
             header: 0,
             end: 2,
+            columns: Vec::new(),
         },
         ResponseRegion {
             request: 0,
             header: 1,
             end: 3,
+            columns: Vec::new(),
         },
     ] {
         let block = request_at(source, 0, &[region]).unwrap();
@@ -707,8 +729,22 @@ fn invalid_restored_ranges_never_hide_or_slice_requests() {
 fn other_responses_follow_stream_updates_and_request_edits() {
     let mut regions = vec![];
     let source = "#check\n#command\nfirst\n\n#check\n#command\nsecond";
-    let text = replace_response(source, 4, "OK", "second output\n#check", &mut regions);
-    let text = replace_response(&text, 0, "Running", "first output", &mut regions);
+    let text = replace_response(
+        source,
+        4,
+        "OK",
+        "second output\n#check",
+        Vec::new(),
+        &mut regions,
+    );
+    let text = replace_response(
+        &text,
+        0,
+        "Running",
+        "first output",
+        Vec::new(),
+        &mut regions,
+    );
     let next = request_at(&text, text.lines().count() - 1, &regions).unwrap();
     assert!(next.text.contains("second"));
     let text = replace_response(
@@ -716,6 +752,7 @@ fn other_responses_follow_stream_updates_and_request_edits() {
         0,
         "OK",
         "first output\n#check\n#endpoint\nliteral",
+        Vec::new(),
         &mut regions,
     );
     assert_eq!(regions.len(), 2);

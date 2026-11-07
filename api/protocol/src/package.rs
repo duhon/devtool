@@ -100,19 +100,14 @@ pub fn skill_frontmatter(text: &str) -> Result<(String, String), String> {
 /// it like a module (`devtool-v<version>` releases), and it is installed by the updater.
 pub const APPLICATION_ID: &str = "app";
 
-/// Ids the host answers itself (`{"service": id}`); a module can't take them.
+/// Ids the host answers itself (`{"service": id}`) that no panel module owns; a module can't
+/// take them. Panel modules (History, Templates, …) keep the ids of the stores they own.
 pub const RESERVED_IDS: &[&str] = &[
-    "agent",
     APPLICATION_ID,
     "agent_models",
     "agent_sessions",
-    "dictionary",
-    "hints",
-    "history",
     "modules",
-    "sessions",
     "sources",
-    "templates",
     "updates",
     "vars",
 ];
@@ -413,7 +408,7 @@ mod tests {
                 "{id}"
             );
         }
-        for id in ["vars", "modules", "agent", "history", "app"] {
+        for id in ["vars", "modules", "app"] {
             assert_eq!(
                 check_id(id),
                 Err(format!("module id \"{id}\" is reserved by the host"))

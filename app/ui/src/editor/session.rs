@@ -1843,6 +1843,7 @@ mod tests {
             request: 0,
             header: 3,
             end: 6,
+            columns: Vec::new(),
         };
         session.set_responses(std::slice::from_ref(&region));
         session.apply(

@@ -391,11 +391,11 @@
             nativeProbe.discoveries.push({service: message.service, params: message.params});
           // A Kernel module discovers through driver calls tagged `discover:{run}:{n}`: one run
           // is one discovery, whatever number of candidate documents it tries.
-          const run = message.service === 'vars' && message.op === 'resolve'
+          const run = message.service === 'drivers'
             && /^discover:([^:]+):/.exec(message.tag || '')?.[1];
           if (run && !nativeProbe.discoveryRuns.has(`${message.module}:${run}`)) {
             nativeProbe.discoveryRuns.add(`${message.module}:${run}`);
-            nativeProbe.discoveries.push({service: message.module, params: {url: message.value?.url}});
+            nativeProbe.discoveries.push({service: message.module, params: {url: message.request?.url}});
           }
           if (message.type === 'clipboardRead') {
             nativeProbe.clipboardReads++;

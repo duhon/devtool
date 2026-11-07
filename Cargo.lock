@@ -2940,6 +2940,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "services-module-history"
+version = "3.7.0"
+dependencies = [
+ "serde_json",
+ "services-sdk",
+]
+
+[[package]]
 name = "services-module-mysql"
 version = "3.2.2"
 dependencies = [
@@ -2984,6 +2992,14 @@ version = "3.2.2"
 dependencies = [
  "prost",
  "serde",
+ "serde_json",
+ "services-sdk",
+]
+
+[[package]]
+name = "services-module-variables"
+version = "3.7.0"
+dependencies = [
  "serde_json",
  "services-sdk",
 ]
@@ -3061,11 +3077,13 @@ dependencies = [
  "services-module-artemis",
  "services-module-graphql",
  "services-module-grpc",
+ "services-module-history",
  "services-module-mysql",
  "services-module-opensearch",
  "services-module-rest",
  "services-module-splunk",
  "services-module-terminal",
+ "services-module-variables",
  "services-sdk",
  "url",
  "uuid",

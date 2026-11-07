@@ -195,7 +195,11 @@ impl Area {
 }
 
 /// Highlighting of a Splunk check, and of its result tables.
-pub fn highlight(state: &[u8], lines: &[String]) -> Vec<Line> {
+pub fn highlight(
+    state: &[u8],
+    lines: &[String],
+    columns: &[services_sdk::LineColumns],
+) -> Vec<Line> {
     let (mut area, rest) = match state.split_first() {
         Some((area, rest)) => (
             Area::ALL
@@ -210,7 +214,8 @@ pub fn highlight(state: &[u8], lines: &[String]) -> Vec<Line> {
     let mut search = Spl::decode(rest);
     lines
         .iter()
-        .map(|line| {
+        .enumerate()
+        .map(|(index, line)| {
             let named = marker(line).map(|(name, _)| name);
             let is_marker = named.as_deref().is_some_and(|name| {
                 (area != Area::Response && !(area == Area::Search && search.fenced))
@@ -226,6 +231,9 @@ pub fn highlight(state: &[u8], lines: &[String]) -> Vec<Line> {
                 };
                 search = Spl::default();
                 response = response.restart();
+                if let Some(reported) = columns.iter().find(|at| at.line == index as u32) {
+                    response.report(&reported.columns);
+                }
                 if line.is_empty() {
                     vec![]
                 } else {
@@ -347,15 +355,16 @@ mod tests {
         let lines: Vec<String> = ["#search", "```a", "#b```", "index=x"]
             .map(String::from)
             .into();
-        let out = highlight(&[], &lines);
+        let out = highlight(&[], &lines, &[]);
         assert_eq!(out[2].tokens[0].kind, "comment");
         assert_eq!(out[3].tokens[0].kind, "attribute");
-        let more = highlight(&out[1].state, &lines[2..]);
+        let more = highlight(&out[1].state, &lines[2..], &[]);
         assert_eq!(more[0].tokens, out[2].tokens);
     }
 
     fn labels(text: &str) -> Vec<String> {
         let check = Check {
+            columns: Vec::new(),
             text: text.into(),
             ..Check::default()
         };

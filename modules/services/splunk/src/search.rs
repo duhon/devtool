@@ -229,6 +229,8 @@ impl Plan {
                 "splunk".into()
             },
             outcome: if preview { "WARNING" } else { "OK" }.into(),
+            // Splunk exports carry no field types; only `Columns-Type` declares them.
+            columns: Vec::new(),
         })
     }
 }

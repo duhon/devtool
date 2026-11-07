@@ -21,6 +21,7 @@ impl Module for Echo {
                     text: check.text_of("text").to_owned(),
                     language: "text".into(),
                     outcome: "OK".into(),
+                    columns: Vec::new(),
                 };
                 vec![cmd::result(&tag, &rendered, &json!({"endpoint": endpoint}))]
             }

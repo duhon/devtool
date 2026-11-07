@@ -89,12 +89,17 @@ impl Module for Splunk {
         }
     }
 
-    fn highlight(&self, state: &[u8], lines: &[String]) -> Vec<Line> {
-        language::highlight(state, lines)
+    fn highlight(
+        &self,
+        state: &[u8],
+        lines: &[String],
+        columns: &[services_sdk::LineColumns],
+    ) -> Vec<Line> {
+        language::highlight(state, lines, columns)
     }
 
     fn fold(&self, check: &Check) -> Vec<services_sdk::Fold> {
-        services_sdk::lang::table::folds(&check.text)
+        services_sdk::lang::table::folds(&check.text, &check.columns)
     }
 
     fn complete(&self, check: &Check, pos: u32) -> Completions {

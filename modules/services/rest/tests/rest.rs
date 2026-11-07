@@ -40,6 +40,7 @@ fn check(text: &str) -> Check {
     }
     close(current, &mut body);
     Check {
+        columns: Vec::new(),
         service: "rest".into(),
         text: text.into(),
         sections,
@@ -49,7 +50,7 @@ fn check(text: &str) -> Check {
 
 fn styles(rest: &Rest, state: &[u8], lines: &[&str]) -> Vec<Vec<(String, String)>> {
     let lines: Vec<String> = lines.iter().map(|line| line.to_string()).collect();
-    rest.highlight(state, &lines)
+    rest.highlight(state, &lines, &[])
         .iter()
         .zip(&lines)
         .map(|(line, text)| {
@@ -235,19 +236,21 @@ fn highlight_styles_each_section_and_carries_state() {
 
     // The state of a line continues the highlighting on the next call.
     let all: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
-    let whole = rest.highlight(&[], &all);
-    let split = rest.highlight(&whole[5].state, &all[6..]);
+    let whole = rest.highlight(&[], &all, &[]);
+    let split = rest.highlight(&whole[5].state, &all[6..], &[]);
     assert_eq!(split, whole[6..].to_vec());
 }
 
 #[test]
 fn highlight_starts_from_a_synthetic_marker_line() {
     let rest = Rest::default();
-    let start = rest.highlight(&[], &["#body".into()])[0].state.clone();
+    let start = rest.highlight(&[], &["#body".into()], &[])[0].state.clone();
     let body = &styles(&rest, &start, &["{\"a\": [1]}"])[0];
     assert!(body.contains(&("\"a\"".into(), "string property".into())));
     assert!(body.contains(&("1".into(), "number".into())));
-    let start = rest.highlight(&[], &["#headers".into()])[0].state.clone();
+    let start = rest.highlight(&[], &["#headers".into()], &[])[0]
+        .state
+        .clone();
     assert_eq!(
         styles(&rest, &start, &["X: 1"])[0],
         pairs(&[("X", "attribute"), ("1", "string")])
@@ -288,7 +291,7 @@ fn highlight_is_fast() {
     lines.extend((0..100).map(|i| format!("  \"field{i}\": [1, \"two\", {{\"three\": null}}],")));
     let started = std::time::Instant::now();
     for _ in 0..10 {
-        rest.highlight(&[], &lines);
+        rest.highlight(&[], &lines, &[]);
     }
     assert!(started.elapsed().as_millis() < 50 * if cfg!(debug_assertions) { 10 } else { 1 });
 }

@@ -9,7 +9,8 @@ fn offline() -> impl Iterator<Item = &'static ModuleSpec> {
     MODULES.iter().filter(|module| !module.external)
 }
 
-/// The modules the host serves, in their `order`.
+/// The service modules the host serves, in their `order`; wasm panels
+/// (Variables, History) carry no drivers and are not in the service catalog.
 fn served(host: &Host) -> Vec<services_sdk::manifest::Manifest> {
     let mut modules: Vec<_> = host
         .runtime()
@@ -17,6 +18,7 @@ fn served(host: &Host) -> Vec<services_sdk::manifest::Manifest> {
         .wasm()
         .iter()
         .map(|module| module.manifest.clone())
+        .filter(|manifest| manifest.kind == services_sdk::manifest::Kind::Service)
         .collect();
     modules.sort_by_key(|manifest| (manifest.order.unwrap_or(u32::MAX), manifest.id.clone()));
     modules
@@ -69,7 +71,11 @@ async fn the_console_reads_the_served_modules_from_the_host() {
     let host = Host::new();
     let reply = host.send(json!({"service":"modules"})).await;
     let wasm = reply.ok()["wasm"].as_array().unwrap().clone();
-    let mut ids: Vec<_> = wasm.iter().map(|m| m["id"].as_str().unwrap()).collect();
+    let mut ids: Vec<_> = wasm
+        .iter()
+        .filter(|m| m["kind"] == "service")
+        .map(|m| m["id"].as_str().unwrap())
+        .collect();
     ids.sort();
     let mut catalog: Vec<_> = services().map(|module| module.name).collect();
     catalog.sort();

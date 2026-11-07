@@ -148,6 +148,7 @@ pub fn render(response: &Value) -> Result<Rendered, String> {
         text,
         language: "text".into(),
         outcome: outcome.into(),
+        columns: Vec::new(),
     };
     if let Ok(event) = process::Event::parse(response) {
         return Ok(match event {
@@ -351,6 +352,7 @@ impl Running {
             text,
             language: "text".into(),
             outcome: outcome(&exit).into(),
+            columns: Vec::new(),
         };
         let mut cmds: Vec<Cmd> = exit_summary(&exit, &self.stderr)
             .iter()
@@ -469,7 +471,12 @@ impl Module for Terminal {
         }
     }
 
-    fn highlight(&self, state: &[u8], lines: &[String]) -> Vec<Line> {
+    fn highlight(
+        &self,
+        state: &[u8],
+        lines: &[String],
+        _: &[services_sdk::LineColumns],
+    ) -> Vec<Line> {
         highlight(state, lines)
     }
 

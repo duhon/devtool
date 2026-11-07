@@ -163,6 +163,7 @@ impl EditHistory {
                             request: region.request + change.from.line,
                             header: region.header + change.from.line,
                             end: region.end + change.from.line,
+                            columns: region.columns.clone(),
                         }));
                         if fragment.moved && fragment.scope == self.scope {
                             checks.extend(fragment.checks.iter().cloned().map(|mut check| {
@@ -309,6 +310,7 @@ fn clipboard_fragment(
             request: region.request - from.line,
             header: region.header - from.line,
             end: region.end - from.line,
+            columns: region.columns.clone(),
         })
         .collect();
     Ok(ClipboardFragment {
@@ -382,6 +384,7 @@ fn remap_change(
                             request: region.request,
                             header: tail_line,
                             end: region.end,
+                            columns: Vec::new(),
                         });
                     }
                     region.end = index;
@@ -428,6 +431,20 @@ pub struct ResponseRegion {
     pub header: usize,
     /// Exclusive line boundary. Output markers inside this region are never requests.
     pub end: usize,
+    /// The result columns' types the module reported with the response (`render`
+    /// metadata): `(name, kind)`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub columns: Vec<(String, String)>,
+}
+
+/// The column types a reply carries: `[[name, kind], …]`.
+pub fn columns_of(reply: &serde_json::Value) -> Vec<(String, String)> {
+    reply["columns"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|pair| Some((pair[0].as_str()?.into(), pair[1].as_str()?.into())))
+        .collect()
 }
 fn marker(line: &str, name: &str) -> bool {
     // Only the marker's own bytes are compared: result lines can be megabytes long.
@@ -538,6 +555,7 @@ pub fn replace_response(
     request: usize,
     status: &str,
     body: &str,
+    columns: Vec<(String, String)>,
     regions: &mut Vec<ResponseRegion>,
 ) -> String {
     let Some(block) = request_at(source, request, regions) else {
@@ -559,7 +577,7 @@ pub fn replace_response(
             regions.retain(|region| region != &tail);
             remap(&before, &cleaned, regions);
         }
-        return replace_response(&cleaned, request, status, body, regions);
+        return replace_response(&cleaned, request, status, body, columns, regions);
     }
     let lines: Vec<_> = source.split('\n').collect();
     let before = lines[..block.end].join("\n");
@@ -581,6 +599,7 @@ pub fn replace_response(
         request: block.start,
         header,
         end,
+        columns,
     });
     regions.sort_by_key(|r| r.header);
     result

@@ -46,6 +46,7 @@ impl Module for Rest {
             text: format!("{} {}", response.status, response.body.unwrap_or_default()),
             language: "text".into(),
             outcome: "OK".into(),
+            columns: Vec::new(),
         })
     }
 }
@@ -226,15 +227,16 @@ fn a_shown_panel_runs_its_commands_and_redraws_from_replies() {
                 request,
                 stream,
                 ..
-            } => Some((tag.as_str(), request["url"].clone(), *stream)),
+            } => Some((tag.as_str(), request["headers"].clone(), *stream)),
             _ => None,
         })
         .collect();
+    // Calls outside runs pass the panels' `before_request` too.
     assert_eq!(
         drivers,
         [
-            ("fetch", json!("https://x"), false),
-            ("live", json!("https://y"), true)
+            ("fetch", json!([["X-Seen", "https://x"]]), false),
+            ("live", json!([["X-Seen", "https://y"]]), true)
         ]
     );
     assert_eq!(
@@ -434,7 +436,7 @@ fn slow_synchronous_calls_are_noted_in_the_log() {
         )
         .unwrap();
     let lines = modules
-        .highlight("rest", vec![7], vec!["a".into(), "b".into()])
+        .highlight("rest", vec![7], vec!["a".into(), "b".into()], Vec::new())
         .unwrap();
     assert_eq!(lines[1].state, [7]);
     assert!(modules.get("rest").unwrap().log.is_empty());
@@ -499,6 +501,7 @@ fn hints_reach_only_the_subscribed_service_of_the_check() {
     let hints = |service: &str| wire::Event {
         kind: Some(event::Kind::Hints(wire::CompleteRequest {
             check: Some(Check {
+                columns: Vec::new(),
                 service: service.into(),
                 text: "#endpoint".into(),
                 ..Check::default()
@@ -525,8 +528,32 @@ fn hints_reach_only_the_subscribed_service_of_the_check() {
     assert_eq!(status(&modules, "two"), None);
 }
 
+/// A panel that keeps one variable and reads it on start.
+#[derive(Default)]
+struct Vars;
+
+impl Module for Vars {
+    type Msg = ();
+    fn update(&mut self, event: Event<()>) -> Vec<Cmd> {
+        match event {
+            Event::Init { .. } => vec![cmd::kv_get("load", "host")],
+            _ => Vec::new(),
+        }
+    }
+    fn resolve(&self, text: &str, _: bool) -> Option<Result<services_sdk::Resolution, String>> {
+        Some(if text.contains("{{var:nope}}") {
+            Err("Unknown variable \"nope\" in profile \"var\"".into())
+        } else {
+            Ok(services_sdk::Resolution {
+                text: text.replace("{{var:host}}", "x.test"),
+                secrets: vec!["x.test".into()],
+            })
+        })
+    }
+}
+
 #[test]
-fn a_module_resolves_variables_through_the_app() {
+fn the_kernel_resolves_variables_with_the_first_panel_that_keeps_them() {
     let mut modules = modules();
     modules
         .load(
@@ -535,26 +562,48 @@ fn a_module_resolves_variables_through_the_app() {
             json!({}),
         )
         .unwrap();
-    let discover = wire::Event {
+    let discover = |text: &str| wire::Event {
         kind: Some(event::Kind::Discover(Check {
             service: "one".into(),
-            text: "http://{{var:host}}/a".into(),
+            text: text.into(),
             ..Check::default()
         })),
         now: 0.0,
     };
-    assert_eq!(
-        modules.broadcast(discover),
-        [Effect::Resolve {
-            module: "one".into(),
-            tag: "url".into(),
-            text: "http://{{var:host}}/a".into(),
-            json: false,
-        }]
+    let status = |modules: &Modules| modules.get("one").unwrap().status.clone().unwrap().text;
+
+    modules.broadcast(discover("http://{{var:host}}/a"));
+    assert_eq!(status(&modules), "url failed: No module resolves variables");
+
+    // A closed panel still starts and reads what it resolves from.
+    let effects = modules
+        .load(
+            manifest("vars", "panel", 1),
+            Box::new(Linked::<Vars>::default()),
+            json!({}),
+        )
+        .unwrap();
+    assert!(
+        effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::Command { cmd, .. } if cmd.name == "kv.get"))
     );
-    modules.reply("one", "url", Ok(json!("http://x.test/a")));
-    let status = modules.get("one").unwrap().status.clone().unwrap();
-    assert_eq!(status.text, "url http://x.test/a");
+    assert!(modules.settling());
+    modules.reply("vars", "load", Ok(json!(null)));
+    assert!(!modules.settling());
+
+    modules.broadcast(discover("http://{{var:host}}/a"));
+    assert_eq!(status(&modules), "url http://x.test/a");
+    assert_eq!(modules.get("one").unwrap().resolutions, 1);
+    assert_eq!(
+        modules.resolve("{{var:host}}", false).unwrap().secrets,
+        ["x.test"]
+    );
+    modules.broadcast(discover("{{var:nope}}"));
+    assert_eq!(
+        status(&modules),
+        "url failed: Unknown variable \"nope\" in profile \"var\""
+    );
     // The reply ended the command: a late end changes nothing.
     assert!(modules.end("one", "url").is_empty());
 }
@@ -594,6 +643,7 @@ impl Module for Runner {
                             text: result.unwrap()["body"].as_str().unwrap().into(),
                             language: "text".into(),
                             outcome: "OK".into(),
+                            columns: Vec::new(),
                         },
                         &json!({}),
                     ),
@@ -626,6 +676,7 @@ fn a_run_owns_its_calls_and_locks_until_it_finishes_or_stops() {
         .unwrap();
     assert!(modules.runs("runner"));
     let check = Check {
+        columns: Vec::new(),
         service: "runner".into(),
         text: "go".into(),
         ..Check::default()
@@ -669,7 +720,7 @@ fn a_run_owns_its_calls_and_locks_until_it_finishes_or_stops() {
             Effect::Finished {
                 module: "runner".into(),
                 run: "r1".into(),
-                result: json!({"body":"done","language":"text","outcome":"OK","debug":{}})
+                result: json!({"body":"done","language":"text","outcome":"OK","debug":{},"columns":[]})
             },
         ]
     );

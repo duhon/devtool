@@ -13,10 +13,16 @@ fn workspace() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-/// `(crate, module id, version)` of every module crate: a `cdylib` in `modules/services/<dir>`.
+/// `(crate, module id, version)` of every module crate: a `cdylib` in
+/// `modules/services/<dir>` or `modules/panels/<dir>`.
 pub fn packages() -> &'static [(String, String, String)] {
     static PACKAGES: OnceLock<Vec<(String, String, String)>> = OnceLock::new();
-    PACKAGES.get_or_init(|| scan("modules/services"))
+    PACKAGES.get_or_init(|| {
+        let mut packages = scan("modules/services");
+        packages.extend(scan("modules/panels"));
+        packages.sort();
+        packages
+    })
 }
 
 /// `(crate, module id, version)` of the example modules in `examples/<dir>`: built
@@ -74,7 +80,7 @@ fn manifest(dir: &Path) -> serde_json::Value {
 
 /// The crate folder of module `id`.
 fn crate_dir(id: &str) -> PathBuf {
-    ["modules/services", "examples"]
+    ["modules/services", "modules/panels", "examples"]
         .iter()
         .flat_map(|folder| {
             std::fs::read_dir(workspace().join(folder))

@@ -74,7 +74,14 @@ fn module_fold(
                 .find(|&at| crate::console::is_check(&lines[at]))
                 .unwrap_or(lines.len());
             let text = lines[check + 1..end].join("\n");
-            let check_text = crate::kernel::check(service, &text, &serde_json::Value::Null);
+            let mut check_text = crate::kernel::check(service, &text, &serde_json::Value::Null);
+            check_text.columns = highlighter
+                .regions()
+                .iter()
+                .filter(|region| region.request == check)
+                .flat_map(|region| &region.columns)
+                .map(|(name, kind)| services_sdk::ColumnType::new(name, kind))
+                .collect();
             let folds: std::rc::Rc<[(usize, usize)]> =
                 crate::kernel::with(|modules| modules.fold(service, check_text))
                     .unwrap_or_default()
@@ -199,6 +206,7 @@ mod tests {
             request: 0,
             header: 4,
             end: 6,
+            columns: Vec::new(),
         }]);
         let fold =
             |h: &mut Highlighter, line| range(h, &doc, line).map(|fold| (fold.from, fold.to));

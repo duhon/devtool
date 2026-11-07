@@ -11,8 +11,8 @@ use services_sdk::lang::{endpoint, finish, headers, item, marker, sql};
 use services_sdk::mysql::{self, Request, Response, ResultSet};
 use services_sdk::run::{self, Answer, OneCall};
 use services_sdk::{
-    Check, Cmd, Completions, DriverCall, Event, Failure, Item, Line, Module, Rendered,
-    Subscriptions, Token, cmd,
+    Check, Cmd, ColumnType, Completions, DriverCall, Event, Failure, Item, Line, LineColumns,
+    Module, Rendered, Subscriptions, Token, cmd,
 };
 use std::collections::BTreeMap;
 
@@ -182,6 +182,14 @@ pub fn render(call: Option<&Value>, response: &Value) -> Result<Rendered, String
     if parts.is_empty() && response.error.is_none() {
         parts.push(table::render(&[], &[], false));
     }
+    let mut types: Vec<ColumnType> = Vec::new();
+    for (columns, _) in &tables {
+        for column in table::types(columns) {
+            if !types.iter().any(|known| known.name == column.name) {
+                types.push(column);
+            }
+        }
+    }
     if let Some(error) = &response.error {
         parts.push(if error.state.is_empty() {
             format!("ERROR {}: {}", error.code, error.message)
@@ -198,6 +206,7 @@ pub fn render(call: Option<&Value>, response: &Value) -> Result<Rendered, String
             "OK"
         }
         .into(),
+        columns: types,
     })
 }
 
@@ -497,7 +506,7 @@ fn whole(line: &str, kind: &str) -> Vec<Token> {
 }
 
 /// Highlighting of a MySQL check: SQL, the endpoint, options and the result tables.
-pub fn highlight(state: &[u8], lines: &[String]) -> Vec<Line> {
+pub fn highlight(state: &[u8], lines: &[String], columns: &[LineColumns]) -> Vec<Line> {
     let (mut area, rest) = match state.split_first() {
         Some((area, rest)) => (
             Area::ALL
@@ -521,7 +530,8 @@ pub fn highlight(state: &[u8], lines: &[String]) -> Vec<Line> {
     let mut query = sql::State::decode(rest);
     lines
         .iter()
-        .map(|line| {
+        .enumerate()
+        .map(|(index, line)| {
             let named = marker(line).map(|(name, _)| name);
             let is_marker = named.as_deref().is_some_and(|name| {
                 area != Area::Response || matches!(name, "responce" | "response")
@@ -536,6 +546,9 @@ pub fn highlight(state: &[u8], lines: &[String]) -> Vec<Line> {
                 };
                 query = sql::State::default();
                 response = response.restart();
+                if let Some(reported) = columns.iter().find(|at| at.line == index as u32) {
+                    response.report(&reported.columns);
+                }
                 whole(line, "comment")
             } else {
                 match area {
@@ -652,12 +665,12 @@ impl Module for Mysql {
         }
     }
 
-    fn highlight(&self, state: &[u8], lines: &[String]) -> Vec<Line> {
-        highlight(state, lines)
+    fn highlight(&self, state: &[u8], lines: &[String], columns: &[LineColumns]) -> Vec<Line> {
+        highlight(state, lines, columns)
     }
 
     fn fold(&self, check: &Check) -> Vec<services_sdk::Fold> {
-        services_sdk::lang::table::folds(&check.text)
+        services_sdk::lang::table::folds(&check.text, &check.columns)
     }
 
     fn complete(&self, check: &Check, pos: u32) -> Completions {

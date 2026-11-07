@@ -40,6 +40,7 @@ fn check(text: &str) -> Check {
     }
     close(current, &mut body);
     Check {
+        columns: Vec::new(),
         service: "graphql".into(),
         text: text.into(),
         sections,

@@ -50,6 +50,7 @@ pub fn check(service: &str, text: &str, options: &Value) -> Check {
         text: text.into(),
         sections,
         options: serde_json::to_vec(options).unwrap_or_default(),
+        columns: Vec::new(),
     }
 }
 

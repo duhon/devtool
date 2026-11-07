@@ -5,27 +5,22 @@ use super::{
 use serde_json::{Value, json};
 use services_contracts::templates::{self, Library};
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeSet,
     fs::{self, OpenOptions},
     io::{ErrorKind, Write},
     path::{Path, PathBuf},
-    sync::Arc,
 };
 
 /// Template sections per module. A section is its local text, else the text of the
-/// highest-priority applied source that has it.
+/// highest-priority applied source that has it. The Host does not know which sections a
+/// module has: the App offers them, the Host only checks their names.
 #[derive(Clone)]
 pub struct Templates {
     path: PathBuf,
-    /// The template sections of each module.
-    sections: Arc<BTreeMap<String, Vec<String>>>,
 }
 impl Templates {
-    pub fn new(path: PathBuf, sections: BTreeMap<String, Vec<String>>) -> Self {
-        Self {
-            path,
-            sections: Arc::new(sections),
-        }
+    pub fn new(path: PathBuf) -> Self {
+        Self { path }
     }
     fn read(&self) -> Result<Library> {
         let bytes = match fs::read(&self.path) {
@@ -111,12 +106,14 @@ impl Templates {
         let section = required("section")?;
         let text = required("text")?;
         let base = required("base")?;
-        if !self
-            .sections
-            .get(service)
-            .is_some_and(|sections| sections.iter().any(|name| name == section))
-        {
-            return Err(Error::new("Unknown template service or section"));
+        let name = |name: &str| {
+            !name.is_empty()
+                && name
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
+        };
+        if !name(service) || !name(section) {
+            return Err(Error::new("Invalid template service or section"));
         }
         templates::parse(text).map_err(Error::new)?;
         let _lock = self.lock()?;
@@ -246,10 +243,7 @@ mod tests {
             .unwrap()
             .block_on(sources.apply("team"))
             .unwrap();
-        let templates = Templates::new(
-            data.path().join(".console-templates.json"),
-            BTreeMap::from([("rest".into(), vec!["check".into()])]),
-        );
+        let templates = Templates::new(data.path().join(".console-templates.json"));
         let team_text = "@team\nGET /\n";
         let got = templates.get().unwrap();
         assert_eq!(got["templates"]["rest"]["check"], team_text);

@@ -5,7 +5,6 @@ use services_ui::template_completion::suggest;
 use std::collections::BTreeMap;
 
 #[test]
-#[ignore = "no service has Template sections until the Templates module (step 5)"]
 fn inserts_only_body_and_normalizes_inline_sections() {
     let templates = BTreeMap::from([(
         "body".into(),
@@ -24,7 +23,6 @@ fn inserts_only_body_and_normalizes_inline_sections() {
 }
 
 #[test]
-#[ignore = "no service has Template sections until the Templates module (step 5)"]
 fn full_checks_and_unicode_are_literal() {
     let templates = BTreeMap::from([(
         "check".into(),
@@ -41,7 +39,6 @@ fn full_checks_and_unicode_are_literal() {
 }
 
 #[test]
-#[ignore = "no service has Template sections until the Templates module (step 5)"]
 fn check_header_uses_description_without_copying_template_definition() {
     let body = r#"#endpoint
 PUT https://fakerestapi.azurewebsites.net/api/v1/Books/123
@@ -68,7 +65,6 @@ Accept: application/json
 }
 
 #[test]
-#[ignore = "no service has Template sections until the Templates module (step 5)"]
 fn check_names_fall_back_to_template_name_and_keep_explicit_headers() {
     for (definition, expected) in [
         (
@@ -99,7 +95,6 @@ fn check_names_fall_back_to_template_name_and_keep_explicit_headers() {
 }
 
 #[test]
-#[ignore = "no service has Template sections until the Templates module (step 5)"]
 fn templates_are_only_suggested_after_a_section_marker_on_the_same_line() {
     let templates = BTreeMap::from([("body".into(), "@example Body\n{}".into())]);
     for source in [
@@ -125,7 +120,6 @@ fn templates_are_only_suggested_after_a_section_marker_on_the_same_line() {
 }
 
 #[test]
-#[ignore = "no service has Template sections until the Templates module (step 5)"]
 fn space_after_section_marker_offers_templates_without_an_at_sign() {
     let templates = BTreeMap::from([
         ("body".into(), "@example Body\n{}".into()),
@@ -161,13 +155,5 @@ fn space_after_section_marker_offers_templates_without_an_at_sign() {
             suggest("artemis", "", source, line, ch, &templates).is_none(),
             "{source}"
         );
-    }
-}
-
-#[test]
-fn kernel_services_offer_no_templates_until_the_templates_module() {
-    let templates = BTreeMap::from([("body".into(), "@example Body\n{}".into())]);
-    for service in services_ui::services::ids() {
-        assert!(suggest(&service, "", "#body @", 0, 7, &templates).is_none());
     }
 }

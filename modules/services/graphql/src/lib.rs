@@ -114,6 +114,7 @@ pub fn render(response: &Value) -> Result<Rendered, String> {
         text,
         language: language.into(),
         outcome: outcome.into(),
+        columns: Vec::new(),
     })
 }
 
@@ -195,7 +196,12 @@ impl Module for Graphql {
         }
     }
 
-    fn highlight(&self, state: &[u8], lines: &[String]) -> Vec<Line> {
+    fn highlight(
+        &self,
+        state: &[u8],
+        lines: &[String],
+        _: &[services_sdk::LineColumns],
+    ) -> Vec<Line> {
         highlight::highlight(state, lines)
     }
 

@@ -53,6 +53,7 @@ fn edits_preserve_connections_outputs_and_use_utf16_positions() {
             request: 0,
             header: 5,
             end: 7,
+            columns: Vec::new(),
         }],
     );
     let id = workspace.context("mysql", 0).unwrap()["checks"][0]["id"]
@@ -171,6 +172,7 @@ fn renaming_preserves_body_response_ownership_and_check_identity() {
         request: 0,
         header: 5,
         end: 7,
+        columns: Vec::new(),
     }];
     workspace.refresh("rest", &source, &regions);
     let context = workspace.context("rest", 0).unwrap();
@@ -250,6 +252,7 @@ fn combined_title_and_request_edits_preserve_connection_and_response_boundary() 
             request: 0,
             header: 5,
             end: 7,
+            columns: Vec::new(),
         }],
     );
     let context = workspace.context("rest", 0).unwrap();
@@ -276,6 +279,7 @@ fn unicode_pages_and_response_ownership_are_bounded() {
             request: 0,
             header: 2,
             end: 5,
+            columns: Vec::new(),
         }],
     );
     let context = workspace.context("rest", 4).unwrap();

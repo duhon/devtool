@@ -28,9 +28,16 @@ use wire::{answer, event, request};
 
 pub use manifest::{Kind, Manifest};
 pub use wire::{
-    Check, Chunk, Cmd, Completions, DriverCall, Failure, Fold, Item, Line, Rendered, Section,
-    Subscriptions, Token,
+    Check, Chunk, Cmd, ColumnType, Completions, DriverCall, Failure, Fold, Item, Line, LineColumns,
+    Rendered, Section, Subscriptions, Token,
 };
+
+/// A text with its `{{…}}` variables resolved, and the values of the sensitive ones in it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Resolution {
+    pub text: String,
+    pub secrets: Vec<String>,
+}
 
 /// The ABI of the exports [`export!`] generates; the Kernel loads only an exact match.
 pub const ABI: u32 = 1;
@@ -126,7 +133,10 @@ pub trait Module: Default + 'static {
     }
 
     /// Tokens of `lines` given the state before the first; each line ends with its state.
-    fn highlight(&self, state: &[u8], lines: &[String]) -> Vec<Line> {
+    /// `columns` are the response column types (`render` metadata) of response markers
+    /// among the lines.
+    fn highlight(&self, state: &[u8], lines: &[String], columns: &[LineColumns]) -> Vec<Line> {
+        let _ = columns;
         lines
             .iter()
             .map(|_| Line {
@@ -172,9 +182,18 @@ pub trait Module: Default + 'static {
     fn before_request(&self, call: DriverCall) -> Result<DriverCall, String> {
         Ok(call)
     }
+    /// What a finished run hands panels: `call` is the driver call (empty for a check the
+    /// module ran itself) and `response` the run record (see the SDK docs).
     fn after_response(&self, call: &DriverCall, response: &Value) -> Vec<Cmd> {
         let _ = (call, response);
         Vec::new()
+    }
+    /// The `{{…}}` variables of `text` resolved (`vars.resolve` of any module): `None` when
+    /// this panel keeps no variables. In `json` mode each value is escaped as the content of
+    /// a JSON string.
+    fn resolve(&self, text: &str, json: bool) -> Option<Result<Resolution, String>> {
+        let _ = (text, json);
+        None
     }
 }
 
@@ -249,7 +268,7 @@ fn handle<T: Module>(state: &RefCell<Option<T>>, request: &[u8]) -> Result<answe
             node: module.view(),
         }),
         request::Kind::Highlight(highlight) => answer::Kind::Highlighted(wire::Highlighted {
-            lines: module.highlight(&highlight.state, &highlight.lines),
+            lines: module.highlight(&highlight.state, &highlight.lines, &highlight.columns),
         }),
         request::Kind::Complete(complete) => answer::Kind::Completions(
             module.complete(&complete.check.unwrap_or_default(), complete.pos),
@@ -268,6 +287,22 @@ fn handle<T: Module>(state: &RefCell<Option<T>>, request: &[u8]) -> Result<answe
                 &wire::value(&after.response),
             ),
         }),
+        request::Kind::Resolve(resolve) => {
+            answer::Kind::Resolved(match module.resolve(&resolve.text, resolve.json) {
+                None => wire::Resolved::default(),
+                Some(Ok(resolution)) => wire::Resolved {
+                    handled: true,
+                    text: resolution.text,
+                    error: None,
+                    secrets: resolution.secrets,
+                },
+                Some(Err(error)) => wire::Resolved {
+                    handled: true,
+                    error: Some(error),
+                    ..Default::default()
+                },
+            })
+        }
     })
 }
 

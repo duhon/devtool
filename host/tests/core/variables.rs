@@ -1,19 +1,5 @@
 use serde_json::{Value, json};
-use services_contracts::ParamConfig;
 use services_testkit::DataDir;
-
-/// A request param: a `type` (`json` params resolve inside their JSON) and a `resolve` mode.
-fn param(name: &str, kind: &str, resolve: Option<&str>) -> ParamConfig {
-    ParamConfig {
-        name: name.into(),
-        kind: kind.into(),
-        required: false,
-        multi: false,
-        default: None,
-        resolve: resolve.map(Into::into),
-        keys: Default::default(),
-    }
-}
 
 #[tokio::test]
 async fn session_variables_are_request_local_and_never_replace_stored_ones() {
@@ -39,11 +25,6 @@ async fn session_variables_are_request_local_and_never_replace_stored_ones() {
             view["context"]["resolvedProfiles"]["shared"]["REF"],
             expected
         );
-        let params = runtime.variable_store.resolve_params(&[param("command", "string", None)],&json!({
-            "endpoint":"sh -c","command":"printf '{{var:TOKEN}} {{shared:REF}}'","__consoleVariables":variables
-        })).unwrap();
-        assert_eq!(params["command"], format!("printf '{expected} {expected}'"));
-        assert!(params.get("__consoleVariables").is_none());
     }
     assert_eq!(
         runtime
@@ -78,15 +59,6 @@ async fn session_variables_are_request_local_and_never_replace_stored_ones() {
     assert!(
         runtime
             .variable_store
-            .resolve_params(
-                &[param("command", "string", None)],
-                &json!({"command":"{{var:TOKEN}}","__consoleVariables":{}})
-            )
-            .is_err()
-    );
-    assert!(
-        runtime
-            .variable_store
             .session_dispatch(&json!({"op":"list"}), &json!([]))
             .is_err()
     );
@@ -101,67 +73,10 @@ async fn session_variables_are_request_local_and_never_replace_stored_ones() {
 }
 
 #[test]
-fn nested_json_keeps_keys_and_types_and_reports_resolution_errors() {
-    let data = DataDir::new();
-    let rt = data.runtime();
-    let sku = "SKU-\"blue\"\\path\nnext";
-    rt.variable_store
-        .dispatch(&json!({"op":"save","name":"var","variables":{
-            "sku":sku,"enabled":true,"count":42
-        }}))
-        .unwrap();
-    let input = json!({
-        "skus":["{{var:sku}}"],
-        "filter":{"items":[{"sku":"prefix-{{:sku}}","nested":[["{{var:sku}}"]]}]},
-        "enabled":true,"count":42,"nothing":null,
-        "booleanText":"{{var:enabled}}","numberText":"{{var:count}}",
-        "{{var:sku}}":"literal key"
-    });
-    let expected = json!({
-        "skus":[sku],
-        "filter":{"items":[{"sku":format!("prefix-{sku}"),"nested":[[sku]]}]},
-        "enabled":true,"count":42,"nothing":null,
-        "booleanText":"true","numberText":"42",
-        "{{var:sku}}":"literal key"
-    });
-    let headers = [
-        param("headers", "json", None),
-        param("count", "string", Some("none")),
-    ];
-    let resolve = |params: Value| rt.variable_store.resolve_params(&headers, &params);
-    assert_eq!(
-        resolve(json!({"headers":input})).unwrap()["headers"],
-        expected
-    );
-    let resolved = resolve(json!({"headers":input.to_string()})).unwrap();
-    assert_eq!(
-        serde_json::from_str::<Value>(resolved["headers"].as_str().unwrap()).unwrap(),
-        expected,
-        "JSON string"
-    );
-    assert_eq!(resolve(json!({"headers":""})).unwrap()["headers"], "");
-    assert_eq!(
-        resolve(json!({"headers":null})).unwrap()["headers"],
-        Value::Null
-    );
-    assert_eq!(
-        resolve(json!({"count":"{{var:count}}"})).unwrap()["count"],
-        "{{var:count}}"
-    );
-    let error = resolve(json!({"headers":{"items":[{"sku":"{{var:missing}}"}]}})).unwrap_err();
-    assert!(error.message.contains("missing") && error.message.contains("var"));
-    let error = resolve(json!({"headers":{"items":[{"sku":"{{unknown:sku}}"}]}})).unwrap_err();
-    assert!(error.message.contains("Unknown profile"));
-    let error = resolve(json!({"headers":"{\"skus\":["})).unwrap_err();
-    assert!(error.message.starts_with("headers must be valid JSON"));
-}
-
-#[test]
-fn cycles_display_tolerantly_and_fall_back_to_globals() {
+fn cycles_display_tolerantly_in_listings() {
     let data = DataDir::new();
     let runtime = data.runtime();
     let vars = runtime.dictionary_store.clone();
-    let artemis = &[param("url", "string", None)];
     vars.dispatch(&json!({"op":"save","name":"default","variables":{"value":"{{default:value}}"}}))
         .unwrap();
     vars.dispatch(
@@ -182,17 +97,6 @@ fn cycles_display_tolerantly_and_fall_back_to_globals() {
             .starts_with("⚠ ")
     );
     assert_eq!(list["resolvedProfiles"]["fallback"]["indirect"], "ok");
-    assert!(
-        vars.resolve_params(artemis, &json!({"url":"literal"}))
-            .is_err()
-    );
-    vars.dispatch(&json!({"op":"reorder","order":["fallback","default"]}))
-        .unwrap();
-    assert_eq!(
-        vars.resolve_params(artemis, &json!({"url":"{{:value}}"}))
-            .unwrap()["url"],
-        "ok"
-    );
 }
 
 #[test]

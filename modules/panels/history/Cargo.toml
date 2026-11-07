@@ -1,0 +1,13 @@
+[package]
+name = "services-module-history"
+version = "3.7.0"
+edition.workspace = true
+publish.workspace = true
+description = "History panel module: saves every finished run with its secrets masked"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+services-sdk = { path = "../../../api/sdk" }
+serde_json.workspace = true

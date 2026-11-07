@@ -39,6 +39,7 @@ fn check(text: &str) -> Check {
     }
     close(current, &mut body);
     Check {
+        columns: Vec::new(),
         service: "opensearch".into(),
         text: text.into(),
         sections,
@@ -295,7 +296,7 @@ fn highlight_styles_options_and_the_ndjson_body() {
     ]
     .map(String::from)
     .to_vec();
-    let highlighted = module.highlight(&[], &lines);
+    let highlighted = module.highlight(&[], &lines, &[]);
     assert_eq!(highlighted[1].tokens[0].kind, "property");
     assert_eq!(highlighted[1].tokens[0].len, "OPTIONS ".len() as u32);
     assert!(

@@ -64,6 +64,7 @@ fn matches_inside_response_output_are_not_replaceable() {
         request: 0,
         header: 2,
         end: 4,
+        columns: Vec::new(),
     }];
     let at = |line, ch, len| {
         let start = lines.offset(line, ch);

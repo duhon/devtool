@@ -104,7 +104,12 @@ impl Module for OpenSearch {
         }
     }
 
-    fn highlight(&self, state: &[u8], lines: &[String]) -> Vec<Line> {
+    fn highlight(
+        &self,
+        state: &[u8],
+        lines: &[String],
+        _: &[services_sdk::LineColumns],
+    ) -> Vec<Line> {
         highlight::highlight(&LANGUAGE, state, lines)
     }
 

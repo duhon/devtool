@@ -58,8 +58,14 @@ fn section_markers_come_from_the_modules() {
         ),
     ] {
         assert_eq!(console::markers(service), sections, "{service}");
-        // Templates come with the Templates panel module.
-        assert!(services::template_sections(service).is_empty());
+        let mut templates = vec!["check"];
+        templates.extend(
+            sections
+                .iter()
+                .copied()
+                .filter(|section| *section != "check"),
+        );
+        assert_eq!(services::template_sections(service), templates, "{service}");
     }
     assert!(console::markers("unknown").is_empty());
 }

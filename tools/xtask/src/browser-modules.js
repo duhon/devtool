@@ -1,7 +1,8 @@
 (async () => {
   const {assert, wait, testid, click, openConsole, editorOf, key, setSource, addFolderSource} = testDriver;
   await openConsole();
-  const shipped = ['artemis', 'graphql', 'grpc', 'mysql', 'opensearch', 'rest', 'splunk', 'terminal'];
+  // The service modules and the panel modules (History, Variables).
+  const shipped = ['artemis', 'graphql', 'grpc', 'history', 'mysql', 'opensearch', 'rest', 'splunk', 'terminal', 'variables'];
   const status = () => document.querySelector('[data-testid="settings-update-status"] .console-status-text')?.textContent ?? '';
   const rows = () => [...document.querySelectorAll('[data-testid="settings-module"]')];
   const part = (row, name) => row?.querySelector(`[data-testid="settings-module-${name}"]`);

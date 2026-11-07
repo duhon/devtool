@@ -909,6 +909,7 @@ impl App {
                 line,
                 &response_status,
                 &body,
+                crate::document::columns_of(&run.result),
                 self.response_regions.entry(service.into()).or_default(),
             );
             crate::checks::remap_text(
@@ -925,7 +926,9 @@ impl App {
     /// (with its details) and how many variable resolutions the module got; a change reopens
     /// hints.
     fn editor_discovery(&self, service: &str) -> Value {
-        let resolutions = self.kernel.resolutions.get(service).copied().unwrap_or(0);
+        let resolutions = crate::kernel::with(|modules| {
+            modules.get(service).map_or(0, |module| module.resolutions)
+        });
         let Some(status) = crate::kernel::status(service) else {
             return if resolutions == 0 {
                 Value::Null

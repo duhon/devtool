@@ -384,6 +384,8 @@ Kernel не знает ни одной панели: даёт точки рас�
 - History — отдельные Cmd (`insert`, `search`): поиск на kv не сделать.
 - Имена Cmd в SDK (`api/sdk/src/cmd.rs`): `driver.call`, `driver.stream`, `driver.cancel`;
   `vars.resolve` (`mode: "json"` — значения экранируются как содержимое JSON-строки);
+  `history.insert`, `history.search`; `vars.profiles` (временно, до панели Dictionary:
+  профили, из которых Variables подставляет — `var` сессии, Dictionary, `env`);
   `run.output`, `run.result` (тело, исход, язык, Debug или ошибка); `status.set` (с меткой
   запуска — статус запуска, например `3 rows`); `kv.get`/`put`/`delete`/`watch` (kv модуля
   в `localStorage` `module:<id>:<key>`); `timer.after`; `lock.acquire`/`lock.release`
@@ -411,8 +413,9 @@ Kernel не знает ни одной панели: даёт точки рас�
   Variables → её хранилище; ответ приходит в `Reply { tag }`. `mode: "json"` (решено 07.11):
   App экранирует значения как содержимое JSON-строки — так GraphQL подставляет переменные в
   JSON. Модуль сам экранирует под свой язык (Terminal — кавычки shell после Resolve); App
-  ничего не подставляет после модуля. До шага 5 App отвечает через временный `vars.resolve`
-  Host.
+  ничего не подставляет после модуля. Kernel отвечает сам синхронным вызовом `resolve`
+  первой по `order` панели, которая держит переменные (Variables); без такой панели текст с
+  `{{` — ошибка.
 | `Request { started / finished }` | запуск и завершение запросов |
 | `Workspace` | restore: сессия переключена |
 | `Storage { key }` | изменился ключ из `watch` |
@@ -441,11 +444,17 @@ Kernel вызывает модуль напрямую и сразу получа
 | | `complete(check, pos) -> items` | подсказки |
 | | `fold(check) -> ranges` | свёртки |
 | Сервис | `build(check) -> driver call` | Run |
-| | `render(chunk) -> response text` | ответ или кусок стрима (`stream: true` — по куску) |
+| | `render(chunk) -> response text, metadata` | ответ или кусок стрима (`stream: true` — по куску) |
 | | `export(check) -> text`, `import(text) -> check` | Export, Import |
 | Панель | `before_request(call) -> call or error` | перед драйвером |
 | | `after_response(call, response) -> cmds` | после ответа |
+| | `resolve(text, mode) -> text, secrets` | Cmd `vars.resolve`, Run сервиса |
 
+- Метаданные ответа (решено, meta=A): `render` отдаёт кроме текста типы колонок, как их
+  сообщил сервер (`text`, `number`, `boolean`, `datetime`, `json`; MySQL — из метаданных
+  драйвера). App хранит их с ответом и передаёт модулю в подсветку (`highlight` — по строке
+  маркера ответа) и в свёртки (`Check.columns`); `Columns-Type` в чеке — явная замена
+  сообщённого типа.
 - Синхронный вызов только читает свою модель (схема discovery для подсказок), не меняет её и
   не отдаёт Cmd. Исключение — `after_response` возвращает Cmd (History `insert`).
 - Подсветка — построчное состояние: Kernel передаёт пачку строк с состоянием на входе и
@@ -599,7 +608,34 @@ Settings. Пакеты выпуска — `dist/modules/`, как сейчас.
   запуска — только по завершении; предупреждения Artemis — в исходе и Debug; пакеты без
   платформы и без codesign.
 
+- Шаг 5 (частично): панели Variables и History — wasm-модули в `modules/panels/`
+  (`variables`, `history`), пакеты как у сервисов. Variables: профили через Cmd
+  `vars.profiles` и `kv.watch("profiles")` (App шлёт `Storage("profiles")` при смене
+  переменных сессии), `before_request` подставляет `{{…}}` во все строки вызова драйвера вне
+  запуска модуля, синхронный `resolve` отвечает на Cmd `vars.resolve` и на подстановку
+  источника и заголовка запуска для History; секреты — имена `token`, `password`, … и
+  зависимости. History: `after_response` по записи запуска (`checkId`, `sessionId`,
+  `source`, `title`, `secrets`, исход, текст) маскирует секреты и отдаёт Cmd
+  `history.insert`. Удалены операции Host `vars.resolve` и прямой `history.insert` из App;
+  операция Host `history insert` осталась хранилищем Cmd `history.insert`; из Host ушли
+  `resolve_params`, `resolve_for_history`, `HistoryRedactor`. Templates для всех сервисов
+  вернулись: секции — `check` и маркеры, которые модуль дополняет; Host не знает секций и
+  проверяет только имена; сценарий templates полный (GraphQL, MySQL, Splunk). Meta=A
+  (см. «Синхронные вызовы»): MySQL отдаёт типы колонок сервера, Splunk — нет (API не
+  сообщает типов полей). Id панелей (`history`, `hints`, `templates`, …) больше не
+  зарезервированы Host. Kernel: закрытые панели получают только Init, Shown, Reply, End,
+  Storage, Workspace; ответы на Cmd, отменённые закрытием, отбрасываются; Run ждёт, пока
+  панели загружаются и читают нужное крючкам.
+  Отличия: повтор запуска не подставляет переменные заново (подставлены при разборе);
+  ошибка переменной для сервиса без своего запуска — ошибка разбора без префикса
+  «Variables could not be resolved»; тестовый счётчик discovery считает вызовы драйвера с
+  меткой `discover:` (сообщение драйвера несёт `module` и `tag`).
+  Не перенесены (UI-дерево SDK App ещё не рисует): интерфейсы Variables и History, панели
+  Templates, Hints, Agent, Sessions, Settings, Dictionary — остаются компонентами App.
+
 ## Решить
 
-- Метаданные ответа для подсветки и свёрток: типы колонок таблиц сейчас только из
-  `Columns-Type` в чеке; нужен ли `render` с метаданными ответа (типы колонок сервера).
+- Рисовать UI-дерево SDK (`ui::Node`) в App, чтобы перенести интерфейсы панелей.
+- `vars.profiles` — временный Cmd до панели Dictionary; окружение (`env`) — из Host.
+- Закрытые панели получают Init, Reply и Storage (держат профили для крючков), хотя по
+  правилу закрытая панель выключена.

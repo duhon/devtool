@@ -1,0 +1,13 @@
+[package]
+name = "services-module-variables"
+version = "3.7.0"
+edition.workspace = true
+publish.workspace = true
+description = "Variables panel module: resolves {{profile:name}} references"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+services-sdk = { path = "../../../api/sdk" }
+serde_json.workspace = true

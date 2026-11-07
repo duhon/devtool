@@ -43,5 +43,6 @@ pub fn render(response: &Value) -> Result<Rendered, String> {
         text,
         language: language.into(),
         outcome: outcome.into(),
+        columns: Vec::new(),
     })
 }

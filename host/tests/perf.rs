@@ -3,7 +3,7 @@
 //! Budgets are about 5x the time measured on a developer laptop, so a
 //! failure means a regression rather than noise.
 
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 use services_native::adapters::framing::{FrameReader, response_frames};
 use services_testkit::{Host, http};
 use std::time::{Duration, Instant};
@@ -91,59 +91,4 @@ async fn history_pages_stay_fast_with_many_entries() {
         started.elapsed(),
     );
     assert_eq!(pages, ENTRIES / 50);
-}
-
-#[tokio::test]
-#[ignore = "performance budget; run with --release --ignored"]
-async fn variables_resolve_fast_with_many_profiles() {
-    const PROFILES: usize = 200;
-    const REQUESTS: usize = 100;
-    let host = Host::new();
-    let (server, _) = http::services().await;
-    for profile in 0..PROFILES {
-        let variables: Map<String, Value> = (0..20)
-            .map(|index| {
-                let value = if profile > 0 && index == 0 {
-                    format!("{{{{p{}:V1}}}}-{profile}", profile - 1)
-                } else {
-                    format!("value-{profile}-{index}")
-                };
-                (format!("V{index}"), json!(value))
-            })
-            .collect();
-        host.op(
-            "dictionary",
-            "save",
-            json!({"name":format!("p{profile}"),"variables":variables}),
-        )
-        .await
-        .ok();
-    }
-    let headers: Map<String, Value> = (0..50)
-        .map(|index| {
-            (
-                format!("X-{index}"),
-                json!(format!("{{{{p{}:V{}}}}}", index * 4, index % 20)),
-            )
-        })
-        .collect();
-    let started = Instant::now();
-    for _ in 0..REQUESTS {
-        let reply = host
-            .op(
-                "vars",
-                "resolve",
-                json!({"value":{"method":"GET","url":format!("{}/echo",server.url),"headers":headers}}),
-            )
-            .await;
-        host.send(json!({"service":"drivers","driver":"http","op":"call",
-            "request":{"method":"GET","url":reply.ok()["value"]["url"],"text":true}}))
-            .await
-            .ok();
-    }
-    within(
-        &format!("{REQUESTS} requests with 50 variables across {PROFILES} profiles"),
-        Duration::from_secs(2),
-        started.elapsed(),
-    );
 }

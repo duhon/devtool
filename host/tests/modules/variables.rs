@@ -2,16 +2,7 @@
 //! (`context.profiles.env`), so failure messages here never print them.
 
 use serde_json::{Value, json};
-use services_testkit::{
-    DataDir, Host,
-    http::{self, Server},
-};
-
-/// A REST request to the fixture's `/echo`, which answers with the body it
-/// received, so the reply shows how the host resolved `body`.
-fn echo(server: &Server, body: &str) -> Value {
-    json!({"method":"POST","url":format!("{}/echo",server.url),"body":body})
-}
+use services_testkit::{DataDir, Host};
 
 async fn list(host: &Host, store: &str) -> Value {
     host.op(store, "list", json!({})).await.ok().clone()
@@ -29,7 +20,6 @@ async fn legacy_profiles_migrate_once_into_independent_files() {
     let original = serde_json::to_vec_pretty(&legacy).unwrap();
     std::fs::write(&path, &original).unwrap();
     let host = Host::on(data);
-    let (server, _) = http::services().await;
     let vars = list(&host, "vars").await;
     let dictionary = list(&host, "dictionary").await;
     assert_eq!(vars["order"], json!(["var"]));
@@ -46,18 +36,6 @@ async fn legacy_profiles_migrate_once_into_independent_files() {
     assert_eq!(
         std::fs::read(host.path().join(".variable-profiles.json.pre-split.bak")).unwrap(),
         original
-    );
-    let reply = host
-        .op(
-            "vars",
-            "resolve",
-            json!({"value": echo(&server, "{{:HOST}}/{{var:FROM_DICT}}/{{shop:FROM_VAR}}")}),
-        )
-        .await;
-    assert_eq!(
-        reply.ok()["value"]["body"],
-        "local.invalid/fixture.invalid/local",
-        "{reply}"
     );
     let dictionary_path = host.path().join(".dictionary-profiles.json");
     let dictionary_before = std::fs::read(&dictionary_path).unwrap();
@@ -226,9 +204,8 @@ async fn concurrent_hosts_serialize_migration_and_mutations() {
 }
 
 #[tokio::test]
-async fn profiles_persist_resolve_by_priority_and_keep_env_read_only() {
+async fn profiles_persist_reorder_and_keep_env_read_only() {
     let host = Host::new();
-    let (server, _) = http::services().await;
     host.op("dictionary", "save", json!({"name":"default","variables":{"name":"first","url":"https://{{second:host}}","same":"{{default:name}}"}})).await.ok();
     host.op(
         "dictionary",
@@ -237,15 +214,6 @@ async fn profiles_persist_resolve_by_priority_and_keep_env_read_only() {
     )
     .await
     .ok();
-    let mut params = echo(&server, "{{:url}}/{{default:same}}");
-    params["headers"] = json!({"X":"{{second:name}}"});
-    let reply = host.op("vars", "resolve", json!({"value": params})).await;
-    assert_eq!(
-        reply.ok()["value"]["body"],
-        "https://fixture.invalid/first",
-        "{reply}"
-    );
-    assert_eq!(reply.ok()["value"]["headers"]["X"], "second", "{reply}");
     assert_eq!(
         list(&host.reopen(), "dictionary").await["resolvedProfiles"]["default"]["url"],
         "https://fixture.invalid"
@@ -257,14 +225,10 @@ async fn profiles_persist_resolve_by_priority_and_keep_env_read_only() {
     )
     .await
     .ok();
-    let reply = host
-        .op(
-            "vars",
-            "resolve",
-            json!({"value": echo(&server, "{{:name}}")}),
-        )
-        .await;
-    assert_eq!(reply.ok()["value"]["body"], "second", "{reply}");
+    assert_eq!(
+        list(&host.reopen(), "dictionary").await["order"],
+        json!(["second", "default"])
+    );
     let reply = host
         .op(
             "dictionary",

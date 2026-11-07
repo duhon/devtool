@@ -42,6 +42,7 @@ fn check(text: &str) -> Check {
     }
     close(current, &mut body);
     Check {
+        columns: Vec::new(),
         service: "terminal".into(),
         text: text.into(),
         sections,
@@ -168,7 +169,7 @@ fn endpoints_env_names_and_markers_complete() {
 fn styles(lines: &[&str]) -> Vec<Vec<(String, String)>> {
     let lines: Vec<String> = lines.iter().map(|line| line.to_string()).collect();
     Terminal::default()
-        .highlight(&[], &lines)
+        .highlight(&[], &lines, &[])
         .iter()
         .zip(&lines)
         .map(|(line, text)| {

@@ -1,5 +1,5 @@
-//! Console services the App runs through the Kernel: their manifests (the Host's `wasm`
-//! list) and one [`Modules`] holding their running instances. The Kernel lives on the UI
+//! Modules the App runs through the Kernel — console services and panels: their manifests
+//! (the Host's `wasm` list) and one [`Modules`] holding their running instances. The Kernel lives on the UI
 //! thread; [`with`] lends it out for one synchronous call, so effects come back to the
 //! caller to run outside the borrow.
 
@@ -15,7 +15,8 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 thread_local! {
     static KERNEL: RefCell<Option<Modules>> = const { RefCell::new(None) };
-    static DECLARED: RefCell<Vec<Manifest>> = RefCell::new(seed());
+    static DECLARED: RefCell<Vec<Manifest>> = RefCell::new(seed(services_sdk::Kind::Service));
+    static PANELS: RefCell<Vec<Manifest>> = RefCell::new(seed(services_sdk::Kind::Panel));
     static STYLES: RefCell<HashMap<String, &'static str>> = RefCell::new(HashMap::new());
     static DRIVERS: RefCell<Option<BTreeMap<String, String>>> = const { RefCell::new(None) };
     /// The digest of each declared module's wasm, and of each one running.
@@ -31,30 +32,39 @@ fn linked() -> Vec<(Manifest, Box<dyn Instance>)> {
     use services_sdk::Linked;
     let manifest = |json: &str| Manifest::parse(json).expect("linked module manifest");
     macro_rules! linked {
-        ($($id:literal => $module:ty),* $(,)?) => {
+        ($($path:literal => $module:ty),* $(,)?) => {
             vec![$((
-                manifest(include_str!(concat!("../../../modules/services/", $id, "/manifest.json"))),
+                manifest(include_str!(concat!("../../../modules/", $path, "/manifest.json"))),
                 Box::new(Linked::<$module>::default()) as Box<dyn Instance>,
             )),*]
         };
     }
     linked![
-        "rest" => services_module_rest::Rest,
-        "mysql" => services_module_mysql::Mysql,
-        "graphql" => services_module_graphql::Graphql,
-        "grpc" => services_module_grpc::Grpc,
-        "splunk" => services_module_splunk::Splunk,
-        "terminal" => services_module_terminal::Terminal,
-        "artemis" => services_module_artemis::Artemis,
-        "opensearch" => services_module_opensearch::OpenSearch,
+        "services/rest" => services_module_rest::Rest,
+        "services/mysql" => services_module_mysql::Mysql,
+        "services/graphql" => services_module_graphql::Graphql,
+        "services/grpc" => services_module_grpc::Grpc,
+        "services/splunk" => services_module_splunk::Splunk,
+        "services/terminal" => services_module_terminal::Terminal,
+        "services/artemis" => services_module_artemis::Artemis,
+        "services/opensearch" => services_module_opensearch::OpenSearch,
+        "panels/variables" => services_module_variables::Variables,
+        "panels/history" => services_module_history::History,
     ]
 }
 
-fn seed() -> Vec<Manifest> {
+fn seed(kind: services_sdk::Kind) -> Vec<Manifest> {
     #[cfg(not(target_arch = "wasm32"))]
-    return linked().into_iter().map(|(manifest, _)| manifest).collect();
+    return linked()
+        .into_iter()
+        .map(|(manifest, _)| manifest)
+        .filter(|manifest| manifest.kind == kind)
+        .collect();
     #[cfg(target_arch = "wasm32")]
-    Vec::new()
+    {
+        let _ = kind;
+        Vec::new()
+    }
 }
 
 fn now() -> f64 {
@@ -134,7 +144,8 @@ pub fn fail(id: &str, message: String) {
 /// Stops the running modules no longer declared; the declared ones not running at their
 /// digest come back to load.
 pub fn retain() -> (Vec<Effect>, Vec<(Manifest, String)>) {
-    let declared = declared();
+    let mut declared = declared();
+    declared.extend(panels());
     let digests = DIGESTS.with(|digests| digests.borrow().clone());
     let running = LOADED.with(|loaded| loaded.borrow().clone());
     let effects = with(|modules| {
@@ -179,18 +190,21 @@ pub fn parse(value: &Value) -> Result<Vec<(Manifest, String)>, String> {
         .collect()
 }
 
-/// Replaces the services the console shows tabs for, with the digest of each one's wasm;
-/// `true` when they changed.
+/// Replaces the declared modules — the services the console shows tabs for and the
+/// panels — with the digest of each one's wasm; `true` when the services changed.
 pub fn declare(modules: Vec<(Manifest, String)>) -> bool {
-    let (services, digests): (Vec<Manifest>, HashMap<String, String>) = modules
+    let (modules, digests): (Vec<Manifest>, HashMap<String, String>) = modules
         .into_iter()
-        .filter(|(manifest, _)| manifest.kind == services_sdk::Kind::Service)
         .map(|(manifest, digest)| {
             let id = manifest.id.clone();
             (manifest, (id, digest))
         })
         .unzip();
+    let (services, panels): (Vec<Manifest>, Vec<Manifest>) = modules
+        .into_iter()
+        .partition(|manifest| manifest.kind == services_sdk::Kind::Service);
     DIGESTS.with(|known| *known.borrow_mut() = digests);
+    PANELS.with(|declared| *declared.borrow_mut() = panels);
     DECLARED.with(|declared| {
         let mut declared = declared.borrow_mut();
         let changed = *declared != services;
@@ -201,6 +215,24 @@ pub fn declare(modules: Vec<(Manifest, String)>) -> bool {
 
 pub fn declared() -> Vec<Manifest> {
     DECLARED.with(|declared| declared.borrow().clone())
+}
+
+/// The declared panel modules.
+pub fn panels() -> Vec<Manifest> {
+    PANELS.with(|panels| panels.borrow().clone())
+}
+
+/// A declared panel has neither started nor failed yet: what it resolves or keeps for
+/// runs is not there.
+pub fn panels_loading() -> bool {
+    panels().iter().any(|panel| {
+        !loaded(&panel.id) && !FAILED.with(|failed| failed.borrow().contains_key(&panel.id))
+    })
+}
+
+/// Panels still read what their hooks need, or have not started: a run waits.
+pub fn settling() -> bool {
+    panels_loading() || with(|modules| modules.settling())
 }
 
 pub fn manifest(id: &str) -> Option<Manifest> {
@@ -272,6 +304,14 @@ pub fn hints(check: Check, pos: u32) -> wire::Event {
             check: Some(check),
             pos,
         })),
+        now: 0.0,
+    }
+}
+
+/// A kv key the modules may watch changed.
+pub fn storage(key: &str) -> wire::Event {
+    wire::Event {
+        kind: Some(event::Kind::Storage(key.into())),
         now: 0.0,
     }
 }

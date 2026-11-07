@@ -78,6 +78,7 @@ fn check(text: &str) -> Check {
     }
     close(current, &mut body);
     Check {
+        columns: Vec::new(),
         service: "graphql".into(),
         text: text.into(),
         sections,
@@ -88,7 +89,7 @@ fn check(text: &str) -> Check {
 fn styles(graphql: &Graphql, state: &[u8], lines: &[&str]) -> Vec<Vec<(String, String)>> {
     let lines: Vec<String> = lines.iter().map(|line| line.to_string()).collect();
     graphql
-        .highlight(state, &lines)
+        .highlight(state, &lines, &[])
         .iter()
         .zip(&lines)
         .map(|(line, text)| {
@@ -241,9 +242,9 @@ fn highlight_styles_each_section_and_carries_state() {
 
     // The state of a line continues the highlighting on the next call.
     let all: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
-    let whole = graphql.highlight(&[], &all);
+    let whole = graphql.highlight(&[], &all, &[]);
     for at in [4, 7] {
-        let split = graphql.highlight(&whole[at].state, &all[at + 1..]);
+        let split = graphql.highlight(&whole[at].state, &all[at + 1..], &[]);
         assert_eq!(split, whole[at + 1..].to_vec());
     }
 }

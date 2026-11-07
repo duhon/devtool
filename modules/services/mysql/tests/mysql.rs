@@ -70,6 +70,7 @@ fn check(text: &str) -> Check {
     }
     close(current, &mut body);
     Check {
+        columns: Vec::new(),
         service: "mysql".into(),
         text: text.into(),
         sections,
@@ -190,6 +191,27 @@ fn options_use_literal_column_names_and_reject_unknown_types() {
         &response,
     );
     assert!(missing.unwrap_err().contains("missing"));
+}
+
+#[test]
+fn render_reports_the_server_column_types() {
+    let response = json!({"sets":[{"columns":[column("id","long"),column("doc","json"),column("at","datetime"),column("name","var_string")],"rows":[[1,"{}","2024-01-01 00:00:00","x"]]}]});
+    let rendered = render(Some(&json!({"console":{}})), &response).unwrap();
+    let kinds: Vec<(String, String)> = rendered
+        .columns
+        .into_iter()
+        .map(|column| (column.name, column.kind))
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            ("id", "number"),
+            ("doc", "json"),
+            ("at", "datetime"),
+            ("name", "text")
+        ]
+        .map(|(name, kind)| (name.to_owned(), kind.to_owned()))
+    );
 }
 
 #[test]
@@ -559,7 +581,7 @@ fn discovery_resolves_variables_through_the_app_and_reports_failures() {
 fn styles(lines: &[&str]) -> Vec<Vec<(String, String)>> {
     let lines: Vec<String> = lines.iter().map(|line| line.to_string()).collect();
     Mysql::default()
-        .highlight(&[], &lines)
+        .highlight(&[], &lines, &[])
         .iter()
         .zip(&lines)
         .map(|(line, text)| {

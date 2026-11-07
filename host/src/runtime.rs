@@ -78,77 +78,16 @@ impl Runtime {
             variable_store,
             dictionary_store,
             hints: Hints::new(path.join(".console-hints.txt")),
-            templates: crate::core::templates::Templates::new(
-                path.join(".console-templates.json"),
-                // Modules declare no template sections yet.
-                Default::default(),
-            ),
+            templates: crate::core::templates::Templates::new(path.join(".console-templates.json")),
             history: crate::core::history::History::new(path.join(".console-history.sqlite3")),
             sources: Sources::new(path),
             drivers: crate::drivers::Drivers::new()?,
         })
     }
-    /// Interim until the Variables panel module: `{"service":"vars","op":"resolve","value",
-    /// "source","title","variables"}` resolves `{{…}}` in every string of `value` with the
-    /// session `variables`; `source` and `title` come back resolved with secrets redacted,
-    /// ready for history. `"mode":"json"` escapes each value of a `value` string as the
-    /// content of a JSON string.
-    fn resolve(&self, message: &Value) -> Result<Value> {
-        if message["mode"] == "json"
-            && let Some(text) = message["value"].as_str()
-        {
-            let references: Vec<&str> = text
-                .match_indices("{{")
-                .filter_map(|(start, _)| {
-                    let end = text[start..].find("}}")?;
-                    Some(&text[start..start + end + 2])
-                })
-                .collect();
-            let mut each = message.clone();
-            each["value"] = json!(references);
-            each["mode"] = Value::Null;
-            let mut resolved = self.resolve(&each)?;
-            let mut out = text.to_owned();
-            for (reference, value) in references
-                .iter()
-                .zip(resolved["value"].as_array().cloned().unwrap_or_default())
-            {
-                let quoted = serde_json::to_string(value.as_str().unwrap_or(""))?;
-                out = out.replace(reference, &quoted[1..quoted.len() - 1]);
-            }
-            resolved["value"] = json!(out);
-            return Ok(resolved);
-        }
-        let config = [services_contracts::ParamConfig {
-            name: "value".into(),
-            kind: "text".into(),
-            required: false,
-            multi: false,
-            default: None,
-            resolve: Some("text".into()),
-            keys: Default::default(),
-        }];
-        let mut params = json!({"value": message["value"]});
-        if let Some(variables) = message.get("variables") {
-            params["__consoleVariables"] = variables.clone();
-        }
-        let (resolved, snapshot) = self.variable_store.resolve_for_history(
-            &config,
-            &params,
-            message["source"].as_str(),
-        )?;
-        let (source, secrets) = snapshot?;
-        let redactor = crate::core::history::redactor(&resolved, &source, secrets);
-        Ok(json!({
-            "value": resolved["value"],
-            "source": redactor.text(&source),
-            "title": redactor.text(message["title"].as_str().unwrap_or("")),
-        }))
-    }
-
-    /// Interim until the History panel module: `{"service":"history","op":"insert","checkId",
-    /// "sessionId","title","module","started","ended","status","text"}` saves a run;
-    /// `defer:true` keeps it back like a repeat's earlier runs.
+    /// What the `history.insert` command of a module (the History panel) runs:
+    /// `{"service":"history","op":"insert","checkId","sessionId","title","module","started",
+    /// "ended","status","text"}` saves a run; `defer:true` keeps it back like a repeat's
+    /// earlier runs.
     async fn insert_history(&self, message: &Value) -> Result<Value> {
         use crate::core::{error::Error, history};
         let number = |key: &str| {
@@ -364,8 +303,6 @@ impl Runtime {
                 hints: self.hints.local(),
             };
             sources::dispatch(&self.sources, message, local, &installed).await
-        } else if service == "vars" && message["op"] == "resolve" {
-            self.resolve(message)
         } else if service == "vars" {
             if let Some(variables) = message.get("sessionVariables") {
                 self.variable_store.session_dispatch(message, variables)

@@ -97,6 +97,7 @@ pub fn history_document(
             .unwrap_or(0),
         header: request.lines().count(),
         end: text.split('\n').count(),
+        columns: Vec::new(),
     };
     (text, vec![region])
 }

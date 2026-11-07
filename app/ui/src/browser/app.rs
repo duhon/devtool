@@ -295,18 +295,14 @@ pub enum Msg {
     CloseExport,
     /// Kernel modules started: their effects and the ids that started.
     KernelStarted((Vec<services_kernel::Effect>, Vec<String>)),
-    /// `vars.resolve` answered a module's driver call: (module, tag, driver, stream, reply).
-    KernelResolved(String, String, String, bool, Reply),
     /// A driver answered a module's call: (module, tag, reply).
     KernelReplied(String, String, Reply),
     /// A module's driver stream sent an event or ended.
     KernelStreamed(String, String, Reply),
-    /// `vars.resolve` answered a module's `vars.resolve` command: (module, tag, reply).
-    KernelVariables(String, String, Reply),
+    /// The Host answered a module's command: (module, tag, a History save, reply).
+    KernelHosted(String, String, bool, Reply),
     KernelTimer(String, String),
-    KernelRunResolved(String, Reply),
     KernelRunReplied(String, Reply),
-    KernelSaved(Reply),
     KernelDocument(String),
     /// The user asked a Kernel service for hints at an offset of a check.
     KernelHints(services_sdk::Check, u32),
@@ -959,7 +955,7 @@ impl Component for App {
                     return false;
                 }
                 let service = self.console_service.clone();
-                if self.kernel.loading > 0 && crate::kernel::loading(&service) {
+                if self.kernel_busy(&service) {
                     self.kernel.waiting = Some((service, text, line));
                     return false;
                 }
@@ -1040,7 +1036,7 @@ impl Component for App {
             }
             Msg::Vars(reply) => match reply {
                 Reply::Result(value) => {
-                    self.vars = value.get("context").unwrap_or(&value).clone();
+                    self.vars_changed(ctx, value.get("context").unwrap_or(&value).clone());
                 }
                 // Opening Variables reloads the profile and shows the failure in its status.
                 Reply::Error(e) => {
@@ -1086,7 +1082,7 @@ impl Component for App {
                     reply: Some(Reply::Error(json!({"error":message}))),
                 });
             }
-            Msg::PanelVars(vars) => self.vars = vars,
+            Msg::PanelVars(vars) => self.vars_changed(ctx, vars),
             Msg::ToggleSettings => {
                 self.settings_visited = true;
                 self.console_panel = if self.console_panel == Some(ConsolePanel::Settings) {
@@ -1708,20 +1704,15 @@ impl Component for App {
                     self.sync_services(ctx);
                 }
             }
-            Msg::KernelResolved(module, tag, driver, stream, reply) => {
-                self.kernel_resolved(ctx, module, tag, driver, stream, reply);
-            }
             Msg::KernelReplied(module, tag, reply) => self.kernel_replied(ctx, module, tag, reply),
             Msg::KernelStreamed(module, tag, reply) => {
                 self.kernel_streamed(ctx, module, tag, reply);
             }
-            Msg::KernelVariables(module, tag, reply) => {
-                self.kernel_variables(ctx, module, tag, reply);
+            Msg::KernelHosted(module, tag, saved, reply) => {
+                self.kernel_hosted(ctx, module, tag, saved, reply);
             }
             Msg::KernelTimer(module, tag) => self.kernel_timer(ctx, &module, &tag),
-            Msg::KernelRunResolved(key, reply) => self.kernel_run_resolved(ctx, &key, reply),
             Msg::KernelRunReplied(key, reply) => self.kernel_run_replied(ctx, &key, reply),
-            Msg::KernelSaved(reply) => self.kernel_saved(reply),
             Msg::KernelDocument(service) => self.kernel_document(ctx, &service),
             Msg::KernelHints(check, pos) => self.kernel_hints(ctx, check, pos),
         }

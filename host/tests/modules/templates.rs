@@ -1,18 +1,61 @@
 use serde_json::json;
 use services_testkit::Host;
 
-/// Modules declare no template sections yet (REFACTORING step 5), so the store only reads;
-/// conflicts and section checks are covered by the store's unit tests.
 #[tokio::test]
-async fn templates_are_rejected_until_modules_declare_sections() {
+async fn saved_templates_are_global_per_section_and_conflict_checked() {
     let host = Host::new();
-    let saved = host
-        .send(json!({"service":"templates","op":"save",
-            "serviceName":"artemis","section":"body","text":"@kept\n{}","base":""}))
-        .await;
-    assert!(saved.error().contains("section"), "{saved}");
+    let save = |service: &str, section: &str, text: &str, base: &str| {
+        json!({"service":"templates","op":"save",
+        "serviceName":service,"section":section,"text":text,"base":base,"sessionVariables":{"OTHER":"not a template"}})
+    };
+    let text = "@my_create_book comment\n{\n  \"id\": 123,\n  \"token\": \"{{var:TOKEN}}\"\n}";
+    let saved = host.send(save("graphql", "variables", text, "")).await;
+    assert_eq!(
+        saved.ok()["templates"]["graphql"]["variables"],
+        text,
+        "{saved}"
+    );
+    let other = host.reopen();
+    let loaded = other.op("templates", "get", json!({})).await;
+    assert_eq!(
+        loaded.ok()["templates"]["graphql"]["variables"],
+        text,
+        "{loaded}"
+    );
+    let changed = "@different\n{\"id\":2}";
+    let conflict = other.send(save("graphql", "variables", changed, "")).await;
+    assert!(conflict.error().contains("CONFLICT"), "{conflict}");
+    other
+        .send(save("mysql", "query", "@my_create_book SQL\nSELECT 1;", ""))
+        .await
+        .ok();
+    other
+        .send(save("graphql", "variables", "@dup\n1\n@dup\n2", text))
+        .await
+        .error();
+    other
+        .send(save("graphql", "Body!", "@wrong\nno", ""))
+        .await
+        .error();
+    other
+        .send(save("graphql", "variables", changed, text))
+        .await
+        .ok();
     let loaded = host.op("templates", "get", json!({})).await;
-    assert_eq!(loaded.ok()["templates"], json!({}), "{loaded}");
+    assert_eq!(
+        loaded.ok()["templates"]["graphql"]["variables"],
+        changed,
+        "{loaded}"
+    );
+    assert_eq!(
+        loaded.ok()["templates"]["mysql"]["query"],
+        "@my_create_book SQL\nSELECT 1;",
+        "{loaded}"
+    );
+    other
+        .send(save("graphql", "variables", "", changed))
+        .await
+        .ok();
     std::fs::write(host.path().join(".console-templates.json"), "not-json").unwrap();
     host.op("templates", "get", json!({})).await.error();
 }

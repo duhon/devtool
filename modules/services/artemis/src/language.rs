@@ -170,7 +170,11 @@ impl Area {
 }
 
 /// Highlighting of an Artemis check, and of its result tables.
-pub fn highlight(state: &[u8], lines: &[String]) -> Vec<Line> {
+pub fn highlight(
+    state: &[u8],
+    lines: &[String],
+    columns: &[services_sdk::LineColumns],
+) -> Vec<Line> {
     let (mut area, rest) = match state.split_first() {
         Some((area, rest)) => (
             Area::ALL
@@ -195,7 +199,8 @@ pub fn highlight(state: &[u8], lines: &[String]) -> Vec<Line> {
     let mut body = json::State::decode(rest);
     lines
         .iter()
-        .map(|line| {
+        .enumerate()
+        .map(|(index, line)| {
             let named = marker(line).map(|(name, _)| name);
             let is_marker = named.as_deref().is_some_and(|name| {
                 area != Area::Response || matches!(name, "responce" | "response")
@@ -212,6 +217,9 @@ pub fn highlight(state: &[u8], lines: &[String]) -> Vec<Line> {
                 command = false;
                 body = json::State::default();
                 response = response.restart();
+                if let Some(reported) = columns.iter().find(|at| at.line == index as u32) {
+                    response.report(&reported.columns);
+                }
                 if line.is_empty() {
                     vec![]
                 } else {
@@ -387,16 +395,17 @@ mod tests {
         assert!(next.contains(&(">=".into(), "operator".into())));
         assert!(next.contains(&("20".into(), "number".into())));
         let lines: Vec<String> = ["#action", "BROWSE", "/q"].map(String::from).into();
-        let out = highlight(&[], &lines);
+        let out = highlight(&[], &lines, &[]);
         assert_eq!(out[2].tokens[0].kind, "def");
         assert_eq!(
-            highlight(&out[1].state, &lines[2..])[0].tokens,
+            highlight(&out[1].state, &lines[2..], &[])[0].tokens,
             out[2].tokens
         );
     }
 
     fn at(text: &str, discovered: &Value) -> (u32, Vec<String>) {
         let check = Check {
+            columns: Vec::new(),
             text: text.into(),
             ..Check::default()
         };
