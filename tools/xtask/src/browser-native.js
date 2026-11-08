@@ -551,6 +551,12 @@
   await win.testDriver.activateSession(0);
   await wait(() => doc.querySelector('[data-testid="console-service-rest"]'));
   await click(testid('console-service-rest', doc));
+  // The toolbar keeps its slots while modules load: the panel buttons do not move.
+  const toolbar = () => [...doc.querySelectorAll('.console-toolbar > button')]
+    .map(el => `${el.dataset.testid}@${Math.round(el.getBoundingClientRect().left)}`).join(' ');
+  const loadingToolbar = toolbar();
+  assert(doc.querySelector('[data-testid="console-import"]') && doc.querySelector('[data-testid="console-sessions-toggle"]'),
+    `The toolbar must reserve Import and the panel buttons before modules load: ${loadingToolbar}`);
   assert(!doc.featurePolicy.allowsFeature('clipboard-read'), 'Iframe must deny clipboard access');
   let denied = false;
   try { await win.navigator.clipboard.readText(); }
@@ -558,7 +564,8 @@
   assert(denied, 'Browser clipboard must fail under Permissions Policy');
   assert(win.nativeProbe.clipboardReads === 0, 'No automatic clipboard read');
   // Import appears once the iframe's own Kernel runs the REST module.
-  await wait(() => doc.querySelector('[data-testid="console-import"]'), 'REST Import must appear once its module runs');
+  await wait(() => doc.querySelector('[data-testid="console-import"]:not(:disabled)'), 'REST Import must appear once its module runs');
+  assert(toolbar() === loadingToolbar, `Loading modules must not shift the toolbar: ${loadingToolbar} → ${toolbar()}`);
   await click(button(/^Import/, doc));
   await wait(() => editorOf('console-editor', doc).getValue().includes('POST https://fixture.invalid/import'));
   assert(editorOf('console-editor', doc).getValue().includes('X-Fixture: imported'), 'Import headers');

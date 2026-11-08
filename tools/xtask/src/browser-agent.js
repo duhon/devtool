@@ -124,8 +124,8 @@
     'User messages must retain literal text rather than render Markdown or HTML');
   await send('agent guide');
   await completed('Application knowledge ready: interface, discovery, services, variables.');
-  assert(!document.querySelector('[data-testid="agent-session-rename"]'),
-    'Chat naming must not show a field until Rename');
+  assert(!document.querySelector('[data-testid="agent-sessions-rename"]'),
+    'Chat naming must not show a field until the tab is double-clicked');
   await send('agent edit');
   await completed('Edited live check');
   let editor = editorOf('console-editor');
@@ -227,23 +227,30 @@
   await wait(() => testid('agent-composer').value === 'Draft survives panel changes', () => `Closing Agent must preserve drafts: composer=${JSON.stringify(testid('agent-composer').value)} chat=${selectedChat()} chats=${JSON.stringify(Object.values(chats()).map(c => [c.id, c.draft, c.closed]))}`);
   const firstSession = selectedChat();
   const tab = id => testid('agent-sessions').querySelector(`[data-testid="${id}"]`);
+  const label = id => tab(id)?.querySelector('.tab-label')?.textContent;
   const renameInput = async text => {
-    await click(testid('agent-session-rename-start'));
-    const field = await wait(() => document.querySelector('[data-testid="agent-session-rename"]'));
-    assert(field.value === tab(firstSession).textContent.replace(' ●', ''), 'The rename field must start with the current name');
+    await doubleClick(tab(firstSession));
+    const field = await wait(() => document.querySelector('[data-testid="agent-sessions-rename"]'));
+    await wait(() => document.activeElement === field, 'Inline chat rename must receive focus');
+    assert(tab(firstSession).contains(field), 'The rename input must be inside the tab');
+    assert(field.selectionStart === 0 && field.selectionEnd === field.value.length, 'The current name must be selected');
     field.value = text;
     field.dispatchEvent(new InputEvent('input', { bubbles: true }));
-    return field;
   };
   const messagesBeforeRename = users().length;
-  (await renameInput('Products chat')).focus();
+  await renameInput('Products chat');
   await key('Enter');
-  await wait(() => !document.querySelector('[data-testid="agent-session-rename"]'));
-  assert(tab(firstSession).textContent === 'Products chat', 'Enter must save the chat name');
+  await wait(() => !document.querySelector('[data-testid="agent-sessions-rename"]'));
+  await wait(() => label(firstSession) === 'Products chat', 'Enter must save an inline chat name');
   assert(users().length === messagesBeforeRename, 'Enter while renaming must not send a chat message');
-  (await renameInput('Products discussion')).focus();
+  await renameInput('Do not save');
+  await key('Escape');
+  await wait(() => !document.querySelector('[data-testid="agent-sessions-rename"]'));
+  await settle();
+  assert(label(firstSession) === 'Products chat', 'Escape must cancel renaming');
+  await renameInput('Products discussion');
   await click(textarea());
-  await wait(() => tab(firstSession)?.textContent === 'Products discussion', 'Blur must save the chat name');
+  await wait(() => label(firstSession) === 'Products discussion', () => `Blur must save an inline chat name: ${JSON.stringify({label: label(firstSession), field: document.querySelector('[data-testid="agent-sessions-rename"]')?.value, active: document.activeElement?.outerHTML.slice(0, 120), tabs: testid('agent-sessions').textContent})}`);
   await click(testid('agent-new-session'));
   await wait(() => selectedChat() !== firstSession);
   const secondSession = selectedChat();

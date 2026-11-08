@@ -796,3 +796,7 @@
   background: rgba(255, 140, 0, 0.55);
   outline: 1px solid #ffb84d;
 }
+
+.console-import-toggle.is-unavailable {
+  visibility: hidden;
+}

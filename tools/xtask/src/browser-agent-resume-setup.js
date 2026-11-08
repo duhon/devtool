@@ -1,7 +1,7 @@
 (async () => {
   // Setup for agent-resume: creates through the UI the saved chat a later Console window must restore
   // (a live SDK session with an edit, a name, a draft, a closed tab and an empty legacy entry).
-  const { assert, wait, click, testid, editorOf, openConsole, openPanel, setSource, key } = testDriver;
+  const { assert, wait, click, doubleClick, testid, editorOf, openConsole, openPanel, setSource, key } = testDriver;
   await openConsole();
   await click(testid('console-service-rest'));
   await openPanel('agent', 'console-agent');
@@ -33,13 +33,13 @@
   await click(testid('agent-session-close'));
   await wait(() => !testid('agent-sessions').querySelector(`[data-testid="agent-chat-${closedChat}"]`)
     && selected() === chat, 'Closing the new chat selects the first one');
-  await click(testid('agent-session-rename-start'));
-  const field = await wait(() => document.querySelector('[data-testid="agent-session-rename"]'), 'Chat rename');
+  await doubleClick(testid(`agent-chat-${chat}`));
+  const field = await wait(() => document.querySelector('[data-testid="agent-sessions-rename"]'), 'Chat rename');
   field.value = 'Products discussion';
   field.dispatchEvent(new InputEvent('input', { bubbles: true }));
   field.focus();
   await key('Enter');
-  await wait(() => testid(`agent-chat-${chat}`).textContent === 'Products discussion', 'Chat rename saved');
+  await wait(() => testid(`agent-chat-${chat}`).querySelector('.tab-label')?.textContent === 'Products discussion', 'Chat rename saved');
   input('Draft survives panel changes');
   const session = testid('console-session-name').dataset.sessionId;
   await wait(() => chats()[chat]?.draft === 'Draft survives panel changes' && chats()[chat]?.title === 'Products discussion'

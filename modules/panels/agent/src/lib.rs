@@ -20,6 +20,9 @@ pub const MAX_PROMPT: usize = 32 * 1024;
 pub const INTRO: &str = "Ask about the active check or the inspected web page. Console runs require approval. In DevTools, page reading and interaction require separate permission for each Copilot turn and site.";
 pub const STOPPED: &str = "Agent stopped. Cancellation was requested for its running Console requests. Already committed changes are not rolled back.";
 const CHAT_PREFIX: &str = "agent-chat-";
+/// A finished chat outcome counts as seen after this long on screen.
+const SEEN: &str = "seen:";
+pub const SEEN_AFTER_MS: u32 = 500;
 
 #[derive(Serialize, Deserialize)]
 pub enum Msg {
@@ -27,9 +30,8 @@ pub enum Msg {
     /// A chat tab chosen (the value is its key).
     Select,
     Close(String),
-    Rename,
-    /// The new name of the active chat (Enter or blur).
-    Renamed,
+    /// A chat tab renamed in place (the value is the new name).
+    Renamed(String),
     Draft,
     Send,
     Stop,
@@ -161,7 +163,11 @@ pub struct Agent {
     list_open: bool,
     list_outcome: Option<Outcome>,
     deleting: Option<(String, f64)>,
-    renaming: bool,
+    /// The state each chat's light had when the user saw it.
+    seen: BTreeMap<String, &'static str>,
+    /// The chat light on screen waiting to count as seen: chat, state and its timer.
+    watching: Option<(String, &'static str, u64)>,
+    visible: bool,
     /// The composer's text when the module changes it (sent once, then the field keeps it).
     composer: Option<String>,
     error: Option<String>,
@@ -197,7 +203,6 @@ impl Agent {
     fn select(&mut self, id: &str) {
         if self.active != id {
             self.active = id.into();
-            self.renaming = false;
         }
         self.composer = Some(
             self.chats
@@ -342,7 +347,6 @@ impl Agent {
         }
         self.outcomes.remove(id);
         if self.active == id {
-            self.renaming = false;
             let open: Vec<String> = self.open().iter().map(|chat| chat.id.clone()).collect();
             match open.first() {
                 Some(next) => {
@@ -402,6 +406,7 @@ impl Agent {
             },
         );
         self.outcomes.remove(&active);
+        self.seen.remove(&active);
         self.page.start(&tag);
         self.error = None;
         vec![cmd::agent_turn(tag, &params)]
@@ -500,7 +505,65 @@ impl Agent {
             outcome.debug["skills"] = json!(turn.skills);
         }
         self.outcomes.insert(chat.into(), outcome);
+        self.seen.remove(chat);
         cmds
+    }
+
+    /// The state of a chat: running, waiting for approval or how its last turn ended.
+    fn chat_state(&self, chat: &str) -> &'static str {
+        if self.turns.contains_key(chat) {
+            if self.approvals.contains_key(chat) || self.page.approval(chat).is_some() {
+                "warning"
+            } else {
+                "busy"
+            }
+        } else {
+            match self.outcomes.get(chat).map(|outcome| outcome.indicator) {
+                // A stopped turn warns until seen.
+                Some("idle") => "warning",
+                Some(indicator) => indicator,
+                None => "idle",
+            }
+        }
+    }
+
+    fn on_screen(&self, chat: &str) -> bool {
+        self.visible && !self.list_open && self.active == chat
+    }
+
+    /// The light of a chat tab: a finished state lights until seen.
+    pub fn chat_light(&self, chat: &str) -> &'static str {
+        let state = self.chat_state(chat);
+        if state != "busy" && (self.on_screen(chat) || self.seen.get(chat) == Some(&state)) {
+            "idle"
+        } else {
+            state
+        }
+    }
+
+    /// The chat on screen counts as seen once its state stays there for [`SEEN_AFTER_MS`].
+    fn observe(&mut self) -> Vec<Cmd> {
+        let chat = self.active.clone();
+        if !self.on_screen(&chat) {
+            self.watching = None;
+            return Vec::new();
+        }
+        let state = self.chat_state(&chat);
+        if state == "busy" {
+            self.seen.remove(&chat);
+            self.watching = None;
+        } else if self.seen.get(&chat) == Some(&state) {
+            self.watching = None;
+        } else if state == "idle" {
+            self.seen.insert(chat, state);
+            self.watching = None;
+        } else if !matches!(&self.watching, Some((watched, shown, _)) if *watched == chat && *shown == state)
+        {
+            self.seq += 1;
+            self.watching = Some((chat, state, self.seq));
+            return vec![cmd::timer(format!("{SEEN}{}", self.seq), SEEN_AFTER_MS)];
+        }
+        Vec::new()
     }
 
     fn turn_reply(&mut self, tag: &str, result: Result<Value, services_sdk::Failure>) -> Vec<Cmd> {
@@ -699,12 +762,6 @@ impl Agent {
 
     fn view_chat(&self, chat: &Chat) -> Vec<ui::Node> {
         let mut body = Vec::new();
-        if self.renaming {
-            body.push(
-                ui::input(Some(chat.title.clone()), "Chat session name", &Msg::Renamed)
-                    .key("agent-session-rename"),
-            );
-        }
         let mut transcript: Vec<ui::Node> = chat
             .messages
             .iter()
@@ -833,6 +890,7 @@ impl Module for Agent {
                 ]
             }
             Event::Shown => {
+                self.visible = true;
                 self.composer = self.chats.get(&self.active).map(|chat| chat.draft.clone());
                 vec![
                     cmd::kv_get(CHATS, CHATS),
@@ -849,7 +907,7 @@ impl Module for Agent {
                     cmds.extend(self.finish(&chat, json!({"stopped": true})));
                 }
                 cmds.extend(self.page.shutdown());
-                self.renaming = false;
+                self.visible = false;
                 cmds
             }
             Event::Workspace => vec![cmd::workspace_list(SESSIONS)],
@@ -915,6 +973,16 @@ impl Module for Agent {
                 self.deleted(result);
                 Vec::new()
             }
+            Event::Reply { tag, .. } if tag.starts_with(SEEN) => {
+                if let Some((chat, state, seq)) = self.watching.take() {
+                    if tag == format!("{SEEN}{seq}") {
+                        self.seen.insert(chat, state);
+                    } else {
+                        self.watching = Some((chat, state, seq));
+                    }
+                }
+                Vec::new()
+            }
             Event::Reply { tag, result } if tag.starts_with(page::TAG) => {
                 self.page.reply(&tag, result)
             }
@@ -947,6 +1015,7 @@ impl Module for Agent {
             _ => Vec::new(),
         };
         cmds.extend(self.persist());
+        cmds.extend(self.observe());
         cmds.push(self.status());
         cmds
     }
@@ -958,9 +1027,6 @@ impl Module for Agent {
                     .key("agent-chat-list-toggle")
                     .variant(if self.list_open { "primary" } else { "" }),
                 ui::button("+", &Msg::New).key("agent-new-session"),
-                ui::button("Rename", &Msg::Rename)
-                    .key("agent-session-rename-start")
-                    .disabled(self.list_open),
                 ui::button("Close chat", &Msg::Close(self.active.clone()))
                     .key("agent-session-close")
                     .disabled(self.list_open),
@@ -982,11 +1048,13 @@ impl Module for Agent {
                     } else {
                         Vec::new()
                     };
-                    let mut label = chat.title.clone();
-                    if self.turns.contains_key(&chat.id) {
-                        label.push_str(" ●");
-                    }
-                    ui::tab(format!("{CHAT_PREFIX}{}", chat.id), label, content)
+                    ui::tab(
+                        format!("{CHAT_PREFIX}{}", chat.id),
+                        chat.title.clone(),
+                        content,
+                    )
+                    .renamed(&Msg::Renamed(chat.id.clone()))
+                    .indicator(self.chat_light(&chat.id))
                 })
                 .collect();
             body.push(
@@ -1035,20 +1103,12 @@ impl Agent {
                     Vec::new()
                 }
             }
-            Msg::Rename => {
-                self.renaming = self.chats.contains_key(&self.active);
-                Vec::new()
-            }
-            Msg::Renamed => {
-                if !self.renaming {
-                    return Vec::new();
-                }
-                self.renaming = false;
+            Msg::Renamed(id) => {
                 let title = value.unwrap_or_default();
                 let title = title.trim();
                 if title.is_empty() || title.chars().count() > 80 {
                     self.error = Some("Chat name must contain between 1 and 80 characters".into());
-                } else if let Some(chat) = self.chats.get_mut(&self.active) {
+                } else if let Some(chat) = self.chats.get_mut(&id) {
                     chat.title = title.to_owned();
                     self.error = None;
                 }
@@ -1088,7 +1148,6 @@ impl Agent {
             }
             Msg::ToggleList => {
                 self.list_open = !self.list_open;
-                self.renaming = false;
                 if !self.list_open {
                     let active = self.active.clone();
                     self.select(&active);

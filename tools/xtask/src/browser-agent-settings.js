@@ -129,12 +129,14 @@
       () => `A source set must name its source: ${document.querySelector('[data-testid="dictionary-origin"]')?.textContent}`);
     assert(!document.querySelector('[data-testid="dictionary-reset"]'), 'An untouched source set has nothing to reset');
     dictionary().setValue(dictionary().getValue().replace('team.fixture.invalid', 'mine.fixture.invalid'));
-    await wait(() => document.querySelector('[data-testid="dictionary-reset"]')
-      && testid('dictionary-origin-label').textContent === 'Changed; from source Team',
-      () => `A changed set must become the user's own: ${testid('dictionary-origin').textContent}`);
-    await click(testid('dictionary-reset'));
-    await wait(() => !document.querySelector('[data-testid="dictionary-reset"]') && dictionary()?.getValue().includes('team.fixture.invalid'),
-      () => `Reset must restore the source's values: ${dictionary()?.getValue()}`);
+    const own = () => document.querySelector('[data-testid="dictionary-reset-variable-HOST"]');
+    await wait(() => own() && !document.querySelector('[data-testid="dictionary-reset-variable-PORT"]')
+      && testid('dictionary-origin-label').textContent === 'From source Team',
+      () => `A changed variable must become the user's own: ${document.querySelector('[data-testid="dictionary-origin"]')?.textContent}`);
+    await click(own());
+    await wait(() => !own() && !document.querySelector('[data-testid="dictionary-reset"]')
+      && dictionary()?.getValue().includes('team.fixture.invalid'),
+      () => `Reset must restore the source's value: ${dictionary()?.getValue()}`);
 
     await testDriver.settingsTab('sources');
     await click(testid('source-remove-team'));

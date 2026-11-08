@@ -85,6 +85,25 @@ pub struct Tab {
     pub label: String,
     #[prost(message, repeated, tag = "3")]
     pub body: Vec<Node>,
+    /// Double-clicking the label edits it in place: Enter or leaving the field sends the new
+    /// label as the value, Escape cancels.
+    #[prost(bytes = "vec", optional, tag = "4")]
+    pub on_rename: Option<Vec<u8>>,
+    /// A light on the tab: `idle`, `busy`, `ok`, `warning`, `error` or empty for none.
+    #[prost(string, tag = "5")]
+    pub indicator: String,
+}
+
+impl Tab {
+    /// A tab renamed in place: see [`Tab::on_rename`].
+    pub fn renamed(mut self, on_rename: &impl Serialize) -> Self {
+        self.on_rename = msg(on_rename);
+        self
+    }
+    pub fn indicator(mut self, state: impl Into<String>) -> Self {
+        self.indicator = state.into();
+        self
+    }
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -96,6 +115,10 @@ pub struct Tabs {
     /// Sent with the chosen tab key as the value.
     #[prost(bytes = "vec", optional, tag = "3")]
     pub on_select: Option<Vec<u8>>,
+    /// Sent when a tab is dragged onto another, with `["<dragged key>","<target key>"]` as
+    /// the value: the dragged tab goes before the target.
+    #[prost(bytes = "vec", optional, tag = "4")]
+    pub on_reorder: Option<Vec<u8>>,
 }
 
 /// A virtual list: `rows` is the visible window starting at `start` of `total`.
@@ -244,6 +267,13 @@ impl Node {
         }
         self
     }
+    /// Tabs that can be reordered by dragging.
+    pub fn on_reorder(mut self, on_reorder: &impl Serialize) -> Self {
+        if let Some(node::Kind::Tabs(tabs)) = &mut self.kind {
+            tabs.on_reorder = msg(on_reorder);
+        }
+        self
+    }
     /// An input that also reports its text while typing, debounced.
     pub fn on_input(mut self, on_input: &impl Serialize) -> Self {
         if let Some(node::Kind::Input(input)) = &mut self.kind {
@@ -286,6 +316,7 @@ pub fn tabs(tabs: Vec<Tab>, active: impl Into<String>, on_select: &impl Serializ
         tabs,
         active: active.into(),
         on_select: msg(on_select),
+        on_reorder: None,
     }))
 }
 
@@ -294,6 +325,8 @@ pub fn tab(key: impl Into<String>, label: impl Into<String>, body: Vec<Node>) ->
         key: key.into(),
         label: label.into(),
         body,
+        on_rename: None,
+        indicator: String::new(),
     }
 }
 

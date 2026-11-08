@@ -205,6 +205,8 @@ pub enum Msg {
     KernelTimer(String, String),
     /// Another window changed the kv key of a module: (module, key).
     KernelStorage(String, String),
+    /// A module's session kv write reached the saved session: (module, tag, outcome).
+    KernelSaved(String, String, Result<(), String>),
     /// Opens or closes the side panel of a panel module.
     TogglePanel(String),
     /// An action in a panel module's UI tree.
@@ -1003,6 +1005,11 @@ impl Component for App {
                 self.kernel_hosted(ctx, module, tag, saved, reply);
             }
             Msg::KernelTimer(module, tag) => self.kernel_timer(ctx, &module, &tag),
+            Msg::KernelSaved(module, tag, saved) => {
+                let result = saved.map(|()| Value::Null).map_err(services_sdk::Failure::new);
+                let effects = crate::kernel::with(|modules| modules.reply(&module, &tag, result));
+                self.kernel_effects(ctx, effects);
+            }
             Msg::KernelStorage(module, key) => {
                 let effects = crate::kernel::with(|modules| modules.storage(&module, &key));
                 self.kernel_effects(ctx, effects);

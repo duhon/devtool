@@ -6,7 +6,7 @@
   const agentStatus = () => testid('console-agent-status');
   const selectedChat = () => testid('agent-sessions').querySelector('[role="tab"][aria-selected="true"]').dataset.testid;
   const chatTab = id => testid('agent-sessions').querySelector(`[data-testid="${id}"]`);
-  const chatRunning = id => chatTab(id).textContent.includes('●');
+  const chatRunning = id => light(chatTab(id)) === 'running';
   const light = element => element.querySelector('.console-state-light')?.dataset.state;
   const checks = () => [...testid('console-check-menu').querySelectorAll('button')];
   const select = async index => {
@@ -319,21 +319,22 @@
   await wait(() => agentStatus().textContent.includes('Copilot is responding'));
   const secondChat = selectedChat();
   assert(chatRunning(firstChat) && chatRunning(secondChat),
-    'Two concurrently running chats must keep separate running marks even while selected');
+    'Two concurrently running chats must keep separate blinking signals even while selected');
   await click(testid('agent-stop'));
   await wait(() => testid('agent-stop').disabled);
-  assert(chatRunning(firstChat) && !chatRunning(secondChat)
+  assert(chatRunning(firstChat) && light(chatTab(secondChat)) === 'ready'
     && light(testid('console-agent-toggle')) === 'running',
   'Stopping the selected chat must preserve another running chat and its aggregate tool indicator');
+  await seen();
   await click(chatTab(firstChat));
   await wait(() => !testid('agent-stop').disabled && agentStatus().classList.contains('is-running'));
   await click(testid('agent-stop'));
   await wait(() => testid('agent-stop').disabled);
   await send('agent failure');
   await wait(() => agentStatus().classList.contains('is-error'));
-  assert(!chatRunning(firstChat) && !chatRunning(secondChat)
+  assert(light(chatTab(firstChat)) === 'ready' && light(chatTab(secondChat)) === 'ready'
     && light(testid('console-agent-toggle')) === 'error',
-  'An Agent failure must show its error status on the chat and the tool');
+  'A viewed Agent failure must keep its error status without relighting acknowledged chat signals');
   const failedAgentStatus = agentStatus().textContent;
   await click(chatTab(secondChat));
   await wait(() => agentStatus().textContent.includes('Stopped'));
@@ -343,7 +344,7 @@
     'Revisiting a chat must preserve its failure');
   await send('agent markdown');
   await wait(() => testid('agent-transcript').textContent.includes('Markdown ready') && testid('agent-stop').disabled);
-  assert(!chatRunning(firstChat) && !agentStatus().classList.contains('is-error'),
+  assert(light(chatTab(firstChat)) === 'ready' && !agentStatus().classList.contains('is-error'),
     'A successful subsequent Agent turn must replace the failure');
   const transcript=testid('agent-transcript');
   testid('agent-composer').focus({preventScroll:true});

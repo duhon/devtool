@@ -49,3 +49,6 @@
 .ui-table td > .ui-input { width: 100%; box-sizing: border-box; }
 .ui-editor { display: flex; flex-direction: column; flex: 1 1 200px; min-height: 120px; }
 .ui-editor > .editor { flex: 1 1 auto; min-height: 0; }
+.ui-tab-strip > .tab-button { display: inline-flex; align-items: center; }
+.ui-tab-strip .tab-label { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.tab-label-input { width: 12ch; background: #17181a; color: #dfe1e5; border: 1px solid #3574f0; border-radius: 3px; padding: 0 4px; font: inherit; }

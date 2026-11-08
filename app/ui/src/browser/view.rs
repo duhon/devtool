@@ -173,13 +173,9 @@ pub fn render(node: &Node, on: &Callback<Action>) -> Html {
                     <div class="ui-tab-strip" role="tablist">
                         {for tabs.tabs.iter().map(|tab| {
                             let selected = active.is_some_and(|active| active.key == tab.key);
-                            let (on, msg, value) = (on.clone(), tabs.on_select.clone(), tab.key.clone());
-                            html! {<button type="button" role="tab" key={tab.key.clone()}
-                                data-key={tab.key.clone()} data-testid={tab.key.clone()}
-                                aria-selected={selected.to_string()}
-                                class={classes!("tab-button", selected.then_some("active"))}
-                                onclick={Callback::from(move |_| send(&on, &msg, Some(value.clone())))}>
-                                {tab.label.clone()}</button>}
+                            html! {<TabButton key={tab.key.clone()} tab={Rc::new(tab.clone())} {selected}
+                                strip={node.key.clone()} on_select={tabs.on_select.clone()}
+                                on_reorder={tabs.on_reorder.clone()} on={on.clone()}/>}
                         })}
                     </div>
                     if let Some(tab) = active {
@@ -295,6 +291,140 @@ pub fn render(node: &Node, on: &Callback<Action>) -> Html {
             // A new language is a new editor: its setup is fixed at creation.
             <TextEditor key={format!("{}\u{1f}{}", node.key, editor.language)} editor={editor.clone()} data_key={data_key} on={on.clone()}/>
         },
+    }
+}
+
+thread_local! {
+    /// The key of the tab being dragged.
+    static DRAGGED: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+#[derive(Properties, PartialEq)]
+struct TabProps {
+    tab: Rc<ui::Tab>,
+    selected: bool,
+    /// The key of the tab strip: the rename field is `<strip>-rename`.
+    strip: String,
+    on_select: Option<Vec<u8>>,
+    on_reorder: Option<Vec<u8>>,
+    on: Callback<Action>,
+}
+
+/// A tab of a strip: it may be renamed in place, dragged onto another and carry a light.
+#[function_component(TabButton)]
+fn tab_button(props: &TabProps) -> Html {
+    let tab = &props.tab;
+    let renaming = use_state_eq(|| None::<String>);
+    let field = use_node_ref();
+    // Escape cancels; the blur that follows must not commit.
+    let cancelled = use_mut_ref(|| false);
+    {
+        let field = field.clone();
+        use_effect_with(renaming.is_some(), move |renaming| {
+            if *renaming && let Some(element) = field.cast::<HtmlInputElement>() {
+                let _ = element.focus();
+                element.select();
+            }
+        });
+    }
+    let onclick = {
+        let (on, msg, value) = (props.on.clone(), props.on_select.clone(), tab.key.clone());
+        Callback::from(move |_| send(&on, &msg, Some(value.clone())))
+    };
+    let ondblclick = {
+        let (renaming, label, cancelled) = (renaming.clone(), tab.label.clone(), cancelled.clone());
+        let enabled = tab.on_rename.is_some();
+        Callback::from(move |_| {
+            if enabled {
+                *cancelled.borrow_mut() = false;
+                renaming.set(Some(label.clone()));
+            }
+        })
+    };
+    let commit = {
+        let (on, msg, label, renaming, cancelled) = (
+            props.on.clone(),
+            tab.on_rename.clone(),
+            tab.label.clone(),
+            renaming.clone(),
+            cancelled.clone(),
+        );
+        move |value: String| {
+            if std::mem::take(&mut *cancelled.borrow_mut()) || renaming.is_none() {
+                return;
+            }
+            renaming.set(None);
+            if value != label {
+                send(&on, &msg, Some(value));
+            }
+        }
+    };
+    let onkeydown = {
+        let (commit, renaming, cancelled) = (commit.clone(), renaming.clone(), cancelled.clone());
+        Callback::from(move |event: KeyboardEvent| {
+            event.stop_propagation();
+            match event.key().as_str() {
+                "Enter" => {
+                    event.prevent_default();
+                    commit(event.target_unchecked_into::<HtmlInputElement>().value());
+                }
+                "Escape" => {
+                    event.prevent_default();
+                    *cancelled.borrow_mut() = true;
+                    renaming.set(None);
+                }
+                _ => {}
+            }
+        })
+    };
+    // The typed text lives in the state: a module re-render must not reset it.
+    let oninput = {
+        let renaming = renaming.clone();
+        Callback::from(move |event: InputEvent| {
+            renaming.set(Some(
+                event.target_unchecked_into::<HtmlInputElement>().value(),
+            ))
+        })
+    };
+    let onblur = Callback::from(move |event: FocusEvent| {
+        commit(event.target_unchecked_into::<HtmlInputElement>().value())
+    });
+    let draggable = props.on_reorder.is_some() && renaming.is_none();
+    let ondragstart = {
+        let key = tab.key.clone();
+        Callback::from(move |_: DragEvent| {
+            DRAGGED.with(|dragged| *dragged.borrow_mut() = Some(key.clone()))
+        })
+    };
+    let ondrop = {
+        let (on, msg, key) = (props.on.clone(), props.on_reorder.clone(), tab.key.clone());
+        Callback::from(move |event: DragEvent| {
+            event.prevent_default();
+            if let Some(from) = DRAGGED.with(|dragged| dragged.borrow_mut().take())
+                && from != key
+            {
+                send(&on, &msg, Some(serde_json::json!([from, key]).to_string()));
+            }
+        })
+    };
+    html! {
+        <button type="button" role="tab" data-key={tab.key.clone()} data-testid={tab.key.clone()}
+            aria-selected={props.selected.to_string()}
+            class={classes!("tab-button", props.selected.then_some("active"))}
+            draggable={draggable.then_some("true")} {onclick} {ondblclick} {ondragstart}
+            ondragover={Callback::from(|event: DragEvent| event.prevent_default())} {ondrop}>
+            if let Some(value) = &*renaming {
+                <input ref={field} class="tab-label-input" data-testid={format!("{}-rename", props.strip)}
+                    value={value.clone()} onclick={Callback::from(|event: MouseEvent| event.stop_propagation())}
+                    ondblclick={Callback::from(|event: MouseEvent| event.stop_propagation())}
+                    {oninput} {onkeydown} {onblur}/>
+            } else {
+                <span class="tab-label">{tab.label.clone()}</span>
+            }
+            if !tab.indicator.is_empty() {
+                {super::views::indicator(indicator_state(&tab.indicator), format!("{} · {}", tab.label, tab.indicator))}
+            }
+        </button>
     }
 }
 

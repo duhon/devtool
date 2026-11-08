@@ -544,7 +544,7 @@
       'The check-menu resize handle must remain accessible while its entries scroll');
     setSource(editor, source);
     await wait(() => links().length === 3);
-    const { openPanel, closePanel, fill } = testDriver;
+    const { openPanel, closePanel, fill, doubleClick } = testDriver;
     const sessionId = () => Number(testid('console-session-name').dataset.sessionId);
     // A panel module's session kv key in the saved session.
     const stored = async (module, key) =>
@@ -670,8 +670,20 @@
     fill(testid('dictionary-add'), 'console-panel-fixture');
     await wait(() => document.querySelector('[data-testid="dictionary-set-console-panel-fixture"]')?.getAttribute('aria-selected') === 'true'
       && toolStatus().textContent.includes('Dictionary add · OK'), 'A new set opens');
+    await doubleClick(testid('dictionary-set-console-panel-fixture'));
+    const rename = await wait(() => document.querySelector('[data-testid="dictionary-tabs-rename"]'));
+    rename.value = 'console-panel-renamed';
+    rename.dispatchEvent(new InputEvent('input', {bubbles:true}));
+    await key('Enter');
+    await wait(() => document.querySelector('[data-testid="dictionary-set-console-panel-renamed"]')
+      && toolStatus().textContent.includes('Dictionary rename · OK'), 'A set of the user\'s own can be renamed in its tab');
+    testid('dictionary-set-console-panel-renamed').dispatchEvent(new DragEvent('dragstart', {bubbles:true}));
+    panelTabs()[0].dispatchEvent(new DragEvent('drop', {bubbles:true,cancelable:true}));
+    await wait(() => toolStatus().textContent.includes('Dictionary reorder · OK')
+      && panelTabs()[0].dataset.testid === 'dictionary-set-console-panel-renamed', 'Dictionary sets reorder by dragging their tabs');
+    await click(testid('dictionary-set-console-panel-renamed'));
     await click(testid('dictionary-delete'));
-    await wait(() => !document.querySelector('[data-testid="dictionary-set-console-panel-fixture"]')
+    await wait(() => !document.querySelector('[data-testid="dictionary-set-console-panel-renamed"]')
       && toolStatus().textContent.includes('Dictionary delete · OK'), 'A set of the user\'s own can be deleted');
     await click(testid(`dictionary-set-${dictionarySet}`));
     await wait(() => dictionary()?.getValue() === originalDictionary);

@@ -80,7 +80,7 @@
     'The quota-limited legacy key must be removed only after IndexedDB commit');
   migratedFrame.remove();
   // The migrated library reaches this window: its console reloads (Export appears with it).
-  await wait(()=>document.querySelector('[data-testid="console-export"]'),'This window must reload the migrated library');
+  await wait(()=>document.querySelector('[data-testid="console-export"]:not(:disabled)'),'This window must reload the migrated library');
   await activateSession(1);
   await activateSession(0);
   for(const service of ['mysql','rest','graphql','grpc','splunk','terminal']) {
@@ -132,11 +132,12 @@
     setSource(editorOf('console-editor',largeFrame.contentDocument),
       largeDocument.replace('#check large-persistence','#check failed-write'));
     const frameDoc=largeFrame.contentDocument;
-    // A closed panel is off: the Sessions panel reports save failures while open.
-    if(testid('console-sessions-toggle',frameDoc).getAttribute('aria-pressed')!=='true')
+    // The App's autosave marks the Sessions button even while the panel is closed.
+    if(testid('console-sessions-toggle',frameDoc).getAttribute('aria-pressed')==='true')
       await click(testid('console-sessions-toggle',frameDoc));
     await wait(()=>frameDoc.querySelector('[data-testid="console-sessions-toggle"] [data-state="error"]'),
       'Asynchronous save failures must mark the Sessions button');
+    await click(testid('console-sessions-toggle',frameDoc));
     assert(![...frameDoc.querySelectorAll('.banner')].some(visible),'Save failures must not use the top banner');
     await wait(()=>testid('console-sessions-status',frameDoc).textContent.includes('Autosave · ERROR · Session save failed: Fixture session storage write failed. Changes are not saved'),
       ()=>`Asynchronous save failures must be visible in the Sessions status: ${testid('console-sessions-status',frameDoc).textContent}`);
@@ -215,6 +216,13 @@
     editorOf('console-hints',doc).setValue('#endpoint\nhttps://other-window.invalid\n');
     await wait(()=>testid('console-hints-status',doc).textContent.includes('Hints save · OK'));
   } finally { frame.remove(); }
+  await open('hints');
+  await wait(()=>editorOf('console-hints'));
+  editorOf('console-hints').setValue('#endpoint\nhttps://conflicting-window.invalid\n');
+  await wait(()=>testid('console-hints-status').textContent.includes('changed in another window'),
+    'Conflicting changes from another window must be reported explicitly');
+  assert((await library()).sessions.find(session=>session.id===a).snapshot.modules.hints.hints.rest.includes('other-window.invalid'),
+    'Conflicting writes must not overwrite another window’s saved hints');
   // The Dictionary is shared by all windows: another window's save reaches this one.
   const activeSet=doc=>doc.querySelector('[data-testid="dictionary-panel"] [role="tab"][aria-selected="true"]').textContent;
   const otherDictionary=async text=>{
@@ -237,6 +245,21 @@
   await otherDictionary(`${dictionary}\nOTHER_WINDOW: saved`);
   await wait(()=>editorOf('console-dictionary').getValue().includes('OTHER_WINDOW: saved'),
     'A window must show the Dictionary another window saved');
+  await otherDictionary(dictionary);
+  await wait(()=>editorOf('console-dictionary').getValue()===dictionary);
+  // An invalid draft is not saved, so this window's draft deterministically starts before
+  // the other window saves.
+  editorOf('console-dictionary').setValue(`${dictionary}\nmissing delimiter`);
+  await wait(()=>testid('console-dictionary-status').textContent.includes('ERROR'));
+  await otherDictionary(`${dictionary}\nOTHER_WINDOW: saved`);
+  editorOf('console-dictionary').setValue(`${dictionary}\nSTALE_WINDOW: draft`);
+  await wait(()=>testid('console-dictionary-status').textContent.includes('changed in another window'),
+    'A Dictionary draft started before another window saved must conflict instead of overwriting it');
+  assert(editorOf('console-dictionary').getValue().includes('STALE_WINDOW: draft'),'A conflicting Dictionary draft must be preserved');
+  await click(testid('console-dictionary-discard'));
+  await wait(()=>editorOf('console-dictionary').getValue().includes('OTHER_WINDOW: saved')
+    &&!document.querySelector('[data-testid="console-dictionary-discard"]'),
+    'Discarding a conflicting Dictionary draft must load the other window’s save');
   await otherDictionary(dictionary);
   await wait(()=>editorOf('console-dictionary').getValue()===dictionary,
     'A window must show the Dictionary another window restored');

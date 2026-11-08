@@ -144,3 +144,86 @@ fn chats_of_another_window_are_merged_and_closed_ones_restored() {
     assert!(view.contains("agent-chat-w2-1"), "{view}");
     assert!(view.contains("agent-message-user-u"), "{view}");
 }
+
+fn select(agent: &mut Agent, chat: &str) -> Vec<Cmd> {
+    agent.update(Event::Ui {
+        msg: Msg::Select,
+        value: Some(format!("agent-chat-{chat}")),
+    })
+}
+
+/// Sends a message in the active chat and returns the chat and its turn tag.
+fn start(agent: &mut Agent, text: &str) -> (String, String) {
+    let cmds = agent.update(Event::Ui {
+        msg: Msg::Send,
+        value: Some(text.into()),
+    });
+    let turn = find(&cmds, "agent.turn");
+    (
+        turn.args()["sessionId"].as_str().unwrap().to_owned(),
+        turn.tag.clone(),
+    )
+}
+
+#[test]
+fn a_finished_chat_lights_its_tab_until_seen_for_half_a_second() {
+    let mut agent = loaded();
+    agent.update(Event::Shown);
+    let (first, turn) = start(&mut agent, "first");
+    assert_eq!(agent.chat_light(&first), "busy");
+    agent.update(Event::Ui {
+        msg: Msg::New,
+        value: None,
+    });
+    agent.update(Event::End { tag: turn });
+    assert_eq!(agent.chat_light(&first), "warning", "a stop is unseen");
+
+    // A glance shorter than the timer leaves it unseen.
+    let cmds = select(&mut agent, &first);
+    let glance = find(&cmds, "timer.after").tag.clone();
+    assert_eq!(
+        agent.chat_light(&first),
+        "idle",
+        "the chat on screen is not lit"
+    );
+    let second = agent
+        .view()
+        .map(|view| format!("{view:?}"))
+        .and_then(|view| {
+            view.match_indices("agent-chat-w1-")
+                .map(|(at, _)| view[at + 11..].split('"').next().unwrap().to_owned())
+                .find(|id| *id != first)
+        })
+        .unwrap();
+    select(&mut agent, &second);
+    reply(&mut agent, &glance, Value::Null);
+    assert_eq!(agent.chat_light(&first), "warning");
+
+    let cmds = select(&mut agent, &first);
+    let look = find(&cmds, "timer.after").tag.clone();
+    reply(&mut agent, &look, Value::Null);
+    select(&mut agent, &second);
+    assert_eq!(agent.chat_light(&first), "idle", "seen");
+}
+
+#[test]
+fn a_chat_tab_is_renamed_in_place() {
+    let mut agent = loaded();
+    agent.update(Event::Shown);
+    let (chat, _) = start(&mut agent, "hello");
+    agent.update(Event::Ui {
+        msg: Msg::Renamed(chat.clone()),
+        value: Some("  Release notes ".into()),
+    });
+    let view = format!("{:?}", agent.view());
+    assert!(view.contains("\"Release notes\""), "{view}");
+    agent.update(Event::Ui {
+        msg: Msg::Renamed(chat),
+        value: Some(" ".into()),
+    });
+    let view = format!("{:?}", agent.view());
+    assert!(
+        view.contains("Release notes") && view.contains("between 1 and 80 characters"),
+        "{view}"
+    );
+}

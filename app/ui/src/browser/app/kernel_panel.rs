@@ -379,7 +379,32 @@ impl App {
         }
         let mut after = After::Reply;
         let hosted = match cmd.name.as_str() {
-            "kv.get" | "kv.put" | "kv.delete" => return answer(self.kv(module, &cmd.name, &args)),
+            "kv.get" | "kv.put" | "kv.delete" => {
+                let result = self.kv(module, &cmd.name, &args);
+                // A session write answers once the saved session has it: a write over another
+                // window's change fails there.
+                if cmd.name != "kv.get"
+                    && let Ok(Value::Bool(true)) = result
+                    && !cmd.tag.is_empty()
+                {
+                    let (shared, link) = (self.sessions.clone(), ctx.link().clone());
+                    let (module, tag) = (module.to_owned(), cmd.tag.clone());
+                    spawn_local(async move {
+                        let saved = super::super::sessions::Store::flush(&shared).await;
+                        let saved = saved.and_then(|()| match shared.borrow().save_error() {
+                            Some(error) => Err(error),
+                            None => Ok(()),
+                        });
+                        link.send_message(Msg::KernelSaved(module, tag, saved));
+                    });
+                    return Vec::new();
+                }
+                return answer(if cmd.name == "kv.get" {
+                    result
+                } else {
+                    result.map(|_| Value::Null)
+                });
+            }
             "editor.contribute" => {
                 if crate::kernel::contribute(module, &args) {
                     self.contributed();
@@ -521,6 +546,7 @@ impl App {
 
     /// A module's kv: session keys live in the session snapshot, the others in
     /// `localStorage` as `module:<id>:<key>`.
+    /// A session write of a saved session answers `true`: it is still being saved.
     fn kv(&mut self, module: &str, name: &str, args: &Value) -> Result<Value, Failure> {
         let key = args["key"].as_str().unwrap_or("").to_owned();
         let session = self
@@ -550,7 +576,7 @@ impl App {
                             .insert(key.clone(), value);
                     })
                     .map_err(failed)?;
-                Ok(Value::Null)
+                Ok(Value::Bool(self.sessions.borrow().library.current != 0))
             }
             "kv.delete" if session.is_some() => {
                 self.sessions
@@ -564,7 +590,8 @@ impl App {
                         }
                     })
                     .map_err(failed)?;
-                local(module, name, &key, args)
+                local(module, name, &key, args)?;
+                Ok(Value::Bool(self.sessions.borrow().library.current != 0))
             }
             _ => local(module, name, &key, args),
         }
@@ -1060,9 +1087,18 @@ impl App {
             .into_iter()
             .map(|panel| {
                 let active = self.side.as_deref() == Some(panel.id.as_str());
-                let state = crate::kernel::status(&panel.id)
-                    .map(|status| crate::browser::view::indicator_state(&status.indicator))
-                    .unwrap_or_default();
+                let store = self.sessions.borrow();
+                // The App saves the session: the Sessions panel's light shows it even closed.
+                let state = if panel.id == SESSIONS_PANEL && store.saving() {
+                    crate::activity::Indicator::Running
+                } else if panel.id == SESSIONS_PANEL && store.save_error().is_some() {
+                    crate::activity::Indicator::Error
+                } else {
+                    crate::kernel::status(&panel.id)
+                        .map(|status| crate::browser::view::indicator_state(&status.indicator))
+                        .unwrap_or_default()
+                };
+                drop(store);
                 let id = panel.id.clone();
                 html! {
                     <button key={panel.id.clone()} class={classes!("console-hints-toggle", active.then_some("active"))}
@@ -1113,6 +1149,9 @@ impl App {
         }
     }
 }
+
+/// The built-in panel of the saved sessions.
+const SESSIONS_PANEL: &str = "sessions";
 
 enum Finish {
     Stopped,

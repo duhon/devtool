@@ -198,6 +198,10 @@ impl Module for Hints {
                 }
                 ("save", Ok(_)) => vec![cmd::status("Hints save · OK", "ok")],
                 ("reset", Ok(_)) => vec![cmd::status("Hints reset · OK", "ok")],
+                (tag @ ("save" | "reset"), Err(failure)) => vec![cmd::status(
+                    &format!("Hints {tag} · ERROR · {}", failure.message),
+                    "error",
+                )],
                 (_, Err(failure)) => {
                     vec![cmd::status(&format!("ERROR: {}", failure.message), "error")]
                 }
