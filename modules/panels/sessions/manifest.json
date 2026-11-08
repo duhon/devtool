@@ -1,0 +1,10 @@
+{
+  "id": "sessions",
+  "kind": "panel",
+  "name": "Sessions",
+  "version": "3.7.0",
+  "description": "Saved workspaces: switch between them, start one from another, delete them.",
+  "abi": 1,
+  "app": ">=3.7",
+  "order": 0
+}

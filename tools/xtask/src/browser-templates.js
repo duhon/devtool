@@ -1,20 +1,12 @@
 (async () => {
-  const {assert,wait,holds,visible,click,testid,editorOf,setSource,key,type,openConsole,activateSession}=testDriver;
+  const {assert,wait,holds,visible,click,testid,editorOf,editorAt,setSource,key,type,openConsole,activateSession,openPanel}=testDriver;
+  const status=()=>testid('console-templates-status');
   await openConsole();
   await click(testid('console-service-graphql'));
   const open=async()=>{
-    if(testid('console-templates-toggle').getAttribute('aria-pressed')!=='true')
-      await click(testid('console-templates-toggle'));
-    await wait(()=>document.querySelector('[data-testid="templates-editor"]')
-      &&editorOf('templates-editor').getOption('readOnly')===false,
-      ()=>`Templates editor did not become editable: ${JSON.stringify({
-        pressed:testid('console-templates-toggle').getAttribute('aria-pressed'),
-        inert:document.querySelector('#service-views')?.inert,
-        status:document.querySelector('[data-testid="templates-status"]')?.textContent,
-        panel:document.querySelector('[data-testid="templates-panel"]')?.textContent.slice(0,1000),
-        sessions:document.querySelector('[data-testid="console-sessions-toggle"] [data-state]')?.dataset.state,
-        editor:!!document.querySelector('[data-testid="templates-editor"]'),
-      })}`);
+    await openPanel('templates');
+    await wait(()=>editorAt('templates-editor')?.getOption('readOnly')===false,
+      ()=>`Templates editor did not become editable: ${document.querySelector('[data-testid="templates-panel"]')?.textContent.slice(0,1000)}`);
     assert(!document.querySelector('[data-testid="templates-reload"]'),
       'Templates must not render a manual Reload button in the header');
   };
@@ -22,13 +14,13 @@
     await click(testid(`templates-section-${section}`));
     await wait(()=>testid(`templates-section-${section}`).getAttribute('aria-selected')==='true');
   };
-  const drafts=()=>JSON.parse(localStorage.getItem('servicesConsole.templateDrafts')||'{}');
+  const drafts=()=>JSON.parse(localStorage.getItem('module:templates:drafts')||'{}');
   const save=async(service,section,text)=>{
     setSource(editorOf('templates-editor'),text);
-    await wait(()=>drafts()[`${service}/${section}`]?.text===text,'Templates draft was not persisted');
     await wait(()=>!drafts()[`${service}/${section}`]
-      &&testid('templates-status').textContent.includes('Templates saved · OK'),
-      ()=>`Templates did not autosave: ${testid('templates-status').textContent}; ${document.querySelector('[data-testid="templates-panel"]').textContent}`);
+      &&status().textContent.includes('Templates saved · OK')
+      &&JSON.parse(localStorage.getItem('module:templates:library')||'{}')[service]?.[section]===text,
+      ()=>`Templates did not autosave: ${status().textContent}; ${testid('templates-panel').textContent}`);
   };
   const entries=()=>editorOf('console-editor').state.completionActive?.data?.list||[];
   const pick=async name=>{
@@ -44,21 +36,23 @@
   const body2='{\n  "id": 1,\n  "title": "Example Book Title",\n}';
   const definitions=`@my_create_book bla bla comment\n${body}\n@my_create_book2 another comment\n${body2}`;
   // A module removed with its data kept leaves its draft behind; it must neither block nor lose the others.
-  const unloaded={text:'@kept\nGET /kept',base:''};
-  localStorage.setItem('servicesConsole.templateDrafts',JSON.stringify({'removed-module/check':unloaded}));
+  const unloaded='@kept\nGET /kept';
+  localStorage.setItem('module:templates:drafts',JSON.stringify({'removed-module/check':unloaded}));
+  const first=Number(testid('console-session-name').dataset.sessionId);
+  await activateSession(first===0?1:0);
+  await activateSession(first);
+  await click(testid('console-service-graphql'));
   await open();
   assert(!testid('templates-panel').textContent.includes('Invalid Templates draft')
-    &&!testid('templates-status').classList.contains('is-error'),
+    &&!status().textContent.includes('ERROR'),
     'A draft of an unloaded module must not break Templates');
   assert(!testid('templates-panel').querySelector('.agent-intro'),'Templates must not show an introductory heading above the editor');
-  assert(testid('templates-status').textContent.includes('@@ = @'),'The short escaping hint must live in the status strip');
+  assert(status().textContent.includes('@@ = @'),'The short escaping hint must live in the status strip');
   assert([...testid('templates-sections').querySelectorAll('[role="tab"]')].map(tab=>tab.textContent).join(',')==='check,endpoint,headers,variables,query,options',
     `GraphQL Templates must expose exactly its own section tabs: ${[...testid('templates-sections').querySelectorAll('[role="tab"]')].map(tab=>tab.textContent)}`);
   await select('variables');
-  if(location.protocol==='http:') assert(editorOf('templates-editor').getValue().includes('@my_create_book'),
-    'HTTP must load global templates previously saved through native messaging');
   await save('graphql','variables',definitions);
-  assert(JSON.stringify(drafts()['removed-module/check'])===JSON.stringify(unloaded),
+  assert(drafts()['removed-module/check']===unloaded,
     'Saving another draft must keep the draft of an unloaded module until it is installed again');
   const tokens=(editor,line)=>editor.getLineTokens(line,true).map(token=>[token.string,token.type]);
   assert(editorOf('templates-editor').getOption('mode').name==='services-console-graphql',
@@ -186,31 +180,29 @@
   await click(testid('console-service-graphql'));
   await open();await select('variables');
   assert(editorOf('templates-editor').getValue()===globalText,'Templates edited in temporary session must persist in the named session');
-  const templateEditor=editorOf('templates-editor');
   const assertExclusivePanel=()=>{
     const panel=testid('console-tool-panel');
     assert([...panel.children].filter(visible).length===1,
       'Only the selected right tool may occupy space; hidden panels must not split the pane');
   };
+  setSource(editorOf('templates-editor'),'@dup\nfirst\n@dup\nsecond');
+  await wait(()=>drafts()['graphql/variables']?.includes('@dup')&&status().textContent.includes('duplicate template'),
+    'An invalid template must stay a draft with its error in the status');
   await click(testid('console-sessions-toggle'));
   await wait(()=>testid('console-sessions-toggle').getAttribute('aria-pressed')==='true');
-  const hiddenTemplates=document.querySelector('[data-testid="templates-panel"]');
-  assert(hiddenTemplates.hidden && getComputedStyle(hiddenTemplates).display==='none'
-    && hiddenTemplates.getBoundingClientRect().height===0,
+  assert(!visible(document.querySelector('[data-testid="templates-panel"]')),
     'Opening Sessions must completely hide Templates, not leave a second flex panel');
   assertExclusivePanel();
-  templateEditor.setValue('@dup\nfirst\n@dup\nsecond');
-  await wait(()=>testid('console-templates-toggle').querySelector('[data-state="error"]'),
-    'An unseen error in hidden Templates must show a red error indicator');
-  assert(drafts()['graphql/variables'].text.includes('@dup'),'Hidden template errors must retain the invalid draft');
+  assert(testid('console-templates-toggle').querySelector('[data-state="error"]'),
+    'An unseen error in hidden Templates must keep a red error indicator');
   await open();
-  await wait(()=>testid('templates-status').textContent.includes('duplicate template'));
+  await wait(()=>status().textContent.includes('duplicate template'));
   assert(editorOf('templates-editor').getValue()==='@dup\nfirst\n@dup\nsecond','Reopening must retain invalid global drafts');
   for(const tool of ['sessions','hints','variables','dictionary','agent']) {
     await click(testid(`console-${tool}-toggle`));
     await wait(()=>testid(`console-${tool}-toggle`).getAttribute('aria-pressed')==='true');
     assertExclusivePanel();
-    assert(hiddenTemplates.getBoundingClientRect().height===0,
+    assert(!visible(document.querySelector('[data-testid="templates-panel"]')),
       `${tool} must replace Templates even when its draft has validation errors`);
     await open();
     assertExclusivePanel();

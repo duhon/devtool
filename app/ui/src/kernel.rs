@@ -24,6 +24,58 @@ thread_local! {
     static LOADED: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
     /// Why a declared module could not start.
     static FAILED: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
+    /// The first effects of the modules the Kernel starts with, until the App runs them.
+    static BOOT: RefCell<Vec<Effect>> = const { RefCell::new(Vec::new()) };
+    /// What each module adds to the editors (`editor.contribute`), by key.
+    static CONTRIBUTED: RefCell<BTreeMap<String, serde_json::Map<String, Value>>> =
+        const { RefCell::new(BTreeMap::new()) };
+}
+
+/// Records what `module` adds to the editors; `true` when it changed.
+pub fn contribute(module: &str, contribution: &Value) -> bool {
+    let Some(fields) = contribution.as_object() else {
+        return false;
+    };
+    CONTRIBUTED.with(|contributed| {
+        let mut contributed = contributed.borrow_mut();
+        let own = contributed.entry(module.to_owned()).or_default();
+        let mut changed = false;
+        for (key, value) in fields {
+            if own.get(key) != Some(value) {
+                own.insert(key.clone(), value.clone());
+                changed = true;
+            }
+        }
+        changed
+    })
+}
+
+/// The contributions under `key` of every module, panels by `order`.
+pub fn contributions(key: &str) -> Vec<Value> {
+    let order: Vec<String> = panels().into_iter().map(|panel| panel.id).collect();
+    CONTRIBUTED.with(|contributed| {
+        let contributed = contributed.borrow();
+        let mut ids: Vec<&String> = contributed.keys().collect();
+        ids.sort_by_key(|id| {
+            order
+                .iter()
+                .position(|panel| panel == *id)
+                .unwrap_or(usize::MAX)
+        });
+        ids.into_iter()
+            .filter_map(|id| contributed[id].get(key).cloned())
+            .collect()
+    })
+}
+
+/// The `{{…}}` references the editors complete, with their values.
+pub fn variables() -> Vec<(String, String)> {
+    contributions("variables")
+        .iter()
+        .flat_map(|list| {
+            serde_json::from_value::<Vec<(String, String)>>(list.clone()).unwrap_or_default()
+        })
+        .collect()
 }
 
 /// Natively the SDK modules are linked, so tests run them without a browser.
@@ -50,7 +102,24 @@ fn linked() -> Vec<(Manifest, Box<dyn Instance>)> {
         "services/opensearch" => services_module_opensearch::OpenSearch,
         "panels/variables" => services_module_variables::Variables,
         "panels/history" => services_module_history::History,
+        "panels/templates" => services_module_templates::Templates,
+        "panels/hints" => services_module_hints::Hints,
+        "panels/dictionary" => services_module_dictionary::Dictionary,
+        "panels/sessions" => services_module_sessions::Sessions,
+        "panels/agent" => services_module_agent::Agent,
     ]
+}
+
+/// The built-in Settings panel: part of the App on every target, never declared by the
+/// Host, removed or updated.
+fn builtin() -> (Manifest, Box<dyn Instance>) {
+    (
+        Manifest::parse(include_str!(
+            "../../../modules/panels/settings/manifest.json"
+        ))
+        .expect("Settings manifest"),
+        Box::new(services_sdk::Linked::<services_module_settings::Settings>::default()),
+    )
 }
 
 fn seed(kind: services_sdk::Kind) -> Vec<Manifest> {
@@ -76,14 +145,32 @@ fn now() -> f64 {
         .map_or(0.0, |elapsed| elapsed.as_secs_f64() * 1000.0)
 }
 
+/// What every module starts with: `timezoneOffset`, minutes the local time is ahead of UTC,
+/// and `instance`, an id unique to this start (the module builds its own ids from it).
+fn settings() -> Value {
+    #[cfg(target_arch = "wasm32")]
+    let offset = -js_sys::Date::new_0().get_timezone_offset();
+    #[cfg(not(target_arch = "wasm32"))]
+    let offset = 0.0;
+    serde_json::json!({
+        "timezoneOffset": offset,
+        "instance": uuid::Uuid::now_v7().simple().to_string(),
+    })
+}
+
 fn start(drivers: BTreeMap<String, String>) -> Modules {
     #[allow(unused_mut)]
     let mut modules = Modules::new(VERSION, drivers, Box::new(now));
+    let (manifest, instance) = builtin();
+    let effects = modules
+        .load(manifest, instance, settings())
+        .expect("Settings loads");
+    BOOT.with(|boot| *boot.borrow_mut() = effects);
     #[cfg(not(target_arch = "wasm32"))]
     for (manifest, instance) in linked() {
         let id = manifest.id.clone();
         modules
-            .load(manifest, instance, Value::Null)
+            .load(manifest, instance, settings())
             .unwrap_or_else(|error| panic!("{id} loads: {error:?}"));
     }
     modules
@@ -107,6 +194,13 @@ pub fn with<R>(f: impl FnOnce(&mut Modules) -> R) -> R {
     })
 }
 
+/// The first effects of the modules the Kernel started with, once.
+pub fn boot() -> Vec<Effect> {
+    // Starts the Kernel if it has not yet.
+    with(|_| ());
+    BOOT.with(|boot| std::mem::take(&mut *boot.borrow_mut()))
+}
+
 /// Restarts the Kernel for the drivers the Host offers; `true` unless it already had them
 /// (its modules then need loading again).
 pub fn configure(drivers: BTreeMap<String, String>) -> bool {
@@ -128,12 +222,17 @@ pub fn install(
     let id = manifest.id.clone();
     let effects = with(|modules| {
         let mut effects = modules.unload(&id);
-        effects.extend(modules.load(manifest, instance, Value::Null)?);
+        effects.extend(modules.load(manifest, instance, settings())?);
         Ok::<_, String>(effects)
     })?;
     LOADED.with(|loaded| loaded.borrow_mut().insert(id.clone(), digest.to_owned()));
     FAILED.with(|failed| failed.borrow_mut().remove(&id));
     Ok(effects)
+}
+
+/// Why the module of `id` could not start.
+pub fn failure(id: &str) -> Option<String> {
+    FAILED.with(|failed| failed.borrow().get(id).cloned())
 }
 
 /// Records why the module of `id` could not start.
@@ -148,13 +247,14 @@ pub fn retain() -> (Vec<Effect>, Vec<(Manifest, String)>) {
     declared.extend(panels());
     let digests = DIGESTS.with(|digests| digests.borrow().clone());
     let running = LOADED.with(|loaded| loaded.borrow().clone());
-    let effects = with(|modules| {
+    let mut effects = boot();
+    effects.extend(with(|modules| {
         running
             .keys()
             .filter(|id| !declared.iter().any(|manifest| &manifest.id == *id))
             .flat_map(|id| modules.unload(id))
-            .collect()
-    });
+            .collect::<Vec<_>>()
+    }));
     LOADED.with(|loaded| {
         loaded
             .borrow_mut()
@@ -204,6 +304,10 @@ pub fn declare(modules: Vec<(Manifest, String)>) -> bool {
         .into_iter()
         .partition(|manifest| manifest.kind == services_sdk::Kind::Service);
     DIGESTS.with(|known| *known.borrow_mut() = digests);
+    let panels = panels
+        .into_iter()
+        .filter(|panel| panel.id != builtin().0.id)
+        .collect();
     PANELS.with(|declared| *declared.borrow_mut() = panels);
     DECLARED.with(|declared| {
         let mut declared = declared.borrow_mut();
@@ -217,9 +321,12 @@ pub fn declared() -> Vec<Manifest> {
     DECLARED.with(|declared| declared.borrow().clone())
 }
 
-/// The declared panel modules.
+/// The panel modules, by `order`: the declared ones and the built-in Settings.
 pub fn panels() -> Vec<Manifest> {
-    PANELS.with(|panels| panels.borrow().clone())
+    let mut panels = PANELS.with(|panels| panels.borrow().clone());
+    panels.push(builtin().0);
+    panels.sort_by_key(|panel| panel.order.unwrap_or(u32::MAX));
+    panels
 }
 
 /// A declared panel has neither started nor failed yet: what it resolves or keeps for
@@ -308,10 +415,10 @@ pub fn hints(check: Check, pos: u32) -> wire::Event {
     }
 }
 
-/// A kv key the modules may watch changed.
-pub fn storage(key: &str) -> wire::Event {
+/// A session was restored.
+pub fn workspace() -> wire::Event {
     wire::Event {
-        kind: Some(event::Kind::Storage(key.into())),
+        kind: Some(event::Kind::Workspace(wire::Empty {})),
         now: 0.0,
     }
 }

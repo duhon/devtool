@@ -3,27 +3,7 @@
 
 use serde_json::json;
 use services_sdk::lang::curl::shell_words;
-use services_ui::console::{self, RunOptions, export, import, parse, parse_run, replace_response};
-
-#[test]
-fn hints_allow_free_text_but_reject_storage_boundaries_and_broken_references() {
-    for text in [
-        "#endpoint\nhttps://{{var:host}}/api\n#headers\nX-Token: value",
-        "#query\nquery { viewer { name } }",
-        "#body\n{\"name\": \"\"}",
-        "plain completion",
-    ] {
-        assert!(console::validate_hints(text).is_ok(), "{text}");
-    }
-    for text in [
-        "## graphql\nleaked",
-        "https://{{var:host",
-        "{{broken}}",
-        "a\0b",
-    ] {
-        assert!(console::validate_hints(text).is_err(), "{text}");
-    }
-}
+use services_ui::console::{RunOptions, export, import, parse, parse_run, replace_response};
 
 #[test]
 fn every_service_console_parses_into_its_request_shape() {

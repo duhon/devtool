@@ -98,6 +98,8 @@ pub struct Status {
     pub indicator: String,
     /// Structured details for Debug; `null` without.
     pub detail: Value,
+    /// When the module became `busy` (milliseconds), for the elapsed clock.
+    pub since: Option<f64>,
 }
 
 /// Synchronous calls over this many milliseconds are noted in the module's log.
@@ -124,6 +126,8 @@ pub struct Loaded {
     reads: BTreeSet<String>,
     /// Calls a closing panel cancelled: their late answers are dropped.
     cancelled: BTreeSet<String>,
+    /// Tags of the commands a panel sent from `Init`: their answers reach it even closed.
+    boot: BTreeSet<String>,
     /// `vars.resolve` answered so far: what the module completes may have changed.
     pub resolutions: u64,
     pub status: Option<Status>,
@@ -131,26 +135,22 @@ pub struct Loaded {
 }
 
 /// Commands that load what a panel's synchronous hooks read: runs wait for them.
-const READS: &[&str] = &["kv.get", "vars.profiles", "os.env", "sources.read"];
+const READS: &[&str] = &["kv.get", "os.env", "sources.read"];
 
 impl Loaded {
-    /// Services always get events. A closed panel keeps only what its synchronous hooks need
-    /// (`before_request`, `after_response`, `resolve`): its start, the answers to its own
-    /// commands, its watched keys and session switches.
+    /// Services always get events. A closed panel is off: it gets only its start and the
+    /// answers to what it asked for then, the data of its synchronous hooks
+    /// (`before_request`, `after_response`, `resolve`).
     fn active(&self, event: &wire::Event) -> bool {
         self.manifest.kind == Kind::Service
             || self.shown
-            || matches!(
-                event.kind,
-                Some(
-                    event::Kind::Init(_)
-                        | event::Kind::Shown(_)
-                        | event::Kind::Reply(_)
-                        | event::Kind::End(_)
-                        | event::Kind::Storage(_)
-                        | event::Kind::Workspace(_)
-                )
-            )
+            || match &event.kind {
+                Some(event::Kind::Init(_) | event::Kind::Shown(_)) => true,
+                Some(event::Kind::Reply(wire::Reply { tag, .. }) | event::Kind::End(tag)) => {
+                    self.boot.contains(tag)
+                }
+                _ => false,
+            }
     }
     /// Whether `tag` belongs to a run that already ended; forgets it.
     fn stopped(&mut self, tag: &str) -> bool {
@@ -232,6 +232,7 @@ impl Modules {
                 owners: BTreeMap::new(),
                 reads: BTreeSet::new(),
                 cancelled: BTreeSet::new(),
+                boot: BTreeSet::new(),
                 resolutions: 0,
                 status: None,
                 log: VecDeque::new(),
@@ -391,6 +392,28 @@ impl Modules {
         effects
     }
 
+    /// The module's kv `key` changed elsewhere (another window): it learns if it watches it.
+    pub fn storage(&mut self, id: &str, key: &str) -> Vec<Effect> {
+        if !self
+            .loaded
+            .get(id)
+            .is_some_and(|module| module.watched.contains(key))
+        {
+            return Vec::new();
+        }
+        self.send(id, kind(event::Kind::Storage(key.into())))
+    }
+
+    /// An Agent tool call for the module that serves the tool `name`.
+    pub fn tool_call(&mut self, id: &str, tag: &str, name: &str, args: &Value) -> Vec<Effect> {
+        let call = wire::ToolCall {
+            tag: tag.into(),
+            name: name.into(),
+            args: serde_json::to_vec(args).unwrap_or_default(),
+        };
+        self.send(id, kind(event::Kind::ToolCall(call)))
+    }
+
     /// Sends an event to every active module whose subscriptions want it.
     pub fn broadcast(&mut self, event: wire::Event) -> Vec<Effect> {
         let Some(which) = &event.kind else {
@@ -433,10 +456,30 @@ impl Modules {
             let Some(module) = self.loaded.get(&id) else {
                 continue;
             };
-            if !module.active(&event) {
+            let event = if module.active(&event) {
+                event
+            } else if matches!(
+                event.kind,
+                Some(event::Kind::Storage(_) | event::Kind::Workspace(_))
+            ) {
+                // What a closed panel's hooks read changed: it starts again and reads it anew.
+                let settings = serde_json::to_vec(&module.settings).unwrap_or_default();
+                kind(event::Kind::Init(settings))
+            } else {
                 continue;
-            }
+            };
+            let answered = match &event.kind {
+                Some(event::Kind::Reply(wire::Reply { tag, .. })) => Some((tag.clone(), false)),
+                Some(event::Kind::End(tag)) => Some((tag.clone(), true)),
+                _ => None,
+            };
             effects.extend(self.update(&id, event));
+            if let Some((tag, end)) = answered
+                && let Some(module) = self.loaded.get_mut(&id)
+                && (end || !module.pending.contains_key(&tag))
+            {
+                module.boot.remove(&tag);
+            }
         }
         effects
     }
@@ -459,6 +502,12 @@ impl Modules {
                 owner.filter(|run| module.runs.contains_key(run))
             }
             _ => None,
+        };
+        // What Init starts, and what its replies go on with, finishes while the panel is closed.
+        let booting = match &event.kind {
+            Some(event::Kind::Init(_)) => true,
+            Some(event::Kind::Reply(wire::Reply { tag, .. })) => module.boot.contains(tag),
+            _ => false,
         };
         let mut event = event;
         event.now = (self.clock)();
@@ -492,6 +541,15 @@ impl Modules {
         if module.shown {
             module.view = updated.view;
             effects.push(Effect::Changed { module: id.into() });
+        }
+        if booting {
+            module.boot.extend(
+                updated
+                    .cmds
+                    .iter()
+                    .filter(|cmd| !cmd.tag.is_empty())
+                    .map(|cmd| cmd.tag.clone()),
+            );
         }
         for cmd in updated.cmds {
             effects.extend(self.run(id, cmd, owner.as_deref()));
@@ -538,10 +596,19 @@ impl Modules {
             // A run already stopped.
             "run.output" | "run.result" => Vec::new(),
             "status.set" => {
+                let indicator = text("indicator");
+                let since = (indicator == "busy").then(|| {
+                    module
+                        .status
+                        .as_ref()
+                        .and_then(|status| status.since)
+                        .unwrap_or_else(|| (self.clock)())
+                });
                 module.status = Some(Status {
                     text: text("text"),
-                    indicator: text("indicator"),
+                    indicator,
                     detail: args.get("detail").cloned().unwrap_or(Value::Null),
+                    since,
                 });
                 vec![Effect::Changed { module: owner }]
             }
@@ -644,19 +711,25 @@ impl Modules {
                     name: text("name"),
                 }]
             }
-            "modules.install" | "modules.remove" | "modules.update" | "app.update"
-            | "app.reload"
-                if !builtin(id) =>
-            {
-                self.refuse(
-                    id,
-                    &cmd.tag,
-                    "Only built-in modules manage modules and the App",
-                )
-            }
+            name if cmd::PRIVILEGED.contains(&name) && !builtin(id) => self.refuse(
+                id,
+                &cmd.tag,
+                "Only built-in modules manage modules and the App",
+            ),
             name if cmd::NAMES.contains(&name) => {
                 if READS.contains(&name) && !cmd.tag.is_empty() {
                     module.reads.insert(cmd.tag.clone());
+                }
+                // A turn streams until it ends; closing the panel cancels it.
+                if name == "agent.turn" {
+                    if module.pending.contains_key(&cmd.tag) {
+                        return self.refuse(
+                            id,
+                            &cmd.tag,
+                            "A command with this tag is still running",
+                        );
+                    }
+                    module.pending.insert(cmd.tag.clone(), true);
                 }
                 vec![Effect::Command { module: owner, cmd }]
             }
@@ -799,6 +872,7 @@ impl Modules {
                 module.runs.clear();
                 module.owners.clear();
                 module.reads.clear();
+                module.boot.clear();
                 module.initialized = false;
                 self.queue.retain(|(owner, _)| owner != id);
                 effects.push(Effect::Failed {
@@ -911,8 +985,14 @@ impl Modules {
             .collect()
     }
 
-    /// Every panel may change or reject a driver call, by `order`.
+    /// Every string of a driver call has its variables resolved, then every panel may
+    /// change or reject the call, by `order`.
     pub fn before_request(&mut self, mut call: DriverCall) -> Result<DriverCall, String> {
+        let request = call.request();
+        let resolved = self.resolve_strings(&request)?;
+        if resolved != request {
+            call.set_request(&resolved);
+        }
         for panel in self.panels() {
             call = match self.sync(&panel, request::Kind::BeforeRequest(call))? {
                 answer::Kind::Call(call) => call,
@@ -922,35 +1002,104 @@ impl Modules {
         Ok(call)
     }
 
-    /// The `{{…}}` variables of `text` resolved by the first panel (by `order`) that keeps
-    /// variables; in `json` mode each value is escaped as the content of a JSON string.
-    /// Without such a panel only a text without references resolves (to itself).
-    pub fn resolve(&mut self, text: &str, json: bool) -> Result<services_sdk::Resolution, String> {
+    fn resolve_strings(&mut self, value: &Value) -> Result<Value, String> {
+        Ok(match value {
+            Value::String(text) if text.contains("{{") => {
+                Value::String(self.resolve(text, false)?.text)
+            }
+            Value::Array(items) => Value::Array(
+                items
+                    .iter()
+                    .map(|item| self.resolve_strings(item))
+                    .collect::<Result<_, _>>()?,
+            ),
+            Value::Object(fields) => Value::Object(
+                fields
+                    .iter()
+                    .map(|(key, item)| Ok((key.clone(), self.resolve_strings(item)?)))
+                    .collect::<Result<_, String>>()?,
+            ),
+            other => other.clone(),
+        })
+    }
+
+    /// One pass over the panels by `order`: each resolves the references it owns. `None`
+    /// when no panel keeps variables.
+    fn resolve_pass(
+        &mut self,
+        text: &str,
+        json: bool,
+        last: bool,
+        secrets: &mut Vec<String>,
+    ) -> Result<Option<String>, String> {
+        let mut text = text.to_owned();
+        let mut handled = false;
         for panel in self.panels() {
             let request = request::Kind::Resolve(wire::ResolveRequest {
-                text: text.into(),
+                text: text.clone(),
                 json,
+                last,
             });
             match self.sync(&panel, request)? {
                 answer::Kind::Resolved(resolved) if resolved.handled => {
-                    return match resolved.error {
-                        Some(error) => Err(error),
-                        None => Ok(services_sdk::Resolution {
-                            text: resolved.text,
-                            secrets: resolved.secrets,
-                        }),
-                    };
+                    if let Some(error) = resolved.error {
+                        return Err(error);
+                    }
+                    handled = true;
+                    text = resolved.text;
+                    secrets.extend(resolved.secrets);
                 }
                 answer::Kind::Resolved(_) => {}
                 _ => return Err(unexpected("resolve")),
             }
         }
-        if text.contains("{{") {
-            return Err("No module resolves variables".into());
+        Ok(handled.then_some(text))
+    }
+
+    /// The `{{…}}` variables of `text` resolved: every panel that keeps variables resolves
+    /// the ones it owns, by `order`, until nothing changes (a value may hold references
+    /// of another panel), then each resolves what it only falls back to. A reference left is
+    /// an error. In `json` mode each value is escaped as the content of a JSON string.
+    pub fn resolve(&mut self, text: &str, json: bool) -> Result<services_sdk::Resolution, String> {
+        const PASSES: usize = 16;
+        let mut secrets = Vec::new();
+        let mut current = text.to_owned();
+        let mut last = false;
+        let mut passes = 0;
+        loop {
+            if services_sdk::refs::find(&current).is_empty() {
+                break;
+            }
+            let Some(next) = self.resolve_pass(&current, json, last, &mut secrets)? else {
+                return Err("No module resolves variables".into());
+            };
+            let changed = next != current;
+            current = next;
+            passes += 1;
+            if passes > PASSES {
+                return Err(format!(
+                    "Circular variable reference: {}",
+                    references(&current)
+                ));
+            }
+            if !changed {
+                if last {
+                    break;
+                }
+                last = true;
+            } else {
+                last = false;
+            }
         }
+        if !services_sdk::refs::find(&current).is_empty() {
+            return Err(format!("Unknown variable(s): {}", references(&current)));
+        }
+        secrets.retain(|secret| !secret.is_empty());
+        secrets.sort();
+        secrets.dedup();
         Ok(services_sdk::Resolution {
-            text: text.into(),
-            secrets: Vec::new(),
+            text: current,
+            secrets,
         })
     }
 
@@ -997,6 +1146,15 @@ impl Modules {
 
 fn unexpected(call: &str) -> String {
     format!("The module answered {call} with something else")
+}
+
+/// The references left in `text`, like `{{dev:host}}, {{:x}}`.
+fn references(text: &str) -> String {
+    services_sdk::refs::find(text)
+        .iter()
+        .map(|(set, name)| format!("{{{{{set}:{name}}}}}"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Modules shipped inside the App (Settings); only they manage modules and the App.

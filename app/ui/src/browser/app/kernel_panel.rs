@@ -21,7 +21,7 @@ const STATUS_LOG: usize = 20;
 #[derive(Default)]
 pub(super) struct KernelState {
     /// Host requests of module driver calls in flight, by (module, tag).
-    calls: BTreeMap<(String, String), u32>,
+    pub(super) calls: BTreeMap<(String, String), u32>,
     /// Web Locks modules asked for, by (module, name): releasing them lets the next holder in.
     locks: BTreeMap<(String, String), Lock>,
     /// Runs in flight by run key.
@@ -280,15 +280,6 @@ impl App {
         Component::update(self, ctx, Msg::Reply(key.to_owned(), service, reply));
     }
 
-    pub(super) fn kernel_saved(&mut self, reply: Reply) {
-        if let Reply::Result(value) = &reply
-            && value["deferred"] == true
-        {
-            return;
-        }
-        self.repeat_saved(reply);
-    }
-
     /// Carries out what modules ask for; statuses that changed are shown last.
     pub(super) fn kernel_effects(&mut self, ctx: &Context<Self>, effects: Vec<Effect>) {
         let mut queue: VecDeque<Effect> = effects.into();
@@ -336,57 +327,8 @@ impl App {
                     }
                 }
                 Effect::Notify { text, .. } => self.notice = Some(Notice::new(text)),
-                Effect::Command { module, cmd } if cmd.name.starts_with("kv.") => {
-                    let result = kv(&module, &cmd.name, &cmd.args());
-                    if !cmd.tag.is_empty() {
-                        queue.extend(crate::kernel::with(|modules| {
-                            modules.reply(&module, &cmd.tag, result)
-                        }));
-                    }
-                }
                 Effect::Command { module, cmd } => {
-                    let args = cmd.args();
-                    let request = match cmd.name.as_str() {
-                        "history.insert" => {
-                            let mut request = args;
-                            request["service"] = json!("history");
-                            request["op"] = json!("insert");
-                            Some(request)
-                        }
-                        "history.search" => {
-                            let mut request = args;
-                            request["service"] = json!("history");
-                            if request["op"].is_null() {
-                                request["op"] = json!("list");
-                            }
-                            Some(request)
-                        }
-                        // Interim until the Dictionary panel module keeps the profiles.
-                        "vars.profiles" => Some(json!({"service":"vars","op":"list"})),
-                        _ => None,
-                    };
-                    match request {
-                        Some(request) => {
-                            let saved = cmd.name == "history.insert";
-                            let (m, t) = (module.clone(), cmd.tag.clone());
-                            let id = self.transport.request(
-                                request,
-                                false,
-                                ctx.link().callback(move |reply| {
-                                    Msg::KernelHosted(m.clone(), t.clone(), saved, reply)
-                                }),
-                            );
-                            if !cmd.tag.is_empty() {
-                                self.kernel.calls.insert((module, cmd.tag), id);
-                            }
-                        }
-                        None if !cmd.tag.is_empty() => {
-                            let message =
-                                format!("\"{}\" is not available to modules yet", cmd.name);
-                            queue.extend(refuse(&module, &cmd.tag, &message));
-                        }
-                        None => {}
-                    }
+                    queue.extend(self.kernel_command(ctx, &module, cmd));
                 }
                 Effect::Output { module, run, text } => {
                     if self.kernel.runs.get(&run).is_some_and(|run| run.started) {
@@ -417,15 +359,237 @@ impl App {
         self.kernel_resume(ctx);
     }
 
-    /// The profiles variables resolve from changed (a save, another session): the modules
-    /// watching `profiles` read them again.
-    pub(super) fn vars_changed(&mut self, ctx: &Context<Self>, vars: Value) {
-        if self.vars == vars {
-            return;
+    /// Carries out a module command the Kernel hands the App; its immediate replies come back.
+    fn kernel_command(
+        &mut self,
+        ctx: &Context<Self>,
+        module: &str,
+        cmd: services_sdk::Cmd,
+    ) -> Vec<Effect> {
+        let args = cmd.args();
+        let answer = |result: Result<Value, Failure>| {
+            if cmd.tag.is_empty() {
+                Vec::new()
+            } else {
+                crate::kernel::with(|modules| modules.reply(module, &cmd.tag, result))
+            }
+        };
+        if let Some(effects) = self.agent_command(ctx, module, &cmd) {
+            return effects;
         }
-        self.vars = vars;
-        let effects = crate::kernel::broadcast(crate::kernel::storage("profiles"));
-        self.kernel_effects(ctx, effects);
+        let mut after = After::Reply;
+        let hosted = match cmd.name.as_str() {
+            "kv.get" | "kv.put" | "kv.delete" => return answer(self.kv(module, &cmd.name, &args)),
+            "editor.contribute" => {
+                if crate::kernel::contribute(module, &args) {
+                    self.contributed();
+                }
+                return Vec::new();
+            }
+            "document.read" => {
+                let service = self.console_service.clone();
+                let text = self.docs.get(&service).cloned().unwrap_or_default();
+                let line = self.active_console_line(&service).unwrap_or(0);
+                let sections = crate::services::template_sections(&service);
+                let services: Vec<Value> = crate::services::ids()
+                    .into_iter()
+                    .map(|id| json!({"name": crate::services::label(&id), "id": id}))
+                    .collect();
+                let check_id = self
+                    .active_console_line(&service)
+                    .and_then(|line| {
+                        self.checks
+                            .get(&service)?
+                            .iter()
+                            .find(|check| check.line == line)
+                    })
+                    .map(|check| check.id.clone())
+                    .unwrap_or_default();
+                return answer(Ok(json!({
+                    "service": service,
+                    "text": text,
+                    "line": line,
+                    "checkId": check_id,
+                    "sessionId": self.sessions.borrow().library.current.to_string(),
+                    "sections": sections,
+                    "services": services,
+                })));
+            }
+            "clipboard.write" => {
+                let text = args["text"].as_str().unwrap_or_default().to_owned();
+                let _ = window().navigator().clipboard().write_text(&text);
+                return answer(Ok(Value::Null));
+            }
+            "history.insert" => {
+                let mut request = args;
+                request["service"] = json!("history");
+                request["op"] = json!("insert");
+                request
+            }
+            "history.search" => {
+                let mut request = args;
+                request["service"] = json!("history");
+                if request["op"].is_null() {
+                    request["op"] = json!("list");
+                }
+                request
+            }
+            "workspace.list" => return answer(Ok(self.workspace_list())),
+            "workspace.restore" | "workspace.copy" | "workspace.delete" => {
+                if self.session_reply.is_some() {
+                    return answer(Err(Failure::new("Another session change is in progress")));
+                }
+                let id = args["id"].as_u64().or(args["source"].as_u64()).unwrap_or(0);
+                self.session_reply = Some((module.to_owned(), cmd.tag.clone()));
+                ctx.link().send_message(match cmd.name.as_str() {
+                    "workspace.restore" => Msg::SessionSelect(id),
+                    "workspace.copy" => {
+                        Msg::SessionCopy(id, args["name"].as_str().unwrap_or_default().to_owned())
+                    }
+                    _ => Msg::SessionDelete(id),
+                });
+                return Vec::new();
+            }
+            "os.env" => json!({"service":"env"}),
+            "sources.read" => json!({"service":"sources","op":"read","name":args["name"]}),
+            "modules.check" if !self.transport.is_native() => return answer(Ok(Value::Null)),
+            "modules.check" => {
+                json!({"service":"sources","op":"check","force":args["force"] == true})
+            }
+            "modules.install" => {
+                after = After::Modules(None);
+                json!({"service":"modules","op":"install","source":args["source"],
+                    "module":args["module"],"version":args["version"]})
+            }
+            "modules.remove" => {
+                let module = args["module"].as_str().unwrap_or_default().to_owned();
+                after = After::Modules((args["forget"] == true).then_some(module));
+                json!({"service":"modules","op":"remove","module":args["module"],"forget":args["forget"] == true})
+            }
+            "sources.list" => json!({"service":"sources","op":"get"}),
+            "sources.save" => {
+                after = After::Sources;
+                json!({"service":"sources","op":"save","sources":args["sources"]})
+            }
+            "sources.token" => json!({"service":"sources","op":"token","token":args["token"]}),
+            "sources.apply" => {
+                after = After::Sources;
+                json!({"service":"sources","op":"apply","source":args["source"]})
+            }
+            "sources.open" => json!({"service":"sources","op":"open","source":args["source"]}),
+            "app.update" => {
+                if self.update_reply.is_some() || self.updates.busy() {
+                    return answer(Err(Failure::new("An update is already being installed")));
+                }
+                self.update_reply = Some((module.to_owned(), cmd.tag.clone()));
+                let field = |key: &str| args[key].as_str().unwrap_or_default().to_owned();
+                ctx.link()
+                    .send_message(Msg::InstallUpdate((field("source"), field("version"))));
+                return Vec::new();
+            }
+            "app.reload" => {
+                ctx.link().send_message(Msg::ReloadUpdate);
+                return Vec::new();
+            }
+            "agent.models" => {
+                after = After::Models;
+                json!({"service":"agent_models"})
+            }
+            "agent.options" => return answer(agent_options(&args["options"])),
+            name => {
+                return answer(Err(Failure::new(format!(
+                    "\"{name}\" is not available to modules yet"
+                ))));
+            }
+        };
+        if cmd.name == "history.insert" {
+            after = After::History;
+        }
+        let (m, t) = (module.to_owned(), cmd.tag.clone());
+        let id = self.transport.request(
+            hosted,
+            false,
+            ctx.link().callback(move |reply| {
+                Msg::KernelHosted(m.clone(), t.clone(), after.clone(), reply)
+            }),
+        );
+        if !cmd.tag.is_empty() {
+            self.kernel.calls.insert((module.to_owned(), cmd.tag), id);
+        }
+        Vec::new()
+    }
+
+    /// A module's kv: session keys live in the session snapshot, the others in
+    /// `localStorage` as `module:<id>:<key>`.
+    fn kv(&mut self, module: &str, name: &str, args: &Value) -> Result<Value, Failure> {
+        let key = args["key"].as_str().unwrap_or("").to_owned();
+        let session = self
+            .sessions
+            .borrow()
+            .library
+            .snapshot()
+            .modules
+            .get(module)
+            .and_then(|keys| keys.get(&key))
+            .cloned();
+        let failed = |error: String| Failure::new(error);
+        match name {
+            "kv.get" => match session {
+                Some(value) => Ok(value),
+                None => local(module, name, &key, args),
+            },
+            "kv.put" if args["session"] == true => {
+                let value = args["value"].clone();
+                self.sessions
+                    .borrow_mut()
+                    .update(|snapshot| {
+                        snapshot
+                            .modules
+                            .entry(module.to_owned())
+                            .or_default()
+                            .insert(key.clone(), value);
+                    })
+                    .map_err(failed)?;
+                Ok(Value::Null)
+            }
+            "kv.delete" if session.is_some() => {
+                self.sessions
+                    .borrow_mut()
+                    .update(|snapshot| {
+                        if let Some(keys) = snapshot.modules.get_mut(module) {
+                            keys.remove(&key);
+                            if keys.is_empty() {
+                                snapshot.modules.remove(module);
+                            }
+                        }
+                    })
+                    .map_err(failed)?;
+                local(module, name, &key, args)
+            }
+            _ => local(module, name, &key, args),
+        }
+    }
+
+    /// What the modules add to the editors changed: the console editors complete anew.
+    fn contributed(&mut self) {
+        self.vars = crate::kernel::variables();
+        crate::browser::view::variables_changed();
+        self.templates = crate::kernel::contributions("templates")
+            .into_iter()
+            .filter_map(|library| {
+                serde_json::from_value::<services_contracts::templates::Library>(library).ok()
+            })
+            .fold(Default::default(), |mut all, library| {
+                all.extend(library);
+                all
+            });
+        self.hints = crate::kernel::contributions("hints")
+            .into_iter()
+            .filter_map(|hints| serde_json::from_value::<BTreeMap<String, String>>(hints).ok())
+            .fold(BTreeMap::new(), |mut all, hints| {
+                all.extend(hints);
+                all
+            });
     }
 
     /// Whether a console run must wait: its module loads, or the panels read what their
@@ -599,20 +763,40 @@ impl App {
         self.kernel_effects(ctx, effects);
     }
 
-    /// The Host answered a module's command; History's saves also count for a repeat.
+    /// The Host answered a module's command: what else it changes is done before the module
+    /// hears of it.
     pub(super) fn kernel_hosted(
         &mut self,
         ctx: &Context<Self>,
         module: String,
         tag: String,
-        saved: bool,
-        reply: Reply,
+        after: After,
+        mut reply: Reply,
     ) {
         if matches!(reply, Reply::Data(_)) {
             return;
         }
-        if saved {
-            self.kernel_saved(reply.clone());
+        match (&after, &mut reply) {
+            (After::History, Reply::Error(value) | Reply::Exit(value)) => {
+                let error = value["error"]
+                    .as_str()
+                    .unwrap_or("History could not be saved");
+                self.notice = Some(Notice::new(format!("History · ERROR · {error}")));
+            }
+            (After::Modules(forget), Reply::Result(_)) => {
+                if let Some(id) = forget {
+                    ctx.link().send_message(Msg::ForgetModule(id.clone()));
+                }
+                // Only a new host process loads the changed modules folder.
+                self.transport.connect();
+                ctx.link().send_message(Msg::ModulesChanged);
+            }
+            (After::Sources, Reply::Result(_)) => ctx.link().send_message(Msg::SourcesApplied),
+            (After::Models, Reply::Result(value)) => {
+                let catalog = strip(std::mem::take(value));
+                *value = json!({"catalog": catalog, "options": agent_options(&Value::Null).unwrap_or_default()});
+            }
+            _ => {}
         }
         if tag.is_empty() {
             return;
@@ -690,6 +874,19 @@ impl App {
         self.kernel_effects(ctx, effects);
     }
 
+    /// The console shows another service: the open panel hears of its document.
+    pub(super) fn kernel_switched(&mut self, ctx: &Context<Self>, service: &str) {
+        let Some(id) = self.side.clone() else {
+            return;
+        };
+        let check = self
+            .kernel_check(service)
+            .unwrap_or_else(|| crate::kernel::check(service, "", &json!({})));
+        let effects =
+            crate::kernel::with(|modules| modules.send(&id, crate::kernel::document(check)));
+        self.kernel_effects(ctx, effects);
+    }
+
     /// The user asked for hints in the console editor: the module may fetch what they need,
     /// e.g. discover; its status belongs to the current check.
     pub(super) fn kernel_hints(
@@ -755,6 +952,7 @@ impl App {
             text,
             indicator,
             detail,
+            ..
         }) = crate::kernel::status(service)
         else {
             return;
@@ -808,6 +1006,106 @@ impl App {
         }
     }
 
+    /// The UI tree of the panel module in the side panel.
+    pub(super) fn view_side(&self, ctx: &Context<Self>) -> Html {
+        let Some(id) = self.side.clone() else {
+            return Html::default();
+        };
+        let node = crate::kernel::with(|modules| modules.view(&id).cloned());
+        let on = ctx
+            .link()
+            .callback(move |action| Msg::PanelUi(id.clone(), action));
+        let id = self.side.clone().unwrap_or_default();
+        html! {
+            <section class="module-panel" data-testid={format!("{id}-panel")} data-module={id.clone()}>
+                if let Some(node) = node {
+                    <crate::browser::view::ModuleView module={id.clone()} node={std::rc::Rc::new(node)} {on}/>
+                } else if let Some(failure) = crate::kernel::failure(&id) {
+                    <span class="ui-text is-danger">{failure}</span>
+                }
+            </section>
+        }
+    }
+
+    /// The status line of the panel module in the side panel (`status.set`).
+    pub(super) fn view_side_status(&self) -> Html {
+        let Some(id) = &self.side else {
+            return Html::default();
+        };
+        let status = crate::kernel::status(id).unwrap_or_default();
+        let log: Vec<Value> = crate::kernel::log(id, STATUS_LOG)
+            .into_iter()
+            .map(|(level, text)| json!({"level":level,"text":text}))
+            .collect();
+        // The module's details come first, so they show without unfolding.
+        let mut debug = match &status.detail {
+            Value::Object(detail) => Value::Object(detail.clone()),
+            Value::Null => json!({}),
+            detail => json!({"detail":detail}),
+        };
+        debug["module"] = json!(id);
+        debug["status"] = json!(status.text);
+        debug["indicator"] = json!(status.indicator);
+        debug["log"] = json!(log);
+        html! {
+            <ConsoleStatus testid={format!("console-{id}-status")} text={status.text.clone()} {debug}
+                running={status.indicator == "busy"} started={status.since}
+                state={crate::browser::view::indicator_state(&status.indicator)}/>
+        }
+    }
+
+    /// A toolbar button for each panel module, by `order`.
+    pub(super) fn view_panel_toggles(&self, ctx: &Context<Self>) -> Html {
+        crate::kernel::panels()
+            .into_iter()
+            .map(|panel| {
+                let active = self.side.as_deref() == Some(panel.id.as_str());
+                let state = crate::kernel::status(&panel.id)
+                    .map(|status| crate::browser::view::indicator_state(&status.indicator))
+                    .unwrap_or_default();
+                let id = panel.id.clone();
+                html! {
+                    <button key={panel.id.clone()} class={classes!("console-hints-toggle", active.then_some("active"))}
+                        data-testid={format!("console-{}-toggle", panel.id)} aria-pressed={active.to_string()}
+                        onclick={ctx.link().callback(move |_| Msg::TogglePanel(id.clone()))}>
+                        {panel.name.clone()}{indicator(state, format!("{} status", panel.name))}
+                    </button>
+                }
+            })
+            .collect()
+    }
+
+    /// Closes the panel module of the side panel: it stops until opened again.
+    pub(super) fn close_side(&mut self, ctx: &Context<Self>) {
+        if let Some(id) = self.side.take() {
+            let mut effects = Vec::new();
+            for (msg, value) in crate::browser::view::take_pending(&id) {
+                effects.extend(crate::kernel::with(|modules| modules.ui(&id, msg, value)));
+            }
+            effects.extend(crate::kernel::with(|modules| modules.hide(&id)));
+            self.kernel_effects(ctx, effects);
+        }
+    }
+
+    /// A workspace was restored (the App starts on it): open panels close, every module
+    /// hears of it. The Kernel outlives the App, so what the modules contributed is read.
+    pub(super) fn kernel_mounted(&mut self, ctx: &Context<Self>) {
+        self.contributed();
+        let panels: Vec<String> = crate::kernel::with(|modules| {
+            modules
+                .ordered(services_sdk::Kind::Panel)
+                .into_iter()
+                .map(|manifest| manifest.id.clone())
+                .collect()
+        });
+        let mut effects = crate::kernel::boot();
+        for id in panels {
+            effects.extend(crate::kernel::with(|modules| modules.hide(&id)));
+        }
+        effects.extend(crate::kernel::broadcast(crate::kernel::workspace()));
+        self.kernel_effects(ctx, effects);
+    }
+
     /// The panel was hidden: pending Document events are dropped.
     pub(super) fn kernel_hidden(&mut self) {
         for (_, id) in std::mem::take(&mut self.kernel.timers) {
@@ -824,14 +1122,14 @@ enum Finish {
     Ran(Value),
 }
 
-/// A module's own keys in `localStorage`, shared by its windows.
-fn kv(module: &str, name: &str, args: &Value) -> Result<Value, Failure> {
+/// A module's kv key kept in `localStorage` (shared by its windows).
+fn local(module: &str, name: &str, key: &str, args: &Value) -> Result<Value, Failure> {
     let storage = window()
         .local_storage()
         .ok()
         .flatten()
         .ok_or_else(|| Failure::new("Storage is not available"))?;
-    let key = format!("module:{module}:{}", args["key"].as_str().unwrap_or(""));
+    let key = format!("module:{module}:{key}");
     let failed = |error: JsValue| Failure::new(super::error(error));
     match name {
         "kv.get" => Ok(storage
@@ -843,13 +1141,10 @@ fn kv(module: &str, name: &str, args: &Value) -> Result<Value, Failure> {
             .set_item(&key, &args["value"].to_string())
             .map(|()| Value::Null)
             .map_err(failed),
-        "kv.delete" => storage
+        _ => storage
             .remove_item(&key)
             .map(|()| Value::Null)
             .map_err(failed),
-        _ => Err(Failure::new(format!(
-            "\"{name}\" is not available to modules yet"
-        ))),
     }
 }
 
@@ -859,6 +1154,43 @@ fn strip(mut value: Value) -> Value {
         map.remove("transportDebug");
     }
     value
+}
+
+/// What the App does once the Host answered a module's command.
+#[derive(Clone)]
+pub(in crate::browser) enum After {
+    Reply,
+    /// A History save: a failure is a notice.
+    History,
+    /// Modules were installed or removed (the one removed with its data).
+    Modules(Option<String>),
+    /// What sources apply changed: panels read their files again.
+    Sources,
+    /// The model catalog: the options new chats get come with it.
+    Models,
+}
+
+const AGENT_OPTIONS: &str = "servicesConsole.agentOptions";
+
+/// Reads (`options` null) or saves the options new Agent chats get; the reply is the
+/// options saved, or the defaults when none are.
+pub(super) fn agent_options(options: &Value) -> Result<Value, Failure> {
+    let storage = window()
+        .local_storage()
+        .ok()
+        .flatten()
+        .ok_or_else(|| Failure::new("Local storage is unavailable"))?;
+    if !options.is_null() {
+        storage
+            .set_item(AGENT_OPTIONS, &options.to_string())
+            .map_err(|_| Failure::new("Agent model settings could not be saved"))?;
+        return Ok(options.clone());
+    }
+    Ok(match storage.get_item(AGENT_OPTIONS).ok().flatten() {
+        Some(raw) => serde_json::from_str(&raw).unwrap_or(Value::String(raw)),
+        None => serde_json::to_value(services_contracts::agent::Options::for_new_chat())
+            .unwrap_or_default(),
+    })
 }
 
 /// Refuses a module's command: it gets the failure as its reply.

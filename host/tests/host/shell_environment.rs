@@ -131,8 +131,8 @@ async fn login_and_interactive_environment_reaches_variables_substitution_and_ch
     )
     .unwrap();
     let mut child = fixture.command().arg("native-host").spawn().unwrap();
-    let replies = request(&mut child, json!({"id":1,"service":"vars","op":"list"})).await;
-    let env = &replies[0]["result"]["profiles"]["env"];
+    let replies = request(&mut child, json!({"id":1,"service":"env"})).await;
+    let env = &replies[0]["result"];
     assert_eq!(env["SDT_LOGIN_VALUE"], "login fixture");
     assert_eq!(env["SDT_INTERACTIVE_VALUE"], "interactive fixture");
     assert_eq!(env["SDT_MULTILINE"], "line 1\nline 2=ok");
@@ -140,16 +140,6 @@ async fn login_and_interactive_environment_reaches_variables_substitution_and_ch
     assert_eq!(
         env["SERVICES_DATA_DIR"],
         fixture.0.join("data").to_str().unwrap()
-    );
-    let replies = request(
-        &mut child,
-        json!({"id":2,"service":"dictionary","op":"save","name":"default",
-            "variables":{"JOIN":"{{env:SDT_LOGIN_VALUE}}/{{env:SDT_INTERACTIVE_VALUE}}"}}),
-    )
-    .await;
-    assert_eq!(
-        replies[0]["result"]["resolvedProfiles"]["default"]["JOIN"],
-        "login fixture/interactive fixture"
     );
     let replies = request(
         &mut child,
@@ -227,9 +217,9 @@ async fn native_environment_loads_with_a_controlling_terminal_and_piped_protocol
         });
     }
     let mut child = command.spawn().unwrap();
-    let replies = request(&mut child, json!({"id":1,"service":"vars","op":"list"})).await;
+    let replies = request(&mut child, json!({"id":1,"service":"env"})).await;
     assert_eq!(replies[0]["ok"], true, "{}", replies[0]);
-    let env = &replies[0]["result"]["profiles"]["env"];
+    let env = &replies[0]["result"];
     assert_eq!(env["SDT_TTY_LOGIN"], "login-fixture");
     assert_eq!(env["SDT_TTY_INTERACTIVE"], "interactive-fixture");
     let output = finish(child).await;

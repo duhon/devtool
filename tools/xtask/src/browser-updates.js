@@ -2,58 +2,52 @@
   const {assert, wait, testid, click, openConsole, nativeHold, settingsTab, addFolderSource} = testDriver;
   // A fresh panel: wait for the restored Console session before using its toolbar.
   await openConsole();
-  const status = () => testid('settings-update-status');
+  const status = () => testid('console-settings-status');
   const text = () => status().querySelector('.console-status-text').textContent;
-  const debug = () => document.querySelector('[data-testid="settings-update-status-debug"]');
+  const debug = () => document.querySelector('[data-testid="console-settings-status-debug"]');
   const body = () => testid('settings-panel');
-  const light = id => testid(id).querySelector('.console-state-light').dataset.state;
+  const light = () => testid('console-settings-toggle').querySelector('[data-state]').dataset.state;
   const noBodyErrors = () => assert(!body().querySelector('[role="alert"], [role="status"]'),
     'Update progress and errors belong in the shared footer, never in the Settings body');
-  const showDebug = async () => {
-    if (debug().hidden) await click(status());
-    await wait(() => !debug().hidden);
-  };
-  const app = source => document.querySelector(`[data-testid="settings-module"][data-module="app"][data-source="${source}"]`);
-  const part = (row, name) => row?.querySelector(`[data-testid="settings-module-${name}"]`);
-  // Details are the rows following a module's row.
-  const detail = (row, name) => {
-    for (let next = row?.nextElementSibling; next && next.dataset.testid !== 'settings-module'; next = next.nextElementSibling)
-      if (next.dataset.testid === `settings-module-${name}`) return next;
+  // A module row is keyed `settings-module-{source}/{module}`; its parts `settings-module-{part}-{source}/{module}`.
+  const key = source => `${source}/app`;
+  const app = source => document.querySelector(`[data-testid="settings-module-${key(source)}"]`);
+  const part = (source, name) => document.querySelector(`[data-testid="settings-module-${name}-${key(source)}"]`);
+  const detail = (source, name) => {
+    const element = part(source, name);
+    return element && (element.editor || element.nextElementSibling?.editor)?.getValue();
   };
   await settingsTab('modules');
-  const model = () => document.querySelector('[data-testid="agent-model-input"]');
-  await wait(() => model() && !model().disabled && app(''),
+  await click(testid('settings-modules-check'));
+  await wait(() => app('') && !testid('settings-modules-check').disabled,
     () => `Settings did not load: ${text()}`);
-  await showDebug();
   assert(status().classList.contains('console-status')
     && status().closest('.console-right-status')
     && !status().closest('[data-testid="settings-panel"]'),
     'Settings must reuse the same bottom status region as other panels');
-  assert([...body().querySelectorAll('button:not(.module-settings-link)')].every(button => button.classList.contains('tab-button')),
-    'Settings actions must reuse shared panel button styling');
   const bodyBox = body().getBoundingClientRect(), footerBox = status().getBoundingClientRect();
   assert(footerBox.top >= bodyBox.bottom - 1 && footerBox.width > 0,
     'Settings status must be visible below the panel body');
 
   // The application is the first module: no source yet, the running version, never removable.
   const current = app('');
-  assert(current === testid('settings-modules').querySelector('[data-testid="settings-module"]'),
+  assert(current === testid('settings-modules').querySelector('tbody > tr'),
     'The application must lead the Modules table');
-  assert(part(current, 'name').textContent === 'Services DevTools'
-    && part(current, 'source').textContent === '—'
-    && part(current, 'version').textContent === fixtureVersion
-    && !part(current, 'new-version') && !part(current, 'install') && !part(current, 'update')
-    && part(current, 'remove').disabled,
+  assert(part('', 'name').textContent === 'Services DevTools'
+    && part('', 'source').textContent === '—'
+    && part('', 'version').textContent === fixtureVersion
+    && !part('', 'new-version') && !part('', 'install') && !part('', 'update')
+    && part('', 'remove').disabled,
     `The application row must show its version and refuse removal: ${current.textContent}`);
-  await click(part(current, 'name'));
-  await wait(() => detail(app(''), 'description')?.textContent.includes("it can't be removed here"),
-    'The name must show the description');
-  await click(part(app(''), 'version'));
-  await wait(() => detail(app(''), 'notes') && !detail(app(''), 'notes').textContent.includes('No details.'),
-    () => `The version must show its release notes: ${detail(app(''), 'notes')?.textContent}`);
-  await click(part(app(''), 'name'));
-  await click(part(app(''), 'version'));
-  await wait(() => !detail(app(''), 'description') && !detail(app(''), 'notes'), 'Details must toggle off');
+  await click(part('', 'name'));
+  await wait(() => detail('', 'description')?.includes("it can't be removed here"),
+    () => `The name must show the description: ${detail('', 'description')}`);
+  await click(part('', 'version'));
+  await wait(() => detail('', 'notes') && !detail('', 'notes').includes('No details.'),
+    () => `The version must show its release notes: ${detail('', 'notes')}`);
+  await click(part('', 'name'));
+  await click(part('', 'version'));
+  await wait(() => !part('', 'description') && !part('', 'notes'), 'Details must toggle off');
 
   // A running check animates the shared footer and the panel light.
   nativeHold.match = message => message.service === 'sources' && message.op === 'check';
@@ -61,9 +55,9 @@
     await click(testid('settings-modules-check'));
     await wait(() => status().classList.contains('is-running') && status().querySelector('.console-status-spinner'),
       'A check must show the running spinner');
-    assert(testid('settings-modules-check').disabled && light('settings-tab-modules') === 'running'
+    assert(testid('settings-modules-check').disabled && light() === 'running'
       && debug().textContent.includes('Check sources'),
-      () => `Checking must disable repeated clicks, animate the light and show in Debug: ${debug().textContent}`);
+      () => `Checking must disable repeated clicks, animate the light and show in Debug: ${light()}; ${debug().textContent}`);
   } finally {
     nativeHold.release();
   }
@@ -73,18 +67,17 @@
 
   // A folder source offering a newer application.
   await addFolderSource('Updates', fixtureUpdates);
-  await wait(() => part(app('updates'), 'new-version')?.textContent === '65000.0.0',
+  await wait(() => part('updates', 'new-version')?.textContent === '65000.0.0',
     () => `The source must offer the new version: ${testid('settings-modules').textContent}; ${text()}`);
-  const offered = app('updates');
-  assert(part(offered, 'source').textContent === 'Updates' && part(offered, 'version').textContent === '—'
-    && part(offered, 'install') && !part(offered, 'remove'),
-    `Another source's application must be installable: ${offered.textContent}`);
-  await click(part(offered, 'new-version'));
-  await wait(() => detail(app('updates'), 'new-notes')?.textContent.includes('Fixture notes of 65000.0.0'),
+  assert(part('updates', 'source').textContent === 'Updates' && part('updates', 'version').textContent === '—'
+    && part('updates', 'install') && !part('updates', 'remove'),
+    `Another source's application must be installable: ${app('updates').textContent}`);
+  await click(part('updates', 'new-version'));
+  await wait(() => detail('updates', 'new-notes')?.includes('Fixture notes of 65000.0.0'),
     'The new version must show its release notes');
   assert(updateFixture.installs.length === 0, 'Checking must not install without user consent');
 
-  const install = () => part(app('updates'), 'install');
+  const install = () => part('updates', 'install');
   const getViews = chrome.extension.getViews;
   const reload = chrome.runtime.reload;
   try {
@@ -114,13 +107,13 @@
     await click(install());
     await wait(() => updateFixture.deliver, 'The install request must be sent');
     assert(testid('update-progress').textContent.includes('Keep this window open')
-      && status().classList.contains('is-running') && light('settings-tab-modules') === 'running'
-      && debug().textContent.includes('installing'),
+      && status().classList.contains('is-running') && light() === 'running'
+      && debug().textContent.includes('Install update'),
       () => `An install must show its progress: ${text()}; ${debug().textContent}`);
     updateFixture.deliver();
     await wait(() => text().includes('automatic reload failed'));
     assert(debug().textContent.includes('Fixture automatic reload failed')
-      && status().classList.contains('is-error') && part(app('updates'), 'reload')
+      && status().classList.contains('is-error') && part('updates', 'reload')
       && !document.querySelector('[data-testid="update-progress"]'),
       'Post-install reload errors must remain in status and Debug with a retry action');
     noBodyErrors();

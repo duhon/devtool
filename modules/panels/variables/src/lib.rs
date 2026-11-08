@@ -1,414 +1,265 @@
-//! The Variables panel: resolves the `{{profile:name}}` references of every request and of
-//! `vars.resolve`. `{{:name}}` takes the first profile in order that has the name, then the
-//! environment; `{{env:name}}` the environment only; a named profile its own value, whose
-//! references resolve in turn. The profiles (the session `var`, the Dictionary, `env`) come
-//! from the Host until the Dictionary is a module of its own.
+//! The Variables panel: the session's own variables (`var`, kept as a session kv key) and the
+//! environment of the user's login shell (`env`, read-only). It resolves `{{var:name}}`,
+//! `{{env:NAME}}` and `{{:name}}` when `var` has the name; `{{:name}}` that no panel owns
+//! falls back to the environment in the last pass.
 
-use serde_json::{Map, Value};
-use services_sdk::{Cmd, DriverCall, Event, Module, Resolution, cmd};
-use std::collections::HashMap;
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value, json};
+use services_sdk::{Cmd, Event, Module, Resolution, cmd, refs, ui};
 
-/// The kv key whose change means the profiles changed (a save, another session).
-pub const PROFILES: &str = "profiles";
-const LOAD: &str = "profiles";
+/// The session kv key of the variables.
+pub const VAR: &str = "var";
+/// The session kv key of a draft that does not parse yet.
+pub const DRAFT: &str = "draft";
+const ENV: &str = "env";
 
-/// Names whose values never show in history: they are masked wherever they appear.
-pub fn sensitive_name(name: &str) -> bool {
-    let name = name.to_ascii_lowercase();
-    [
-        "password",
-        "passwd",
-        "pwd",
-        "token",
-        "secret",
-        "credential",
-        "api_key",
-        "apikey",
-        "api-key",
-        "authorization",
-        "cookie",
-        "private_key",
-    ]
-    .iter()
-    .any(|part| name.contains(part))
-}
-
-/// The profiles references resolve from: `order` from the highest priority, the raw
-/// `profiles` and the environment.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct Profiles {
-    pub order: Vec<String>,
-    pub profiles: Map<String, Value>,
-    pub env: Map<String, Value>,
-}
-
-impl Profiles {
-    /// The Host's Variables `list` answer: its `context` holds every profile and `env`.
-    pub fn from_list(value: &Value) -> Self {
-        let context = value.get("context").unwrap_or(value);
-        let mut profiles = context["profiles"].as_object().cloned().unwrap_or_default();
-        let env = match profiles.remove("env") {
-            Some(Value::Object(env)) => env,
-            _ => Map::new(),
-        };
-        let order = context["order"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(Value::as_str)
-            .filter(|name| *name != "env" && profiles.contains_key(*name))
-            .map(str::to_owned)
-            .collect();
-        Self {
-            order,
-            profiles,
-            env,
-        }
-    }
-}
-
-/// The profiles with every value resolved once, ready for each reference.
-#[derive(Clone, Debug, Default)]
-struct Prepared {
-    profiles: Profiles,
-    /// A highest-priority profile that does not resolve fails every resolution.
-    error: Option<String>,
-    /// Every name with the value it takes without a profile: the environment overridden
-    /// by the profiles, the highest priority last.
-    effective: Map<String, Value>,
-    /// The profile each name of `effective` comes from.
-    owners: HashMap<String, String>,
-    resolved: HashMap<String, Map<String, Value>>,
-    /// The sensitive values each `profile:name` takes in through its references.
-    dependencies: HashMap<String, Vec<String>>,
-}
-
-fn string(value: &Value) -> String {
-    value
-        .as_str()
-        .map_or_else(|| value.to_string(), str::to_owned)
-}
-
-/// Replaces each `{{profile:name}}` of `text` (profile `[A-Za-z0-9_-]*`, name
-/// `[A-Za-z0-9_-]+`) with what `resolve` gives.
-pub fn replace(
-    text: &str,
-    mut resolve: impl FnMut(&str, &str) -> Result<String, String>,
-) -> Result<String, String> {
-    let word = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '-';
-    let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(start) = rest.find("{{") {
-        out.push_str(&rest[..start]);
-        let tail = &rest[start + 2..];
-        let reference = tail.find("}}").and_then(|end| {
-            let (profile, name) = tail[..end].split_once(':')?;
-            (profile.chars().all(word) && !name.is_empty() && name.chars().all(word))
-                .then_some((profile, name, end))
-        });
-        match reference {
-            Some((profile, name, end)) => {
-                out.push_str(&resolve(profile, name)?);
-                rest = &tail[end + 2..];
-            }
-            None => {
-                out.push_str("{{");
-                rest = tail;
-            }
-        }
-    }
-    out.push_str(rest);
-    Ok(out)
-}
-
-impl Prepared {
-    fn new(profiles: Profiles) -> Self {
-        let mut prepared = Self {
-            effective: profiles.env.clone(),
-            profiles,
-            ..Self::default()
-        };
-        let order = prepared.profiles.order.clone();
-        for (index, profile) in order.iter().enumerate().rev() {
-            let mut values = Map::new();
-            let mut dependencies = Vec::new();
-            let mut failed = None;
-            let names: Vec<String> = prepared.profiles.profiles[profile]
-                .as_object()
-                .map(|vars| vars.keys().cloned().collect())
-                .unwrap_or_default();
-            for name in names {
-                let mut sensitive = Vec::new();
-                match prepared.named(profile, &name, &mut Vec::new(), &mut sensitive) {
-                    Ok(value) => {
-                        values.insert(name.clone(), value);
-                        dependencies.push((format!("{profile}:{name}"), sensitive));
-                    }
-                    Err(error) => {
-                        failed = Some(error);
-                        break;
-                    }
-                }
-            }
-            match failed {
-                Some(error) if index <= 1 => prepared.error = Some(error),
-                Some(_) => {}
-                None => {
-                    for name in values.keys() {
-                        prepared.owners.insert(name.clone(), profile.clone());
-                    }
-                    prepared.dependencies.extend(dependencies);
-                    prepared.effective.extend(values.clone());
-                    prepared.resolved.insert(profile.clone(), values);
-                }
-            }
-        }
-        prepared
-    }
-
-    /// The value of `name` in `profile`, its references resolved; the sensitive values it
-    /// takes in are added to `sensitive`.
-    fn named(
-        &self,
-        profile: &str,
-        name: &str,
-        chain: &mut Vec<String>,
-        sensitive: &mut Vec<String>,
-    ) -> Result<Value, String> {
-        let start = sensitive.len();
-        match self.named_value(profile, name, chain, sensitive) {
-            Ok(value) => {
-                if sensitive_name(name) {
-                    sensitive.push(string(&value));
-                }
-                Ok(value)
-            }
-            Err(error) => {
-                sensitive.truncate(start);
-                Err(error)
-            }
-        }
-    }
-
-    fn circular(chain: &[String], key: &str) -> Result<(), String> {
-        if chain.iter().any(|link| link == key) {
-            return Err(format!(
-                "Circular profile reference: {} -> {key}",
-                chain.join(" -> ")
-            ));
-        }
-        Ok(())
-    }
-
-    fn named_value(
-        &self,
-        profile: &str,
-        name: &str,
-        chain: &mut Vec<String>,
-        sensitive: &mut Vec<String>,
-    ) -> Result<Value, String> {
-        let profiles = &self.profiles;
-        if profile == "env" {
-            return profiles
-                .env
-                .get(name)
-                .cloned()
-                .ok_or_else(|| format!("Unknown environment variable: {name}"));
-        }
-        if profile.is_empty() {
-            let key = format!(":{name}");
-            Self::circular(chain, &key)?;
-            chain.push(key);
-            for candidate in &profiles.order {
-                if profiles.profiles[candidate].get(name).is_some()
-                    && let Ok(value) = self.named(candidate, name, chain, sensitive)
-                {
-                    chain.pop();
-                    return Ok(value);
-                }
-            }
-            chain.pop();
-            return profiles.env.get(name).cloned().ok_or_else(|| {
-                format!(
-                    "Unknown variable: {name} (not found in any profile or the real environment)"
-                )
-            });
-        }
-        let key = format!("{profile}:{name}");
-        Self::circular(chain, &key)?;
-        let vars = profiles
-            .profiles
-            .get(profile)
-            .ok_or_else(|| format!("Unknown profile reference: {profile}"))?;
-        let raw = vars
-            .get(name)
-            .ok_or_else(|| format!("Unknown variable \"{name}\" in profile \"{profile}\""))?;
-        let Some(raw) = raw.as_str() else {
-            return Ok(raw.clone());
-        };
-        chain.push(key);
-        let out = replace(raw, |profile, name| {
-            self.named(profile, name, chain, sensitive)
-                .map(|value| string(&value))
-        });
-        chain.pop();
-        out.map(Value::String)
-    }
-
-    /// `text` with its references resolved; in `json` mode each value is escaped as the
-    /// content of a JSON string.
-    fn resolve(&self, text: &str, json: bool) -> Result<Resolution, String> {
-        if let Some(error) = &self.error {
-            return Err(error.clone());
-        }
-        let mut cache: HashMap<String, String> = HashMap::new();
-        let mut secrets = Vec::new();
-        let text = replace(text, |profile, name| {
-            let key = format!("{profile}:{name}");
-            let value = match cache.get(&key) {
-                Some(value) => value.clone(),
-                None => {
-                    let value = self.reference(profile, name, &mut secrets)?;
-                    if sensitive_name(name) {
-                        secrets.push(value.clone());
-                    }
-                    cache.insert(key, value.clone());
-                    value
-                }
-            };
-            Ok(if json {
-                let quoted = Value::String(value).to_string();
-                quoted[1..quoted.len() - 1].to_owned()
-            } else {
-                value
-            })
-        })?;
-        secrets.retain(|secret| !secret.is_empty());
-        secrets.sort();
-        secrets.dedup();
-        Ok(Resolution { text, secrets })
-    }
-
-    fn reference(
-        &self,
-        profile: &str,
-        name: &str,
-        secrets: &mut Vec<String>,
-    ) -> Result<String, String> {
-        let owner = if profile.is_empty() {
-            self.owners.get(name).map(String::as_str)
-        } else {
-            Some(profile)
-        };
-        if let Some(values) =
-            owner.and_then(|owner| self.dependencies.get(&format!("{owner}:{name}")))
-        {
-            secrets.extend(values.iter().cloned());
-        }
-        let missing = || format!("Missing environment variable(s): {name}");
-        if profile.is_empty() {
-            return self.effective.get(name).map(string).ok_or_else(missing);
-        }
-        if profile == "env" {
-            return self.profiles.env.get(name).map(string).ok_or_else(missing);
-        }
-        if !self.profiles.profiles.contains_key(profile) {
-            return Err(format!("Unknown profile: {profile}"));
-        }
-        if let Some(value) = self.resolved.get(profile).and_then(|vars| vars.get(name)) {
-            return Ok(string(value));
-        }
-        self.named(profile, name, &mut Vec::new(), secrets)
-            .map(|value| string(&value))
-    }
-}
-
-/// Resolves every string in `value`.
-fn resolve_strings(prepared: &Prepared, value: &Value) -> Result<Value, String> {
-    Ok(match value {
-        Value::String(text) => Value::String(prepared.resolve(text, false)?.text),
-        Value::Array(items) => Value::Array(
-            items
-                .iter()
-                .map(|item| resolve_strings(prepared, item))
-                .collect::<Result<_, _>>()?,
-        ),
-        Value::Object(fields) => Value::Object(
-            fields
-                .iter()
-                .map(|(key, item)| Ok((key.clone(), resolve_strings(prepared, item)?)))
-                .collect::<Result<_, String>>()?,
-        ),
-        other => other.clone(),
-    })
+#[derive(Serialize, Deserialize)]
+pub enum Msg {
+    Tab(String),
+    Edit,
 }
 
 #[derive(Default)]
 pub struct Variables {
-    prepared: Prepared,
-    /// Why the profiles could not be read; resolving fails with it.
+    vars: Map<String, Value>,
+    env: Map<String, Value>,
+    /// The editor text when it differs from `vars` (it does not parse).
+    draft: Option<String>,
     error: Option<String>,
+    env_error: Option<String>,
+    tab: String,
+    /// Bumped when the module replaces the editor text itself.
+    shown: String,
 }
 
 impl Variables {
-    /// Takes `profiles` directly (tests and a future Dictionary module).
-    pub fn with(profiles: Profiles) -> Self {
-        Self {
-            prepared: Prepared::new(profiles),
-            error: None,
+    /// Takes the variables and the environment directly (tests).
+    pub fn with(vars: Value, env: Value) -> Self {
+        let mut variables = Self {
+            vars: vars.as_object().cloned().unwrap_or_default(),
+            env: env.as_object().cloned().unwrap_or_default(),
+            ..Self::default()
+        };
+        variables.shown = variables.text();
+        variables
+    }
+
+    fn text(&self) -> String {
+        self.draft
+            .clone()
+            .unwrap_or_else(|| refs::format_lines(&self.vars))
+    }
+
+    fn load() -> Vec<Cmd> {
+        vec![
+            cmd::kv_watch(VAR),
+            cmd::kv_get(VAR, VAR),
+            cmd::kv_get(DRAFT, DRAFT),
+            cmd::env(ENV),
+        ]
+    }
+
+    /// What the editors complete and show on hover.
+    fn contribution(&self) -> Cmd {
+        let mut hints: Vec<(String, String)> = Vec::new();
+        for (name, value) in self.vars.iter().filter(|(name, _)| !name.starts_with('#')) {
+            hints.push((format!("{{{{var:{name}}}}}"), refs::text(value)));
+            hints.push((format!("{{{{:{name}}}}}"), refs::text(value)));
+        }
+        for (name, value) in &self.env {
+            hints.push((format!("{{{{env:{name}}}}}"), refs::text(value)));
+        }
+        cmd::contribute(&json!({ "variables": hints }))
+    }
+
+    fn save(&mut self, text: String) -> Vec<Cmd> {
+        self.shown = text.clone();
+        match refs::parse_lines(&text) {
+            Ok(vars) => {
+                self.error = None;
+                self.draft = None;
+                self.vars = vars;
+                vec![
+                    cmd::kv_put("save", VAR, &Value::Object(self.vars.clone()), true),
+                    cmd::kv_delete("", DRAFT),
+                    cmd::status("Variables save · OK", "ok"),
+                    self.contribution(),
+                ]
+            }
+            Err(error) => {
+                let message = format!("ERROR: {error}");
+                self.error = Some(message.clone());
+                self.draft = Some(text.clone());
+                vec![
+                    cmd::kv_put("", DRAFT, &json!(text), true),
+                    cmd::status(&message, "error"),
+                ]
+            }
         }
     }
-    fn load() -> Cmd {
-        cmd::vars_profiles(LOAD)
+
+    /// The value of `name` in `var` with the references `var` and `env` own resolved.
+    fn own(&self, name: &str, chain: &mut Vec<String>) -> Result<Option<String>, String> {
+        let Some(value) = self.vars.get(name) else {
+            return Ok(None);
+        };
+        if chain.iter().any(|link| link == name) {
+            return Err(format!(
+                "Circular variable reference: {} -> {name}",
+                chain.join(" -> ")
+            ));
+        }
+        chain.push(name.to_owned());
+        let out = refs::replace(&refs::text(value), |set, name| {
+            self.reference(set, name, chain)
+        });
+        chain.pop();
+        out.map(Some)
+    }
+
+    fn reference(
+        &self,
+        set: &str,
+        name: &str,
+        chain: &mut Vec<String>,
+    ) -> Result<Option<String>, String> {
+        match set {
+            "var" => match self.own(name, chain)? {
+                Some(value) => Ok(Some(value)),
+                None => Err(format!("Unknown variable \"{name}\" in var")),
+            },
+            "" => self.own(name, chain),
+            ENV => Ok(self.env.get(name).map(refs::text)),
+            _ => Ok(None),
+        }
     }
 }
 
 impl Module for Variables {
-    type Msg = ();
+    type Msg = Msg;
 
-    fn update(&mut self, event: Event<()>) -> Vec<Cmd> {
+    fn subscriptions(&self) -> services_sdk::Subscriptions {
+        services_sdk::Subscriptions {
+            workspace: true,
+            ..Default::default()
+        }
+    }
+
+    fn update(&mut self, event: Event<Msg>) -> Vec<Cmd> {
         match event {
-            Event::Init { .. } => vec![cmd::kv_watch(PROFILES), Self::load()],
-            Event::Storage { key } if key == PROFILES => vec![Self::load()],
-            Event::Reply { tag, result } if tag == LOAD => {
-                match result {
-                    Ok(value) => {
-                        self.prepared = Prepared::new(Profiles::from_list(&value));
-                        self.error = None;
+            Event::Init { .. } | Event::Workspace => Self::load(),
+            Event::Storage { key } if key == VAR => vec![cmd::kv_get(VAR, VAR)],
+            Event::Reply { tag, result } => match (tag.as_str(), result) {
+                (VAR, Ok(value)) => {
+                    self.vars = value.as_object().cloned().unwrap_or_default();
+                    // The editor keeps the text as typed unless the variables changed elsewhere.
+                    if refs::parse_lines(&self.shown).ok().as_ref() != Some(&self.vars) {
+                        self.shown = self.text();
                     }
-                    Err(failure) => self.error = Some(failure.message),
+                    vec![self.contribution()]
                 }
+                (DRAFT, Ok(Value::String(text))) => {
+                    self.error = refs::parse_lines(&text)
+                        .err()
+                        .map(|error| format!("ERROR: {error}"));
+                    self.draft = Some(text);
+                    self.shown = self.text();
+                    Vec::new()
+                }
+                (DRAFT, _) => {
+                    self.draft = None;
+                    self.shown = self.text();
+                    Vec::new()
+                }
+                (ENV, Ok(value)) => {
+                    self.env = value.as_object().cloned().unwrap_or_default();
+                    self.env_error = None;
+                    vec![self.contribution()]
+                }
+                (ENV, Err(failure)) => {
+                    self.env_error = Some(failure.message);
+                    Vec::new()
+                }
+                ("save", Err(failure)) => {
+                    let message = format!("ERROR: {}", failure.message);
+                    vec![cmd::status(&message, "error")]
+                }
+                (VAR, Err(failure)) => {
+                    vec![cmd::status(&format!("ERROR: {}", failure.message), "error")]
+                }
+                _ => Vec::new(),
+            },
+            Event::Ui {
+                msg: Msg::Tab(_),
+                value: Some(tab),
+            } => {
+                self.tab = tab.trim_start_matches("variables-tab-").to_owned();
                 Vec::new()
             }
+            Event::Ui {
+                msg: Msg::Edit,
+                value: Some(text),
+            } if text != self.text() || self.draft.is_some() => self.save(text),
             _ => Vec::new(),
         }
     }
 
-    fn before_request(&self, mut call: DriverCall) -> Result<DriverCall, String> {
-        let request = call.request();
-        let resolved = resolve_strings(&self.prepared, &request)?;
-        if resolved != request {
-            call.set_request(&resolved);
+    fn view(&self) -> Option<ui::Node> {
+        let active = if self.tab == ENV { ENV } else { VAR };
+        let var = ui::editor("headers", self.shown.clone(), &Msg::Edit).key("console-variables");
+        let mut env =
+            vec![ui::viewer("headers", refs::format_lines(&self.env)).key("console-variables")];
+        if let Some(error) = &self.env_error {
+            env.insert(0, ui::text(error.clone()).variant("danger"));
         }
-        Ok(call)
+        let tabs = ui::tabs(
+            vec![
+                ui::tab("variables-tab-var", "var", vec![var]),
+                ui::tab("variables-tab-env", "env (read-only)", env),
+            ],
+            format!("variables-tab-{active}"),
+            &Msg::Tab(String::new()),
+        )
+        .key("variables-tabs");
+        Some(ui::panel("Variables", vec![tabs], Vec::new()))
     }
 
-    fn resolve(&self, text: &str, json: bool) -> Option<Result<Resolution, String>> {
-        if let Some(error) = &self.error
-            && text.contains("{{")
-        {
-            return Some(Err(error.clone()));
-        }
-        Some(self.prepared.resolve(text, json))
-    }
-}
-
-/// [`Profiles`] from JSON: `order` from the highest priority.
-pub fn profiles(order: &[&str], profiles: Value, env: Value) -> Profiles {
-    Profiles {
-        order: order.iter().map(|name| (*name).to_owned()).collect(),
-        profiles: profiles.as_object().cloned().unwrap_or_default(),
-        env: env.as_object().cloned().unwrap_or_default(),
+    fn resolve(&self, text: &str, json: bool, last: bool) -> Option<Result<Resolution, String>> {
+        let mut secrets = Vec::new();
+        let mut missing = Vec::new();
+        let result = refs::replace(text, |set, name| {
+            let value = match self.reference(set, name, &mut Vec::new())? {
+                Some(value) => Some(value),
+                None if last && set.is_empty() => self.env.get(name).map(refs::text),
+                None => None,
+            };
+            if value.is_none() && last && (set.is_empty() || set == ENV) {
+                missing.push(name.to_owned());
+            }
+            if let Some(value) = &value
+                && refs::sensitive(name)
+                && refs::find(value).is_empty()
+            {
+                secrets.push(value.clone());
+            }
+            Ok(value.map(|value| {
+                if json {
+                    refs::escape_json(&value)
+                } else {
+                    value
+                }
+            }))
+        });
+        Some(result.and_then(|text| {
+            if missing.is_empty() {
+                Ok(Resolution { text, secrets })
+            } else {
+                Err(format!(
+                    "Missing environment variable(s): {}",
+                    missing.join(", ")
+                ))
+            }
+        }))
     }
 }
 

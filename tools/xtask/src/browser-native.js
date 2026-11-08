@@ -459,10 +459,10 @@
     'Materialization must change the network payload, not the editable Console template');
   await testDriver.checkConsoleFolding(materializationEditor);
   assert(nativeProbe.clipboardReads === 0, 'Startup and requests must not read clipboard');
-  const panelEditor = name => document.querySelector(`[data-testid="console-${name}-editor"]`);
-  if (!visible(panelEditor('dictionary'))) await click(testid('console-dictionary-toggle'));
-  await click(await wait(() => [...find('.console-panel-tabs').querySelectorAll('.tab-label')]
-    .find(el => el.textContent === 'default')));
+  // The Dictionary keeps the user's sets and the drafts that do not parse in its kv.
+  const stored = () => `${localStorage.getItem('module:dictionary:sets')}|${localStorage.getItem('module:dictionary:drafts')}`;
+  await testDriver.openPanel('dictionary');
+  await click(testid('dictionary-set-default'));
   await wait(() => editorOf('console-dictionary').getValue().includes('{{second:TOKEN}}'),
     'Variable reference fixture must be present');
   let variables = editorOf('console-dictionary');
@@ -500,43 +500,42 @@
     await key('Control+Space');
     assert(candidates().length === 0, `Variables leaked suggestions for ${JSON.stringify(suffix)}`);
   }
-  const beforeRestore = nativeProbe.saves;
   setSource(variables, original);
-  await wait(() => nativeProbe.saves > beforeRestore, 'The debounced autosave of the restored variables must finish');
-  const initial = nativeProbe.saves;
+  await wait(() => stored().includes('"REF":"{{second:TOKEN}}"') && !stored().includes('NAME'),
+    'The autosave of the restored variables must finish');
+  const initial = stored();
   setSource(variables, `${original}\n\nPROBE: `);
   await type('{{env:');
   await wait(() => candidates().includes('{{env:HOME}}'));
-  await wait(() => nativeProbe.saves > initial, 'Variable autosave');
+  await wait(() => stored() !== initial, 'Variable autosave');
   await key('Escape');
   await key('Control+Space');
   await wait(() => candidates().includes('{{env:HOME}}'));
   assert(variables.getValue() === `${original}\n\nPROBE: {{env:`, 'Autosave must preserve draft and blank lines');
-  const saved = nativeProbe.saves;
+  const saved = stored();
   await key('Escape');
   for (let i = 0; i < 4; i++) await key('Backspace');
   await type('second:');
   await wait(() => candidates().includes('{{second:TOKEN}}'));
-  await wait(() => nativeProbe.saves > saved);
+  await wait(() => stored() !== saved);
   await key('Escape');
   await key('Control+Space');
   await wait(() => candidates().includes('{{second:TOKEN}}'));
   await key('Escape');
-  const beforeCleanup = nativeProbe.saves;
+  const beforeCleanup = stored();
   setSource(variables, original);
-  await wait(() => nativeProbe.saves > beforeCleanup, 'The restored dictionary must be saved before the panel checks');
-  await click(testid('console-variables-toggle'));
-  await wait(() => visible(panelEditor('variables')));
-  await click(button(/^env /, find('.console-panel-tabs')));
-  await wait(() => editorOf('console-variables').getOption('readOnly') === true);
+  await wait(() => stored() !== beforeCleanup, 'The restored dictionary must be saved before the panel checks');
+  await testDriver.closePanel('dictionary');
+  await testDriver.openPanel('variables');
+  await click(testid('variables-tab-env'));
+  await wait(() => testDriver.editorAt('console-variables')?.getOption('readOnly') === true);
   variables = editorOf('console-variables');
   assert(variables.getValue().includes('HOME:'), 'env must include companion HOME');
   assert(variables.getValue().includes('SERVICES_DEVTOOLS_ENV_PROBE: companion-fixture-only'), 'env from .zprofile');
   assert(variables.getValue().includes('SERVICES_DEVTOOLS_INTERACTIVE_PROBE: interactive-fixture-only'), 'env from .zshrc');
-  await click(button(/^var$/, find('.console-panel-tabs')));
-  await wait(() => editorOf('console-variables').getOption('readOnly') !== true);
-  await click(testid('console-variables-toggle'));
-  await wait(() => !visible(panelEditor('variables')), 'The tool panel must close before the shared Console checks');
+  await click(testid('variables-tab-var'));
+  await wait(() => testDriver.editorAt('console-variables')?.getOption('readOnly') !== true);
+  await testDriver.closePanel('variables');
   await testDriver.checkConsoleTools(`${fixtureUrl}/panel-tools`);
   const frame = document.createElement('iframe');
   frame.allow = "clipboard-read 'none'; clipboard-write 'none'";

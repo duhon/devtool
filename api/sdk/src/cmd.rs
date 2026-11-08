@@ -18,24 +18,36 @@ pub const NAMES: &[&str] = &[
     "history.search",
     "os.env",
     "vars.resolve",
-    "vars.profiles",
     "clipboard.read",
     "clipboard.write",
     "sources.read",
+    "editor.contribute",
     "document.read",
     "document.insert",
     "document.replace",
     "document.select",
     "document.run",
-    "workspace.snapshot",
+    "workspace.list",
     "workspace.restore",
+    "workspace.copy",
+    "workspace.delete",
     "page.eval",
+    "page.network",
     "agent.turn",
     "agent.stop",
-    "agent.tools",
+    "agent.reply",
+    "agent.approve",
+    "agent.sessions",
+    "agent.models",
+    "agent.options",
+    "modules.check",
     "modules.install",
     "modules.remove",
-    "modules.update",
+    "sources.list",
+    "sources.save",
+    "sources.token",
+    "sources.apply",
+    "sources.open",
     "app.update",
     "app.reload",
     "lock.acquire",
@@ -132,11 +144,200 @@ pub fn history_search(tag: impl Into<String>, query: &Value) -> Cmd {
     Cmd::new(tag, "history.search", query)
 }
 
-/// Interim until the Dictionary panel module: the profiles variables resolve from, as
-/// `{order, profiles}` — the session `var`, the Dictionary of the sources with its local
-/// layer, and `env`.
-pub fn vars_profiles(tag: impl Into<String>) -> Cmd {
-    Cmd::new(tag, "vars.profiles", &json!({}))
+/// The environment of the user's login shell as a JSON object of strings.
+pub fn env(tag: impl Into<String>) -> Cmd {
+    Cmd::new(tag, "os.env", &json!({}))
+}
+
+pub fn clipboard_write(tag: impl Into<String>, text: &str) -> Cmd {
+    Cmd::new(tag, "clipboard.write", &json!({"text": text}))
+}
+
+/// The raw document `name` (like `dictionary.json`) of every applied source, by order:
+/// `[{source, text}]`, the local layer last.
+pub fn sources_read(tag: impl Into<String>, name: &str) -> Cmd {
+    Cmd::new(tag, "sources.read", &json!({"name": name}))
+}
+
+/// The saved workspaces (sessions): `{current, sessions: [{id, name}], saving, saveError,
+/// importError}`; `0` is the temporary one, never saved. A workspace holds the documents,
+/// the layout and the session keys of every module's kv; the Kernel saves the current one
+/// as it changes.
+pub fn workspace_list(tag: impl Into<String>) -> Cmd {
+    Cmd::new(tag, "workspace.list", &json!({}))
+}
+
+/// Makes workspace `id` the current one; every module gets `Workspace`.
+pub fn workspace_restore(tag: impl Into<String>, id: u64) -> Cmd {
+    Cmd::new(tag, "workspace.restore", &json!({"id": id}))
+}
+
+/// Saves a copy of workspace `source` (`0`: an empty one) as `name` and makes it current.
+pub fn workspace_copy(tag: impl Into<String>, source: u64, name: &str) -> Cmd {
+    Cmd::new(
+        tag,
+        "workspace.copy",
+        &json!({"source": source, "name": name}),
+    )
+}
+
+/// Deletes saved workspace `id`; deleting the current one makes the temporary one current.
+pub fn workspace_delete(tag: impl Into<String>, id: u64) -> Cmd {
+    Cmd::new(tag, "workspace.delete", &json!({"id": id}))
+}
+
+/// What the module adds to the editors: `{"variables": [[reference, value], …]}` (completion
+/// and hover of `{{…}}`), `{"templates": {service: {section: text}}}` or
+/// `{"hints": {service: text}}`. Replaces what the module contributed before under that key.
+pub fn contribute(contribution: &Value) -> Cmd {
+    Cmd::new("", "editor.contribute", contribution)
+}
+
+/// The console's current service and its document: `{service, text, line}`.
+pub fn document_read(tag: impl Into<String>) -> Cmd {
+    Cmd::new(tag, "document.read", &json!({}))
+}
+
+/// Inserts `text` at the cursor of the current console document.
+pub fn document_insert(tag: impl Into<String>, text: &str) -> Cmd {
+    Cmd::new(tag, "document.insert", &json!({"text": text}))
+}
+
+/// Commands only built-in modules (Settings) may send: they manage the modules, their
+/// sources and the App.
+pub const PRIVILEGED: &[&str] = &[
+    "modules.check",
+    "modules.install",
+    "modules.remove",
+    "sources.list",
+    "sources.save",
+    "sources.token",
+    "sources.apply",
+    "sources.open",
+    "app.update",
+    "app.reload",
+];
+
+/// Evaluates `expression` on the inspected page (DevTools only); the reply is its JSON value.
+pub fn page_eval(tag: impl Into<String>, expression: &str) -> Cmd {
+    Cmd::new(tag, "page.eval", &json!({"expression": expression}))
+}
+
+/// The requests DevTools recorded for the inspected page: `{entries: [{url, method, status,
+/// time, bodySize, started}]}` (`started` in epoch milliseconds).
+pub fn page_network(tag: impl Into<String>) -> Cmd {
+    Cmd::new(tag, "page.network", &json!({}))
+}
+
+/// Starts an Agent turn: a stream of `{type: "copilot", event}` replies (the Copilot events)
+/// that ends with the turn. `params` are `{workspaceId, sessionId, prompt, options}`. Console
+/// tools are served by the App; page tools come to the module as `Event::ToolCall` with
+/// `args: {turn, arguments}`, a console run waiting for approval as a reply
+/// `{type: "approval", approval}` (`null` once decided).
+pub fn agent_turn(tag: impl Into<String>, params: &Value) -> Cmd {
+    Cmd::new(tag, "agent.turn", params)
+}
+
+/// Stops the Agent turn started with `turn`.
+pub fn agent_stop(turn: &str) -> Cmd {
+    Cmd::new(turn, "agent.stop", &json!({}))
+}
+
+/// The result of the Agent tool call `tag` (from `Event::ToolCall`).
+pub fn agent_reply(tag: &str, result: &Value) -> Cmd {
+    Cmd::new(tag, "agent.reply", &json!({"result": result}))
+}
+
+/// Approves or denies the console run waiting for approval in the turn `turn`.
+pub fn agent_approve(turn: &str, approve: bool) -> Cmd {
+    Cmd::new(turn, "agent.approve", &json!({"approve": approve}))
+}
+
+/// Deletes the Copilot history of Agent sessions `ids`.
+pub fn agent_sessions_delete(tag: impl Into<String>, ids: &[String]) -> Cmd {
+    Cmd::new(
+        tag,
+        "agent.sessions",
+        &json!({"op": "delete", "sessionIds": ids}),
+    )
+}
+
+/// The Copilot models: `{catalog, options}` — the catalog of the account and the options new
+/// chats get.
+pub fn agent_models(tag: impl Into<String>) -> Cmd {
+    Cmd::new(tag, "agent.models", &json!({}))
+}
+
+/// Saves the options (model, reasoning) new Agent chats get; `None` only reads them. The
+/// reply is the saved options.
+pub fn agent_options(tag: impl Into<String>, options: Option<&Value>) -> Cmd {
+    Cmd::new(tag, "agent.options", &json!({"options": options}))
+}
+
+/// The sources with what they offer and what is installed: `{sources, installed}`. `force`
+/// checks again the sources checked recently.
+pub fn modules_check(tag: impl Into<String>, force: bool) -> Cmd {
+    Cmd::new(tag, "modules.check", &json!({"force": force}))
+}
+
+/// Installs (or updates to) `version` of `module` from source `source`; the Kernel reloads
+/// the modules.
+pub fn modules_install(tag: impl Into<String>, source: &str, module: &str, version: &str) -> Cmd {
+    Cmd::new(
+        tag,
+        "modules.install",
+        &json!({"source": source, "module": module, "version": version}),
+    )
+}
+
+/// Removes `module`; `forget` deletes its documents in every session too.
+pub fn modules_remove(tag: impl Into<String>, module: &str, forget: bool) -> Cmd {
+    Cmd::new(
+        tag,
+        "modules.remove",
+        &json!({"module": module, "forget": forget}),
+    )
+}
+
+/// The configured sources: `{sources, tokenSet, warning}`.
+pub fn sources_list(tag: impl Into<String>) -> Cmd {
+    Cmd::new(tag, "sources.list", &json!({}))
+}
+
+/// Saves the list of sources (order, names, new and removed ones); replies like
+/// [`sources_list`].
+pub fn sources_save(tag: impl Into<String>, sources: &[Value]) -> Cmd {
+    Cmd::new(tag, "sources.save", &json!({"sources": sources}))
+}
+
+/// Saves the GitHub token, or clears it with `None`.
+pub fn sources_token(tag: impl Into<String>, token: Option<&str>) -> Cmd {
+    Cmd::new(tag, "sources.token", &json!({"token": token}))
+}
+
+/// Applies the settings of source `source`; every module gets `Workspace`.
+pub fn sources_apply(tag: impl Into<String>, source: &str) -> Cmd {
+    Cmd::new(tag, "sources.apply", &json!({"source": source}))
+}
+
+/// Opens folder source `source` in the file manager.
+pub fn sources_open(tag: impl Into<String>, source: &str) -> Cmd {
+    Cmd::new(tag, "sources.open", &json!({"source": source}))
+}
+
+/// Installs App `version` from source `source`; the App saves the workspace, installs and
+/// reloads. The reply comes once it is installed and could not reload by itself.
+pub fn app_update(tag: impl Into<String>, source: &str, version: &str) -> Cmd {
+    Cmd::new(
+        tag,
+        "app.update",
+        &json!({"source": source, "version": version}),
+    )
+}
+
+/// Reloads the App after an installed update.
+pub fn app_reload() -> Cmd {
+    Cmd::new("", "app.reload", &json!({}))
 }
 
 pub fn kv_get(tag: impl Into<String>, key: &str) -> Cmd {

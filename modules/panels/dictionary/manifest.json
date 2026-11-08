@@ -1,0 +1,10 @@
+{
+  "id": "dictionary",
+  "kind": "panel",
+  "name": "Dictionary",
+  "version": "3.7.0",
+  "description": "Named sets of variables ({{set:name}}) from sources and your own edits.",
+  "abi": 1,
+  "app": ">=3.7",
+  "order": 5
+}

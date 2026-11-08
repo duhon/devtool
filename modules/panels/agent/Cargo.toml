@@ -1,0 +1,15 @@
+[package]
+name = "services-module-agent"
+version = "3.7.0"
+edition.workspace = true
+publish.workspace = true
+description = "Agent panel module: Copilot chats about the console and the inspected page"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+services-sdk = { path = "../../../api/sdk" }
+serde.workspace = true
+serde_json.workspace = true
+url = "2"

@@ -1,11 +1,10 @@
 (async () => {
-  const {assert, wait, holds, click, testid, key, openConsole, input} = testDriver;
+  const {assert, wait, holds, click, testid, key, openConsole, openPanel, closePanel, input} = testDriver;
   await openConsole();
-  if (!document.querySelector('[data-testid="agent-composer"]')?.getBoundingClientRect().width)
-    await click(testid('console-agent-toggle'));
+  await openPanel('agent', 'console-agent');
   await click(testid('agent-new-session'));
   const composer = () => testid('agent-composer');
-  const assistants = () => [...testid('agent-transcript').querySelectorAll('.agent-message-assistant')];
+  const assistants = () => [...testid('agent-transcript').querySelectorAll('[data-testid^="agent-message-assistant-"]')];
   let before = 0;
   const send = async message => {
     await wait(() => testid('agent-stop').disabled);
@@ -17,7 +16,7 @@
   };
   const completed = async text => {
     await wait(() => assistants().length > before && assistants().at(-1).textContent.includes(text),
-      () => `Missing page Agent reply "${text}": ${testid('agent-transcript').textContent}; ${document.querySelector('.agent-error')?.textContent}`);
+      () => `Missing page Agent reply "${text}": ${testid('agent-transcript').textContent}; ${document.querySelector('[data-testid="agent-error"]')?.textContent}`);
     await wait(() => testid('agent-stop').disabled);
     assert(!document.querySelector('[data-testid="agent-page-approval"]'), 'Finished turn retained page access approval');
   };
@@ -260,7 +259,7 @@
     await beginGuide('closing');
     await guideStep(1);
     const closedCleanups = guideCleanups;
-    await click(testid('agent-sessions').querySelector('.active [data-testid="agent-session-close"]'));
+    await click(testid('agent-session-close'));
     await wait(async () => !await page(`!!document.getElementById('services-devtools-page-guide')`));
     await wait(() => guideCleanups >= closedCleanups + 2);
     await beginGuide('application hidden');
@@ -307,8 +306,8 @@
   } finally {
     if (original) Object.defineProperty(chrome, 'devtools', original);
     else delete chrome.devtools;
-    await click(testid('agent-sessions').querySelector('.active [data-testid="agent-session-close"]'));
-    await click(testid('console-agent-toggle'));
+    await click(testid('agent-session-close'));
+    await closePanel('agent');
   }
   return true;
 })()

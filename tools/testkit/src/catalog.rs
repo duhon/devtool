@@ -58,10 +58,6 @@ pub const MODULES: &[ModuleSpec] = &[
     service("terminal", "Terminal"),
     service("artemis", "Artemis"),
     service("opensearch", "OpenSearch"),
-    panel("vars", "Variables", &[("list", "{}")]),
-    panel("dictionary", "Dictionary", &[("list", "{}")]),
-    panel("templates", "Templates", &[("get", "{}")]),
-    panel("hints", "Hints", &[("get", r#"{"serviceName":"mysql"}"#)]),
     panel(
         "history",
         "History",
@@ -70,7 +66,6 @@ pub const MODULES: &[ModuleSpec] = &[
             r#"{"checkId":"00000000-0000-4000-8000-000000000001"}"#,
         )],
     ),
-    panel("sessions", "Sessions", &[("bootstrap", "{}")]),
     ModuleSpec {
         external: true,
         ..panel("agent", "Agent", &[])

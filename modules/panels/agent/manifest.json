@@ -1,0 +1,10 @@
+{
+  "id": "agent",
+  "kind": "panel",
+  "name": "Agent",
+  "version": "3.7.0",
+  "description": "Copilot chats about the active check and the inspected web page.",
+  "abi": 1,
+  "app": ">=3.7",
+  "order": 6
+}

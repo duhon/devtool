@@ -56,17 +56,6 @@ fn every_module_brings_a_skill_the_agent_can_load() {
 }
 
 #[tokio::test]
-async fn a_service_without_saved_hints_gets_empty_hints() {
-    let host = Host::new();
-    for name in services().map(|module| module.name).chain(["unknown"]) {
-        let reply = host
-            .send(json!({"service":"hints","serviceName":name}))
-            .await;
-        assert_eq!(reply.ok()["text"], "", "{name}");
-    }
-}
-
-#[tokio::test]
 async fn the_console_reads_the_served_modules_from_the_host() {
     let host = Host::new();
     let reply = host.send(json!({"service":"modules"})).await;
@@ -165,40 +154,16 @@ async fn panel_reads_succeed_on_empty_data() {
 #[tokio::test]
 async fn panel_state_survives_a_restart() {
     let host = Host::new();
-    let cases = [
-        (
-            "vars",
-            json!({"op":"save","name":"var","variables":{"TOKEN":"kept"}}),
-            ("list", json!({})),
-            "/profiles/var/TOKEN",
-            json!("kept"),
-        ),
-        (
-            "dictionary",
-            json!({"op":"save","name":"shop","variables":{"HOST":"kept"}}),
-            ("list", json!({})),
-            "/profiles/shop/HOST",
-            json!("kept"),
-        ),
-        (
-            "hints",
-            json!({"op":"save","serviceName":"artemis","text":"#kept\n"}),
-            ("get", json!({"serviceName":"artemis"})),
-            "/text",
-            json!("#kept\n"),
-        ),
-        (
-            "sources",
-            json!({"op":"save","sources":[{"name":"Team","kind":"folder","path":std::env::temp_dir()}]}),
-            ("get", json!({})),
-            "/sources/0/name",
-            json!("Team"),
-        ),
-    ];
-    // History keeps its own state (tests/core/history.rs); sessions and agent_sessions derive
-    // theirs from other services' storage; templates only read until modules declare
-    // sections (tests/modules/templates.rs).
-    let mut covered = vec!["history", "sessions", "agent_sessions", "templates"];
+    let cases = [(
+        "sources",
+        json!({"op":"save","sources":[{"name":"Team","kind":"folder","path":std::env::temp_dir()}]}),
+        ("get", json!({})),
+        "/sources/0/name",
+        json!("Team"),
+    )];
+    // History keeps its own state (tests/core/history.rs); agent_sessions derives its own
+    // from the Agent's storage.
+    let mut covered = vec!["history", "agent_sessions"];
     for (panel, mut write, (op, fields), pointer, expected) in cases {
         module(panel);
         write["service"] = json!(panel);

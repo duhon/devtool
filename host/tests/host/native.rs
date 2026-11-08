@@ -207,10 +207,10 @@ async fn concurrent_requests_stop_and_health_are_routed_by_id() {
     assert_eq!(exit["id"], 3);
     assert_eq!(exit["failure"]["stage"], "cancelled", "{exit}");
     input
-        .write_all(&encode(&json!({"id":4,"service":"vars","op":"list"})).unwrap())
+        .write_all(&encode(&json!({"id":4,"service":"env"})).unwrap())
         .await
         .unwrap();
-    assert!(read_frame(&mut output).await["result"]["profiles"]["var"].is_object());
+    assert!(read_frame(&mut output).await["result"]["PATH"].is_string());
     input
         .write_all(&encode(&json!({"id":5,"type":"health"})).unwrap())
         .await

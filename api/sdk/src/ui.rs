@@ -237,6 +237,20 @@ impl Node {
         self.variant = variant.into();
         self
     }
+    /// A button that cannot be clicked now.
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        if let Some(node::Kind::Button(button)) = &mut self.kind {
+            button.disabled = disabled;
+        }
+        self
+    }
+    /// An input that also reports its text while typing, debounced.
+    pub fn on_input(mut self, on_input: &impl Serialize) -> Self {
+        if let Some(node::Kind::Input(input)) = &mut self.kind {
+            input.on_input = msg(on_input);
+        }
+        self
+    }
 }
 
 pub fn text(text: impl Into<String>) -> Node {
@@ -305,6 +319,8 @@ pub fn button(label: impl Into<String>, on_click: &impl Serialize) -> Node {
 }
 
 /// An input that reports Enter/blur with `on_change`; set `value` only to replace the text.
+/// Variant `secret` hides what is typed; `multiline` is a text area that reports only Enter
+/// (Shift+Enter breaks the line).
 pub fn input(
     value: Option<String>,
     placeholder: impl Into<String>,
@@ -348,6 +364,15 @@ pub fn indicator(state: impl Into<String>, label: impl Into<String>) -> Node {
     node(node::Kind::Indicator(Indicator {
         state: state.into(),
         label: label.into(),
+    }))
+}
+
+/// A read-only [`editor`].
+pub fn viewer(language: impl Into<String>, text: impl Into<String>) -> Node {
+    node(node::Kind::Editor(Editor {
+        language: language.into(),
+        text: text.into(),
+        on_change: None,
     }))
 }
 

@@ -3,7 +3,6 @@
 //! `cargo test -p services-ui --test modules -- rest::`.
 
 mod agent;
-mod history;
 mod rest;
 mod sessions;
 mod templates;

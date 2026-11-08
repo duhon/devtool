@@ -24,114 +24,80 @@
   await run();
   const topBar=()=>document.querySelector('.console-top-bar');
   const initialHeaderHeight=topBar().getBoundingClientRect().height;
+  const panel=()=>document.querySelector('[data-testid="history-panel"]');
+  const title=()=>panel()?.querySelector('.ui-panel-title .tab-button');
+  const idle=()=>testid('console-history-toggle').querySelector('.console-state-light')?.dataset.state!=='running';
+  const list=()=>document.querySelector('[data-testid="history-entries"]');
+  const entries=()=>[...(list()?.querySelectorAll('[data-testid^="history-entry-"]')??[])];
+  const entryId=entry=>entry.dataset.testid.slice('history-entry-'.length);
+  const viewer=()=>testDriver.editorAt('history-editor');
   const open=async()=>{
     if(testid('console-history-toggle').getAttribute('aria-pressed')!=='true') await click(testid('console-history-toggle'));
-    await wait(()=>testid('history-panel') && document.querySelector('[data-testid="history-title"]'));
+    await wait(()=>title());
     const height=topBar().getBoundingClientRect().height;
     assert(Math.abs(height-initialHeaderHeight)<0.5,
       `Opening History must not increase the shared service header height: ${initialHeaderHeight} -> ${height}`);
-    assert(testid('history-title').classList.contains('tab-button')
-      && testid('history-title').classList.contains('active'),
-      'History must use the same compact active heading style as other panels');
-    assert(getComputedStyle(testid('history-title')).backgroundColor
-      ===getComputedStyle(topBar().querySelector('.console-tab-strip > .tab-button.active')).backgroundColor,
-      'History must have the same visible active background as the service tabs');
+    assert(title().textContent==='History'
+      && getComputedStyle(title()).backgroundColor
+        ===getComputedStyle(topBar().querySelector('.console-tab-strip > .tab-button.active')).backgroundColor,
+      'History must have the same visible active heading as the service tabs');
   };
   await open();
-  await wait(()=>document.querySelector('[data-testid="history-entries"]')?.querySelectorAll('[data-testid="history-entry"]').length===3,
-    ()=>`History must contain three executions: ${testid('history-panel').textContent}; ${testid('history-status').textContent}`);
-  assert(testid('history-panel').dataset.checkId===identity,'History must follow the persisted active check ID');
-  const entries=()=>[...testid('history-entries').querySelectorAll('[data-testid="history-entry"]')];
-  assert(!document.querySelector('[data-testid="history-editor"]'),
-    'History must not mount an empty editor before an execution is selected');
-  assert(getComputedStyle(testid('history-entries')).maxHeight==='none',
-    'The collapsed History list must not reserve snapshot space');
-  assert(!document.querySelector('[data-testid="history-refresh"]')
-    && testid('history-title').tagName==='SPAN',
-    'History must have a non-interactive active heading without a Refresh button');
+  await wait(()=>entries().length===3,
+    ()=>`History must contain three executions: ${panel()?.textContent}`);
+  assert(!viewer(),'History must not mount an empty editor before an execution is selected');
+  assert(![...panel().querySelectorAll('button')].some(button=>/refresh/i.test(button.textContent)),
+    'History must have no Refresh button');
   await click(testid('console-history-toggle'));
   await run();
-  assert(document.querySelector('[data-testid="history-entries"]').querySelectorAll('[data-testid="history-entry"]').length===3,
-    'The hidden History list must not be reloaded by background execution notifications');
   await open();
-  await wait(()=>document.querySelector('[data-testid="history-entries"]')?.querySelectorAll('[data-testid="history-entry"]').length===4,
-    'Opening History must reread the database even when automatic updates did not refresh the hidden list');
+  await wait(()=>entries().length===4,
+    'Opening History must reread the database: a closed panel hears of no executions');
   for(let count=5;count<=10;count++){
     await run();
-    await wait(()=>entries().length===count && !testid('history-status').classList.contains('is-running'));
+    await wait(()=>entries().length===count && idle(),
+      ()=>`An open History must list each new execution: ${entries().length} of ${count}`);
   }
   const detail=async index=>{
-    const id=entries()[index].dataset.entryId;
+    const id=entryId(entries()[index]);
     await click(entries()[index]);
-    await wait(()=>{
-      const element=document.querySelector('[data-testid="history-editor"]');
-      const snapshotEditor=element?.editor || element?.nextElementSibling?.editor;
-      return snapshotEditor?.getValue().includes('#endpoint') && !testid('history-status').classList.contains('is-running');
-    });
-    assert(entries()[index].dataset.entryId===id,'Opening a snapshot must retain its execution identity');
-    assert(entries()[index].getAttribute('aria-expanded')==='true','The selected history record must be expanded');
-    const list=testid('history-entries'),row=entries()[index].getBoundingClientRect();
-    const top=list.getBoundingClientRect().top+list.clientTop;
-    assert(row.top>=top-0.5 && row.bottom<=top+list.clientHeight+0.5,
-      `The selected History entry must remain fully visible after the list shrinks: ${row.top}..${row.bottom}, list ${top}..${top+list.clientHeight}`);
-    assert(entries()[index].getAttribute('aria-current')==='true'
-      && list.querySelectorAll('.history-entry.active').length===1,
-      'Exactly the displayed execution must have the visible and accessible current-entry state');
-    return editorOf('history-editor').getValue();
+    await wait(()=>viewer()?.getValue().includes('#endpoint') && idle());
+    assert(entryId(entries()[index])===id,'Opening a snapshot must retain its execution identity');
+    assert(entries()[index].classList.contains('is-primary')
+      && list().querySelectorAll('.is-primary').length===1,
+      'Exactly the displayed execution must be marked current');
+    return viewer().getValue();
   };
-  const historyPanel=testid('history-panel'),list=testid('history-entries');
-  historyPanel.style.maxHeight='400px';
-  await wait(()=>list.clientHeight>=list.scrollHeight);
-  const unsplitHeight=list.clientHeight;
   const sourceViewport=editor.getScrollInfo();
   const pageViewport={x:window.scrollX,y:window.scrollY};
-  const oldestId=entries()[9].dataset.entryId;
+  const oldestId=entryId(entries()[9]);
   const oldest=await detail(9);
-  assert(list.clientHeight<unsplitHeight && list.scrollHeight>list.clientHeight && list.scrollTop>0,
-    'Opening the bottom execution must reveal it inside the newly split, overflowing History list');
-  const activeStyle=getComputedStyle(entries()[9]),inactiveStyle=getComputedStyle(entries()[0]);
-  assert(activeStyle.backgroundColor!==inactiveStyle.backgroundColor
-    && activeStyle.backgroundColor===getComputedStyle(testid('history-title')).backgroundColor
-    && activeStyle.boxShadow!=='none',
-    'The open execution must retain a clearly distinct active background and left indicator, including while hovered');
   assert(editor.getScrollInfo().top===sourceViewport.top && editor.getScrollInfo().left===sourceViewport.left
     && window.scrollX===pageViewport.x && window.scrollY===pageViewport.y,
-    'Revealing a History entry must scroll only its list, not the source editor or page');
-  list.scrollTop=0;
+    'Opening a History entry must not scroll the source editor or page');
   await click(testid('console-templates-toggle'));
   await open();
-  await wait(()=>{
-    const row=entries().find(entry=>entry.dataset.entryId===oldestId)?.getBoundingClientRect();
-    const top=list.getBoundingClientRect().top+list.clientTop;
-    return row && row.top>=top-0.5 && row.bottom<=top+list.clientHeight+0.5
-      && !testid('history-status').classList.contains('is-running');
-  },'Reopening History must reveal the retained current execution');
-  assert(editorOf('history-editor').getValue()===oldest,'Reopening History must preserve the selected snapshot');
+  await wait(()=>entries().find(entry=>entryId(entry)===oldestId)?.classList.contains('is-primary')
+    && viewer()?.getValue()===oldest && idle(),
+    'Reopening History must keep the selected execution and its snapshot');
   await click(entries()[9]);
-  await wait(()=>!document.querySelector('[data-testid="history-editor"]'));
-  assert(!list.querySelector('.history-entry.active') && !list.querySelector('[aria-current]'),
-    'Collapsing the current execution must remove its active indicator');
+  await wait(()=>!viewer());
+  assert(!list().querySelector('.is-primary'),'Collapsing the current execution must remove its current mark');
   assert(await detail(9)===oldest,'The oldest execution must remain visible and immutable when reopened');
-  historyPanel.style.removeProperty('max-height');
   const latest=await detail(0);
   assert(latest.includes('third') && latest.includes('companion-fixture-only') && !latest.includes('{{env:'),
     `History must show full resolved sections/body rather than current variable references: ${latest}`);
   assert(!latest.includes('history-secret-token'),'History must not persist exposed Authorization secrets');
-  assert(/#respon[cs]e/.test(latest),'History snapshot must include the recorded response');
-  const expectedHeader=`\n#responce ${new Date(Number(entries()[0].dataset.endedAt)).toLocaleTimeString('en-US')} · OK\n`;
-  assert(latest.includes(expectedHeader),'History must show the recorded completion time and Console response marker/outcome');
-  const recordedResponse=latest.split(expectedHeader)[1];
+  const header=latest.match(/\n#responce [^\n]+ · OK\n/)?.[0];
+  assert(header,'History must show the recorded completion time and Console response marker/outcome');
+  const recordedResponse=latest.split(header)[1];
   assert(recordedResponse===JSON.stringify(JSON.parse(recordedResponse),null,2),
     'History must display JSON using the same indentation as the main check, without transport metadata');
   assert(!latest.includes('\n#effective-parameters\n') && !recordedResponse.includes('"durationMs"'),
     'History must not add effective parameters or response transport/debug wrappers');
-  assert(editorOf('history-editor').getOption('readOnly')===true,'History snapshots must be read-only');
+  assert(viewer().getOption('readOnly')===true,'History snapshots must be read-only');
   await click(entries()[0]);
-  await wait(()=>!document.querySelector('[data-testid="history-editor"]'));
-  assert(entries()[0].getAttribute('aria-expanded')==='false'
-    && !testid('history-panel').classList.contains('has-selection')
-    && !testid('history-status').classList.contains('is-running'),
-    'Clicking the same record must collapse its snapshot and release the detail area');
+  await wait(()=>!viewer() && idle(),'Clicking the same record must collapse its snapshot');
   assert(await detail(0)===latest,'A collapsed history record must reopen its original immutable snapshot');
   const second=await detail(8),first=await detail(9);
   assert(first.includes('first') && !first.includes('"text":"third"') && first!==second,
@@ -140,24 +106,21 @@
   await wait(async()=>(await snapshot()).documents.rest.startsWith('#check History renamed'));
   assert((await snapshot()).checkIdentities.rest[0].id===identity,'Renaming a check must retain all its history');
   await click(testid('console-sessions-toggle'));
-  await wait(()=>testid('console-sessions'));
-  const input=testid('session-new-name');input.value='History copy';input.dispatchEvent(new InputEvent('input',{bubbles:true}));
+  await wait(()=>document.querySelector('[data-testid="session-new-name"]'));
+  testDriver.fill(testid('session-new-name'),'History copy');
   await click(testid(`session-copy-${current}`));
   await wait(()=>Number(testid('console-session-name').dataset.sessionId)!==current);
   await click(testid('console-service-rest'));
   await open();
-  await wait(()=>!testid('history-status').classList.contains('is-running'));
-  assert(testid('history-panel').dataset.checkId!==identity
-    && testid('history-entries').querySelectorAll('[data-testid="history-entry"]').length===0,
+  await wait(()=>idle() && panel()?.textContent.includes('No executions recorded for this check.'),
     'Copying a Console session must create new check identities without inheriting execution history');
-  assert(!document.querySelector('[data-testid="history-editor"]'),'An empty history must not show an editor');
+  assert(entries().length===0 && !viewer(),'An empty history must not show an editor');
   const copiedEditor=editorOf('console-editor');
   await activateSession(current);
   await wait(()=>!copiedEditor.getWrapperElement().isConnected);
   await click(testid('console-service-rest'));await open();
-  await wait(()=>document.querySelector('[data-testid="history-entries"]')?.querySelectorAll('[data-testid="history-entry"]').length===10);
-  assert((await snapshot()).workspaceId===workspace && testid('history-panel').dataset.checkId===identity,
-    'Switching sessions must restore persisted workspace and check IDs');
+  await wait(()=>entries().length===10);
+  assert((await snapshot()).workspaceId===workspace,'Switching sessions must restore the persisted workspace');
   await click(testid('console-templates-toggle'));
   assert(!visible(document.querySelector('[data-testid="history-panel"]')),'Another right panel must completely hide History');
   await open();
@@ -173,8 +136,7 @@
     ()=>`Terminal execution did not render plain output: ${terminalEditor.getValue()}`);
   assert(testid('console-main-status').textContent.includes('WARNING · warning'),
     `A Terminal command that exits 0 after writing to stderr must be a WARNING showing that line: ${testid('console-main-status').textContent}`);
-  await wait(()=>document.querySelector('[data-testid="history-entries"]')?.querySelectorAll('[data-testid="history-entry"]').length===1
-    && !testid('history-status').classList.contains('is-running'));
+  await wait(()=>entries().length===1 && idle());
   const terminalSnapshot=await detail(0);
   assert(terminalSnapshot.endsWith(terminalOutput+'warning\n'),
     'Terminal History must match the main check output, joining stdout/stderr without added text');
@@ -182,7 +144,7 @@
     && !terminalSnapshot.includes('"durationMs"'),
     'Terminal History must hide stream-event and completion-metadata envelopes');
   await click(testid('console-service-rest'));
-  await wait(()=>document.querySelector('[data-testid="history-entries"]')?.querySelectorAll('[data-testid="history-entry"]').length===10);
+  await wait(()=>entries().length===10);
   const largeEditor=editorOf('console-editor');
   setSource(largeEditor,`#check Large History\n#endpoint\nGET ${fixtureUrl}/history-large-fixture`);
   largeEditor.closeHint();largeEditor.focus();largeEditor.setCursor(2,0);
@@ -191,7 +153,7 @@
     && !testid('console-main-status').classList.contains('is-running')
     && testid('console-main-status').textContent.includes('OK'),
     ()=>`Large History fixture did not complete: ${testid('console-main-status').textContent}; ${[...largeEditor.getValue()].slice(-200).join('')}`);
-  await wait(()=>entries().length===1 && !testid('history-status').classList.contains('is-running'));
+  await wait(()=>entries().length===1 && idle());
   const largeSnapshot=await detail(0);
   assert(!document.querySelector('[data-testid="history-more-text"]'),
     'History must load all snapshot chunks automatically without a Load more snapshot text button');

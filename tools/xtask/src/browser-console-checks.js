@@ -230,10 +230,6 @@
     }
   };
   const checkConsoleTools = async endpoint => {
-    const storedHints = async () => {
-      const id=Number(testid('console-session-name').dataset.sessionId);
-      return (await sessionLibrary()).sessions.find(s=>s.id===id).snapshot.hints.rest;
-    };
     await openConsole();
     await click(testid('console-service-rest'));
     const editor = editorOf('console-editor');
@@ -548,31 +544,29 @@
       'The check-menu resize handle must remain accessible while its entries scroll');
     setSource(editor, source);
     await wait(() => links().length === 3);
-    await click(testid('console-hints-toggle'));
-    const panel = testid('console-tool-panel');
-    const workspace = find('.console-top-bar');
+    const { openPanel, closePanel, fill } = testDriver;
+    const sessionId = () => Number(testid('console-session-name').dataset.sessionId);
+    // A panel module's session kv key in the saved session.
+    const stored = async (module, key) =>
+      (await sessionLibrary()).sessions.find(s => s.id === sessionId()).snapshot.modules?.[module]?.[key];
+    const storedHints = async () => (await stored('hints', 'hints'))?.rest;
     const toolStatus = () => [...document.querySelectorAll('.console-right-status .console-status')].find(visible);
     const mainStatusText = () => testid('console-main-status').textContent;
-    const profileToolLight = tool => testid(`console-${tool}-toggle`).querySelector('.console-state-light')?.dataset.state;
-    // Diagnostic snapshot of the profile tools for timeouts on slow hosts.
-    const profileState = () => JSON.stringify({
-      lights: {variables: profileToolLight('variables'), dictionary: profileToolLight('dictionary')},
-      status: toolStatus()?.textContent,
-      tab: document.querySelector('.console-panel-tabs [role="tab"].active .tab-label')?.textContent,
-      editors: document.querySelectorAll('[data-testid="console-dictionary-editor"]').length,
-      text: document.querySelector('[data-testid="console-dictionary"]') && editorOf('console-dictionary').getValue().slice(-160),
-    });
-    await wait(() => Math.abs(panel.closest('.console-right-pane').getBoundingClientRect().width
-      - workspace.clientWidth / 2) < 1);
+    const toolLight = tool => testid(`console-${tool}-toggle`).querySelector('.console-state-light')?.dataset.state;
+    const workspace = find('.console-top-bar');
+    const hintsPanel = await openPanel('hints');
+    await wait(() => Math.abs(hintsPanel.closest('.console-right-pane').getBoundingClientRect().width
+      - workspace.clientWidth / 2) < 1, () => `Side panel width ${hintsPanel.closest('.console-right-pane')?.getBoundingClientRect().width} vs ${workspace.clientWidth / 2}`);
     assert(JSON.stringify(assertStatusBounds()) === JSON.stringify(closedStatusBounds),
       'Opening the right panel must not change status boundaries');
     assert(getComputedStyle(find('.console-toolbar')).flexDirection === 'column'
       && getComputedStyle(testid('console-check-menu')).flexDirection === 'column',
       'Both side menus must be vertical');
-    const hints = editorOf('console-hints');
-    assert(testid('console-hints-title').textContent === 'REST completion hints'
-      && tabStyle(testid('console-hints-title')) === tabStyle(testid('console-service-rest')),
+    const hintsTitle = await wait(() => find('.ui-panel-title .tab-button', hintsPanel));
+    await wait(() => hintsTitle.textContent === 'REST completion hints', 'Hints must be titled by the active service');
+    assert(tabStyle(hintsTitle) === tabStyle(testid('console-service-rest')),
       'Hints must have a tab-styled title matching the active service tabs');
+    const hints = await wait(() => testDriver.editorAt('console-hints'));
     const originalHints = hints.getValue();
     setSource(hints, '#endpoint\nhttp://\n');
     await type('#');
@@ -582,13 +576,13 @@
     assert(hints.getLine(2) === '#body', 'Picking a Hints section must insert its header');
     const changedHints = `${originalHints.trimEnd()}\n#headers\nX-Console-Panel-Fixture: saved\n`;
     hints.setValue(changedHints);
-    await click(testid('console-hints-toggle'));
     await wait(async () => await storedHints() === changedHints,
-      'Closing hints must persist the edited text in the named session');
-    await click(testid('console-hints-toggle'));
-    await wait(() => editorOf('console-hints').getValue() === changedHints);
+      'Edited hints must persist in the named session');
+    await closePanel('hints');
+    await openPanel('hints');
+    await wait(() => testDriver.editorAt('console-hints')?.getValue() === changedHints);
     editorOf('console-hints').setValue('## accidental-service-boundary\ninvalid fixture');
-    await wait(() => toolStatus().textContent.includes('ERROR')
+    await wait(() => toolStatus()?.textContent.includes('ERROR')
       && toolStatus().textContent.includes('service headers'));
     assert(await storedHints() === changedHints, 'Invalid hints drafts must not replace the last valid persisted hints');
     const hintsError = toolStatus().textContent;
@@ -596,228 +590,124 @@
     await click(toolStatus());
     assertStatusBounds();
     assert(testid('console-hints-status-debug').textContent.includes('Hints validation'),
-      'Hints errors must reach the right tool Debug, not the check Debug');
-    await click(testid('console-hints-toggle'));
+      'Hints errors must reach the panel Debug, not the check Debug');
+    await click(toolStatus());
+    await closePanel('hints');
     assert(mainStatusText() === hintsMainStatus, 'Hints validation must not overwrite the main check status');
-    assert(editor.getValue() === source, 'Tool errors must not modify the Console document');
-    await click(testid('console-hints-toggle'));
-    await wait(() => editorOf('console-hints').getValue().startsWith('## accidental'));
+    assert(editor.getValue() === source, 'Panel errors must not modify the Console document');
+    await openPanel('hints');
+    await wait(() => testDriver.editorAt('console-hints')?.getValue().startsWith('## accidental'));
     assert(toolStatus().textContent === hintsError, 'Reopening hints must retain its own error status');
-    await click(testid('console-variables-toggle'));
-    await wait(() => visible(document.querySelector('[data-testid="console-variables-editor"]')));
+    await openPanel('variables');
     assert(JSON.stringify(assertStatusBounds()) === JSON.stringify(closedStatusBounds),
-      'Switching right-panel tools must not change status boundaries');
-    assert(!visible(document.querySelector('[data-testid="console-hints-editor"]'))
-      && document.querySelectorAll('.console-tool-panel').length === 1,
-      'Variables and Hints must share one panel without overlapping editors');
-    const profileTabs = () => [...find('.console-panel-tabs').querySelectorAll('[role="tab"]')];
-    const writable = await wait(() => profileTabs().find(el => !el.textContent.startsWith('env ')));
-    assert(profileTabs().map(el => el.querySelector('.tab-label').textContent).join(',') === 'var,env (read-only)'
-      && !document.querySelector('[data-testid="console-profile-add"]'),
-      'Variables must contain only fixed var and read-only env, without profile CRUD');
-    await click(writable);
-    const originalVars = editorOf('console-variables').getValue();
+      'Switching panels must not change status boundaries');
+    assert(!document.querySelector('[data-testid="hints-panel"]')
+      && document.querySelectorAll('.module-panel').length === 1,
+      'Variables and Hints must share one side panel without overlapping');
+    const panelTabs = () => [...document.querySelectorAll('.module-panel [role="tab"]')];
+    assert(panelTabs().map(el => el.textContent).join(',') === 'var,env (read-only)'
+      && !document.querySelector('.module-panel input'),
+      'Variables must contain only fixed var and read-only env, without set CRUD');
+    await click(testid('variables-tab-var'));
+    const variables = () => testDriver.editorAt('console-variables');
+    await wait(() => variables()?.getOption('readOnly') !== true);
+    const originalVars = variables().getValue();
     assertSignalGeometry();
-    editorOf('console-variables').setValue(`${originalVars}\nCONSOLE_PANEL_FIXTURE: saved`);
-    await wait(() => profileToolLight('variables') === 'running',
-      'Variables must expose its pending autosave on the tool button');
-    await wait(() => toolStatus().textContent.includes('Variables save · OK')
-      && profileToolLight('variables') === 'ready',
-      'A visible save result must be acknowledged without clearing its status');
-    editorOf('console-variables').setValue('missing delimiter');
+    variables().setValue(`${originalVars}\nCONSOLE_PANEL_FIXTURE: saved`);
+    await wait(() => toolStatus().textContent.includes('Variables save · OK') && toolLight('variables') === 'success',
+      'A save must report its result on the panel status and toolbar signal');
+    variables().setValue('missing delimiter');
     await wait(() => toolStatus().textContent.includes('ERROR')
-      && toolStatus().textContent.includes('NAME: value') && profileToolLight('variables') === 'ready');
-    await seen();
+      && toolStatus().textContent.includes('NAME: value') && toolLight('variables') === 'error');
     const varsError = toolStatus().textContent;
     const varsMainStatus = mainStatusText();
-    await click(testid('console-variables-toggle'));
+    await closePanel('variables');
     assert(mainStatusText() === varsMainStatus, 'Variables validation must not overwrite the main check status');
-    assert(profileToolLight('variables') === 'ready', 'Collapsing Variables must not relight an already viewed validation failure');
-    await click(testid('console-variables-toggle'));
-    await wait(() => editorOf('console-variables').getValue() === 'missing delimiter');
+    assert(toolLight('variables') === 'error', 'A closed panel keeps its error signal');
+    await openPanel('variables');
+    await wait(() => variables()?.getValue() === 'missing delimiter');
     assert(toolStatus().textContent === varsError, 'Reopening Variables must retain its own validation error');
-    await click(button(/^env /, find('.console-panel-tabs')));
-    await wait(() => editorOf('console-variables').getOption('readOnly') === true);
-    assert(profileToolLight('variables') === 'ready',
-      'Selecting env must not relight a viewed error belonging to var');
-    await click(button(/^var$/, find('.console-panel-tabs')));
-    await wait(() => editorOf('console-variables').getValue() === 'missing delimiter');
-    editorOf('console-variables').setValue(`${originalVars}\nCONSOLE_PANEL_FIXTURE: shared`);
+    await click(testid('variables-tab-env'));
+    await wait(() => variables()?.getOption('readOnly') === true);
+    await click(testid('variables-tab-var'));
+    await wait(() => variables()?.getValue() === 'missing delimiter');
+    variables().setValue(`${originalVars}\nCONSOLE_PANEL_FIXTURE: shared`);
     await wait(() => toolStatus().textContent.includes('Variables save · OK'));
-    await click(button(/^env /, find('.console-panel-tabs')));
-    await wait(() => editorOf('console-variables').getOption('readOnly') === true);
-    await click(testid('console-variables-toggle'));
-    await click(testid('console-variables-toggle'));
-    await click(button(/^var$/, find('.console-panel-tabs')));
-    await wait(() => editorOf('console-variables').getValue().includes('CONSOLE_PANEL_FIXTURE: shared'),
-      'Reopening Variables must reload the saved shared file');
-    editorOf('console-variables').setValue(`${originalVars}\nCONSOLE_PANEL_FIXTURE: {{unknown_fixture:MISSING}}`);
-    await click(button(/^env /, find('.console-panel-tabs')));
-    await wait(() => editorOf('console-variables').getOption('readOnly') === true
-      && profileToolLight('variables') === 'error',
-      'An unseen background validation failure must light Variables without assigning the error to env');
-    await click(testid('console-variables-toggle'));
-    await click(testid('console-variables-toggle'));
-    await wait(() => editorOf('console-variables').getOption('readOnly') === true
-      && !toolStatus().classList.contains('is-running'));
-    assert(profileToolLight('variables') === 'error' && !toolStatus().classList.contains('is-error'),
-      'Backend validation of var must keep its aggregate error without incorrectly assigning that error to env');
-    await seen();
-    await click(button(/^var$/, find('.console-panel-tabs')));
-    await wait(() => editorOf('console-variables').getOption('readOnly') !== true
-      && toolStatus().textContent.includes('unknown_fixture') && profileToolLight('variables') === 'ready',
-      () => `Opening the failed profile must acknowledge its signal while retaining its error status: ${profileState()}`);
-    await seen();
-    await click(button(/^env /, find('.console-panel-tabs')));
-    await click(testid('console-variables-toggle'));
-    await click(testid('console-variables-toggle'));
-    await wait(() => editorOf('console-variables').getOption('readOnly') === true
-      && !toolStatus().classList.contains('is-running'));
-    assert(profileToolLight('variables') === 'ready',
-      'Background reload must not relight an unchanged validation failure that was already viewed');
-    await click(button(/^var$/, find('.console-panel-tabs')));
-    await wait(() => editorOf('console-variables').getOption('readOnly') !== true);
-    editorOf('console-variables').setValue(originalVars);
-    await wait(() => toolStatus().textContent.includes('Variables save · OK')
-      && profileToolLight('variables') === 'ready',
-      'Fixing var must clear its aggregate error without leaving a stale error on env');
-    // Showing Dictionary reloads its profiles; that reply must not bypass the autosave debounce.
-    nativeHold.match = message => message.service === 'dictionary' && message.op === 'list';
-    await click(testid('console-dictionary-toggle'));
-    await wait(() => visible(document.querySelector('[data-testid="console-dictionary-editor"]')));
+    await closePanel('variables');
+    await openPanel('variables');
+    await click(testid('variables-tab-var'));
+    await wait(() => variables()?.getValue().includes('CONSOLE_PANEL_FIXTURE: shared'),
+      'Reopening Variables must show the saved variables');
+    variables().setValue(originalVars);
+    await wait(() => toolStatus().textContent.includes('Variables save · OK') && toolLight('variables') === 'success');
+    await openPanel('dictionary');
     assertStatusBounds();
-    assert(profileTabs().every(el => !['var','env (read-only)'].includes(el.querySelector('.tab-label').textContent))
-      && !visible(document.querySelector('[data-testid="console-variables-editor"]')),
-      'Dictionary must be a separate tool with no var or env tabs');
-    const dictionaryProfile = profileTabs().find(el => el.classList.contains('active')).querySelector('.tab-label').textContent;
-    const originalDictionary = editorOf('console-dictionary').getValue();
-    assertSignalGeometry();
-    editorOf('console-dictionary').setValue(`${originalDictionary}\nDICTIONARY_PANEL_FIXTURE: shared`);
-    await wait(() => profileToolLight('dictionary') === 'running',
-      () => `Dictionary must expose its pending autosave independently of Variables: ${profileState()}`);
-    nativeHold.release();
-    await holds(() => profileToolLight('dictionary') === 'running',
-      () => `A Dictionary load reply must not save the edited draft before its debounce: ${profileState()}`, 300);
-    await wait(() => toolStatus().textContent.includes('Dictionary save · OK')
-      && profileToolLight('dictionary') === 'ready');
-    await click(testid('console-dictionary-toggle'));
-    await click(testid('console-dictionary-toggle'));
-    await wait(() => editorOf('console-dictionary').getValue().includes('DICTIONARY_PANEL_FIXTURE: shared'),
-      'Reopening Dictionary must reload the saved profile');
-    const invalidDictionary = `${originalDictionary}\nDICTIONARY_PANEL_FIXTURE: {{unknown_fixture:MISSING}}`;
-    editorOf('console-dictionary').setValue(invalidDictionary);
-    await click(testid('console-variables-toggle'));
-    await wait(() => visible(document.querySelector('[data-testid="console-variables-editor"]')));
-    await click(button(/^var$/, find('.console-panel-tabs')));
-    assert(editorOf('console-variables').getValue() === originalVars,
-      'Dictionary edits and drafts must not alter var');
-    await wait(() => profileToolLight('dictionary') === 'error',
-      () => `A hidden invalid Dictionary draft must light its tool as error: ${profileState()}`);
-    assert(profileToolLight('dictionary') === 'error' && profileToolLight('variables') === 'ready',
-      'A hidden Dictionary error must remain visible without contaminating the Variables indicator');
-    await click(testid('console-dictionary-toggle'));
-    await wait(() => editorOf('console-dictionary').getValue() === invalidDictionary
-      && toolStatus().textContent.includes('ERROR') && profileToolLight('dictionary') === 'ready',
-      'Opening Dictionary must acknowledge its failure but preserve the saved request and status');
-    editorOf('console-dictionary').setValue(originalDictionary);
-    await wait(() => toolStatus().textContent.includes('Dictionary save · OK')
-      && profileToolLight('dictionary') === 'ready');
-    const prompt = window.prompt;
-    const confirm = window.confirm;
-    try {
-      window.prompt = () => 'console-panel-fixture';
-      await click(testid('console-profile-add'));
-      await wait(() => profileTabs().some(el => el.classList.contains('active') && el.textContent.includes('console-panel-fixture')));
-      const tab = profileTabs().find(el => el.textContent.includes('console-panel-fixture'));
-      tab.dispatchEvent(new MouseEvent('dblclick', {bubbles:true}));
-      const rename = await wait(() => document.querySelector('[data-testid="console-profile-rename"]'));
-      rename.value = 'console-panel-renamed';
-      rename.dispatchEvent(new InputEvent('input', {bubbles:true}));
-      await key('Enter');
-      await wait(() => profileTabs().some(el => el.textContent.includes('console-panel-renamed')));
-      const renamed = profileTabs().find(el => el.textContent.includes('console-panel-renamed'));
-      renamed.dispatchEvent(new DragEvent('dragstart', {bubbles:true}));
-      await settle();
-      profileTabs()[0].dispatchEvent(new DragEvent('drop', {bubbles:true,cancelable:true}));
-      await wait(() => toolStatus().textContent.includes('Dictionary reorder · OK')
-        && profileTabs()[0].textContent.includes('console-panel-renamed'),
-        'Console profile tabs must reorder through the existing native API');
-      window.confirm = () => true;
-      await click(profileTabs().find(el => el.textContent.includes('console-panel-renamed')).querySelector('.tab-close'));
-      await wait(() => !profileTabs().some(el => el.textContent.includes('console-panel-renamed')));
-      const renameDictionary = async (from, to) => {
-        const tab = profileTabs().find(el => el.querySelector('.tab-label')?.textContent === from);
-        assert(tab, `Dictionary profile to rename was not found: ${from}`);
-        tab.dispatchEvent(new MouseEvent('dblclick', {bubbles:true}));
-        const input = await wait(() => document.querySelector('[data-testid="console-profile-rename"]'));
-        input.value = to;
-        input.dispatchEvent(new InputEvent('input', {bubbles:true}));
-        await key('Enter');
-        await wait(() => profileTabs().some(el => el.querySelector('.tab-label')?.textContent === to)
-          && toolStatus().textContent.includes('Dictionary rename · OK'));
-      };
-      const renamedProfile = 'console-no-default-fixture';
-      await renameDictionary(dictionaryProfile, renamedProfile);
-      assert(!profileTabs().some(el => el.querySelector('.tab-label')?.textContent === 'default'),
-        'Dictionary loading regression must run without a profile named default');
-      const frame = document.createElement('iframe');
-      frame.src = location.href;
-      frame.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;z-index:9999';
-      document.body.append(frame);
-      try {
-        await wait(() => frame.contentDocument?.querySelector('[data-testid="console-dictionary-toggle"]'));
-        const doc = frame.contentDocument;
-        const toggle = () => testid('console-dictionary-toggle', doc);
-        const state = () => toggle().querySelector('.console-state-light')?.dataset.state;
-        await click(toggle());
-        await wait(() => doc.querySelector('[data-testid="console-dictionary-status"]')?.textContent.includes('Dictionary load · OK'));
-        await wait(() => state() === 'ready',
-          'A first Dictionary load without default must finish its tool signal, not leave a phantom running profile');
-        assert(doc.querySelector('[data-testid="console-dictionary-status-stop"]').disabled,
-          'A completed Dictionary load must not offer a running operation to stop');
-        await click(toggle());
-        await click(toggle());
-        await wait(() => editorOf('console-dictionary', doc).getValue() === originalDictionary && state() === 'ready',
-          'Reopening Dictionary without default must not relight a phantom loading operation');
-      } finally {
-        frame.remove();
-        await renameDictionary(renamedProfile, dictionaryProfile);
-      }
-    } finally {
-      window.prompt = prompt;
-      window.confirm = confirm;
-    }
-    await click(testid('console-hints-toggle'));
-    assert(editorOf('console-hints').getValue().startsWith('## accidental'),
-      'Invalid hints drafts survive tool switches');
+    assert(panelTabs().every(el => !['var', 'env (read-only)'].includes(el.textContent))
+      && !document.querySelector('[data-testid="variables-panel"]'),
+      'Dictionary must be a separate panel with no var or env tabs');
+    const dictionary = () => testDriver.editorAt('console-dictionary');
+    const dictionarySet = panelTabs().find(el => el.getAttribute('aria-selected') === 'true').textContent;
+    const originalDictionary = (await wait(() => dictionary())).getValue();
+    dictionary().setValue(`${originalDictionary}\nDICTIONARY_PANEL_FIXTURE: shared`);
+    await wait(() => toolStatus().textContent.includes('Dictionary save · OK'));
+    await closePanel('dictionary');
+    await openPanel('dictionary');
+    await wait(() => dictionary()?.getValue().includes('DICTIONARY_PANEL_FIXTURE: shared'),
+      'Reopening Dictionary must show the saved set');
+    const invalidDictionary = `${originalDictionary}\nmissing delimiter`;
+    dictionary().setValue(invalidDictionary);
+    await wait(() => toolStatus().textContent.includes('ERROR') && toolLight('dictionary') === 'error');
+    await openPanel('variables');
+    await click(testid('variables-tab-var'));
+    await wait(() => variables()?.getValue() === originalVars, 'Dictionary edits and drafts must not alter var');
+    assert(toolLight('dictionary') === 'error' && toolLight('variables') === 'success',
+      'A hidden Dictionary error must remain visible without contaminating the Variables signal');
+    await openPanel('dictionary');
+    await wait(() => dictionary()?.getValue() === invalidDictionary && toolStatus().textContent.includes('ERROR'),
+      'Reopening Dictionary must keep its draft and status');
+    dictionary().setValue(originalDictionary);
+    await wait(() => toolStatus().textContent.includes('Dictionary save · OK'));
+    fill(testid('dictionary-add'), 'console-panel-fixture');
+    await wait(() => document.querySelector('[data-testid="dictionary-set-console-panel-fixture"]')?.getAttribute('aria-selected') === 'true'
+      && toolStatus().textContent.includes('Dictionary add · OK'), 'A new set opens');
+    await click(testid('dictionary-delete'));
+    await wait(() => !document.querySelector('[data-testid="dictionary-set-console-panel-fixture"]')
+      && toolStatus().textContent.includes('Dictionary delete · OK'), 'A set of the user\'s own can be deleted');
+    await click(testid(`dictionary-set-${dictionarySet}`));
+    await wait(() => dictionary()?.getValue() === originalDictionary);
+    await openPanel('hints');
+    await wait(() => testDriver.editorAt('console-hints')?.getValue().startsWith('## accidental'),
+      'Invalid hints drafts survive panel switches');
     editorOf('console-hints').setValue(originalHints);
     await wait(() => toolStatus().textContent.includes('Hints save · OK'));
     editorOf('console-hints').setValue('{{incomplete:');
     await wait(() => toolStatus().textContent.includes('ERROR'));
-    await click(testid('console-hints-toggle'));
+    await closePanel('hints');
     setSource(editor, `#check panel-status\n#endpoint\nGET ${endpoint}\n`);
     await key('Shift+Enter');
     await wait(() => find('.console-status').textContent.startsWith('Request · ')
       && find('.console-status').textContent.includes('OK'),
-      'An ordinary request must use only its own status, independent of the retained tool error');
+      'An ordinary request must use only its own status, independent of the retained panel error');
     const frame = document.createElement('iframe');
     frame.src = location.href;
     frame.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;z-index:9999';
     document.body.append(frame);
     try {
       await wait(() => frame.contentDocument?.querySelector('[data-testid="console-hints-toggle"]'));
-      await activateSession(Number(testid('console-session-name').dataset.sessionId),frame.contentDocument);
-      await click(testid('console-hints-toggle', frame.contentDocument));
-      await wait(() => editorOf('console-hints', frame.contentDocument).getValue() === '{{incomplete:',
+      const doc = frame.contentDocument;
+      await activateSession(sessionId(), doc);
+      await click(testid('console-hints-toggle', doc));
+      await wait(() => doc.querySelector('[data-testid="console-hints"]')
+        && editorOf('console-hints', doc).getValue() === '{{incomplete:',
         'An invalid hints draft must survive a new application instance');
     } finally {
       frame.remove();
     }
-    await click(testid('console-hints-toggle'));
+    await openPanel('hints');
     assert(editorOf('console-hints').getValue() === '{{incomplete:', 'A request must not discard an invalid hints draft');
     editorOf('console-hints').setValue(originalHints);
     await wait(() => toolStatus().textContent.includes('Hints save · OK'));
-    await click(testid('console-hints-toggle'));
+    await closePanel('hints');
     await checkConsoleMoves();
   };
   Object.assign(testDriver, { checkConsoleFolding, checkConsoleTools, assertSignalGeometry });

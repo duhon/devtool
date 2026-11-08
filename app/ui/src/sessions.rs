@@ -22,20 +22,15 @@ impl Default for Layout {
 pub struct Snapshot {
     pub layout: Layout,
     pub console: Value,
-    pub variables: Value,
-    pub variable_drafts: BTreeMap<String, String>,
-    pub hints: BTreeMap<String, String>,
-    pub hints_drafts: BTreeMap<String, String>,
+    /// What panel modules keep with `kv.put session:true`, by module and key.
+    pub modules: BTreeMap<String, serde_json::Map<String, Value>>,
 }
 impl Default for Snapshot {
     fn default() -> Self {
         Self {
             layout: Layout::default(),
             console: json!({"version":1,"service":crate::services::default_service(),"documents":{},"responses":{}}),
-            variables: json!({}),
-            variable_drafts: BTreeMap::new(),
-            hints: BTreeMap::new(),
-            hints_drafts: BTreeMap::new(),
+            modules: BTreeMap::new(),
         }
     }
 }
@@ -60,8 +55,7 @@ pub fn forget_service(snapshot: &mut Snapshot, service: &str) {
     {
         order.retain(|id| id != service);
     }
-    snapshot.hints.remove(service);
-    snapshot.hints_drafts.remove(service);
+    snapshot.modules.remove(service);
 }
 pub fn merge_snapshot(
     base: &Snapshot,
@@ -156,7 +150,6 @@ impl Library {
                         .any(|width| !(1..=16_384).contains(width))
                     || s.id >= value.next_id
                     || s.name.trim().is_empty()
-                    || !s.snapshot.variables.is_object()
                     || s.snapshot.console["version"] != 1
                     || !s.snapshot.console["documents"]
                         .as_object()

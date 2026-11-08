@@ -41,10 +41,10 @@
   await select(0);
   await run();
   await wait(() => status().classList.contains('is-running'), 'REST check running');
-  if (!testid('console-agent-toggle').classList.contains('active')) await click(testid('console-agent-toggle'));
+  await testDriver.openPanel('agent', 'console-agent');
   await wait(() => document.querySelector('[data-testid="agent-composer"]'), 'Agent composer');
   // Same-origin windows share the stored Agent chat; each window needs its own Copilot session.
-  const chat = () => testid('agent-sessions').querySelector('.active')?.dataset.sessionId;
+  const chat = () => testid('agent-sessions').querySelector('[role="tab"][aria-selected="true"]')?.dataset.testid;
   const previous = chat();
   await click(testid('agent-new-session'));
   await wait(() => chat() && chat() !== previous, 'New Agent chat for this window');

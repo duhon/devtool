@@ -7,7 +7,6 @@ use std::{
     rc::Rc,
 };
 use wasm_bindgen::{JsCast, JsValue, closure::Closure};
-use wasm_bindgen_futures::spawn_local;
 use yew::Callback;
 
 #[derive(Clone, Debug)]
@@ -69,23 +68,6 @@ impl Transport {
             self.background.get(),
             waiting.join(", ")
         )
-    }
-    pub fn variable_drafts(&self) -> BTreeMap<String, String> {
-        self.session
-            .borrow()
-            .as_ref()
-            .map(|s| s.borrow().library.snapshot().variable_drafts.clone())
-            .unwrap_or_default()
-    }
-    pub fn save_variable_drafts(&self, drafts: &BTreeMap<String, String>) -> Result<(), String> {
-        let session = self
-            .session
-            .borrow()
-            .clone()
-            .ok_or("Session is unavailable")?;
-        session
-            .borrow_mut()
-            .update(|snapshot| snapshot.variable_drafts = drafts.clone())
     }
     pub fn is_native(&self) -> bool {
         self.native
@@ -289,41 +271,30 @@ impl Transport {
         message["id"] = json!(id);
         if let Some(session) = self.session.borrow().clone() {
             let service = message["service"].as_str().unwrap_or("");
-            if service == "hints" {
-                let name = message["serviceName"].as_str().unwrap_or("");
-                let result = if message["op"] == "save" {
-                    let text = message["text"].as_str().unwrap_or("");
-                    crate::console::validate_hints(text)
-                        .and_then(|_| {
-                            session.borrow_mut().update(|s| {
-                                s.hints.insert(name.into(), text.into());
-                            })
+            if service == "agent" {
+                // The Agent masks the values of sensitive variables: the session's (Variables)
+                // and the Dictionary sets'.
+                let modules = session.borrow().library.snapshot().modules.clone();
+                let stored = |module: &str, key: &str| {
+                    modules
+                        .get(module)
+                        .and_then(|keys| keys.get(key))
+                        .cloned()
+                        .or_else(|| {
+                            web_sys::window()
+                                .and_then(|window| window.local_storage().ok().flatten())
+                                .and_then(|storage| {
+                                    storage.get_item(&format!("module:{module}:{key}")).ok()
+                                })
+                                .flatten()
+                                .and_then(|text| serde_json::from_str(&text).ok())
                         })
-                        .map(|_| json!({"text":text}))
-                } else {
-                    Ok(
-                        json!({"text":session.borrow().library.snapshot().hints.get(name).cloned().unwrap_or_default()}),
-                    )
+                        .unwrap_or_else(|| json!({}))
                 };
-                let saving = message["op"] == "save";
-                spawn_local(async move {
-                    let result = match result {
-                        Ok(value) if saving => {
-                            super::sessions::Store::flush(&session).await.map(|_| value)
-                        }
-                        result => result,
-                    };
-                    callback.emit(match result {
-                        Ok(value) => Reply::Result(value),
-                        Err(error) => Reply::Error(json!({"error":error})),
-                    });
+                let variables = json!({
+                    "variables": stored("variables", "var"),
+                    "dictionary": stored("dictionary", "sets"),
                 });
-                return id;
-            }
-            let variables = session.borrow().library.snapshot().variables.clone();
-            if service == "vars" || service == "dictionary" {
-                message["sessionVariables"] = variables;
-            } else if crate::services::contains(service) || service == "agent" {
                 if !message["params"].is_object() {
                     message["params"] = json!({});
                 }
@@ -338,39 +309,18 @@ impl Transport {
         }
         self.notify_busy(was_busy);
         let weak = Rc::downgrade(self);
-        let save_variables = message["service"] == "vars" && message["op"] == "save";
         let completed = Cell::new(false);
-        let callback = Callback::from(move |mut reply: Reply| {
-            if let Some(this) = weak.upgrade() {
-                if !matches!(reply, Reply::Data(_)) && !completed.replace(true) {
-                    let was_busy = this.busy();
-                    this.in_flight.set(this.in_flight.get().saturating_sub(1));
-                    if is_background {
-                        this.background.set(this.background.get().saturating_sub(1));
-                    }
-                    this.notify_busy(was_busy);
+        let callback = Callback::from(move |reply: Reply| {
+            if let Some(this) = weak.upgrade()
+                && !matches!(reply, Reply::Data(_))
+                && !completed.replace(true)
+            {
+                let was_busy = this.busy();
+                this.in_flight.set(this.in_flight.get().saturating_sub(1));
+                if is_background {
+                    this.background.set(this.background.get().saturating_sub(1));
                 }
-                if save_variables
-                    && let Reply::Result(value) = &reply
-                    && let Some(session) = this.session.borrow().clone()
-                {
-                    let result = session
-                        .borrow_mut()
-                        .update(|snapshot| snapshot.variables = value["profiles"]["var"].clone());
-                    if let Err(error) = result {
-                        reply = Reply::Error(json!({"error":error}));
-                    } else {
-                        let callback = callback.clone();
-                        spawn_local(async move {
-                            let reply = match super::sessions::Store::flush(&session).await {
-                                Ok(()) => reply,
-                                Err(error) => Reply::Error(json!({"error":error})),
-                            };
-                            callback.emit(reply);
-                        });
-                        return;
-                    }
-                }
+                this.notify_busy(was_busy);
             }
             callback.emit(reply);
         });

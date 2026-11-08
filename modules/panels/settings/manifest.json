@@ -1,0 +1,10 @@
+{
+  "id": "settings",
+  "kind": "panel",
+  "name": "Settings",
+  "version": "3.7.0",
+  "description": "Modules and their sources, App updates and the Agent's model. Built into the App.",
+  "abi": 1,
+  "app": ">=3.7",
+  "order": 7
+}

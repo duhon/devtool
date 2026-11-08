@@ -1,5 +1,4 @@
 pub mod error;
-pub mod hints;
 pub mod history;
 pub mod install;
 pub mod modules;
@@ -8,7 +7,5 @@ pub(crate) mod process;
 pub mod registry;
 pub mod skills;
 pub mod sources;
-pub mod templates;
 pub mod text;
 pub mod updates;
-pub mod variables;

@@ -3,7 +3,10 @@
   const editor = () => editorOf('console-editor');
   const source = () => editor().getValue();
   const status = () => document.querySelector('.console-status');
-  const agentStatus = () => testid('agent-status');
+  const agentStatus = () => testid('console-agent-status');
+  const selectedChat = () => testid('agent-sessions').querySelector('[role="tab"][aria-selected="true"]').dataset.testid;
+  const chatTab = id => testid('agent-sessions').querySelector(`[data-testid="${id}"]`);
+  const chatRunning = id => chatTab(id).textContent.includes('●');
   const light = element => element.querySelector('.console-state-light')?.dataset.state;
   const checks = () => [...testid('console-check-menu').querySelectorAll('button')];
   const select = async index => {
@@ -24,9 +27,7 @@
   const rest = name => `#check ${name}\n#endpoint\nGET ${fixtureUrl}/stop-slow?${name}`;
   const count = async () => (await (await fetch(`${fixtureUrl}/stop-count`)).json()).count;
   const openAgent = async () => {
-    if (!testid('console-agent-toggle').classList.contains('active')) {
-      await click(testid('console-agent-toggle'));
-    }
+    await testDriver.openPanel('agent', 'console-agent');
     await wait(() => document.querySelector('[data-testid="agent-composer"]'));
   };
   // Parses the rendered elapsed clock ("350ms", "1.2s", "1min") into milliseconds.
@@ -254,9 +255,8 @@
   await send('agent run');
   await wait(() => document.querySelector('[data-testid="agent-run-approval"]'),
     'An Agent must be able to request another check while the user query is running');
-  assert(agentStatus().classList.contains('is-warning')
-    && light(testid('agent-sessions').querySelector('[aria-selected="true"]')) === 'ready',
-  'Viewed approval must remain yellow in the Agent status without an unread chat signal');
+  assert(agentStatus().classList.contains('is-warning'),
+  'A pending approval must be yellow in the Agent status');
   await select(0);
   await click(testid('agent-approve-run'));
   await wait(async () => await count() >= beforeConcurrent + 2,
@@ -275,7 +275,7 @@
   await click(agentStatus());
   assert(testid('console-main-status-debug').textContent.includes('/stop-slow?manual')
     && !testid('console-main-status-debug').textContent.includes('sessionId')
-    && testid('agent-status-debug').textContent.includes('sessionId'),
+    && testid('console-agent-status-debug').textContent.includes('sessionId'),
   'Opening both Debug panels must show independent check and Agent diagnostics');
   const mainBounds = status().getBoundingClientRect();
   const agentBounds = agentStatus().getBoundingClientRect();
@@ -309,46 +309,42 @@
   await wait(() => stopped('manual') && testid('console-stop').disabled);
   assert(!document.querySelector('[data-testid="agent-run-approval"]'),
     'Stopping the owning Agent must revoke its approvals');
-  const agentDebugText = () => document.querySelector('[data-testid="agent-status-debug"]').textContent;
   await send('agent hold first');
-  await wait(() => agentDebugText().includes('Fixture is holding'));
+  await wait(() => agentStatus().textContent.includes('Copilot is responding'));
   assert(!testid('agent-transcript').textContent.includes('Fixture is holding'),
     'Running commentary must stay in Debug, not the chat transcript');
-  const firstChat = testid('agent-sessions').querySelector('[aria-selected="true"]').dataset.sessionId;
+  const firstChat = selectedChat();
   await click(testid('agent-new-session'));
   await send('agent hold second');
-  await wait(() => agentDebugText().includes('Fixture is holding'));
-  const secondChat = testid('agent-sessions').querySelector('[aria-selected="true"]').dataset.sessionId;
-  const chatTab = id => testid('agent-sessions').querySelector(`[data-session-id="${id}"]`);
-  assert(light(chatTab(firstChat)) === 'running' && light(chatTab(secondChat)) === 'running',
-    'Two concurrently running chats must keep separate blinking signals even while selected');
-  assertSignalGeometry();
+  await wait(() => agentStatus().textContent.includes('Copilot is responding'));
+  const secondChat = selectedChat();
+  assert(chatRunning(firstChat) && chatRunning(secondChat),
+    'Two concurrently running chats must keep separate running marks even while selected');
   await click(testid('agent-stop'));
   await wait(() => testid('agent-stop').disabled);
-  assert(light(chatTab(firstChat)) === 'running' && light(chatTab(secondChat)) === 'ready'
+  assert(chatRunning(firstChat) && !chatRunning(secondChat)
     && light(testid('console-agent-toggle')) === 'running',
   'Stopping the selected chat must preserve another running chat and its aggregate tool indicator');
-  await seen();
   await click(chatTab(firstChat));
   await wait(() => !testid('agent-stop').disabled && agentStatus().classList.contains('is-running'));
   await click(testid('agent-stop'));
   await wait(() => testid('agent-stop').disabled);
   await send('agent failure');
   await wait(() => agentStatus().classList.contains('is-error'));
-  assert(light(chatTab(firstChat)) === 'ready' && light(chatTab(secondChat)) === 'ready'
-    && light(testid('console-agent-toggle')) === 'ready',
-  'A viewed Agent failure must keep its error status without relighting acknowledged chat/tool signals');
+  assert(!chatRunning(firstChat) && !chatRunning(secondChat)
+    && light(testid('console-agent-toggle')) === 'error',
+  'An Agent failure must show its error status on the chat and the tool');
   const failedAgentStatus = agentStatus().textContent;
   await click(chatTab(secondChat));
   await wait(() => agentStatus().textContent.includes('Stopped'));
   await click(chatTab(firstChat));
   await wait(() => agentStatus().textContent === failedAgentStatus);
-  assert(light(chatTab(firstChat)) === 'ready' && agentStatus().classList.contains('is-error'),
-    'Revisiting an acknowledged chat must preserve its failure without a new signal');
+  assert(agentStatus().classList.contains('is-error'),
+    'Revisiting a chat must preserve its failure');
   await send('agent markdown');
   await wait(() => testid('agent-transcript').textContent.includes('Markdown ready') && testid('agent-stop').disabled);
-  assert(light(chatTab(firstChat)) === 'ready',
-    'A successful subsequent Agent turn must retain its visible status with a black acknowledged signal');
+  assert(!chatRunning(firstChat) && !agentStatus().classList.contains('is-error'),
+    'A successful subsequent Agent turn must replace the failure');
   const transcript=testid('agent-transcript');
   testid('agent-composer').focus({preventScroll:true});
   transcript.scrollTop=Math.max(0,(transcript.scrollHeight-transcript.clientHeight)/3);
@@ -367,7 +363,7 @@
   await click(agentStatus());
   const bothOpen=await measured('Debug geometry with both Debug panels open');
   const mainDebug=testid('console-main-status-debug');
-  const agentDebug=testid('agent-status-debug');
+  const agentDebug=testid('console-agent-status-debug');
   mainDebug.style.height='100px';
   const leftResized=await measured('Debug geometry after resizing the left Debug');
   agentDebug.style.height='80px';
@@ -407,7 +403,7 @@
   // Copilot confirms an abort asynchronously (the fixture delays it by 1 s here). Stop must consume
   // that idle, or it would end the next turn of the same chat.
   await send('agent hold late abort');
-  await wait(() => agentDebugText().includes('Fixture is holding'));
+  await wait(() => agentStatus().textContent.includes('Copilot is responding'));
   await click(testid('agent-stop'));
   await wait(() => testid('agent-stop').disabled);
   await send('agent hold after late abort');
@@ -421,24 +417,18 @@
   await click(testid('agent-new-session'));
   await send('agent hold hidden second');
   await wait(() => agentStatus().classList.contains('is-running'));
-  const hiddenChat = testid('agent-sessions').querySelector('[aria-selected="true"]').dataset.sessionId;
+  const hiddenChat = selectedChat();
   await click(testid('console-service-terminal'));
   const afterAgentStop = ticks('background');
   await wait(() => ticks('background') > afterAgentStop,
     'Stopping the Agent and user request must still preserve an unrelated background service');
   window.dispatchEvent(new Event('services-console-hidden'));
   await wait(() => stopped('background') && testid('agent-stop').disabled
-    && light(testid('console-agent-toggle')) === 'warning');
+    && !chatRunning(hiddenChat) && !chatRunning(firstChat));
   window.dispatchEvent(new Event('services-console-shown'));
-  await wait(() => light(chatTab(hiddenChat)) === 'ready' && light(chatTab(firstChat)) === 'warning');
-  assert(light(testid('console-agent-toggle')) === 'warning',
-    'Showing the selected stopped chat must not acknowledge another chat that completed while hidden');
-  await seen();
   await click(chatTab(firstChat));
-  await wait(() => agentStatus().textContent.includes('Stopped')
-    && light(testid('console-agent-toggle')) === 'ready');
-  assert(light(chatTab(firstChat)) === 'ready' && light(chatTab(hiddenChat)) === 'ready',
-    'The Agent tool must go dark after both stopped chat outcomes are viewed, without erasing their statuses');
+  await wait(() => agentStatus().textContent.includes('Stopped'),
+    'Hiding the Console must stop every chat and keep their outcomes');
   setSource(editor(), `${terminal('hiddenfirst')}\n\n${terminal('hiddensecond')}`);
   await wait(() => checks().length === 2);
   await select(0);

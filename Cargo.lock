@@ -2899,6 +2899,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "services-module-agent"
+version = "3.7.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "services-sdk",
+ "url",
+]
+
+[[package]]
 name = "services-module-artemis"
 version = "4.0.1"
 dependencies = [
@@ -2908,6 +2918,15 @@ dependencies = [
  "serde_json",
  "services-sdk",
  "url",
+]
+
+[[package]]
+name = "services-module-dictionary"
+version = "3.7.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "services-sdk",
 ]
 
 [[package]]
@@ -2940,9 +2959,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "services-module-hints"
+version = "3.7.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "services-sdk",
+]
+
+[[package]]
 name = "services-module-history"
 version = "3.7.0"
 dependencies = [
+ "serde",
  "serde_json",
  "services-sdk",
 ]
@@ -2976,6 +3005,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "services-module-sessions"
+version = "3.7.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "services-sdk",
+]
+
+[[package]]
+name = "services-module-settings"
+version = "3.7.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "services-contracts",
+ "services-sdk",
+]
+
+[[package]]
 name = "services-module-splunk"
 version = "3.2.2"
 dependencies = [
@@ -2984,6 +3032,16 @@ dependencies = [
  "serde_json",
  "services-sdk",
  "url",
+]
+
+[[package]]
+name = "services-module-templates"
+version = "3.7.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "services-contracts",
+ "services-sdk",
 ]
 
 [[package]]
@@ -3000,6 +3058,7 @@ dependencies = [
 name = "services-module-variables"
 version = "3.7.0"
 dependencies = [
+ "serde",
  "serde_json",
  "services-sdk",
 ]
@@ -3074,14 +3133,20 @@ dependencies = [
  "serde_json",
  "services-contracts",
  "services-kernel",
+ "services-module-agent",
  "services-module-artemis",
+ "services-module-dictionary",
  "services-module-graphql",
  "services-module-grpc",
+ "services-module-hints",
  "services-module-history",
  "services-module-mysql",
  "services-module-opensearch",
  "services-module-rest",
+ "services-module-sessions",
+ "services-module-settings",
  "services-module-splunk",
+ "services-module-templates",
  "services-module-terminal",
  "services-module-variables",
  "services-sdk",

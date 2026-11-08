@@ -1,126 +1,91 @@
 use serde_json::json;
-use services_module_variables::{Variables, profiles};
-use services_sdk::{DriverCall, Event, Module, cmd};
+use services_module_variables::{Msg, VAR, Variables};
+use services_sdk::{Event, Module, cmd};
 
 fn variables() -> Variables {
-    Variables::with(profiles(
-        &["var", "dev"],
-        json!({
-            "var": {"host": "local.test", "user": "{{dev:user}}"},
-            "dev": {"host": "dev.test", "user": "admin", "api_token": "s3cr3t", "auth": "Bearer {{dev:api_token}}"},
-        }),
+    Variables::with(
+        json!({"host": "local.test", "user": "{{:login}}", "password": "p\"w", "token": "{{var:password}}"}),
         json!({"HOME": "/home/me", "host": "env.test"}),
-    ))
+    )
 }
 
-fn resolve(variables: &Variables, text: &str) -> Result<String, String> {
+fn pass(variables: &Variables, text: &str, last: bool) -> Result<String, String> {
     variables
-        .resolve(text, false)
+        .resolve(text, false, last)
         .expect("variables resolves")
         .map(|resolution| resolution.text)
 }
 
 #[test]
-fn references_take_the_profile_the_environment_or_the_first_profile_that_has_the_name() {
+fn resolves_only_what_it_owns_until_the_last_pass() {
     let variables = variables();
     assert_eq!(
-        resolve(
+        pass(
             &variables,
-            "{{:host}} {{dev:host}} {{env:host}} {{var:user}} {{:HOME}}"
+            "{{:host}} {{var:host}} {{env:host}} {{dev:x}} {{:HOME}}",
+            false
         )
         .unwrap(),
-        "local.test dev.test env.test admin /home/me"
+        "local.test local.test env.test {{dev:x}} {{:HOME}}"
+    );
+    // A value's foreign reference stays for the panel that owns it.
+    assert_eq!(
+        pass(&variables, "{{var:user}}", false).unwrap(),
+        "{{:login}}"
+    );
+    assert_eq!(pass(&variables, "{{:HOME}}", true).unwrap(), "/home/me");
+    assert_eq!(
+        pass(&variables, "{{:nope}} {{env:NOPE}}", true),
+        Err("Missing environment variable(s): nope, NOPE".into())
     );
     assert_eq!(
-        resolve(&variables, "plain {{ text }}").unwrap(),
-        "plain {{ text }}"
-    );
-    assert_eq!(
-        resolve(&variables, "{{prod:host}}"),
-        Err("Unknown profile: prod".into())
-    );
-    assert_eq!(
-        resolve(&variables, "{{dev:nope}}"),
-        Err("Unknown variable \"nope\" in profile \"dev\"".into())
-    );
-    assert_eq!(
-        resolve(&variables, "{{env:NOPE}}"),
-        Err("Missing environment variable(s): NOPE".into())
+        pass(&variables, "{{var:nope}}", false),
+        Err("Unknown variable \"nope\" in var".into())
     );
 }
 
 #[test]
 fn sensitive_values_come_back_as_secrets_and_json_mode_escapes() {
-    let secret = Variables::with(profiles(
-        &["var"],
-        json!({"var": {"password": "p\"w", "token": "{{var:password}}"}}),
-        json!({}),
-    ));
-    let resolution = secret
-        .resolve("{\"p\":\"{{var:token}}\"}", true)
+    let resolution = variables()
+        .resolve("{\"p\":\"{{var:token}}\"}", true, false)
         .unwrap()
         .unwrap();
     assert_eq!(resolution.text, "{\"p\":\"p\\\"w\"}");
     assert_eq!(resolution.secrets, ["p\"w"]);
-    let resolution = variables().resolve("{{dev:auth}}", false).unwrap().unwrap();
-    assert_eq!(resolution.text, "Bearer s3cr3t");
-    assert_eq!(resolution.secrets, ["s3cr3t"]);
 }
 
 #[test]
-fn circular_references_fail_every_resolution_of_a_first_profile() {
-    let variables = Variables::with(profiles(
-        &["var"],
-        json!({"var": {"a": "{{var:b}}", "b": "{{var:a}}"}}),
-        json!({}),
-    ));
-    let error = resolve(&variables, "x").unwrap_err();
-    assert!(error.starts_with("Circular profile reference:"), "{error}");
+fn circular_references_fail() {
+    let variables = Variables::with(json!({"a": "{{var:b}}", "b": "{{:a}}"}), json!({}));
+    let error = pass(&variables, "{{:a}}", false).unwrap_err();
+    assert!(error.starts_with("Circular variable reference:"), "{error}");
 }
 
 #[test]
-fn requests_resolve_every_string_before_they_go() {
-    let call = DriverCall::new(
-        "http",
-        &json!({"url": "https://{{:host}}/a", "headers": [["Authorization", "{{dev:auth}}"]], "n": 1}),
-    );
-    let call = variables().before_request(call).unwrap();
-    assert_eq!(
-        call.request(),
-        json!({"url": "https://local.test/a", "headers": [["Authorization", "Bearer s3cr3t"]], "n": 1})
-    );
-    let call = DriverCall::new("http", &json!({"url": "{{nope:x}}"}));
-    assert_eq!(
-        variables().before_request(call).err(),
-        Some("Unknown profile: nope".into())
-    );
-}
-
-#[test]
-fn profiles_load_on_start_and_again_when_they_change() {
+fn edits_save_the_session_variables_or_keep_a_draft() {
     let mut variables = Variables::default();
     let commands = variables.update(Event::Init {
         settings: json!({}),
     });
-    assert_eq!(
-        commands,
-        [cmd::kv_watch("profiles"), cmd::vars_profiles("profiles")]
-    );
-    variables.update(Event::Reply {
-        tag: "profiles".into(),
-        result: Ok(json!({"context": {
-            "order": ["var"],
-            "profiles": {"var": {"host": "x.test"}, "env": {"HOME": "/h"}},
-        }})),
+    assert!(commands.contains(&cmd::kv_get(VAR, VAR)));
+    assert!(commands.contains(&cmd::env("env")));
+    let commands = variables.update(Event::Ui {
+        msg: Msg::Edit,
+        value: Some("A: 1".into()),
     });
     assert_eq!(
-        resolve(&variables, "{{var:host}}{{env:HOME}}").unwrap(),
-        "x.test/h"
+        commands[0],
+        cmd::kv_put("save", VAR, &json!({"A": "1"}), true)
     );
+    assert_eq!(pass(&variables, "{{var:A}}", false).unwrap(), "1");
+    let commands = variables.update(Event::Ui {
+        msg: Msg::Edit,
+        value: Some("missing delimiter".into()),
+    });
     assert_eq!(
-        variables.update(Event::Storage {
-            key: "profiles".into()
-        }),
-        [cmd::vars_profiles("profiles")]
+        commands[1],
+        cmd::status("ERROR: Line 1: expected NAME: value.", "error")
     );
+    // The last saved variables still resolve.
+    assert_eq!(pass(&variables, "{{var:A}}", false).unwrap(), "1");
 }

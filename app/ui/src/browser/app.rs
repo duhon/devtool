@@ -1,11 +1,9 @@
 use super::{
-    agent_panel::{Activity, AgentPanel, Approval, WorkspaceRequest},
-    console_variables::{ConsoleVariables, PanelEvent},
     editor::{self, Handle},
     error,
     transport::{Reply, Transport},
     updates::{self, Phase as UpdatePhase},
-    views::{ConsoleStatus, OperationStatus, SeenTimer, indicator},
+    views::{ConsoleStatus, SeenTimer, indicator},
     window,
 };
 use crate::activity::Indicator;
@@ -13,7 +11,8 @@ use crate::editor::{
     Anchor,
     session::{Context as EditorContext, Event as EditorEvent, Msg as EditorMsg, Setup},
 };
-use crate::{console, format, profiles, storage};
+use crate::{console, format, storage};
+use agent::{Approval, WorkspaceRequest};
 use serde_json::{Value, json};
 use std::{
     cell::RefCell,
@@ -22,14 +21,12 @@ use std::{
 };
 use wasm_bindgen::{JsCast, closure::Closure};
 use wasm_bindgen_futures::spawn_local;
-use web_sys::{DragEvent, HtmlInputElement};
+use web_sys::DragEvent;
 use yew::prelude::*;
 
+mod agent;
 mod console_panel;
 mod kernel_panel;
-
-/// Name of Console session 0.
-const TEMPORARY_SESSION: &str = "Temporary";
 
 #[derive(Default)]
 struct Run {
@@ -122,75 +119,6 @@ enum Transfer {
     Import,
     Export,
 }
-#[derive(Clone, Copy, PartialEq)]
-enum ConsolePanel {
-    Hints,
-    Templates,
-    Variables,
-    Dictionary,
-    Agent,
-    Sessions,
-    History,
-    Settings,
-}
-impl ConsolePanel {
-    fn key(self) -> &'static str {
-        match self {
-            Self::Hints => "hints",
-            Self::Templates => "templates",
-            Self::Variables => "variables",
-            Self::Dictionary => "dictionary",
-            Self::Agent => "agent",
-            Self::Sessions => "sessions",
-            Self::History => "history",
-            Self::Settings => "settings",
-        }
-    }
-    fn minimum(self) -> u32 {
-        match self {
-            Self::Hints | Self::Settings => 240,
-            Self::History => 280,
-            Self::Templates => 300,
-            Self::Variables | Self::Dictionary => 320,
-            Self::Agent | Self::Sessions => 360,
-        }
-    }
-}
-/// The tabs of the Settings panel; Modules and Sources need the native host.
-#[derive(Clone, Copy, PartialEq)]
-pub(super) enum SettingsTab {
-    Modules,
-    Sources,
-    Agent,
-}
-impl SettingsTab {
-    const STORAGE: &'static str = "servicesConsole.settingsTab";
-    fn key(self) -> &'static str {
-        match self {
-            Self::Modules => "modules",
-            Self::Sources => "sources",
-            Self::Agent => "agent",
-        }
-    }
-    fn label(self) -> &'static str {
-        match self {
-            Self::Modules => "Modules",
-            Self::Sources => "Sources",
-            Self::Agent => "Agent",
-        }
-    }
-    fn restore() -> Self {
-        let saved = super::window()
-            .local_storage()
-            .ok()
-            .flatten()
-            .and_then(|storage| storage.get_item(Self::STORAGE).ok().flatten());
-        [Self::Sources, Self::Agent]
-            .into_iter()
-            .find(|tab| saved.as_deref() == Some(tab.key()))
-            .unwrap_or(Self::Modules)
-    }
-}
 struct AgentEdit {
     command: crate::agent_workspace::EditCommand,
     request: WorkspaceRequest,
@@ -203,7 +131,7 @@ struct AgentRun {
     check_id: String,
     revision: String,
     params: Value,
-    variables: Value,
+    variables: Vec<(String, String)>,
     approval: Approval,
     started: bool,
 }
@@ -212,17 +140,10 @@ pub enum Msg {
     Seen,
     CheckMenuWidth(u32),
     PanelWidth(String, u32),
-    ToggleHistory,
-    ToggleSettings,
-    SettingsTab(SettingsTab),
-    SettingsStatus(SettingsTab, OperationStatus),
     ModulesChanged,
     /// A module was removed with its data: drop what this window and the sessions keep for it.
     ForgetModule(String),
     ModuleForgotten(Result<(), String>),
-    /// Checks the sources; `true` also checks the recently checked ones.
-    CheckSources(bool),
-    SourcesChecked(u64, bool, f64, Reply),
     /// A source's settings were applied: reload what comes from them.
     SourcesApplied,
     /// Installs the application version offered by a source: (source slug, version).
@@ -231,16 +152,9 @@ pub enum Msg {
     UpdateInstalled(Reply),
     ReloadUpdate,
     UpdateReloadReady(Result<(), String>),
-    HistoryActivity(crate::activity::Indicator),
-    ToggleTemplates,
-    TemplatesLoaded(Reply),
     Modules(Reply),
-    TemplatesChanged(services_contracts::templates::Library),
-    TemplatesActivity(crate::activity::Indicator),
-    ToggleSessions,
-    SessionName(String),
     SessionSelect(u64),
-    SessionCopy(u64),
+    SessionCopy(u64, String),
     SessionDelete(u64),
     SessionFinished(Result<u64, String>),
     Drag(String),
@@ -250,47 +164,34 @@ pub enum Msg {
     ConsoleEdited(String, crate::document::DocumentEdit),
     /// A message of the console editor of a service.
     ConsoleEditor(String, EditorMsg),
-    HintsEditor(String, EditorMsg),
     ExportEditor(EditorMsg),
     ConsoleRun(String, usize),
     /// The wait of a repeating check is over.
     RepeatRun(String),
     /// History answered the save of a finished repeat.
-    RepeatSaved(Reply),
+    RepeatSaved(String, Reply),
     Reply(String, String, Reply),
     Connection(Option<String>),
     /// Native requests started or finished; the Sessions guard must be re-rendered.
     TransportBusy,
     Retry,
-    Vars(Reply),
     Discover,
     Scroll(String, crate::document::CheckViewport),
     Check(usize),
     EditorError(String),
-    ToggleHints,
-    ToggleVariables,
-    ToggleDictionary,
-    ToggleAgent,
-    AgentTool(WorkspaceRequest),
+    /// An event of an Agent turn a module started: (module, turn tag, reply).
+    AgentReply(String, String, Reply),
+    /// A console tool answered: (turn tag, call id, result).
+    AgentToolResult(String, String, Value),
     AgentEdited(u64, Result<(), String>),
-    AgentApprove(bool),
-    AgentFinished(String),
-    PanelVars(Value),
-    Hints(String, u64, f64, Reply),
-    HintsText(String),
-    SaveHints(String),
-    StopHints,
-    ResetHints,
-    HintsReset(String, u64, f64, Reply),
-    HintsSaved(String, u64, String, f64, Reply),
+    /// The inspected page answered a module: (module, tag, result).
+    PageReplied(String, String, Result<Value, String>),
     Import,
     Imported(String, Result<String, String>),
     ClipboardError(String, String),
     Export,
     Stop,
     Visibility(bool),
-    AgentActivity(Vec<Activity>),
-    ProfileActivity(bool, (crate::activity::Indicator, String)),
     ClearNotice,
     CloseExport,
     /// Kernel modules started: their effects and the ids that started.
@@ -299,99 +200,68 @@ pub enum Msg {
     KernelReplied(String, String, Reply),
     /// A module's driver stream sent an event or ended.
     KernelStreamed(String, String, Reply),
-    /// The Host answered a module's command: (module, tag, a History save, reply).
-    KernelHosted(String, String, bool, Reply),
+    /// The Host answered a module's command: (module, tag, what follows, reply).
+    KernelHosted(String, String, kernel_panel::After, Reply),
     KernelTimer(String, String),
+    /// Another window changed the kv key of a module: (module, key).
+    KernelStorage(String, String),
+    /// Opens or closes the side panel of a panel module.
+    TogglePanel(String),
+    /// An action in a panel module's UI tree.
+    PanelUi(String, super::view::Action),
     KernelRunReplied(String, Reply),
     KernelDocument(String),
+    /// This App shows a workspace just restored: panels are closed and modules hear of it.
+    KernelMounted,
     /// The user asked a Kernel service for hints at an offset of a check.
     KernelHints(services_sdk::Check, u32),
 }
 pub struct App {
     sessions: super::sessions::Shared,
     session_id: u64,
-    session_name: String,
-    session_status: OperationStatus,
     session_loading: bool,
+    /// The module and tag a workspace operation answers when it ends.
+    session_reply: Option<(String, String)>,
     docs: BTreeMap<String, String>,
     response_regions: BTreeMap<String, Vec<crate::document::ResponseRegion>>,
     checks: BTreeMap<String, Vec<crate::checks::Identity>>,
     workspace_id: String,
-    history_visited: bool,
-    history_revision: u64,
-    history_activity: crate::activity::Indicator,
-    history_error: Option<String>,
-    history_error_seen: bool,
     updates: updates::State,
-    settings_status: Option<OperationStatus>,
-    settings_tab: SettingsTab,
-    /// The tab whose button started the running forced check of the sources.
-    settings_check_tab: SettingsTab,
-    /// Start and state of the newest operation of each Settings tab, for its light.
-    settings_groups: [Option<(f64, Indicator)>; 3],
-    /// The last check of the sources.
-    sources_check: Option<Rc<Value>>,
-    sources_checking: bool,
-    sources_generation: u64,
-    /// The last sources notice put on Settings, so repeated checks don't light it again.
-    sources_notice: String,
-    /// Remounts the settings and panels that show configuration from sources and modules.
-    config_epoch: u64,
-    /// Where each module's hints come from: `{origin, source?}`.
-    hints_origins: BTreeMap<String, Value>,
-    /// Start of the Settings warning or error last shown, and when it was first shown.
-    settings_seen: Option<(f64, f64)>,
-    /// The Settings warning or error on screen and when it appeared, until it counts as seen.
-    settings_shown: Option<(f64, f64)>,
+    /// The module and tag the App update answers when it fails or cannot reload by itself.
+    update_reply: Option<(String, String)>,
     /// Re-renders once a status on screen has stayed long enough to count as seen.
     seen: SeenTimer,
-    settings_visited: bool,
     console_service: String,
     console_order: Vec<String>,
     transport: Rc<Transport>,
     runs: BTreeMap<String, Run>,
     connection: Option<String>,
     notice: Option<Notice>,
-    vars: Value,
+    /// Variable references completion offers, with their values: `({{set:name}}, value)`.
+    vars: Vec<(String, String)>,
     drag: Option<String>,
     module_status: BTreeMap<String, ModuleStatus>,
     module_history: BTreeMap<String, Vec<ModuleStatus>>,
     hints: BTreeMap<String, String>,
     templates: services_contracts::templates::Library,
-    templates_visited: bool,
-    templates_activity: crate::activity::Indicator,
-    hints_revisions: BTreeMap<String, u64>,
-    console_panel: Option<ConsolePanel>,
-    console_panel_header: NodeRef,
-    console_panel_footer: NodeRef,
-    variables_visited: bool,
-    dictionary_visited: bool,
-    agent_visited: bool,
+    /// The panel module shown in the side panel.
+    side: Option<String>,
     agent_workspace: crate::agent_workspace::Workspace,
     agent_edit: Option<AgentEdit>,
     agent_serial: u64,
     agent_run: Option<AgentRun>,
     kernel: kernel_panel::KernelState,
-    agent_activity: Vec<Activity>,
-    profile_activity: BTreeMap<bool, (crate::activity::Indicator, String)>,
-    agent_stop_generation: u64,
+    /// Agent turns in flight by tag.
+    agent_turns: BTreeMap<String, agent::AgentTurn>,
     run_serial: u64,
     hidden: bool,
     viewports: BTreeMap<String, crate::document::CheckViewport>,
-    /// The console and hints editors by `console:{service}` and `hints:{service}`.
+    /// The console editors by `console:{service}`.
     editors: RefCell<BTreeMap<String, Handle>>,
     export_editor: RefCell<Option<Handle>>,
-    panel_status: BTreeMap<String, OperationStatus>,
-    agent_stop_error: Option<crate::browser::agent_panel::StopError>,
-    hints_drafts: BTreeMap<String, String>,
-    hints_timers: BTreeMap<String, i32>,
-    hints_saving: BTreeSet<String>,
-    hints_edited: BTreeMap<String, f64>,
     export_text: Option<String>,
     /// Sessions still being cleared of removed modules.
     forgetting: usize,
-    /// Remounts Templates after its drafts of a removed module are deleted.
-    templates_epoch: u64,
 }
 impl Component for App {
     type Message = Msg;
@@ -429,76 +299,43 @@ impl Component for App {
         let mut app = Self {
             sessions,
             session_id: ctx.props().session_id,
-            session_name: String::new(),
-            session_status: snapshot_status(&ctx.props().sessions.borrow().error),
             session_loading: false,
+            session_reply: None,
             docs,
             response_regions,
             checks,
             workspace_id,
-            history_visited: false,
-            history_revision: 0,
-            history_activity: Default::default(),
-            history_error: None,
-            history_error_seen: false,
             updates: updates::State::default(),
-            settings_status: None,
-            settings_tab: SettingsTab::restore(),
-            settings_check_tab: SettingsTab::Modules,
-            settings_groups: [None; 3],
-            sources_check: None,
-            sources_checking: false,
-            sources_generation: 0,
-            sources_notice: String::new(),
-            config_epoch: 0,
-            hints_origins: BTreeMap::new(),
-            settings_seen: None,
-            settings_shown: None,
+            update_reply: None,
             seen: SeenTimer::default(),
-            settings_visited: false,
             console_service,
             console_order,
             transport,
             runs: BTreeMap::new(),
             connection: None,
             notice: None,
-            vars: json!({"order":[],"profiles":{},"validation":{}}),
+            vars: Vec::new(),
             drag: None,
             module_status: BTreeMap::new(),
             module_history: BTreeMap::new(),
             hints: BTreeMap::new(),
             templates: Default::default(),
-            templates_visited: false,
-            templates_activity: Default::default(),
-            hints_revisions: BTreeMap::new(),
-            console_panel: None,
-            console_panel_header: NodeRef::default(),
-            console_panel_footer: NodeRef::default(),
-            variables_visited: false,
-            dictionary_visited: false,
-            agent_visited: false,
-            agent_workspace: crate::agent_workspace::Workspace::new(super::agent_panel::id()),
+            side: None,
+            agent_workspace: crate::agent_workspace::Workspace::new(Ok(
+                uuid::Uuid::now_v7().to_string()
+            )),
             agent_edit: None,
             agent_serial: 0,
             agent_run: None,
             kernel: Default::default(),
-            agent_activity: Vec::new(),
-            profile_activity: BTreeMap::new(),
-            agent_stop_generation: 0,
+            agent_turns: BTreeMap::new(),
             run_serial: 0,
             hidden: false,
             viewports: BTreeMap::new(),
             editors: RefCell::default(),
             export_editor: RefCell::default(),
-            panel_status: BTreeMap::new(),
-            agent_stop_error: None,
-            hints_drafts: snapshot.hints_drafts,
-            hints_timers: BTreeMap::new(),
-            hints_saving: BTreeSet::new(),
-            hints_edited: BTreeMap::new(),
             export_text: None,
             forgetting: 0,
-            templates_epoch: 0,
         };
         if migrated_console
             || saved["workspaceId"].as_str() != Some(&app.workspace_id)
@@ -511,19 +348,6 @@ impl Component for App {
             false,
             ctx.link().callback(Msg::Modules),
         );
-        app.transport.request(
-            json!({"service":"vars","op":"list"}),
-            false,
-            ctx.link().callback(Msg::Vars),
-        );
-        app.transport.request(
-            json!({"service":"templates","op":"get"}),
-            false,
-            ctx.link().callback(Msg::TemplatesLoaded),
-        );
-        for service in crate::services::ids() {
-            app.load_hints(ctx, service);
-        }
         for (event, visible) in [
             ("services-console-hidden", false),
             ("services-console-shown", true),
@@ -538,7 +362,28 @@ impl Component for App {
             }
             callback.forget();
         }
-        ctx.link().send_message(Msg::CheckSources(false));
+        // Another window changed a module's kv key: the module hears of it if it watches it.
+        let link = ctx.link().clone();
+        let callback = Closure::<dyn FnMut(web_sys::StorageEvent)>::new(
+            move |event: web_sys::StorageEvent| {
+                let Some(key) = event.key() else {
+                    return;
+                };
+                if let Some((module, key)) = key
+                    .strip_prefix("module:")
+                    .and_then(|rest| rest.split_once(':'))
+                {
+                    link.send_message(Msg::KernelStorage(module.into(), key.into()));
+                }
+            },
+        );
+        if let Err(error) =
+            window().add_event_listener_with_callback("storage", callback.as_ref().unchecked_ref())
+        {
+            app.notice = Some(Notice::new(super::error(error)));
+        }
+        callback.forget();
+        ctx.link().send_message(Msg::KernelMounted);
         app
     }
     fn update(&mut self, ctx: &Context<Self>, msg: Msg) -> bool {
@@ -548,162 +393,41 @@ impl Component for App {
                 self.observe_statuses();
                 return true;
             }
-            Msg::SettingsStatus(tab, status) => self.set_settings_status(tab, status),
-            Msg::SettingsTab(tab) => {
-                self.settings_tab = tab;
-                if let Some(storage) = super::window().local_storage().ok().flatten() {
-                    let _ = storage.set_item(SettingsTab::STORAGE, tab.key());
-                }
-            }
             Msg::ModulesChanged => {
                 self.transport.request(
                     json!({"service":"modules"}),
                     false,
                     ctx.link().callback(Msg::Modules),
                 );
-                self.config_epoch += 1;
-                ctx.link().send_message(Msg::CheckSources(false));
-            }
-            Msg::CheckSources(force) => {
-                if !self.transport.is_native() {
-                    return false;
-                }
-                self.sources_generation += 1;
-                self.sources_checking = true;
-                let (generation, started) = (self.sources_generation, js_sys::Date::now());
-                if force {
-                    self.settings_check_tab = self.visible_settings_tab();
-                    self.set_settings_status(
-                        self.settings_check_tab,
-                        OperationStatus::event("Check sources", started, None),
-                    );
-                }
-                self.transport.request(
-                    json!({"service":"sources","op":"check","force":force}),
-                    false,
-                    ctx.link().callback(move |reply| {
-                        Msg::SourcesChecked(generation, force, started, reply)
-                    }),
-                );
-            }
-            Msg::SourcesChecked(generation, force, started, reply) => {
-                if generation != self.sources_generation {
-                    return false;
-                }
-                self.sources_checking = false;
-                let mut status = OperationStatus::event("Check sources", started, Some(&reply));
-                if let Reply::Result(value) = reply {
-                    let (errors, updates) = super::sources_settings::summary(&value);
-                    self.sources_check = Some(Rc::new(value));
-                    let updates = (!updates.is_empty())
-                        .then(|| format!("Updates available: {}", updates.join(", ")));
-                    let mut result = json!({});
-                    if !errors.is_empty() {
-                        result["warning"] = json!(errors.join("; "));
-                    }
-                    status = OperationStatus::event("Check sources", started, Some(&Reply::Result(result)));
-                    if let Some(updates) = updates {
-                        status.text = match errors.is_empty() {
-                            true => format!("Check sources · {updates}"),
-                            false => format!("{} · {updates}", status.text),
-                        };
-                    }
-                }
-                // Automatic checks speak up only about something new.
-                let notice = if status.text.ends_with(" · OK") {
-                    String::new()
-                } else {
-                    status.text.clone()
-                };
-                if force || (!notice.is_empty() && notice != self.sources_notice) {
-                    if !force {
-                        status.started = js_sys::Date::now();
-                    }
-                    // Automatic checks report source problems on Sources, updates on Modules.
-                    let tab = if force {
-                        self.settings_check_tab
-                    } else if matches!(status.indicator(), Indicator::Warning | Indicator::Error) {
-                        SettingsTab::Sources
-                    } else {
-                        SettingsTab::Modules
-                    };
-                    self.set_settings_status(tab, status);
-                }
-                self.sources_notice = notice;
             }
             Msg::SourcesApplied => {
-                self.config_epoch += 1;
-                self.templates_epoch += 1;
-                if !self.templates_visited {
-                    self.transport.request(
-                        json!({"service":"templates","op":"get"}),
-                        false,
-                        ctx.link().callback(Msg::TemplatesLoaded),
-                    );
-                }
-                self.transport.request(
-                    json!({"service":"vars","op":"list"}),
-                    false,
-                    ctx.link().callback(Msg::Vars),
-                );
-                for service in crate::services::ids() {
-                    if !self.hints_drafts.contains_key(&service)
-                        && !self.hints_saving.contains(&service)
-                    {
-                        let revision = self.next_hints_revision(&service);
-                        let started = js_sys::Date::now();
-                        self.transport.request(
-                            json!({"service":"hints","op":"get","serviceName":service}),
-                            false,
-                            ctx.link().callback(move |r| {
-                                Msg::Hints(service.clone(), revision, started, r)
-                            }),
-                        );
-                    }
-                }
+                // Panels read their sources' files again.
+                let effects = crate::kernel::broadcast(crate::kernel::workspace());
+                self.kernel_effects(ctx, effects);
             }
             Msg::ForgetModule(service) => {
                 let mut editors = self.editors.borrow_mut();
                 editors.remove(&format!("console:{service}"));
-                editors.remove(&format!("hints:{service}"));
                 drop(editors);
                 self.docs.remove(&service);
                 self.response_regions.remove(&service);
                 self.checks.remove(&service);
                 self.viewports.remove(&service);
                 self.hints.remove(&service);
-                self.hints_origins.remove(&service);
-                self.hints_drafts.remove(&service);
-                self.hints_edited.remove(&service);
-                if let Some(id) = self.hints_timers.remove(&service) {
-                    window().clear_timeout_with_handle(id);
-                }
                 self.templates.remove(&service);
                 self.console_order.retain(|id| *id != service);
-                self.templates_epoch += 1;
-                self.history_revision = self.history_revision.wrapping_add(1);
-                let drafts = super::templates::forget_drafts(&service);
                 self.forgetting += 1;
                 let sessions = self.sessions.clone();
                 let link = ctx.link().clone();
                 wasm_bindgen_futures::spawn_local(async move {
-                    let result = super::sessions::Store::forget(&sessions, service)
-                        .await
-                        .and(drafts);
+                    let result = super::sessions::Store::forget(&sessions, service).await;
                     link.send_message(Msg::ModuleForgotten(result));
                 });
             }
             Msg::ModuleForgotten(result) => {
                 self.forgetting -= 1;
                 if let Err(error) = result {
-                    self.set_settings_status(
-                        SettingsTab::Modules,
-                        OperationStatus::event(
-                            "Remove module data",
-                            js_sys::Date::now(),
-                            Some(&Reply::Error(json!({"error":error}))),
-                        ),
-                    );
+                    self.notice = Some(Notice::new(format!("Remove module data · ERROR · {error}")));
                 }
             }
             Msg::InstallUpdate(target) => {
@@ -715,17 +439,12 @@ impl Component for App {
                     .session_guard()
                     .map_err(|error| format!("Cannot update while work is active: {error}"))
                     .and_then(|()| updates::ensure_single_window());
-                self.updates.begin(
-                    UpdatePhase::Preparing,
-                    "Install update",
-                    json!({"action":"Check update guards"}),
-                );
+                self.updates.transition(UpdatePhase::Preparing);
                 if let Err(error) = ready {
-                    self.updates.fail(error);
+                    self.update_failed(ctx, error);
                     return true;
                 }
                 self.persist_console();
-                self.updates.record(json!({"action":"Save workspace"}));
                 let sessions = self.sessions.clone();
                 let link = ctx.link().clone();
                 spawn_local(async move {
@@ -740,21 +459,20 @@ impl Component for App {
             Msg::UpdatePrepared(result) => match result {
                 Ok(()) => {
                     if let Err(error) = updates::ensure_single_window() {
-                        self.updates.fail(error);
+                        self.update_failed(ctx, error);
                         return true;
                     }
                     let Some((source, version)) = self.updates.target.clone() else {
-                        self.updates.fail("The version to install is missing".into());
+                        self.update_failed(ctx, "The version to install is missing".into());
                         return true;
                     };
                     let request =
                         json!({"service":"updates","op":"install","source":source,"version":version});
                     self.updates.transition(UpdatePhase::Installing);
-                    self.updates.record(json!({"request":request}));
                     self.transport
                         .request(request, false, ctx.link().callback(Msg::UpdateInstalled));
                 }
-                Err(error) => self.updates.fail(error),
+                Err(error) => self.update_failed(ctx, error),
             },
             Msg::UpdateInstalled(reply) => match reply {
                 Reply::Result(value)
@@ -764,13 +482,9 @@ impl Component for App {
                         }) =>
                 {
                     self.updates.transition(UpdatePhase::Installed);
-                    self.updates.record(json!({"result":value}));
                     ctx.link().send_message(Msg::ReloadUpdate);
                 }
-                Reply::Error(value) => {
-                    self.updates.record(json!({"response":value}));
-                    self.updates.fail(err_text(&value));
-                }
+                Reply::Error(value) => self.update_failed(ctx, err_text(&value)),
                 _ => self
                     .updates
                     .fail("Updater did not confirm successful installation".into()),
@@ -780,7 +494,7 @@ impl Component for App {
                     return false;
                 }
                 if let Err(error) = self.session_guard() {
-                    self.updates.fail(format!(
+                    self.update_failed(ctx, format!(
                         "Update is installed, but reloading is blocked: {error}"
                     ));
                     return true;
@@ -798,7 +512,7 @@ impl Component for App {
             Msg::UpdateReloadReady(result) => {
                 match result.and_then(|()| updates::reload()) {
                     Ok(()) => self.updates.transition(UpdatePhase::Installed),
-                    Err(error) => self.updates.fail(format!("Update is installed, but automatic reload failed: {error}. Reload the extension manually.")),
+                    Err(error) => self.update_failed(ctx, format!("Update is installed, but automatic reload failed: {error}. Reload the extension manually.")),
                 }
             }
             Msg::CheckMenuWidth(width) => {
@@ -818,17 +532,9 @@ impl Component for App {
                     self.session_error("Layout", error);
                 }
             }
-            Msg::ToggleSessions => {
-                self.console_panel = if self.console_panel == Some(ConsolePanel::Sessions) {
-                    None
-                } else {
-                    Some(ConsolePanel::Sessions)
-                };
-            }
-            Msg::SessionName(name) => self.session_name = name,
             Msg::SessionSelect(id) => {
                 if let Err(error) = self.session_guard() {
-                    self.session_result(&Err(error));
+                    self.session_result(ctx, Err(error));
                 } else {
                     self.session_loading = true;
                     let sessions = self.sessions.clone();
@@ -840,13 +546,12 @@ impl Component for App {
                     });
                 }
             }
-            Msg::SessionCopy(source) => {
+            Msg::SessionCopy(source, name) => {
                 if let Err(error) = self.session_guard() {
-                    self.session_result(&Err(error));
+                    self.session_result(ctx, Err(error));
                 } else {
                     self.session_loading = true;
                     let sessions = self.sessions.clone();
-                    let name = self.session_name.clone();
                     let link = ctx.link().clone();
                     spawn_local(async move {
                         link.send_message(Msg::SessionFinished(
@@ -857,11 +562,7 @@ impl Component for App {
             }
             Msg::SessionDelete(id) => {
                 if let Err(error) = self.session_guard() {
-                    self.session_result(&Err(error));
-                } else if let Err(error) = super::agent_panel::close_console_session(id) {
-                    self.session_result(&Err(format!(
-                        "The session was not deleted: its Agent chats could not be closed: {error}"
-                    )));
+                    self.session_result(ctx, Err(error));
                 } else {
                     self.session_loading = true;
                     let sessions = self.sessions.clone();
@@ -875,7 +576,7 @@ impl Component for App {
             }
             Msg::SessionFinished(result) => {
                 self.session_loading = false;
-                self.session_result(&result.as_ref().map(|_| ()).map_err(Clone::clone));
+                self.session_result(ctx, result.as_ref().map(|_| ()).map_err(Clone::clone));
                 if let Ok(id) = result {
                     ctx.props().onselect.emit(id);
                 }
@@ -891,9 +592,13 @@ impl Component for App {
                 if service != self.console_service {
                     self.cancel_agent_edit();
                 }
+                let switched = service != self.console_service;
                 self.console_service = service.clone();
                 self.export_text = None;
                 self.persist_console();
+                if switched {
+                    self.kernel_switched(ctx, &service);
+                }
                 self.kernel_schedule(ctx, &service);
             }
             Msg::ConsoleText(text) => {
@@ -931,15 +636,6 @@ impl Component for App {
             Msg::ConsoleEditor(service, msg) => {
                 let events = self.console_editor(&service).update(msg);
                 return self.console_events(ctx, &service, events);
-            }
-            Msg::HintsEditor(service, msg) => {
-                let mut render = false;
-                for event in self.hints_editor(&service).update(msg) {
-                    if let EditorEvent::Changed(text) = event {
-                        render |= Component::update(self, ctx, Msg::HintsText(text));
-                    }
-                }
-                return render;
             }
             Msg::ExportEditor(msg) => {
                 let editor = self.export_editor.borrow().clone();
@@ -1002,7 +698,7 @@ impl Component for App {
                 }
             }
             Msg::RepeatRun(key) => self.repeat_run(ctx, &key),
-            Msg::RepeatSaved(reply) => self.repeat_saved(reply),
+            Msg::RepeatSaved(check, reply) => self.repeat_saved(ctx, &check, reply),
             Msg::Reply(key, service, reply) => {
                 self.receive(&key, &service, reply);
                 self.continue_repeat(ctx, &key);
@@ -1034,22 +730,6 @@ impl Component for App {
                     ctx.props().onretry.emit(());
                 }
             }
-            Msg::Vars(reply) => match reply {
-                Reply::Result(value) => {
-                    self.vars_changed(ctx, value.get("context").unwrap_or(&value).clone());
-                }
-                // Opening Variables reloads the profile and shows the failure in its status.
-                Reply::Error(e) => {
-                    self.profile_activity.insert(
-                        false,
-                        (
-                            Indicator::Error,
-                            format!("Variables load failed: {}", err_text(&e)),
-                        ),
-                    );
-                }
-                _ => {}
-            },
             Msg::Discover => {
                 let service = self.console_service.clone();
                 self.kernel_discover(ctx, &service);
@@ -1075,48 +755,7 @@ impl Component for App {
                 );
             }
             Msg::EditorError(message) => {
-                self.record_panel_status(PanelEvent {
-                    owner: self.console_service.clone(),
-                    operation: "Editor".into(),
-                    started: js_sys::Date::now(),
-                    reply: Some(Reply::Error(json!({"error":message}))),
-                });
-            }
-            Msg::PanelVars(vars) => self.vars_changed(ctx, vars),
-            Msg::ToggleSettings => {
-                self.settings_visited = true;
-                self.console_panel = if self.console_panel == Some(ConsolePanel::Settings) {
-                    None
-                } else {
-                    // The host checks once per process; later requests get its saved results.
-                    ctx.link().send_message(Msg::CheckSources(false));
-                    Some(ConsolePanel::Settings)
-                };
-            }
-            Msg::ToggleHistory => {
-                self.console_panel = if self.console_panel == Some(ConsolePanel::History) {
-                    None
-                } else {
-                    Some(ConsolePanel::History)
-                };
-                self.history_visited = true;
-                if self.console_panel == Some(ConsolePanel::History) {
-                    self.history_error_seen = true;
-                }
-            }
-            Msg::HistoryActivity(state) => {
-                if self.history_activity == state {
-                    return false;
-                }
-                self.history_activity = state;
-            }
-            Msg::ToggleTemplates => {
-                self.console_panel = if self.console_panel == Some(ConsolePanel::Templates) {
-                    None
-                } else {
-                    Some(ConsolePanel::Templates)
-                };
-                self.templates_visited = true;
+                self.notice = Some(Notice::new(format!("Editor · ERROR · {message}")));
             }
             Msg::Modules(reply) => {
                 // Hosts without module lists keep the cached or built-in one.
@@ -1133,65 +772,22 @@ impl Component for App {
                         if !changed {
                             return false;
                         }
-                        self.sync_services(ctx);
+                        self.sync_services();
                     }
                     Err(error) => {
-                        self.set_settings_status(
-                            SettingsTab::Modules,
-                            OperationStatus::event(
-                                "Modules",
-                                js_sys::Date::now(),
-                                Some(&Reply::Error(json!({"error":error,"reply":value}))),
-                            ),
-                        );
+                        self.notice = Some(Notice::new(format!("Modules · ERROR · {error}")));
                     }
                 }
             }
-            Msg::TemplatesLoaded(reply) => {
-                if self.templates_visited {
-                    return false;
-                }
-                let result = match reply {
-                    Reply::Result(value) => serde_json::from_value::<
-                        services_contracts::templates::Library,
-                    >(value["templates"].clone())
-                    .map_err(|e| format!("Invalid library: {e}"))
-                    .and_then(|library| {
-                        services_contracts::templates::validate(&library)?;
-                        Ok(library)
-                    }),
-                    Reply::Error(value) => {
-                        Err(value["error"].as_str().unwrap_or("Load failed").into())
-                    }
-                    _ => Err("Unexpected response".into()),
-                };
-                match result {
-                    Ok(library) => self.templates = library,
-                    // Opening Templates reloads the library and shows the failure in its status.
-                    Err(_) => self.templates_activity = Indicator::Error,
-                }
+            Msg::AgentReply(module, tag, reply) => self.agent_reply(ctx, &module, &tag, reply),
+            Msg::AgentToolResult(tag, call_id, result) => {
+                self.agent_tool_result(&tag, &call_id, result);
             }
-            Msg::TemplatesChanged(library) => {
-                self.templates = library;
-            }
-            Msg::TemplatesActivity(state) => {
-                if self.templates_activity == state {
-                    return false;
-                }
-                self.templates_activity = state;
-            }
-            Msg::ToggleAgent => {
-                self.console_panel = if self.console_panel == Some(ConsolePanel::Agent) {
-                    None
-                } else {
-                    Some(ConsolePanel::Agent)
-                };
-                self.agent_visited = true;
-            }
-            Msg::AgentTool(request) => {
-                if let Err(error) = self.agent_tool(ctx, &request) {
-                    request.reply.emit(json!({"error":error}));
-                }
+            Msg::PageReplied(module, tag, result) => {
+                let effects = crate::kernel::with(|modules| {
+                    modules.reply(&module, &tag, result.map_err(services_sdk::Failure::new))
+                });
+                self.kernel_effects(ctx, effects);
             }
             Msg::AgentEdited(serial, result) => {
                 if self
@@ -1215,292 +811,6 @@ impl Component for App {
                         Err(error) => json!({"error":error}),
                     };
                     pending.request.reply.emit(reply);
-                }
-            }
-            Msg::AgentApprove(approve) => self.approve_agent_run(ctx, approve),
-            Msg::AgentFinished(session) => {
-                self.stop_agent_requests(ctx, &session);
-                if self
-                    .agent_run
-                    .as_ref()
-                    .is_some_and(|run| run.request.session == session)
-                {
-                    let pending = self.agent_run.take().unwrap();
-                    pending
-                        .request
-                        .reply
-                        .emit(json!({"error":"Agent turn ended; approval revoked"}));
-                }
-                if self
-                    .agent_edit
-                    .as_ref()
-                    .is_some_and(|edit| edit.request.session == session)
-                {
-                    let pending = self.agent_edit.take().unwrap();
-                    pending
-                        .request
-                        .reply
-                        .emit(json!({"error":"Agent turn ended before edit acknowledgement"}));
-                }
-            }
-            Msg::ToggleDictionary => {
-                self.console_panel = if self.console_panel == Some(ConsolePanel::Dictionary) {
-                    None
-                } else {
-                    Some(ConsolePanel::Dictionary)
-                };
-                self.dictionary_visited = true;
-            }
-            Msg::ToggleVariables => {
-                self.console_panel = if self.console_panel == Some(ConsolePanel::Variables) {
-                    None
-                } else {
-                    Some(ConsolePanel::Variables)
-                };
-                self.variables_visited = true;
-            }
-            Msg::ToggleHints => {
-                self.console_panel = if self.console_panel == Some(ConsolePanel::Hints) {
-                    None
-                } else {
-                    Some(ConsolePanel::Hints)
-                };
-                if self.console_panel == Some(ConsolePanel::Hints) {
-                    let service = self.current_language().to_string();
-                    if self.hints_drafts.contains_key(&service)
-                        || self.hints_saving.contains(&service)
-                    {
-                        return true;
-                    }
-                    let revision = self.next_hints_revision(&service);
-                    let started = js_sys::Date::now();
-                    self.transport.request(
-                        json!({"service":"hints","op":"get","serviceName":service}),
-                        false,
-                        ctx.link()
-                            .callback(move |r| Msg::Hints(service.clone(), revision, started, r)),
-                    );
-                }
-            }
-            Msg::Hints(service, revision, started, reply) => match reply {
-                Reply::Result(v) => {
-                    if self.hints_revisions.get(&service).copied().unwrap_or(0) == revision {
-                        let Some(text) = v["text"].as_str().or(v.as_str()) else {
-                            self.record_panel_status(PanelEvent { owner:service, operation:"Hints load".into(), started, reply:Some(Reply::Error(json!({"error":"Invalid hints response: text is missing","reply":v}))) });
-                            return true;
-                        };
-                        self.hints.insert(service.clone(), text.into());
-                        self.hints_origins.insert(service.clone(), v.clone());
-                        if self.hints_drafts.contains_key(&service) {
-                            ctx.link().send_message(Msg::SaveHints(service));
-                        }
-                    }
-                }
-                Reply::Error(e)
-                    if self.hints_revisions.get(&service).copied().unwrap_or(0) == revision =>
-                {
-                    self.record_panel_status(PanelEvent {
-                        owner: service,
-                        operation: "Hints load".into(),
-                        started,
-                        reply: Some(Reply::Error(e)),
-                    })
-                }
-                Reply::Error(_) => {}
-                Reply::Data(v) | Reply::Exit(v) => self.record_panel_status(PanelEvent {
-                    owner: service,
-                    operation: "Hints load".into(),
-                    started,
-                    reply: Some(Reply::Error(
-                        json!({"error":"Unexpected hints reply","reply":v}),
-                    )),
-                }),
-            },
-            Msg::HintsText(text) => {
-                let service = self.current_language().to_string();
-                self.next_hints_revision(&service);
-                let started = js_sys::Date::now();
-                self.hints_edited.insert(service.clone(), started);
-                self.hints_drafts.insert(service.clone(), text.clone());
-                if let Some(id) = self.hints_timers.remove(&service) {
-                    window().clear_timeout_with_handle(id);
-                }
-                if let Err(e) = self.persist_hints_drafts() {
-                    self.record_panel_status(PanelEvent {
-                        owner: service,
-                        operation: "Hints draft".into(),
-                        started,
-                        reply: Some(Reply::Error(json!({"error":e}))),
-                    });
-                } else if let Err(e) = console::validate_hints(&text) {
-                    self.record_panel_status(PanelEvent {
-                        owner: service,
-                        operation: "Hints validation".into(),
-                        started,
-                        reply: Some(Reply::Error(json!({"error":e,"phase":"validation"}))),
-                    });
-                } else {
-                    self.record_panel_status(PanelEvent {
-                        owner: service.clone(),
-                        operation: "Hints save".into(),
-                        started,
-                        reply: None,
-                    });
-                    let link = ctx.link().clone();
-                    let owner = service.clone();
-                    let save =
-                        Closure::once_into_js(move || link.send_message(Msg::SaveHints(owner)));
-                    match window().set_timeout_with_callback_and_timeout_and_arguments_0(
-                        save.unchecked_ref(),
-                        600,
-                    ) {
-                        Ok(id) => {
-                            self.hints_timers.insert(service, id);
-                        }
-                        Err(e) => self.record_panel_status(PanelEvent {
-                            owner: service,
-                            operation: "Hints autosave".into(),
-                            started,
-                            reply: Some(Reply::Error(json!({"error":error(e)}))),
-                        }),
-                    }
-                }
-            }
-            Msg::SaveHints(service) => {
-                if let Some(id) = self.hints_timers.remove(&service) {
-                    window().clear_timeout_with_handle(id);
-                }
-                if self.hints_saving.contains(&service) {
-                    return false;
-                }
-                let Some(text) = self.hints_drafts.get(&service).cloned() else {
-                    return false;
-                };
-                let started = self
-                    .hints_edited
-                    .get(&service)
-                    .copied()
-                    .unwrap_or_else(js_sys::Date::now);
-                if let Err(e) = console::validate_hints(&text) {
-                    self.record_panel_status(PanelEvent {
-                        owner: service,
-                        operation: "Hints validation".into(),
-                        started,
-                        reply: Some(Reply::Error(json!({"error":e,"phase":"validation"}))),
-                    });
-                } else {
-                    let revision = self.hints_revisions.get(&service).copied().unwrap_or(0);
-                    self.hints_saving.insert(service.clone());
-                    self.record_panel_status(PanelEvent {
-                        owner: service.clone(),
-                        operation: "Hints save".into(),
-                        started,
-                        reply: None,
-                    });
-                    self.transport.request(
-                        json!({"service":"hints","op":"save","serviceName":service,"text":text}),
-                        false,
-                        ctx.link().callback(move |r| {
-                            Msg::HintsSaved(service.clone(), revision, text.clone(), started, r)
-                        }),
-                    );
-                }
-            }
-            Msg::StopHints => {
-                let service = self.console_service.clone();
-                if let Some(id) = self.hints_timers.remove(&service) {
-                    window().clear_timeout_with_handle(id);
-                    self.record_panel_status(PanelEvent {
-                        owner: service,
-                        operation: "Hints save".into(),
-                        started: js_sys::Date::now(),
-                        reply: Some(Reply::Result(json!({"cancelled":true,"phase":"before-dispatch","warning":"Draft retained."}))),
-                    });
-                }
-            }
-            Msg::ResetHints => {
-                let service = self.current_language().to_string();
-                if self.hints_saving.contains(&service) {
-                    return false;
-                }
-                if let Some(id) = self.hints_timers.remove(&service) {
-                    window().clear_timeout_with_handle(id);
-                }
-                let started = js_sys::Date::now();
-                if self.hints_drafts.remove(&service).is_some()
-                    && let Err(e) = self.persist_hints_drafts()
-                {
-                    self.record_panel_status(PanelEvent {
-                        owner: service.clone(),
-                        operation: "Hints draft".into(),
-                        started,
-                        reply: Some(Reply::Error(json!({"error":e}))),
-                    });
-                }
-                let revision = self.next_hints_revision(&service);
-                self.hints_saving.insert(service.clone());
-                self.record_panel_status(PanelEvent {
-                    owner: service.clone(),
-                    operation: "Hints reset".into(),
-                    started,
-                    reply: None,
-                });
-                self.transport.request(
-                    json!({"service":"hints","op":"reset","serviceName":service}),
-                    false,
-                    ctx.link().callback(move |r| {
-                        Msg::HintsReset(service.clone(), revision, started, r)
-                    }),
-                );
-            }
-            Msg::HintsReset(service, revision, started, reply) => {
-                self.hints_saving.remove(&service);
-                if let Reply::Result(value) = &reply
-                    && let Some(text) = value["text"].as_str()
-                    && self.hints_revisions.get(&service).copied().unwrap_or(0) == revision
-                {
-                    self.hints.insert(service.clone(), text.into());
-                    self.hints_origins.insert(service.clone(), value.clone());
-                }
-                self.record_panel_status(PanelEvent {
-                    owner: service.clone(),
-                    operation: "Hints reset".into(),
-                    started,
-                    reply: Some(reply),
-                });
-                if self.hints_drafts.contains_key(&service) {
-                    ctx.link().send_message(Msg::SaveHints(service));
-                }
-            }
-            Msg::HintsSaved(service, revision, text, started, reply) => {
-                self.hints_saving.remove(&service);
-                let latest = self.hints_revisions.get(&service).copied().unwrap_or(0) == revision;
-                if let Reply::Result(value) = &reply {
-                    self.hints.insert(service.clone(), text.clone());
-                    self.hints_origins.insert(service.clone(), value.clone());
-                    if self.hints_drafts.get(&service) == Some(&text) {
-                        self.hints_drafts.remove(&service);
-                        if let Err(e) = self.persist_hints_drafts() {
-                            self.record_panel_status(PanelEvent {
-                                owner: service.clone(),
-                                operation: "Hints draft".into(),
-                                started: js_sys::Date::now(),
-                                reply: Some(Reply::Error(json!({"error":e}))),
-                            });
-                        }
-                    }
-                }
-                if latest {
-                    self.record_panel_status(PanelEvent {
-                        owner: service.clone(),
-                        operation: "Hints save".into(),
-                        started,
-                        reply: Some(reply),
-                    });
-                } else if self.hints_drafts.contains_key(&service)
-                    && !self.hints_timers.contains_key(&service)
-                {
-                    ctx.link().send_message(Msg::SaveHints(service));
                 }
             }
             Msg::Import => {
@@ -1641,35 +951,11 @@ impl Component for App {
                     }
                 }
             }
-            Msg::AgentActivity(activity) => {
-                if self.agent_activity == activity {
-                    return false;
-                }
-                self.agent_activity = activity;
-            }
-            Msg::ProfileActivity(dictionary, activity) => {
-                if self.profile_activity.get(&dictionary) == Some(&activity) {
-                    return false;
-                }
-                self.profile_activity.insert(dictionary, activity);
-            }
             Msg::Visibility(visible) => {
                 self.hidden = !visible;
                 if !visible {
                     self.kernel_hidden();
-                    for (service, id) in std::mem::take(&mut self.hints_timers) {
-                        window().clear_timeout_with_handle(id);
-                        self.record_panel_status(PanelEvent {
-                            owner: service,
-                            operation: "Hints save".into(),
-                            started: js_sys::Date::now(),
-                            reply: Some(Reply::Result(json!({"cancelled":true,"phase":"before-dispatch","warning":"Panel hidden; draft retained."}))),
-                        });
-                    }
-                    for activity in &mut self.agent_activity {
-                        activity.stopping = true;
-                    }
-                    self.agent_stop_generation += 1;
+                    self.agent_stop_all(ctx);
                     for run in self.runs.values_mut().filter(|run| run.running) {
                         run.stopping = true;
                     }
@@ -1701,7 +987,12 @@ impl Component for App {
             Msg::KernelStarted((effects, started)) => {
                 self.kernel_started(ctx, effects, started.clone());
                 if !started.is_empty() {
-                    self.sync_services(ctx);
+                    self.sync_services();
+                }
+                // A panel opened before its module started is shown once it runs.
+                if let Some(id) = self.side.clone() {
+                    let effects = crate::kernel::with(|modules| modules.show(&id));
+                    self.kernel_effects(ctx, effects);
                 }
             }
             Msg::KernelReplied(module, tag, reply) => self.kernel_replied(ctx, module, tag, reply),
@@ -1712,8 +1003,30 @@ impl Component for App {
                 self.kernel_hosted(ctx, module, tag, saved, reply);
             }
             Msg::KernelTimer(module, tag) => self.kernel_timer(ctx, &module, &tag),
+            Msg::KernelStorage(module, key) => {
+                let effects = crate::kernel::with(|modules| modules.storage(&module, &key));
+                self.kernel_effects(ctx, effects);
+            }
+            Msg::TogglePanel(id) => {
+                let open = self.side.as_deref() != Some(id.as_str());
+                self.close_side(ctx);
+                if open {
+                    self.side = Some(id.clone());
+                    let effects = crate::kernel::with(|modules| modules.show(&id));
+                    self.kernel_effects(ctx, effects);
+                }
+            }
+            Msg::PanelUi(id, (msg, value)) => {
+                let mut effects = Vec::new();
+                for (msg, value) in super::view::take_pending(&id) {
+                    effects.extend(crate::kernel::with(|modules| modules.ui(&id, msg, value)));
+                }
+                effects.extend(crate::kernel::with(|modules| modules.ui(&id, msg, value)));
+                self.kernel_effects(ctx, effects);
+            }
             Msg::KernelRunReplied(key, reply) => self.kernel_run_replied(ctx, &key, reply),
             Msg::KernelDocument(service) => self.kernel_document(ctx, &service),
+            Msg::KernelMounted => self.kernel_mounted(ctx),
             Msg::KernelHints(check, pos) => self.kernel_hints(ctx, check, pos),
         }
         true
@@ -1723,6 +1036,7 @@ impl Component for App {
             <style>{include_str!("../../assets/editor.css")}</style>
             <style>{include_str!("../../assets/console.css")}</style>
             <style>{include_str!("ui.css")}</style>
+            <style>{include_str!("view.css")}</style>
             <super::find::FindBar/>
             <div data-testid="native-status" role="status" hidden={self.connection.is_none()}><button title={self.connection.clone().unwrap_or_default()} onclick={ctx.link().callback(|_|Msg::Retry)}>{"Retry connection"}</button></div>
             if let Some(notice)=&self.notice{<div class="banner banner-error" role="alert" data-testid="app-notice">{&notice.text}<button onclick={ctx.link().callback(|_|Msg::ClearNotice)}>{"Dismiss"}</button></div>}
@@ -1747,9 +1061,6 @@ impl Component for App {
             .schedule(wait, ctx.link().callback(|()| Msg::Seen));
     }
     fn destroy(&mut self, _: &Context<Self>) {
-        for (_, id) in std::mem::take(&mut self.hints_timers) {
-            window().clear_timeout_with_handle(id);
-        }
         for repeat in self.runs.values_mut().filter_map(|run| run.repeat.as_mut()) {
             if let Some(id) = repeat.timer.take() {
                 window().clear_timeout_with_handle(id);
@@ -1761,54 +1072,10 @@ impl App {
     /// Counts on-screen time of every visible status and returns the wait until the nearest
     /// one counts as seen.
     fn observe_statuses(&mut self) -> Option<f64> {
-        let mut wait = self.observe_console_status();
-        if self.console_panel == Some(ConsolePanel::Settings) && !self.hidden {
-            let now = js_sys::Date::now();
-            let shown = self
-                .settings_operation()
-                .map(|status| (status.started, status.indicator()));
-            let operation = shown.is_some();
-            let (started, state) =
-                shown.unwrap_or((self.updates.status.started, self.updates.indicator()));
-            let settings = match self.settings_status.as_mut().filter(|_| operation) {
-                Some(status) => status.observe(now),
-                None => self.updates.signal.observe(self.updates.indicator(), now),
-            };
-            if matches!(state, Indicator::Warning | Indicator::Error)
-                && !self.settings_seen.is_some_and(|(seen, _)| seen == started)
-            {
-                let shown = match self.settings_shown {
-                    Some(shown) if shown.0 == started => shown,
-                    _ => (started, now),
-                };
-                self.settings_shown = Some(shown);
-                if settings.is_none() {
-                    self.settings_seen = Some(shown);
-                }
-            }
-            wait = crate::activity::sooner(wait, settings);
-        } else {
-            if let Some(status) = &mut self.settings_status {
-                status.hide();
-            }
-            self.updates.signal.hide();
-            self.settings_shown = None;
-        }
-        wait
+        self.observe_console_status()
     }
-    fn load_hints(&self, ctx: &Context<Self>, service: String) {
-        let started = js_sys::Date::now();
-        self.transport.request(
-            json!({"service":"hints","op":"get","serviceName":service}),
-            false,
-            ctx.link()
-                .callback(move |r| Msg::Hints(service.clone(), 0, started, r)),
-        );
-    }
-
-    /// Follows a changed module list: new services get their saved document and
-    /// hints, the tab order drops missing ones, a missing current service falls back.
-    fn sync_services(&mut self, ctx: &Context<Self>) {
+    /// Follows a changed module list: new services get their saved document, the tab order drops missing ones, a missing current service falls back.
+    fn sync_services(&mut self) {
         let saved = self.sessions.borrow().library.snapshot().console.clone();
         for service in crate::services::ids() {
             if self.docs.contains_key(&service) {
@@ -1817,8 +1084,7 @@ impl App {
             let (document, regions, identities, _) = saved_document(&saved, &service);
             self.checks.insert(service.clone(), identities);
             self.docs.insert(service.clone(), document);
-            self.response_regions.insert(service.clone(), regions);
-            self.load_hints(ctx, service);
+            self.response_regions.insert(service, regions);
         }
         self.console_order = storage::console_order(&json!(self.console_order));
         if !crate::services::contains(&self.console_service) {
@@ -1826,74 +1092,19 @@ impl App {
         }
     }
 
-    /// Settings shows its newest operation, except that one which finished quietly
-    /// never hides an older warning or error before it has been shown.
-    fn settings_operation(&self) -> Option<&OperationStatus> {
-        let operation = self.settings_status.as_ref()?;
-        let current = (operation.started, operation.indicator());
-        let update = (self.updates.status.started, self.updates.indicator());
-        let newest = current.0 >= update.0;
-        let (newer, older) = if newest {
-            (current, update)
-        } else {
-            (update, current)
-        };
-        let unseen = matches!(older.1, Indicator::Warning | Indicator::Error)
-            && !matches!(
-                newer.1,
-                Indicator::Warning | Indicator::Error | Indicator::Running
-            )
-            && !self
-                .settings_seen
-                .is_some_and(|(started, at)| started == older.0 && at < newer.0);
-        (newest != unseen).then_some(operation)
-    }
-
-    fn set_settings_status(&mut self, tab: SettingsTab, status: OperationStatus) {
-        self.settings_groups[tab as usize] = Some((status.started, status.indicator()));
-        self.settings_status = Some(status);
-    }
-
-    fn settings_tabs(&self) -> &'static [SettingsTab] {
-        if self.transport.is_native() {
-            &[
-                SettingsTab::Modules,
-                SettingsTab::Sources,
-                SettingsTab::Agent,
-            ]
-        } else {
-            &[SettingsTab::Agent]
+    /// The App update failed; the module that asked hears of it.
+    fn update_failed(&mut self, ctx: &Context<Self>, message: String) {
+        self.updates.fail(message.clone());
+        if let Some((module, tag)) = self.update_reply.take() {
+            let installed = self.updates.phase == UpdatePhase::Installed;
+            let result = if installed {
+                Ok(json!({"installed": true, "warning": message}))
+            } else {
+                Err(services_sdk::Failure::new(message))
+            };
+            let effects = crate::kernel::with(|modules| modules.reply(&module, &tag, result));
+            self.kernel_effects(ctx, effects);
         }
-    }
-
-    fn visible_settings_tab(&self) -> SettingsTab {
-        if self.settings_tabs().contains(&self.settings_tab) {
-            self.settings_tab
-        } else {
-            SettingsTab::Agent
-        }
-    }
-
-    /// The newest operation of a tab; Modules also shows the application update.
-    fn settings_tab_indicator(&self, tab: SettingsTab) -> Indicator {
-        let update = (tab == SettingsTab::Modules)
-            .then(|| (self.updates.status.started, self.updates.indicator()));
-        self.settings_groups[tab as usize]
-            .into_iter()
-            .chain(update)
-            .max_by(|a, b| a.0.total_cmp(&b.0))
-            .map_or(Indicator::Ready, |(_, state)| state)
-    }
-
-    fn settings_notification(&self) -> crate::activity::Indicator {
-        let visible = self.console_panel == Some(ConsolePanel::Settings) && !self.hidden;
-        self.settings_operation()
-            .map(|status| status.notification(visible))
-            .unwrap_or_else(|| {
-                self.updates
-                    .signal
-                    .indicator(self.updates.indicator(), visible)
-            })
     }
 
     fn session_guard(&self) -> Result<(), String> {
@@ -1905,7 +1116,6 @@ impl App {
     }
     /// What keeps sessions busy; shown on the Sessions panel for diagnostics.
     fn busy_reasons(&self) -> Vec<String> {
-        let running = Indicator::Running;
         let mut reasons = Vec::new();
         if self.session_loading {
             reasons.push("session loading".into());
@@ -1936,28 +1146,8 @@ impl App {
         if self.agent_edit.is_some() {
             reasons.push("agent edit".into());
         }
-        for activity in &self.agent_activity {
-            if activity.state == running {
-                reasons.push(format!("agent {}", activity.session));
-            }
-        }
-        for (dictionary, (state, _)) in &self.profile_activity {
-            if *state == running {
-                reasons.push(
-                    if *dictionary {
-                        "dictionary"
-                    } else {
-                        "variables"
-                    }
-                    .into(),
-                );
-            }
-        }
-        if !self.hints_timers.is_empty() {
-            reasons.push(format!("hints pending {:?}", self.hints_timers.keys()));
-        }
-        if !self.hints_saving.is_empty() {
-            reasons.push(format!("hints saving {:?}", self.hints_saving));
+        for tag in self.agent_turns.keys() {
+            reasons.push(format!("agent {tag}"));
         }
         reasons
     }
@@ -1971,34 +1161,39 @@ impl App {
             source: Some((service, transfer)),
         });
     }
-    fn session_error(&mut self, operation: &str, error: String) {
-        self.session_status = OperationStatus::event(
-            operation,
-            js_sys::Date::now(),
-            Some(&Reply::Error(json!({"error":error}))),
-        );
+    pub(super) fn session_error(&mut self, operation: &str, error: String) {
+        self.notice = Some(Notice::new(format!("{operation} · ERROR · {error}")));
     }
-    /// Sessions shows a failed autosave until a later save succeeds.
-    pub(super) fn sessions_status(&self) -> OperationStatus {
+    /// A workspace operation ended: the module that asked for it hears how.
+    fn session_result(&mut self, ctx: &Context<Self>, result: Result<(), String>) {
+        let Some((module, tag)) = self.session_reply.take() else {
+            if let Err(error) = result {
+                self.session_error("Sessions", error);
+            }
+            return;
+        };
+        let result = result
+            .map(|()| json!({}))
+            .map_err(services_sdk::Failure::new);
+        let effects = crate::kernel::with(|modules| modules.reply(&module, &tag, result));
+        self.kernel_effects(ctx, effects);
+    }
+    /// The saved workspaces as `workspace.list` answers.
+    pub(super) fn workspace_list(&self) -> Value {
         let store = self.sessions.borrow();
-        let Some(error) = store.save_error() else {
-            return self.session_status.clone();
-        };
-        OperationStatus::event(
-            "Autosave",
-            0.0,
-            Some(&Reply::Error(
-                json!({"error":error,"sessionId":store.library.current,
-                "session":store.library.name()}),
-            )),
-        )
-    }
-    fn session_result(&mut self, result: &Result<(), String>) {
-        let reply = match result {
-            Ok(()) => Reply::Result(json!({})),
-            Err(error) => Reply::Error(json!({"error":error})),
-        };
-        self.session_status = OperationStatus::event("Sessions", js_sys::Date::now(), Some(&reply));
+        let sessions: Vec<Value> = store
+            .library
+            .sessions
+            .iter()
+            .map(|session| json!({"id": session.id, "name": session.name}))
+            .collect();
+        json!({
+            "current": store.library.current,
+            "sessions": sessions,
+            "saving": store.saving(),
+            "saveError": store.save_error(),
+            "importError": store.error,
+        })
     }
     fn stop_agent_requests(&mut self, ctx: &Context<Self>, session: &str) {
         let keys: Vec<_> = self
@@ -2021,12 +1216,9 @@ impl App {
             .collect();
         for id in ids {
             if let Err(error) = self.transport.stop(id) {
-                self.agent_stop_error = Some(crate::browser::agent_panel::StopError {
-                    session: session.into(),
-                    error,
-                    stream: id,
-                    started: js_sys::Date::now(),
-                });
+                self.notice = Some(Notice::new(format!(
+                    "Agent · Could not stop its Console request: {error}"
+                )));
             }
         }
     }
@@ -2057,9 +1249,9 @@ impl App {
             );
         }
         if self
-            .agent_activity
-            .iter()
-            .any(|activity| activity.session == request.session && activity.stopping)
+            .agent_turns
+            .get(&request.session)
+            .is_none_or(|turn| turn.stopping())
         {
             return Err("Agent is stopping; workspace access revoked".into());
         }
@@ -2082,8 +1274,8 @@ impl App {
                     .context_page(&service, cursor, offset, limit)?;
                 value["services"] = json!(crate::services::ids());
                 value["variables"] = json!(
-                    profiles::hints(&self.vars)
-                        .into_iter()
+                    self.vars
+                        .iter()
                         .map(|(name, _)| name)
                         .filter(|name| !name.starts_with("{{env:"))
                         .take(512)
@@ -2205,12 +1397,8 @@ impl App {
                         .unwrap_or(&[]),
                 )
                 .ok_or("Check is unavailable")?;
-                let params = resolve_agent_params(
-                    console::parse(&service, &block.text)?,
-                    &profiles::hints(&self.vars),
-                )?;
+                let params = resolve_agent_params(console::parse(&service, &block.text)?)?;
                 let approval = Approval {
-                    session: request.session.clone(),
                     service: service.clone(),
                     title: source.split('\n').nth(line).unwrap_or("").into(),
                     request: block.text.chars().take(4000).collect(),
@@ -2299,68 +1487,6 @@ impl App {
             Err(error) => pending.request.reply.emit(json!({"error":error})),
         }
     }
-    fn persist_hints_drafts(&self) -> Result<(), String> {
-        self.sessions
-            .borrow_mut()
-            .update(|s| s.hints_drafts = self.hints_drafts.clone())
-    }
-    fn record_panel_status(&mut self, event: PanelEvent) {
-        let panel_started = self
-            .panel_status
-            .get(&event.owner)
-            .map(|s| s.started)
-            .unwrap_or(0.0);
-        if event.started < panel_started {
-            return;
-        }
-        self.panel_status.insert(
-            event.owner,
-            OperationStatus::event(&event.operation, event.started, event.reply.as_ref()),
-        );
-    }
-    fn next_hints_revision(&mut self, service: &str) -> u64 {
-        let revision = self.hints_revisions.entry(service.into()).or_default();
-        *revision = revision.wrapping_add(1);
-        *revision
-    }
-    fn current_language(&self) -> &str {
-        &self.console_service
-    }
-    /// Console session names by id, for the Agent chat list.
-    pub(super) fn session_names(&self) -> BTreeMap<u64, String> {
-        std::iter::once((0, TEMPORARY_SESSION.to_owned()))
-            .chain(
-                self.sessions
-                    .borrow()
-                    .library
-                    .sessions
-                    .iter()
-                    .map(|session| (session.id, session.name.clone())),
-            )
-            .collect()
-    }
-    fn view_sessions(&self, ctx: &Context<Self>) -> Html {
-        let store = self.sessions.borrow();
-        let library = &store.library;
-        let rows = std::iter::once((0, TEMPORARY_SESSION))
-            .chain(library.sessions.iter().map(|s| (s.id, s.name.as_str())));
-        let reasons = self.busy_reasons();
-        html! {<section class="console-sessions" data-testid="console-sessions" data-busy={(!reasons.is_empty()).to_string()} data-busy-reason={reasons.join("; ")}>
-             <p role="status" data-testid="session-storage-status">{if store.saving(){"Saving…"}else if store.save_error().is_some(){"Not saved"}else{"Saved"}}</p>
-            if let Some(error)=&store.error {<p role="alert">{format!("Original workspace import is pending: {error}")}<button onclick={ctx.link().callback(|_|Msg::Retry)}>{"Retry import"}</button></p>}
-            <label>{"New session name"}<input data-testid="session-new-name" value={self.session_name.clone()}
-                oninput={ctx.link().callback(|event:InputEvent|Msg::SessionName(event.target_unchecked_into::<HtmlInputElement>().value()))}/></label>
-            <table><thead><tr><th>{"#"}</th><th>{"Session"}</th><th>{"Actions"}</th></tr></thead><tbody>
-                {for rows.map(|(id,name)|html!{<tr class={classes!((library.current==id).then_some("active"))} data-session-id={id.to_string()}>
-                    <td>{id}</td><td>{name}</td><td>
-                        <button data-testid={format!("session-switch-{id}")} disabled={library.current==id} onclick={ctx.link().callback(move |_|Msg::SessionSelect(id))}>{"Switch"}</button>
-                        <button data-testid={format!("session-delete-{id}")} disabled={id==0} onclick={ctx.link().callback(move |_|Msg::SessionDelete(id))}>{"Delete"}</button>
-                        <button data-testid={format!("session-copy-{id}")} onclick={ctx.link().callback(move |_|Msg::SessionCopy(id))}>{"Create from"}</button>
-                    </td></tr>})}
-            </tbody></table>
-            <p>{"0 is temporary. Creating from 0 starts empty. Named sessions save automatically. Dictionary and environment variables are shared. Agent chats belong to their session; deleting a session closes them."}</p>
-        </section>}
-    }
 }
 /// A service's persisted document, response regions and check identities; `true`
 /// when the document needed a marker migration.
@@ -2384,18 +1510,6 @@ fn saved_document(
     (document, regions, identities, migrated)
 }
 
-fn snapshot_status(error: &Option<String>) -> OperationStatus {
-    error
-        .as_ref()
-        .map(|error| {
-            OperationStatus::event(
-                "Session import",
-                js_sys::Date::now(),
-                Some(&Reply::Error(json!({"error":error}))),
-            )
-        })
-        .unwrap_or_default()
-}
 /// A check's Debug for the Agent. The response payload is readable page by page through
 /// console_read_response, and each transport trace repeats the module result, so both are
 /// replaced by pointers. Session variable values never reach the Agent; it sees only names.
@@ -2446,17 +1560,21 @@ fn agent_debug(debug: &Value, response: bool) -> Value {
     scrub(&mut debug, response);
     debug
 }
-fn resolve_agent_params(value: Value, hints: &[(String, String)]) -> Result<Value, String> {
+/// Resolves the variables of an Agent run's parameters the way a console run does.
+fn resolve_agent_params(value: Value) -> Result<Value, String> {
     match value {
-        Value::String(text) => profiles::resolve_text(&text, hints).map(Value::String),
+        Value::String(text) if text.contains("{{") => {
+            crate::kernel::with(|modules| modules.resolve(&text, false))
+                .map(|resolution| Value::String(resolution.text))
+        }
         Value::Array(values) => values
             .into_iter()
-            .map(|value| resolve_agent_params(value, hints))
+            .map(resolve_agent_params)
             .collect::<Result<Vec<_>, _>>()
             .map(Value::Array),
         Value::Object(values) => values
             .into_iter()
-            .map(|(key, value)| resolve_agent_params(value, hints).map(|value| (key, value)))
+            .map(|(key, value)| resolve_agent_params(value).map(|value| (key, value)))
             .collect::<Result<serde_json::Map<_, _>, _>>()
             .map(Value::Object),
         value => Ok(value),

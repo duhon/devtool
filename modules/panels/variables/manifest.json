@@ -3,8 +3,8 @@
   "kind": "panel",
   "name": "Variables",
   "version": "3.7.0",
-  "description": "Session variables and the {{profile:name}} references every request resolves.",
+  "description": "Session variables ({{var:name}}, {{:name}}) and the environment ({{env:NAME}}).",
   "abi": 1,
   "app": ">=3.7",
-  "order": 1
+  "order": 4
 }

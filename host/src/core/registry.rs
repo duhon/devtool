@@ -1,7 +1,6 @@
 use super::{
     error::{Error, Result},
     modules,
-    variables::VariableStore,
 };
 use serde_json::{Value, json};
 use services_sdk::manifest::Manifest;
@@ -13,7 +12,6 @@ use std::{
 /// The installed modules: wasm packages the App runs.
 #[derive(Clone)]
 pub struct Registry {
-    pub variables: VariableStore,
     /// Modules the App runs, in tab order.
     wasm: Arc<Vec<Wasm>>,
     /// Packages that failed to load: `{"package","module","error"}`.
@@ -61,7 +59,8 @@ fn load_wasm(package: &modules::Package, placed: bool) -> std::result::Result<Wa
 }
 
 impl Registry {
-    pub fn new(variables: VariableStore) -> Result<Self> {
+    /// The modules installed in the `data` folder.
+    pub fn new(data: &Path) -> Result<Self> {
         if rustls::crypto::CryptoProvider::get_default().is_none() {
             let installed = rustls::crypto::ring::default_provider().install_default();
             // A concurrent runtime may have installed the process-wide provider first.
@@ -69,12 +68,7 @@ impl Registry {
                 return Err(Error::new("Failed to initialize the TLS crypto provider"));
             }
         }
-        let dir = variables
-            .path
-            .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_default()
-            .join(modules::DIR);
+        let dir = data.join(modules::DIR);
         let mut failed = Vec::new();
         let mut wasm = Vec::new();
         for package in modules::scan(&dir) {
@@ -89,7 +83,6 @@ impl Registry {
         }
         wasm.sort_by_key(|module| module.manifest.order.unwrap_or(u32::MAX));
         Ok(Self {
-            variables,
             wasm: Arc::new(wasm),
             failed: Arc::new(failed),
             dir,

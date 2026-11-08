@@ -71,30 +71,6 @@ button:hover {
   color: #3574f0;
 }
 
-.tab-close {
-  margin-left: 6px;
-  color: #868a91;
-}
-
-.tab-close:hover {
-  color: #ff8980;
-}
-
-/* A renameable tab's label (see app-shell.js's dblclick handler) turns into
-   this on double-click — sized/positioned to sit exactly where the label
-   text was, so the tab's own width doesn't visibly jump mid-edit. */
-.tab-label-input {
-  box-sizing: border-box;
-  width: 100%;
-  min-width: 40px;
-  font: inherit;
-  color: inherit;
-  background: #1e1f22;
-  border: 1px solid #3574f0;
-  border-radius: 2px;
-  padding: 0 2px;
-}
-
 /* Left unstyled, this inherits the theme's normal (bright) text color,
    making a hint look like text you actually typed — dim it like every
    other placeholder in this design system. */

@@ -11,6 +11,8 @@ crate-type = ["cdylib", "rlib"]
 services-contracts = { path = "../../api/protocol" }
 services-kernel = { path = "../kernel" }
 services-sdk = { path = "../../api/sdk" }
+# Built in on every target: Settings is part of the App.
+services-module-settings = { path = "../../modules/panels/settings" }
 serde.workspace = true
 serde_json.workspace = true
 regex = "1"
@@ -29,6 +31,11 @@ services-module-terminal = { path = "../../modules/services/terminal" }
 services-module-artemis = { path = "../../modules/services/artemis" }
 services-module-variables = { path = "../../modules/panels/variables" }
 services-module-history = { path = "../../modules/panels/history" }
+services-module-templates = { path = "../../modules/panels/templates" }
+services-module-hints = { path = "../../modules/panels/hints" }
+services-module-dictionary = { path = "../../modules/panels/dictionary" }
+services-module-sessions = { path = "../../modules/panels/sessions" }
+services-module-agent = { path = "../../modules/panels/agent" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 base64 = "0.22"

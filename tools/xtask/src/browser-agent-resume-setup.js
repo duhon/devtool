@@ -1,13 +1,13 @@
 (async () => {
   // Setup for agent-resume: creates through the UI the saved chat a later Console window must restore
-  // (a live SDK session with an edit, an inline name, a draft, a closed tab and an empty legacy entry).
-  const { assert, wait, click, doubleClick, testid, editorOf, openConsole, setSource, key } = testDriver;
+  // (a live SDK session with an edit, a name, a draft, a closed tab and an empty legacy entry).
+  const { assert, wait, click, testid, editorOf, openConsole, openPanel, setSource, key } = testDriver;
   await openConsole();
   await click(testid('console-service-rest'));
-  await click(testid('console-agent-toggle'));
-  const textarea = await wait(() => document.querySelector('[data-testid="agent-composer"]'), 'Agent composer');
+  await openPanel('agent', 'console-agent');
   setSource(editorOf('console-editor'), `#check Agent resume\n#endpoint\nGET ${fixtureUrl}/agent-before\n`);
   const input = text => {
+    const textarea = testid('agent-composer');
     textarea.value = text;
     textarea.dispatchEvent(new InputEvent('input', { bubbles: true }));
   };
@@ -15,39 +15,39 @@
   const send = async (text, reply) => {
     input(text);
     await wait(() => testid('agent-stop').disabled, 'Agent idle before sending');
-    textarea.focus();
+    testid('agent-composer').focus();
     await key('Enter');
     await wait(() => transcript().includes(reply),
-      () => `Agent reply "${reply}": ${transcript()}; ${document.querySelector('.agent-error')?.textContent || ''}`);
+      () => `Agent reply "${reply}": ${transcript()}; ${document.querySelector('[data-testid="agent-error"]')?.textContent || ''}`);
     await wait(() => testid('agent-stop').disabled, 'Agent idle after reply');
   };
+  const selected = () => testid('agent-sessions').querySelector('[role="tab"][aria-selected="true"]')?.dataset.testid.slice('agent-chat-'.length);
+  const chats = () => JSON.parse(localStorage.getItem('module:agent:chats') || '{}');
   await send('agent hello', 'Copilot session ready');
   await send('agent edit', 'Edited live check');
-  const sessions = () => testid('agent-sessions');
-  const chat = sessions().querySelector('.active').dataset.sessionId;
+  const chat = selected();
   await click(testid('agent-new-session'));
-  const closedChat = sessions().querySelector('.active').dataset.sessionId;
-  assert(closedChat !== chat, 'A new chat tab must be selected');
+  await wait(() => selected() !== chat, 'A new chat tab must be selected');
+  const closedChat = selected();
   input('Closed chat draft');
-  await click(sessions().querySelector(`[data-session-id="${closedChat}"] [data-testid="agent-session-close"]`));
-  await wait(() => !sessions().querySelector(`[data-session-id="${closedChat}"]`)
-    && sessions().querySelector('.active')?.dataset.sessionId === chat, 'Closing the new chat selects the first one');
-  await doubleClick(sessions().querySelector(`[data-session-id="${chat}"]`));
-  const field = await wait(() => document.querySelector('[data-testid="agent-session-rename"]'), 'Inline chat rename');
+  await click(testid('agent-session-close'));
+  await wait(() => !testid('agent-sessions').querySelector(`[data-testid="agent-chat-${closedChat}"]`)
+    && selected() === chat, 'Closing the new chat selects the first one');
+  await click(testid('agent-session-rename-start'));
+  const field = await wait(() => document.querySelector('[data-testid="agent-session-rename"]'), 'Chat rename');
   field.value = 'Products discussion';
   field.dispatchEvent(new InputEvent('input', { bubbles: true }));
+  field.focus();
   await key('Enter');
-  await wait(() => sessions().querySelector(`[data-session-id="${chat}"] .tab-label`)?.textContent === 'Products discussion',
-    'Chat rename saved');
+  await wait(() => testid(`agent-chat-${chat}`).textContent === 'Products discussion', 'Chat rename saved');
   input('Draft survives panel changes');
-  const saved = () => JSON.parse(localStorage.getItem(`servicesConsole.agentSession.${chat}`) || 'null');
-  await wait(() => saved()?.draft === 'Draft survives panel changes' && saved()?.title === 'Products discussion'
-    && JSON.parse(localStorage.getItem('servicesConsole.agentClosedSessions') || '[]').includes(closedChat)
-    && localStorage.getItem(`servicesConsole.agentActive.${testid('console-session-name').dataset.sessionId}`) === chat,
-    'Chat name, draft and closed tab persisted');
-  const record = saved();
-  record.messages.push({ id: 'legacy-empty', role: 'assistant', text: ' \n ' });
-  localStorage.setItem(`servicesConsole.agentSession.${chat}`, JSON.stringify(record));
+  const session = testid('console-session-name').dataset.sessionId;
+  await wait(() => chats()[chat]?.draft === 'Draft survives panel changes' && chats()[chat]?.title === 'Products discussion'
+    && chats()[closedChat]?.closed && JSON.parse(localStorage.getItem(`module:agent:active.${session}`) || 'null') === chat,
+    () => `Chat name, draft and closed tab persisted: ${JSON.stringify(chats())}`);
+  const saved = chats();
+  saved[chat].messages.push({ id: 'legacy-empty', role: 'assistant', text: ' \n ' });
+  localStorage.setItem('module:agent:chats', JSON.stringify(saved));
   localStorage.setItem('servicesConsole.agentOptions', JSON.stringify({ model: 'sample-powerful', reasoningEffort: 'low' }));
   return true;
 })()

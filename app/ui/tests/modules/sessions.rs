@@ -5,7 +5,7 @@ use serde_json::json;
 use services_ui::sessions::{Layout, Library, Snapshot, forget_service, merge_snapshot};
 
 #[test]
-fn forgetting_a_service_drops_only_its_console_order_and_hints() {
+fn forgetting_a_service_drops_only_its_console_order_and_module_data() {
     let mut snapshot = Snapshot {
         console: json!({"version":1,"service":"rest",
             "documents":{"rest":"#check rest","echo":"#check echo"},
@@ -13,9 +13,14 @@ fn forgetting_a_service_drops_only_its_console_order_and_hints() {
             "order":["echo","rest"]}),
         ..Snapshot::default()
     };
-    snapshot.hints.insert("echo".into(), "x: 1".into());
-    snapshot.hints.insert("rest".into(), "y: 2".into());
-    snapshot.hints_drafts.insert("echo".into(), "x: 3".into());
+    snapshot.modules.insert(
+        "echo".into(),
+        json!({"draft":"x: 1"}).as_object().unwrap().clone(),
+    );
+    snapshot.modules.insert(
+        "rest".into(),
+        json!({"draft":"y: 2"}).as_object().unwrap().clone(),
+    );
     forget_service(&mut snapshot, "echo");
     assert_eq!(
         snapshot.console,
@@ -23,8 +28,7 @@ fn forgetting_a_service_drops_only_its_console_order_and_hints() {
             "responses":{},"order":["rest"]}),
         "a missing key such as checkIdentities must not be added"
     );
-    assert_eq!(snapshot.hints.keys().collect::<Vec<_>>(), ["rest"]);
-    assert!(snapshot.hints_drafts.is_empty());
+    assert_eq!(snapshot.modules.keys().collect::<Vec<_>>(), ["rest"]);
 }
 
 #[test]
@@ -111,17 +115,18 @@ fn session_copies_do_not_inherit_execution_history_identities() {
 fn concurrent_changes_merge_only_when_their_fields_do_not_conflict() {
     let base = Snapshot::default();
     let mut local = base.clone();
-    local.hints.insert("rest".into(), "local".into());
+    let hints = |text: &str| json!({"rest": text}).as_object().unwrap().clone();
+    local.modules.insert("hints".into(), hints("local"));
     let mut remote = base.clone();
     remote.console["documents"]["grpc"] = json!("#check remote");
     let merged = merge_snapshot(&base, &local, &remote).unwrap();
-    assert_eq!(merged.hints["rest"], "local");
+    assert_eq!(merged.modules["hints"]["rest"], "local");
     assert_eq!(merged.console["documents"]["grpc"], "#check remote");
-    remote.hints.insert("rest".into(), "remote".into());
+    remote.modules.insert("hints".into(), hints("remote"));
     assert!(
         merge_snapshot(&base, &local, &remote)
             .unwrap_err()
-            .contains("hints.rest")
+            .contains("modules.hints.rest")
     );
     assert_eq!(merge_snapshot(&base, &local, &local).unwrap(), local);
 }
@@ -129,7 +134,10 @@ fn concurrent_changes_merge_only_when_their_fields_do_not_conflict() {
 #[test]
 fn temporary_starts_empty_and_is_never_a_copy_template() {
     let mut library = Library::default();
-    library.temporary.variables = json!({"secret":"temporary"});
+    library.temporary.modules.insert(
+        "variables".into(),
+        json!({"secret":"temporary"}).as_object().unwrap().clone(),
+    );
     let id = library.copy(0, "Empty").unwrap();
     assert_eq!(library.get(id), Some(&Snapshot::default()));
     library.select(id).unwrap();
@@ -140,25 +148,25 @@ fn temporary_starts_empty_and_is_never_a_copy_template() {
 }
 
 #[test]
-fn copies_are_independent_and_include_checks_variables_hints_and_drafts() {
+fn copies_are_independent_and_include_checks_and_module_data() {
     let mut library = Library::default();
     let a = library.copy(0, "A").unwrap();
     library.select(a).unwrap();
     library.snapshot_mut().console["documents"] = json!({"rest":"#check A"});
-    library.snapshot_mut().variables = json!({"token":"A"});
-    library
-        .snapshot_mut()
-        .hints
-        .insert("rest".into(), "A".into());
-    library
-        .snapshot_mut()
-        .variable_drafts
-        .insert("var".into(), "draft".into());
+    library.snapshot_mut().modules.insert(
+        "variables".into(),
+        json!({"token":"A"}).as_object().unwrap().clone(),
+    );
     let b = library.copy(a, "B").unwrap();
     assert_eq!(library.get(a), library.get(b));
     library.select(b).unwrap();
-    library.snapshot_mut().variables["token"] = json!("B");
-    assert_eq!(library.get(a).unwrap().variables["token"], "A");
+    library
+        .snapshot_mut()
+        .modules
+        .get_mut("variables")
+        .unwrap()
+        .insert("token".into(), json!("B"));
+    assert_eq!(library.get(a).unwrap().modules["variables"]["token"], "A");
     library.delete(b).unwrap();
     assert_eq!(library.current, 0);
     assert!(library.select(b).is_err());

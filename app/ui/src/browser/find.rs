@@ -982,7 +982,7 @@ fn resolve(shared: &Shared) -> Option<Element> {
         .ok()
         .flatten()
         .filter(visible);
-    let in_panel = closest(&anchor, ".console-right-pane, .console-panel-heading").is_some()
+    let in_panel = closest(&anchor, ".console-right-pane").is_some()
         || (closest(&anchor, ".console-toolbar").is_some() && pane.is_some());
     if in_panel {
         return pane.as_ref().and_then(editor_in);

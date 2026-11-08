@@ -1,121 +1,96 @@
 (async () => {
-  const {assert, wait, testid, click, key, editorOf, openConsole} = testDriver;
+  const {assert, wait, testid, click, editorOf, editorAt, openConsole, openPanel, choose, settle} = testDriver;
   // A fresh panel: wait for the restored Console session before using its toolbar.
   await openConsole();
-  if (testid('console-agent-toggle').getAttribute('aria-pressed') !== 'true')
-    await click(testid('console-agent-toggle'));
-  const originalChat = testid('agent-sessions').querySelector('[aria-selected="true"]').dataset.sessionId;
-  const originalDraft = testid('agent-composer').value;
+  const agent = () => openPanel('agent', 'console-agent');
+  await agent();
+  const selected = () => testid('agent-sessions').querySelector('[role="tab"][aria-selected="true"]').dataset.testid;
+  const chatId = key => key.slice('agent-chat-'.length);
+  const chats = () => JSON.parse(localStorage.getItem('module:agent:chats') || '{}');
+  const originalChat = selected();
   const originalOptions = localStorage.getItem('servicesConsole.agentOptions');
   const created = [];
-  const input = (element, value) => {
-    element.value = value;
-    element.dispatchEvent(new InputEvent('input', {bubbles:true}));
-  };
+  const status = () => document.querySelector('[data-testid="console-settings-status"]')?.textContent || '';
   const settings = async () => {
     await testDriver.settingsTab('agent');
-    await wait(() => testid('agent-model-input') && !testid('agent-model-input').disabled,
-      () => `Model catalog did not load: ${document.querySelector('[data-testid="settings-update-status"]')?.textContent}`);
+    await wait(() => document.querySelector('[data-testid="agent-model-input"]'),
+      () => `Model catalog did not load: ${status()}; ${testid('settings-tab-agent-body').textContent}`);
   };
-  const agent = async () => {
-    if (testid('console-agent-toggle').getAttribute('aria-pressed') !== 'true')
-      await click(testid('console-agent-toggle'));
+  const model = () => testid('agent-model-input');
+  const selectModel = async (id, category) => {
+    choose(model(), id);
+    await wait(() => model().value === id && testid('agent-model-category').textContent === category,
+      () => `Model ${id} must be selected with its category: ${model().value}; ${document.querySelector('[data-testid="agent-model-category"]')?.textContent}`);
   };
-  const selectModel = async (query, name, category) => {
-    const field = testid('agent-model-input');
+  const assistants = () => testid('agent-transcript').querySelectorAll('[data-testid^="agent-message-assistant-"]');
+  const ask = async prompt => {
+    const before = assistants().length;
+    const field = testid('agent-composer');
+    field.value = prompt;
+    field.dispatchEvent(new InputEvent('input', {bubbles:true}));
     field.focus();
-    input(field, query);
-    await wait(() => document.querySelectorAll('[data-testid="agent-model-options"] [role="option"]').length === 1);
-    assert(testid('agent-model-options').textContent.includes(category), 'Suggestions must include the model category');
-    await key('Enter');
-    await wait(() => field.value === name && !document.querySelector('[data-testid="agent-model-options"]'));
-    assert(testid('agent-model-category').textContent === category, 'The selected model must keep its category');
+    await testDriver.key('Enter');
+    await wait(() => assistants().length > before && testid('agent-stop').disabled,
+      () => `Turn "${prompt}" did not finish: ${testid('agent-transcript').textContent}; ${document.querySelector('[data-testid="agent-error"]')?.textContent}`);
+    return [...assistants()].at(-1).textContent;
   };
   const configuration = async () => {
-    const field = testid('agent-composer');
-    const before = testid('agent-transcript').querySelectorAll('.agent-message-assistant').length;
-    input(field, 'agent model configuration');
-    field.focus();
-    await key('Enter');
-    await wait(() => testid('agent-stop').disabled
-      && testid('agent-transcript').querySelectorAll('.agent-message-assistant').length > before,
-      () => `Model-config turn did not finish: ${testid('agent-transcript').textContent}; ${document.querySelector('.agent-error')?.textContent}`);
-    const message = [...testid('agent-transcript').querySelectorAll('.agent-message-assistant')].at(-1).textContent;
+    const message = await ask('agent model configuration');
     return JSON.parse(message.match(/Model configuration: (\{[^\n]+\})/)?.[1] || '{}');
   };
-  const ask = async prompt => {
-    const field = testid('agent-composer');
-    const before = testid('agent-transcript').querySelectorAll('.agent-message-assistant').length;
-    input(field, prompt);
-    field.focus();
-    await key('Enter');
-    await wait(() => testid('agent-stop').disabled
-      && testid('agent-transcript').querySelectorAll('.agent-message-assistant').length > before,
-      () => `Turn "${prompt}" did not finish: ${testid('agent-transcript').textContent}; ${document.querySelector('.agent-error')?.textContent}`);
-    return [...testid('agent-transcript').querySelectorAll('.agent-message-assistant')].at(-1).textContent;
-  };
   const newChat = async () => {
+    const before = selected();
     await click(testid('agent-new-session'));
-    const id = testid('agent-sessions').querySelector('[aria-selected="true"]').dataset.sessionId;
+    await wait(() => selected() !== before);
+    const id = selected();
     created.push(id);
     return id;
   };
   try {
     await settings();
-    assert(testid('agent-model-input').value === 'Copilot Fusion', 'An unconfigured client must default to Copilot Fusion');
+    assert(model().value === 'auto' && model().selectedOptions[0].textContent.startsWith('Copilot Fusion'),
+      `An unconfigured client must default to Copilot Fusion: ${model().value}`);
     assert(testid('agent-model-category').textContent === 'Automatic', 'Fusion must be identified as the automatic router');
-    assert(testid('agent-reasoning').disabled && testid('agent-reasoning-value').textContent === 'Not supported',
+    assert(!document.querySelector('[data-testid="agent-reasoning"]') && testid('agent-reasoning-value').textContent === 'Not supported',
       'Fusion must manage Reasoning automatically');
-    const field = testid('agent-model-input');
-    field.focus();
-    await wait(() => document.querySelector('[data-testid="agent-model-options"]'));
-    assert(!document.querySelector('[data-model-id="sample-disabled"]'), 'Disabled models must not be selectable');
-    await key('ArrowDown');
-    await key('ArrowDown');
-    assert(testid('agent-model-options').querySelector('[aria-selected="true"]').dataset.modelId === 'sample-powerful',
-      'ArrowDown must move the active suggestion');
-    await key('ArrowUp');
-    await key('Escape');
-    assert(!document.querySelector('[data-testid="agent-model-options"]'), 'Escape must close suggestions');
-    input(field, 'does-not-exist');
-    await wait(() => document.querySelector('[data-testid="agent-model-options"]')?.textContent.includes('No matching models'),
-      () => `No-match state missing: value=${field.value}; expanded=${field.getAttribute('aria-expanded')}; settingsHidden=${testid('settings-panel')?.hidden}; active=${document.activeElement?.dataset?.testid}`);
-    assert(localStorage.getItem('servicesConsole.agentOptions') === originalOptions, 'Typing a search must not save an invalid model');
-    await key('Escape');
-    await selectModel('powerful', 'Sample Powerful', 'Powerful');
+    assert(![...model().options].some(option => option.value === 'sample-disabled'), 'Disabled models must not be selectable');
+    assert(localStorage.getItem('servicesConsole.agentOptions') === originalOptions, 'Opening Settings must not save a model');
+    await selectModel('sample-powerful', 'Powerful');
     const reasoning = () => testid('agent-reasoning');
-    const levels = () => [...document.querySelectorAll('[data-testid="agent-reasoning-level"]')].map(level => level.textContent).join(',');
+    const levels = () => [...document.querySelectorAll('[data-testid^="agent-reasoning-level-"]')].map(level => level.textContent).join(',');
     const reasoningValue = () => testid('agent-reasoning-value').textContent;
     const stored = () => JSON.parse(localStorage.getItem('servicesConsole.agentOptions'));
     assert(levels() === 'low,high' && reasoning().max === '1',
       `The Reasoning slider must have one step per model level: ${levels()}`);
-    assert(reasoning().getAttribute('aria-valuetext') === 'high' && reasoningValue() === 'high · default',
-      `A new model must show its default Reasoning: ${reasoningValue()}`);
-    input(reasoning(), '0');
-    await wait(() => stored().reasoningEffort === 'low' && reasoningValue() === 'low');
-    assert(testid('settings-update-status').textContent.includes('New Agent chat settings')
-      && !testid('settings-panel').querySelector('[role="alert"]'), 'Settings results belong in the shared footer');
+    assert(reasoningValue() === 'high · default', `A new model must show its default Reasoning: ${reasoningValue()}`);
+    reasoning().value = '0';
+    reasoning().dispatchEvent(new Event('change', {bubbles:true}));
+    await wait(() => stored()?.reasoningEffort === 'low' && reasoningValue() === 'low',
+      () => `Reasoning must be saved: ${JSON.stringify(stored())}; ${reasoningValue()}`);
+    await wait(() => status().includes('New Agent chat settings'), () => `Settings results belong in the status: ${status()}`);
     await agent();
     const old = await configuration();
-    assert(old.model === 'auto' && old.reasoningEffort === null, 'Existing chats must not adopt new defaults');
+    assert(old.model === 'auto' && old.reasoningEffort === null, `Existing chats must not adopt new defaults: ${JSON.stringify(old)}`);
     const powerfulChat = await newChat();
     const powerful = await configuration();
     assert(powerful.model === 'sample-powerful' && powerful.reasoningEffort === 'low',
       `The SDK must receive the selected model and reasoning: ${JSON.stringify(powerful)}`);
-    const saved = JSON.parse(localStorage.getItem(`servicesConsole.agentSession.${powerfulChat}`));
-    assert(saved.options.model === 'sample-powerful' && saved.options.reasoningEffort === 'low',
+    const saved = chats()[chatId(powerfulChat)];
+    assert(saved?.options.model === 'sample-powerful' && saved.options.reasoningEffort === 'low',
       'A chat must persist its captured defaults');
     await settings();
-    assert(field.value === 'Sample Powerful' && reasoning().value === '0' && reasoningValue() === 'low',
+    assert(model().value === 'sample-powerful' && reasoning().value === '0' && reasoningValue() === 'low',
       'Reopening Settings must retain choices');
-    await click(document.querySelector('[data-testid="agent-reasoning-level"]:last-child'));
+    await click(testid('agent-reasoning-level-high'));
     await wait(() => stored().model === 'sample-powerful' && stored().reasoningEffort === null
       && reasoning().value === '1' && reasoningValue() === 'high · default',
       () => `Choosing the model default must follow the model again: ${JSON.stringify(stored())}; ${reasoningValue()}`);
-    await selectModel('light', 'Sample Light', 'Lightweight');
-    assert(reasoning().disabled && !levels() && reasoningValue() === 'Not supported',
+    await selectModel('sample-light', 'Lightweight');
+    assert(!document.querySelector('[data-testid="agent-reasoning"]') && !levels() && reasoningValue() === 'Not supported',
       'Models without Reasoning must disable and reset the slider');
     await agent();
+    await click(testid('agent-sessions').querySelector(`[data-testid="${powerfulChat}"]`));
+    await wait(() => selected() === powerfulChat);
     const retained = await configuration();
     assert(retained.model === 'sample-powerful' && retained.reasoningEffort === 'low',
       'Changing defaults must not change an already-created SDK session');
@@ -124,50 +99,47 @@
     assert(light.model === 'sample-light' && light.reasoningEffort === null,
       'New chats must capture the latest model without unsupported Reasoning');
 
-    await settings();
-    assert(!document.querySelector('[data-testid="source"]'), 'The scenario starts without sources');
+    await testDriver.settingsTab('sources');
+    assert(!document.querySelector('[data-testid^="source-name-"]'), 'The scenario starts without sources');
     await testDriver.addFolderSource('Team', fixtureSource);
     await testDriver.settingsTab('sources');
-    const team = () => document.querySelector('[data-testid="source"][data-source="team"]');
-    await wait(() => team()?.querySelector('[data-testid="source-apply"]'),
-      () => `The added source must be checked and offer its settings: ${team()?.textContent}; ${testid('settings-update-status').textContent}`);
-    const changes = team().querySelector('[data-testid="source-changes"]').textContent;
+    await wait(() => document.querySelector('[data-testid="source-apply-team"]'),
+      () => `The added source must be checked and offer its settings: ${testid('settings-tab-sources-body').textContent}; ${status()}`);
+    const changes = testid('source-changes-team').textContent;
     assert(changes.includes('skill team-shop-deploy added') && changes.includes('dictionary team/HOST added'),
       `The check must list what applying changes: ${changes}`);
-    await click(team().querySelector('[data-testid="source-apply"]'));
-    await wait(() => team()?.querySelector('[data-testid="source-up-to-date"]'),
-      () => `Applying must bring the source's settings: ${team()?.textContent}`);
+    await click(testid('source-apply-team'));
+    await wait(() => document.querySelector('[data-testid="source-up-to-date-team"]'),
+      () => `Applying must bring the source's settings: ${testid('source-team').textContent}`);
     await agent();
     await newChat();
     const used = await ask('agent skills');
     assert(/skills: .*team-shop-deploy/.test(used) && used.includes('sources/team/skills'),
       `The next turn must hand the source's skill to Copilot: ${used}`);
-    assert(document.querySelector('[data-testid="agent-status-debug"]').textContent.includes('team-shop-deploy'),
+    assert(document.querySelector('[data-testid="console-agent-status-debug"]')?.textContent.includes('team-shop-deploy'),
       'The Agent status debug must list the skills Copilot used');
 
-    await click(testid('console-dictionary-toggle'));
-    const tabs = () => [...document.querySelector('.console-panel-tabs').querySelectorAll('[role="tab"]')];
-    const profile = await wait(() => tabs().find(tab => tab.querySelector('.tab-label')?.textContent === 'team'),
-      () => `The source's Dictionary profile must be listed: ${tabs().map(tab => tab.textContent)}`);
+    await openPanel('dictionary');
+    const profile = await wait(() => document.querySelector('[data-testid="dictionary-set-team"]'),
+      () => `The source's Dictionary set must be listed: ${testid('dictionary-tabs').textContent}`);
     await click(profile);
+    const dictionary = () => editorAt('console-dictionary');
     await wait(() => document.querySelector('[data-testid="dictionary-origin-label"]')?.textContent === 'From source Team'
-      && editorOf('console-dictionary').getValue().includes('team.fixture.invalid'),
-      () => `A source profile must name its source: ${document.querySelector('[data-testid="dictionary-origin"]')?.textContent}`);
-    assert(!document.querySelector('[data-testid="dictionary-reset"]'), 'An untouched source profile has nothing to reset');
-    editorOf('console-dictionary').setValue(editorOf('console-dictionary').getValue().replace('team.fixture.invalid', 'mine.fixture.invalid'));
-    const own = () => document.querySelector('[data-testid="dictionary-reset-variable"][data-variable="HOST"]');
-    await wait(() => own() && !document.querySelector('[data-testid="dictionary-reset-variable"][data-variable="PORT"]'),
-      () => `A changed variable must become the user's own: ${testid('dictionary-origin').textContent}`);
-    await click(own());
-    await wait(() => !own() && editorOf('console-dictionary').getValue().includes('team.fixture.invalid'),
-      () => `Reset must restore the source's value: ${editorOf('console-dictionary').getValue()}`);
-    await click(testid('console-dictionary-toggle'));
+      && dictionary()?.getValue().includes('team.fixture.invalid'),
+      () => `A source set must name its source: ${document.querySelector('[data-testid="dictionary-origin"]')?.textContent}`);
+    assert(!document.querySelector('[data-testid="dictionary-reset"]'), 'An untouched source set has nothing to reset');
+    dictionary().setValue(dictionary().getValue().replace('team.fixture.invalid', 'mine.fixture.invalid'));
+    await wait(() => document.querySelector('[data-testid="dictionary-reset"]')
+      && testid('dictionary-origin-label').textContent === 'Changed; from source Team',
+      () => `A changed set must become the user's own: ${testid('dictionary-origin').textContent}`);
+    await click(testid('dictionary-reset'));
+    await wait(() => !document.querySelector('[data-testid="dictionary-reset"]') && dictionary()?.getValue().includes('team.fixture.invalid'),
+      () => `Reset must restore the source's values: ${dictionary()?.getValue()}`);
 
-    await settings();
     await testDriver.settingsTab('sources');
-    await click(team().querySelector('[data-testid="source-remove"]'));
-    await click(team().querySelector('[data-testid="source-remove-confirm"]'));
-    await wait(() => !team(), 'Removing the source must remove its row');
+    await click(testid('source-remove-team'));
+    await click(await wait(() => document.querySelector('[data-testid="source-remove-confirm-team"]')));
+    await wait(() => !document.querySelector('[data-testid="source-team"]'), 'Removing the source must remove its row');
     await agent();
     const cleared = await ask('agent skills');
     assert(!cleared.includes('team-shop-deploy'), `A removed source must stop reaching Copilot: ${cleared}`);
@@ -175,10 +147,17 @@
     if (originalOptions === null) localStorage.removeItem('servicesConsole.agentOptions');
     else localStorage.setItem('servicesConsole.agentOptions', originalOptions);
     await agent();
-    for (const id of created)
-      await click(testid('agent-sessions').querySelector(`[data-session-id="${id}"] [data-testid="agent-session-close"]`));
-    await click(testid('agent-sessions').querySelector(`[data-session-id="${originalChat}"]`));
-    input(testid('agent-composer'), originalDraft);
+    for (const id of created) {
+      const tab = testid('agent-sessions').querySelector(`[data-testid="${id}"]`);
+      if (!tab) continue;
+      await click(tab);
+      await wait(() => selected() === id);
+      await click(testid('agent-session-close'));
+      await wait(() => !testid('agent-sessions').querySelector(`[data-testid="${id}"]`));
+    }
+    const original = testid('agent-sessions').querySelector(`[data-testid="${originalChat}"]`);
+    if (original) await click(original);
+    await settle();
   }
   globalThis.agentSettingsReceipt = {categories:3,reasoning:['low','high'],newChats:created.length,existingChatPreserved:true,sourceSkills:['team-shop-deploy'],dictionaryReset:true};
   return true;

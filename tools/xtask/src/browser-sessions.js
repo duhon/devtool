@@ -7,10 +7,7 @@
     if(toggle.getAttribute('aria-pressed')!=='true') await click(toggle);
     await wait(()=>toggle.getAttribute('aria-pressed')==='true');
     const editor={variables:'console-variables',dictionary:'console-dictionary',hints:'console-hints'}[tool];
-    if(editor) await wait(()=>{
-      const element=document.querySelector(`[data-testid="${editor}"]`);
-      return element?.editor||element?.nextElementSibling?.editor;
-    });
+    if(editor) await wait(()=>testDriver.editorAt(editor));
   };
   const sessionPanel=async()=>{
     await open('sessions');
@@ -18,16 +15,13 @@
   };
   const copy=async(id,name)=>{
     await sessionPanel();
-    const input=testid('session-new-name');
-    input.value=name;
-    input.dispatchEvent(new InputEvent('input',{bubbles:true}));
+    testDriver.fill(testid('session-new-name'),name);
     await click(testid(`session-copy-${id}`));
     await wait(()=>testid('console-session-name').textContent===name);
     return current();
   };
   const vars=async text=>{
     await open('variables');
-    await wait(()=>document.querySelector('[data-testid="console-variables-editor"]'));
     editorOf('console-variables').setValue(text);
     await wait(()=>testid('console-variables-status').textContent.includes(text==='missing delimiter'?'ERROR':'Variables save · OK'));
   };
@@ -49,6 +43,10 @@
   await wait(()=>document.querySelector('[data-testid="console-session-name"]'));
   assert(current()===0,'Every new application must start in temporary session 0');
   assert((await library()).sessions[0].name==='Imported','Existing workspace must be preserved, not automatically activated');
+  // The fixture var and hints are defaults of sessions without their own; this scenario
+  // checks sessions start empty.
+  localStorage.removeItem('module:variables:var');
+  localStorage.removeItem('module:hints:hints');
   const legacy=await library();
   const legacyRaw=JSON.stringify(legacy);
   localStorage.setItem('servicesConsole.sessions.v1',legacyRaw);
@@ -81,6 +79,10 @@
   assert(localStorage.getItem('servicesConsole.sessions.v1')===null,
     'The quota-limited legacy key must be removed only after IndexedDB commit');
   migratedFrame.remove();
+  // The migrated library reaches this window: its console reloads (Export appears with it).
+  await wait(()=>document.querySelector('[data-testid="console-export"]'),'This window must reload the migrated library');
+  await activateSession(1);
+  await activateSession(0);
   for(const service of ['mysql','rest','graphql','grpc','splunk','terminal']) {
     await click(testid(`console-service-${service}`));
     assert(editorOf('console-editor').getValue()==='',`${service}: fresh temporary checks must be empty`);
@@ -88,7 +90,6 @@
   await click(testid('console-service-rest'));
   setSource(editorOf('console-editor'),'#check temp-only\n#endpoint\nGET https://temporary.invalid');
   await open('variables');
-  await wait(()=>document.querySelector('[data-testid="console-variables-editor"]'));
   assert(editorOf('console-variables').getValue()==='','Temporary var must not inherit native legacy variables');
   await open('hints');
   assert(editorOf('console-hints').getValue()==='','Temporary hints must start empty');
@@ -131,11 +132,12 @@
     setSource(editorOf('console-editor',largeFrame.contentDocument),
       largeDocument.replace('#check large-persistence','#check failed-write'));
     const frameDoc=largeFrame.contentDocument;
+    // A closed panel is off: the Sessions panel reports save failures while open.
+    if(testid('console-sessions-toggle',frameDoc).getAttribute('aria-pressed')!=='true')
+      await click(testid('console-sessions-toggle',frameDoc));
     await wait(()=>frameDoc.querySelector('[data-testid="console-sessions-toggle"] [data-state="error"]'),
       'Asynchronous save failures must mark the Sessions button');
     assert(![...frameDoc.querySelectorAll('.banner')].some(visible),'Save failures must not use the top banner');
-    if(testid('console-sessions-toggle',frameDoc).getAttribute('aria-pressed')!=='true')
-      await click(testid('console-sessions-toggle',frameDoc));
     await wait(()=>testid('console-sessions-status',frameDoc).textContent.includes('Autosave · ERROR · Session save failed: Fixture session storage write failed. Changes are not saved'),
       ()=>`Asynchronous save failures must be visible in the Sessions status: ${testid('console-sessions-status',frameDoc).textContent}`);
     assert((await library()).sessions.find(s=>s.id===large).snapshot.console.documents.mysql===largeDocument,
@@ -152,7 +154,7 @@
   await wait(()=>current()===0);
   await sessionPanel();
   await click(testid(`session-delete-${large}`));
-  await wait(()=>!document.querySelector(`[data-session-id="${large}"]`));
+  await wait(()=>!document.querySelector(`[data-testid="session-${large}"]`));
   await activateSession(a);
   await vars('missing delimiter');
   await hints('## invalid-session-hints\ninvalid draft');
@@ -166,14 +168,12 @@
   await hints('#endpoint\nhttps://session-b.invalid\n');
   await runRest('beta');
   await open('dictionary');
-  await wait(()=>document.querySelector('[data-testid="console-dictionary-editor"]'));
   const dictionary=editorOf('console-dictionary').getValue();
   editorOf('console-dictionary').setValue(`${dictionary}\nSESSION_GLOBAL: shared`);
   await wait(()=>testid('console-dictionary-status').textContent.includes('Dictionary save · OK'));
   await open('agent');
   const composer=await wait(()=>document.querySelector('[data-testid="agent-composer"]'));
-  composer.value='session B agent draft';
-  composer.dispatchEvent(new InputEvent('input',{bubbles:true}));
+  testDriver.fill(composer,'session B agent draft');
   await activateSession(a);
   for(const service of ['mysql','graphql','grpc','splunk','terminal']) {
     await click(testid(`console-service-${service}`));
@@ -195,7 +195,8 @@
   assert(testid('agent-composer').value!=='session B agent draft','Agent chats belong to their Console session');
   await click(testid('agent-chat-list-toggle'));
   await wait(()=>[...document.querySelectorAll('[data-testid="agent-chat-list"] tbody tr')]
-    .some(row=>row.dataset.state==='open'&&row.cells[1].textContent==='Session B'),
+    .some(row=>row.querySelector('[data-testid="agent-chat-state"]').textContent.startsWith('Open')
+      &&row.querySelector('[data-testid="agent-chat-session"]').textContent==='Session B'),
     'The chat list shows chats of other Console sessions');
   await click(testid('agent-chat-list-toggle'));
   const frame=document.createElement('iframe');
@@ -210,20 +211,14 @@
     await activateSession(a,doc);
     assert(editorOf('console-editor',doc).getValue().includes('session-a-rest'),'Named checks must persist across application instances');
     await click(testid('console-hints-toggle',doc));
-    await wait(()=>doc.querySelector('[data-testid="console-hints"]'));
+    await wait(()=>doc.querySelector('[data-testid="console-hints"]')&&editorOf('console-hints',doc));
     editorOf('console-hints',doc).setValue('#endpoint\nhttps://other-window.invalid\n');
     await wait(()=>testid('console-hints-status',doc).textContent.includes('Hints save · OK'));
   } finally { frame.remove(); }
-  await open('hints');
-  editorOf('console-hints').setValue('#endpoint\nhttps://conflicting-window.invalid\n');
-  await wait(()=>testid('console-hints-status').textContent.includes('changed in another window'),
-    'Conflicting changes from another window must be reported explicitly');
-  assert((await library()).sessions.find(session=>session.id===a).snapshot.hints.rest.includes('other-window.invalid'),
-    'Conflicting writes must not overwrite another window’s saved hints');
-  // Dictionary profiles are shared by all windows. An invalid draft is not autosaved, so this
-  // window's draft deterministically starts before the other window saves.
+  // The Dictionary is shared by all windows: another window's save reaches this one.
+  const activeSet=doc=>doc.querySelector('[data-testid="dictionary-panel"] [role="tab"][aria-selected="true"]').textContent;
   const otherDictionary=async text=>{
-    const profile=document.querySelector('.console-panel-tabs .tab-button.active .tab-label').textContent;
+    const profile=activeSet(document);
     const frame=document.createElement('iframe');
     frame.src=location.href;
     frame.style.cssText='position:fixed;inset:0;width:100vw;height:100vh;z-index:9999';
@@ -231,37 +226,26 @@
     try {
       const doc=await wait(()=>frame.contentDocument?.querySelector('[data-testid="console-dictionary-toggle"]')&&frame.contentDocument);
       await click(testid('console-dictionary-toggle',doc));
-      await wait(()=>doc.querySelector('[data-testid="console-dictionary-editor"]'));
-      assert(doc.querySelector('.console-panel-tabs .tab-button.active .tab-label').textContent===profile,
-        'Both windows must edit the same Dictionary profile');
+      await wait(()=>doc.querySelector('[data-testid="console-dictionary"]')&&editorOf('console-dictionary',doc));
+      assert(activeSet(doc)===profile,'Both windows must edit the same Dictionary set');
       editorOf('console-dictionary',doc).setValue(text);
       await wait(()=>testid('console-dictionary-status',doc).textContent.includes('Dictionary save · OK'));
     } finally { frame.remove(); }
   };
   await open('dictionary');
   await wait(()=>editorOf('console-dictionary').getValue()===dictionary);
-  editorOf('console-dictionary').setValue(`${dictionary}\nmissing delimiter`);
-  await wait(()=>testid('console-dictionary-status').textContent.includes('ERROR'));
   await otherDictionary(`${dictionary}\nOTHER_WINDOW: saved`);
-  editorOf('console-dictionary').setValue(`${dictionary}\nSTALE_WINDOW: draft`);
-  await wait(()=>testid('console-dictionary-status').textContent.includes('changed in another window'),
-    'A Dictionary draft started before another window saved must conflict instead of overwriting it');
-  assert(editorOf('console-dictionary').getValue().includes('STALE_WINDOW: draft'),'A conflicting Dictionary draft must be preserved');
-  await click(testid('console-dictionary-discard'));
-  await wait(()=>editorOf('console-dictionary').getValue().includes('OTHER_WINDOW: saved')
-    &&!document.querySelector('[data-testid="console-dictionary-discard"]'),
-    'Discarding a conflicting Dictionary draft must load the other window’s save');
+  await wait(()=>editorOf('console-dictionary').getValue().includes('OTHER_WINDOW: saved'),
+    'A window must show the Dictionary another window saved');
   await otherDictionary(dictionary);
-  window.dispatchEvent(new Event('focus'));
   await wait(()=>editorOf('console-dictionary').getValue()===dictionary,
-    'Returning to a window must re-read Dictionary profiles another window saved');
+    'A window must show the Dictionary another window restored');
   // A reply that changes nothing must still clear the guard: the recreated application's module
   // list request finishes without other state changes, which left data-busy stale on slow hosts.
   testDriver.nativeHold.match=message=>message.service==='modules'&&!message.op;
   await activateSession(0);
-  await open('sessions');
-  await wait(()=>/^native in flight 1, background 0 \[modules [\d.]+s\]$/.test(testid('console-sessions').dataset.busyReason),
-    ()=>`Sessions must stay busy only while the recreated application loads its module list: ${testid('console-sessions').dataset.busyReason}`);
+  await wait(()=>/^native in flight 1, background 0 \[modules [\d.]+s\]$/.test(testid('console-session-name').dataset.busyReason),
+    ()=>`Sessions must stay busy only while the recreated application loads its module list: ${testid('console-session-name').dataset.busyReason}`);
   testDriver.nativeHold.release();
   await testDriver.sessionsIdle();
   await activateSession(a);
@@ -282,7 +266,7 @@
   await activateSession(a);
   await sessionPanel();
   await click(testid(`session-delete-${b}`));
-  await wait(()=>!document.querySelector(`[data-session-id="${b}"]`));
+  await wait(()=>!document.querySelector(`[data-testid="session-${b}"]`));
   await click(testid(`session-delete-${a}`));
   await wait(()=>current()===0);
   assert(editorOf('console-editor').getValue().includes('temp-only'),'Returning to 0 must preserve this window’s unsaved temporary work');

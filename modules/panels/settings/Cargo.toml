@@ -1,0 +1,16 @@
+[package]
+name = "services-module-settings"
+version = "3.7.0"
+edition.workspace = true
+publish.workspace = true
+description = "Settings panel module, built into the App: modules, their sources and the Agent's model"
+
+# Built in: the App links it; it is not packaged, removed or updated on its own.
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+services-sdk = { path = "../../../api/sdk" }
+services-contracts = { path = "../../../api/protocol" }
+serde.workspace = true
+serde_json.workspace = true

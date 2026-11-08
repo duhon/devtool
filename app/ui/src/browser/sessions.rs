@@ -301,7 +301,8 @@ pub enum Msg {
     Loaded(Result<(Database, Option<Library>), String>),
     Imported(Result<Library, String>),
     Storage,
-    Bootstrap(Reply),
+    /// No saved sessions yet: the checks of the single-workspace storage are imported.
+    Bootstrap,
     Select(u64),
     Retry,
 }
@@ -421,11 +422,7 @@ impl Component for Host {
                     if let Some(library) = library {
                         ctx.link().send_message(Msg::Imported(Ok(library)));
                     } else {
-                        self.transport.request(
-                            json!({"service":"sessions","op":"bootstrap"}),
-                            false,
-                            ctx.link().callback(Msg::Bootstrap),
-                        );
+                        ctx.link().send_message(Msg::Bootstrap);
                     }
                 }
                 Err(error) => {
@@ -440,53 +437,12 @@ impl Component for Host {
                 self.load(ctx);
             }
             Msg::Select(id) => self.active = id,
-            Msg::Bootstrap(reply) => {
+            Msg::Bootstrap => {
                 let result = (|| -> Result<Library, String> {
-                    let value = match reply {
-                        Reply::Result(value) => value,
-                        Reply::Error(value) => {
-                            return Err(value["error"]
-                                .as_str()
-                                .unwrap_or("Session import failed")
-                                .into());
-                        }
-                        _ => return Err("Invalid session import reply".into()),
-                    };
-                    if !value["variables"].is_object() || !value["hints"].is_object() {
-                        return Err("Incomplete session import".into());
-                    }
-                    let mut snapshot = Snapshot {
-                        variables: value["variables"].clone(),
-                        hints: serde_json::from_value(value["hints"].clone())
-                            .map_err(|e| e.to_string())?,
-                        ..Default::default()
-                    };
+                    let mut snapshot = Snapshot::default();
                     if let Some(raw) = read("servicesConsole.state")? {
                         snapshot.console = serde_json::from_str(&raw)
                             .map_err(|e| format!("Cannot import saved checks: {e}"))?;
-                    }
-                    for (key, drafts) in [
-                        (
-                            "servicesConsole.variableDraftsV2",
-                            &mut snapshot.variable_drafts,
-                        ),
-                        ("servicesConsole.hintsDrafts", &mut snapshot.hints_drafts),
-                    ] {
-                        if let Some(raw) = read(key)? {
-                            *drafts = serde_json::from_str(&raw)
-                                .map_err(|e| format!("Cannot import drafts: {e}"))?;
-                        }
-                    }
-                    if read("servicesConsole.variableDraftsV2")?.is_none()
-                        && let Some(raw) = read("servicesConsole.variablesDrafts")?
-                    {
-                        let drafts: std::collections::BTreeMap<String, String> =
-                            serde_json::from_str(&raw)
-                                .map_err(|e| format!("Cannot import variable drafts: {e}"))?;
-                        snapshot.variable_drafts = drafts
-                            .into_iter()
-                            .filter(|(name, _)| name == "var")
-                            .collect();
                     }
                     let mut library = Library::default();
                     let id = library.copy(0, "Imported")?;

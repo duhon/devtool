@@ -1,22 +1,15 @@
 mod agent_markdown;
-mod agent_panel;
-mod agent_settings;
 mod app;
 mod check_rail;
-mod console_variables;
 mod editor;
 mod find;
-mod history;
 mod kernel_modules;
-mod module_settings;
-mod page_agent;
 mod pane_resizer;
 mod session_database;
 mod sessions;
-mod sources_settings;
-mod templates;
 mod transport;
 mod updates;
+mod view;
 mod views;
 
 use js_sys::{Function, Reflect};

@@ -451,14 +451,18 @@ pub struct Updated {
     pub subscriptions: Option<Subscriptions>,
 }
 
-/// Resolve the `{{…}}` variables of `text`; in `json` mode each value is escaped as the
-/// content of a JSON string.
+/// Resolve the `{{…}}` variables of `text` a panel owns; in `json` mode each value is
+/// escaped as the content of a JSON string. The Kernel asks every panel by `order` until the
+/// text stops changing, then once more with `last`: the panel then resolves what it can only
+/// fall back to (Variables: `{{:x}}` from the environment) or fails on what it owns.
 #[derive(Clone, PartialEq, Message)]
 pub struct ResolveRequest {
     #[prost(string, tag = "1")]
     pub text: String,
     #[prost(bool, tag = "2")]
     pub json: bool,
+    #[prost(bool, tag = "3")]
+    pub last: bool,
 }
 
 /// A panel's answer to [`ResolveRequest`]: `handled` is false when it keeps no variables.

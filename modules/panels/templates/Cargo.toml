@@ -1,0 +1,15 @@
+[package]
+name = "services-module-templates"
+version = "3.7.0"
+edition.workspace = true
+publish.workspace = true
+description = "Templates panel module: the template library of every service section"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+services-sdk = { path = "../../../api/sdk" }
+serde.workspace = true
+serde_json.workspace = true
+services-contracts = { path = "../../../api/protocol" }

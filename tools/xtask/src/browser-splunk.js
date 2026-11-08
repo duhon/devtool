@@ -1,5 +1,5 @@
 (async () => {
-  const { assert, wait, click, testid, editorOf, openConsole, setSource, key, visible, settle } = testDriver;
+  const { assert, wait, click, testid, editorOf, editorAt, openConsole, setSource, key, visible, settle } = testDriver;
   await openConsole();
   await click(testid('console-service-splunk'));
   const editor = editorOf('console-editor');
@@ -102,10 +102,9 @@
   editor.scrollIntoView({line:region.request,ch:0});
   await wait(() => !document.querySelector('[data-testid="console-history-toggle"]')?.disabled);
   await click(testid('console-history-toggle'));
-  await wait(() => document.querySelector('[data-testid="history-entry"]'));
-  await click(testid('history-entries').querySelector('[data-testid="history-entry"]'));
-  await wait(() => document.querySelector('[data-testid="history-editor"]')
-    && editorOf('history-editor').getValue().includes('splunk-preview-🦀-3'));
+  await wait(() => document.querySelector('[data-testid^="history-entry-"]'));
+  await click(document.querySelector('[data-testid^="history-entry-"]'));
+  await wait(() => editorAt('history-editor')?.getValue().includes('splunk-preview-🦀-3'));
   const saved = editorOf('history-editor').getValue();
   assertTyped(editorOf('history-editor'));
   assert(saved.includes('Preview results are provisional') && saved.includes('· WARNING')

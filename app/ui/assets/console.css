@@ -87,7 +87,7 @@
   background: #713a36;
 }
 
-:is(.console-tab-strip, .console-panel-tabs, .console-panel-heading) > .tab-button,
+:is(.console-tab-strip, .ui-tab-strip, .ui-panel-title) > .tab-button,
 .console-check-link,
 .console-toolbar > button {
   position: relative;
@@ -227,20 +227,6 @@
   content: '▸';
 }
 
-.console-fold-placeholder {
-  display: inline-block;
-  min-width: 18px;
-  margin-left: 4px;
-  padding: 0 6px;
-  border-radius: 3px;
-  background: #3a3d43;
-  color: #a8adb7;
-  font-family: inherit;
-  line-height: 18px;
-  text-align: center;
-  vertical-align: baseline;
-}
-
 .console-editor-host[hidden] {
   display: none;
 }
@@ -284,28 +270,6 @@
   overflow: hidden;
 }
 
-.console-panel-heading {
-  box-sizing: border-box;
-  display: flex;
-  grid-column: 2;
-  grid-row: 1;
-  align-items: stretch;
-  min-width: 0;
-  padding-left: 2px;
-  border-left: 3px solid #68717e;
-}
-
-.console-panel-heading[hidden] {
-  display: none;
-}
-
-.console-top-bar .console-panel-heading > .tab-button {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  cursor: default;
-}
-
 .console-toolbar {
   display: flex;
   grid-column: -2;
@@ -343,508 +307,9 @@
   line-height: 16px;
 }
 
-.console-sessions,
-.console-settings {
-  overflow: auto;
-  padding: 8px;
-}
-
-.console-settings > [hidden] {
-  display: none;
-}
-
-.console-settings-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.console-settings-actions a {
-  color: inherit;
-  text-decoration: none;
-}
-
-.console-settings[hidden] {
-  display: none;
-}
-
-.module-settings {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.module-settings-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.module-settings-hint {
-  color: #a9adb5;
-}
-
-.module-settings-table {
-  width: 100%;
-  border-collapse: collapse;
-}
-
-.module-settings-table th {
-  padding: 2px 4px;
-  color: #a9adb5;
-  font-weight: normal;
-  text-align: left;
-  white-space: nowrap;
-}
-
-.module-settings-table td {
-  padding: 2px 4px;
-  vertical-align: middle;
-}
-
-.module-settings-row > td {
-  border-top: 1px solid #34363a;
-}
-
-.module-settings-link {
-  padding: 0;
-  border: 0;
-  background: none;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  text-decoration: underline dotted #6b6f76;
-  text-underline-offset: 3px;
-  cursor: pointer;
-}
-
-.module-settings-link:hover {
-  text-decoration-color: currentColor;
-}
-
-.module-settings-version.failed,
-.module-settings-details.failed {
-  color: #ff8980;
-}
-
-.module-settings-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 4px;
-  white-space: nowrap;
-}
-
-.module-settings-details > td {
-  padding-bottom: 6px;
-  color: #a9adb5;
-}
-
 /* Detail rows wrap to the table width instead of resizing the module columns. */
-.module-settings-details > td > * {
-  box-sizing: border-box;
-  width: 0;
-  min-width: 100%;
-  overflow-wrap: anywhere;
-}
-
-.module-settings-details pre {
-  margin: 0;
-  white-space: pre-wrap;
-  font: inherit;
-}
-
-.module-settings-confirm {
-  display: flex;
-  flex-basis: 100%;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px 8px;
-  padding: 2px 0 6px;
-}
-
-.module-settings-confirm p {
-  flex-basis: 100%;
-  margin: 0;
-  color: #a9adb5;
-}
-
-.module-settings-confirm label {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-right: auto;
-}
-
-.module-settings-detail {
-  overflow: hidden;
-  color: #a9adb5;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.settings-origin {
-  flex: none;
-  padding: 0 4px;
-  border: 1px solid #43454a;
-  border-radius: 3px;
-  color: #a9adb5;
-  font-size: 11px;
-  line-height: 16px;
-}
-
-.source-settings {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding-top: 8px;
-  border-top: 1px solid #43454a;
-}
-
-.source-settings input,
-.source-settings select {
-  min-width: 0;
-  padding: 4px;
-  border: 1px solid #43454a;
-  background: #25272a;
-  color: inherit;
-  font: inherit;
-}
-
-.source-settings-row {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 4px 0;
-}
-
-.source-settings-head {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.module-settings-name {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-}
-
-.source-settings-head .module-settings-name,
-.source-settings-input {
-  flex: 1;
-  margin-right: 4px;
-}
-
-.source-settings-error {
-  margin: 0;
-  color: #ff8980;
-}
-
-.source-settings-changes {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
-}
-
-.source-settings-changes ul {
-  margin: 0;
-  padding-left: 16px;
-}
-
-.source-settings-changes li {
-  display: flex;
-  gap: 6px;
-}
-
-.source-settings-add {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.source-settings-field {
-  display: grid;
-  grid-template-columns: 90px 1fr;
-  align-items: center;
-  gap: 6px;
-}
 
 /* Where a docked panel's content comes from, after its heading tabs. */
-.console-panel-origin {
-  display: flex;
-  flex: 0 1 auto;
-  align-items: stretch;
-  gap: 2px;
-  min-width: 0;
-  padding-left: 4px;
-  overflow-x: auto;
-}
-
-.console-panel-origin > span,
-.console-panel-heading > .settings-origin {
-  align-self: center;
-  margin: 0 4px;
-  white-space: nowrap;
-}
-
-.console-panel-origin > .tab-button {
-  flex: none;
-  white-space: nowrap;
-}
-
-.agent-settings {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding-top: 8px;
-  border-top: 1px solid #43454a;
-}
-
-.agent-settings input,
-.agent-settings select {
-  min-width: 0;
-  padding: 4px;
-  border: 1px solid #43454a;
-  background: #25272a;
-  color: inherit;
-  font: inherit;
-}
-
-.agent-skills-folder {
-  display: flex;
-  gap: 6px;
-}
-
-.agent-skills-folder input {
-  flex: 1;
-}
-
-.agent-settings input.invalid {
-  border-color: #ff8980;
-}
-
-.agent-skills-hint {
-  color: #a9adb5;
-}
-
-.agent-skills-problems {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  color: #e5c07b;
-}
-
-.agent-model-picker {
-  position: relative;
-}
-
-.agent-model-current,
-.agent-model-option {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-}
-
-.agent-model-current input {
-  width: 100%;
-}
-
-.agent-model-category {
-  color: #a9adb5;
-  font-size: 11px;
-  white-space: nowrap;
-}
-
-.agent-model-options {
-  position: absolute;
-  z-index: 20;
-  top: 100%;
-  left: 0;
-  right: 0;
-  max-height: 240px;
-  overflow: auto;
-  background: #25272a;
-  border: 1px solid #43454a;
-}
-
-.agent-model-option {
-  width: 100%;
-  text-align: left;
-}
-
-.agent-model-option.active {
-  background: #43454a;
-}
-
-.agent-model-empty {
-  display: block;
-  padding: 6px;
-}
-
-.agent-reasoning-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 6px;
-}
-
-.agent-reasoning-value {
-  font-weight: 600;
-}
-
-.agent-reasoning-value small {
-  color: #a9adb5;
-  font-size: inherit;
-  font-weight: 400;
-}
-
-.agent-reasoning-value.disabled {
-  color: #868a91;
-  font-weight: 400;
-}
-
-.agent-reasoning {
-  position: relative;
-  height: 22px;
-}
-
-.agent-reasoning-track {
-  position: absolute;
-  top: 9px;
-  left: 7px;
-  right: 7px;
-  height: 4px;
-  border-radius: 2px;
-  background: #393b40;
-}
-
-.agent-reasoning-fill {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  border-radius: 2px;
-  background: linear-gradient(90deg, #324b70, #3574f0);
-  transition: width 0.15s;
-}
-
-.agent-reasoning-tick {
-  position: absolute;
-  top: -2px;
-  width: 8px;
-  height: 8px;
-  margin-left: -4px;
-  border-radius: 50%;
-  background: #43454a;
-}
-
-.agent-reasoning-tick.on {
-  background: #5794d2;
-}
-
-.agent-reasoning-default {
-  position: absolute;
-  top: -10px;
-  margin-left: -3px;
-  border: 3px solid transparent;
-  border-top-color: #a9adb5;
-}
-
-.agent-reasoning-thumb {
-  position: absolute;
-  top: -5px;
-  width: 14px;
-  height: 14px;
-  margin-left: -7px;
-  border-radius: 50%;
-  background: #dfe1e5;
-  box-shadow: 0 0 0 3px rgba(53, 116, 240, 0.45);
-  pointer-events: none;
-  transition: left 0.15s, box-shadow 0.15s;
-}
-
-.agent-reasoning:not(.disabled):hover .agent-reasoning-thumb {
-  box-shadow: 0 0 0 4px rgba(53, 116, 240, 0.6);
-}
-
-.agent-reasoning:has(input:focus-visible) .agent-reasoning-thumb {
-  box-shadow: 0 0 0 2px #1e1f22, 0 0 0 4px #3574f0;
-}
-
-.agent-reasoning.disabled .agent-reasoning-fill,
-.agent-reasoning.disabled .agent-reasoning-tick.on {
-  background: #43454a;
-}
-
-.agent-reasoning.disabled .agent-reasoning-thumb {
-  background: #68717e;
-  box-shadow: none;
-}
-
-.agent-settings .agent-reasoning input {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  margin: 0;
-  padding: 0;
-  border: none;
-  background: transparent;
-  opacity: 0;
-  cursor: pointer;
-  -webkit-appearance: none;
-  appearance: none;
-}
-
-.agent-settings .agent-reasoning input::-webkit-slider-thumb {
-  width: 14px;
-  height: 14px;
-  -webkit-appearance: none;
-  appearance: none;
-}
-
-.agent-settings .agent-reasoning input:disabled {
-  cursor: default;
-}
-
-.agent-reasoning-levels {
-  position: relative;
-  height: 14px;
-  margin: 0 7px;
-}
-
-.agent-reasoning-level {
-  position: absolute;
-  top: 0;
-  padding: 0;
-  border: none;
-  background: none;
-  color: #868a91;
-  font: inherit;
-  font-size: 11px;
-  line-height: 14px;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.agent-reasoning-level:hover {
-  background: none;
-}
-
-.agent-reasoning-level:hover:not(:disabled),
-.agent-reasoning-level.selected {
-  color: #dfe1e5;
-}
-
-.agent-reasoning-level:disabled {
-  cursor: default;
-}
 
 .console-update-overlay {
   position: fixed;
@@ -857,32 +322,6 @@
   padding: 24px;
   background: rgba(30, 31, 34, 0.96);
   text-align: center;
-}
-
-.console-sessions label {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-.console-sessions table {
-  width: 100%;
-  margin-top: 8px;
-  border-collapse: collapse;
-  text-align: left;
-}
-
-.console-sessions :is(th, td) {
-  padding: 5px;
-  border-bottom: 1px solid #444;
-}
-
-.console-sessions tr.active {
-  background: #324b70;
-}
-
-.console-sessions td button {
-  margin: 2px;
 }
 
 .console-workspace {
@@ -977,309 +416,16 @@
   border-left: none;
 }
 
-.console-tool-panel[hidden],
-.console-hints-editor[hidden],
-.console-history[hidden],
-.console-variables[hidden],
-.console-agent[hidden] {
+.console-tool-panel[hidden] {
   display: none;
 }
 
-.console-agent {
-  display: flex;
-  flex: 1 1 0;
-  flex-direction: column;
-  min-height: 0;
-  min-width: 0;
-  background: #25272a;
-}
-
-.agent-transcript {
-  flex: 1 1 0;
-  min-height: 0;
-  overflow: auto;
-  overflow-anchor: none;
-  padding: 6px;
-}
-
-.agent-message {
-  padding: 6px;
-  margin-bottom: 6px;
-  border-left: 2px solid #43454a;
-}
-
-.agent-message-user {
-  border-left-color: #5794d2;
-  background: #2b2d30;
-}
-
-.agent-message pre,
-.agent-approval pre {
-  font: inherit;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  margin: 4px 0 0;
-}
-
-.agent-markdown {
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-}
-
-.agent-markdown p,
-.agent-markdown ul,
-.agent-markdown ol,
-.agent-markdown blockquote,
-.agent-markdown table {
-  margin: 6px 0;
-}
-
-.agent-markdown ul,
-.agent-markdown ol {
-  padding-left: 22px;
-}
-
-.agent-markdown li > p {
-  margin: 3px 0;
-}
-
-.agent-markdown h1,
-.agent-markdown h2,
-.agent-markdown h3,
-.agent-markdown h4,
-.agent-markdown h5,
-.agent-markdown h6 {
-  margin: 10px 0 4px;
-  font-size: 1.1em;
-}
-
-.agent-markdown code {
-  padding: 1px 3px;
-  border-radius: 3px;
-  background: #25272a;
-  font: 0.95em ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-
-.agent-markdown pre {
-  max-width: 100%;
-  padding: 8px;
-  border: 1px solid #43454a;
-  background: #25272a;
-  overflow-x: auto;
-  white-space: pre;
-  overflow-wrap: normal;
-}
-
-.agent-markdown pre code {
-  padding: 0;
-  background: transparent;
-}
-
-.agent-markdown blockquote {
-  padding-left: 8px;
-  border-left: 2px solid #5794d2;
-  color: #a9adb5;
-}
-
-.agent-markdown a {
-  color: #79b8ff;
-}
-
-.agent-markdown table {
-  display: block;
-  max-width: 100%;
-  overflow-x: auto;
-  border-collapse: collapse;
-}
-
-.agent-markdown th,
-.agent-markdown td {
-  padding: 4px 8px;
-  border: 1px solid #43454a;
-}
-
-.agent-markdown-image {
-  color: #a9adb5;
-}
-
-.agent-intro,
-.agent-activity {
-  color: #a9adb5;
-}
-
-.agent-composer {
-  resize: vertical;
-  min-height: 56px;
-  max-height: 30vh;
-  margin: 0 6px;
-  background: #25272a;
-  color: inherit;
-  border: 1px solid #43454a;
-  font: inherit;
-}
-
-.agent-activity {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.agent-error,
-.agent-message-error {
-  color: #ff8585;
-}
-
-.agent-approval {
-  padding: 6px;
-  border: 1px solid #bb9655;
-  margin: 4px 6px;
-}
-
-.agent-approval pre {
-  max-height: 120px;
-  overflow: auto;
-  margin-bottom: 6px;
-}
-
-.agent-chats {
-  flex: 1 1 0;
-  min-height: 0;
-  overflow: auto;
-  padding: 6px;
-}
-
-.agent-chats table {
-  width: 100%;
-  border-collapse: collapse;
-  text-align: left;
-}
-
-.agent-chats :is(th, td) {
-  padding: 4px 6px;
-  border-bottom: 1px solid #43454a;
-  white-space: nowrap;
-}
-
-/* Name, session and activity share the width and clip; Messages and the buttons always fit. */
-.agent-chats td:is(:nth-child(1), :nth-child(2), :nth-child(4)) {
-  max-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.agent-chats th {
-  color: #a9adb5;
-  font-weight: normal;
-}
-
-.agent-chats th:nth-child(1) {
-  width: 40%;
-}
-
-.agent-chats th:nth-child(2) {
-  width: 25%;
-}
-
-.agent-chats th:nth-child(4) {
-  width: 35%;
-}
-
-.agent-chats tr.current {
-  background: #2b2d30;
-}
-
-.agent-chats tr[data-state="closed"] td:not(.agent-chats-actions) {
-  color: #a9adb5;
-}
-
-.agent-chats-actions {
-  text-align: right;
-}
-
-.agent-chats-actions button {
-  margin-left: 4px;
-}
-
-.console-hints-editor,
-.console-history,
-.console-variables {
-  display: flex;
-  flex-direction: column;
-  flex: 1 1 0;
-  min-height: 0;
-  min-width: 0;
-}
-.history-entries {
-  flex: 1 1 0;
-  overflow: auto;
-}
-.console-history.has-selection .history-entries {
-  flex: 0 1 auto;
-  max-height: 35%;
-}
-.history-entry {
-  display: block;
-  width: 100%;
-  padding: 5px 8px;
-  text-align: left;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.history-entry.active {
-  background: #324b70;
-  color: #f0f4ff;
-  box-shadow: inset 3px 0 0 #7eb4ff;
-}
-.console-hints-editor > .editor,
-.console-history > .editor,
-.console-variables > .editor {
-  min-height: 0;
-}
-
-.console-panel-header {
-  flex: 0 0 auto;
-  padding: 5px 8px;
-  color: #d0d3d9;
-  border-bottom: 1px solid #43454a;
-}
-
-.console-panel-tabs {
-  display: flex;
-  flex: 1 1 0;
-  align-items: stretch;
-  gap: 2px;
-  min-width: 0;
-  overflow: hidden;
-  min-height: 0;
-}
-
-.console-panel-tabs > .tab-button,
 .console-tab-strip > .tab-button {
   flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-}
-
-.console-panel-tabs > .tab-button:has(.tab-label, .tab-label-input) {
-  display: flex;
-  align-items: center;
-}
-
-.console-panel-tabs .tab-label {
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.console-panel-tabs .tab-close,
-.console-panel-tabs > .vars-tab-add {
-  flex-shrink: 0;
 }
 
 .console-pane-resizer {
@@ -1410,7 +556,7 @@
   padding: 2px;
 }
 
-:is(.console-tab-strip, .console-panel-tabs, .console-panel-heading) > .tab-button.active,
+:is(.console-tab-strip, .ui-tab-strip, .ui-panel-title) > .tab-button.active,
 .console-check-link.active,
 .console-toolbar button.active {
   color: #ffffff;
@@ -1418,7 +564,7 @@
   border-color: #3574f0;
 }
 
-:is(.console-tab-strip, .console-panel-tabs, .console-panel-heading) > .tab-button,
+:is(.console-tab-strip, .ui-tab-strip, .ui-panel-title) > .tab-button,
 .console-check-link,
 .console-hints-toggle,
 .console-import-toggle {
@@ -1434,13 +580,13 @@
   cursor: pointer;
 }
 
-:is(.console-tab-strip, .console-panel-tabs, .console-panel-heading) > .tab-button,
+:is(.console-tab-strip, .ui-tab-strip, .ui-panel-title) > .tab-button,
 .console-hints-toggle,
 .console-import-toggle {
   padding: 2px 6px;
 }
 
-:is(.console-tab-strip, .console-panel-tabs, .console-panel-heading) > .tab-button {
+:is(.console-tab-strip, .ui-tab-strip, .ui-panel-title) > .tab-button {
   margin: 0;
   border-bottom: none;
   border-radius: 4px 4px 0 0;
@@ -1456,7 +602,7 @@
   border-radius: 0 4px 4px 0;
 }
 
-:is(.console-tab-strip, .console-panel-tabs) > .tab-button:hover,
+:is(.console-tab-strip, .ui-tab-strip, .ui-panel-title) > .tab-button:hover,
 .console-check-link:hover,
 .console-hints-toggle:hover,
 .console-import-toggle:hover {
@@ -1496,11 +642,6 @@
   font-weight: 600;
 }
 
-.console-hints-panel-hint {
-  color: #868a91;
-  font-size: 12px;
-}
-
 .console-hints-panel .editor {
   height: 320px;
   border: 1px solid #43454a;
@@ -1523,17 +664,6 @@
   display: flex;
   align-items: center;
   gap: 8px;
-}
-
-.console-hints-panel-status {
-  color: #868a91;
-  font-size: 12px;
-  /* Sits first visually (before the buttons) and grows to fill the row,
-     pushing the action buttons themselves to the bottom-right corner of
-     the panel — without reordering the DOM (it's appended last, after
-     the buttons, so screen readers still hear the buttons first). */
-  order: -1;
-  flex: 1;
 }
 
 /* Find bar: drawn inside the editor it searches. */

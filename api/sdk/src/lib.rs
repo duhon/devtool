@@ -15,8 +15,10 @@ pub mod lang;
 pub mod manifest;
 pub mod mysql;
 pub mod process;
+pub mod refs;
 pub mod run;
 pub mod tcp;
+pub mod time;
 pub mod ui;
 pub mod wire;
 
@@ -188,11 +190,11 @@ pub trait Module: Default + 'static {
         let _ = (call, response);
         Vec::new()
     }
-    /// The `{{…}}` variables of `text` resolved (`vars.resolve` of any module): `None` when
-    /// this panel keeps no variables. In `json` mode each value is escaped as the content of
-    /// a JSON string.
-    fn resolve(&self, text: &str, json: bool) -> Option<Result<Resolution, String>> {
-        let _ = (text, json);
+    /// `text` with the `{{…}}` variables this panel owns resolved (see
+    /// [`wire::ResolveRequest`]; [`refs::replace`] helps): `None` when it keeps no variables.
+    /// In `json` mode each value is escaped as the content of a JSON string.
+    fn resolve(&self, text: &str, json: bool, last: bool) -> Option<Result<Resolution, String>> {
+        let _ = (text, json, last);
         None
     }
 }
@@ -287,8 +289,8 @@ fn handle<T: Module>(state: &RefCell<Option<T>>, request: &[u8]) -> Result<answe
                 &wire::value(&after.response),
             ),
         }),
-        request::Kind::Resolve(resolve) => {
-            answer::Kind::Resolved(match module.resolve(&resolve.text, resolve.json) {
+        request::Kind::Resolve(resolve) => answer::Kind::Resolved(
+            match module.resolve(&resolve.text, resolve.json, resolve.last) {
                 None => wire::Resolved::default(),
                 Some(Ok(resolution)) => wire::Resolved {
                     handled: true,
@@ -301,8 +303,8 @@ fn handle<T: Module>(state: &RefCell<Option<T>>, request: &[u8]) -> Result<answe
                     error: Some(error),
                     ..Default::default()
                 },
-            })
-        }
+            },
+        ),
     })
 }
 

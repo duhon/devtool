@@ -3,7 +3,7 @@
 //! repositories and local folders. A source is laid out as
 //!
 //! ```text
-//! dictionary.json          {"order"?: [...], "profiles": {"<profile>": {"<VAR>": value}}}
+//! dictionary.json          {"order"?: [...], "sets": {"<set>": {"<VAR>": value}}} (or "profiles")
 //! templates.json           {"<module>": {"<section>": "<templates text>"}}
 //! hints/<module>.md        the module's hints
 //! skills/<name>/SKILL.md   Agent skills, with their files
@@ -51,6 +51,8 @@ const MODULES_FILE: &str = ".module-sources.json";
 pub const DICTIONARY: &str = "dictionary.json";
 pub const TEMPLATES: &str = "templates.json";
 pub const HINTS: &str = "hints";
+/// The field of dictionary.json with its sets.
+const DICTIONARY_SETS: &str = "sets";
 pub const SKILLS: &str = "skills";
 const MODULES: &str = "modules";
 const DISTRIBUTION: &str = "distribution";
@@ -389,6 +391,29 @@ pub fn layer_files(data: &Path, name: &str) -> Result<Vec<(Layer, Value)>> {
         }
     }
     Ok(out)
+}
+
+/// The raw file `name` (a relative path like `dictionary.json` or `hints/rest.md`) of every
+/// applied source that has it, lowest priority first: `[{source, text}]`.
+pub fn read(data: &Path, name: &str) -> Result<Value> {
+    let path = Path::new(name);
+    if name.is_empty()
+        || path.is_absolute()
+        || path
+            .components()
+            .any(|part| !matches!(part, std::path::Component::Normal(_)))
+    {
+        return Err(Error::new(format!("Invalid source file name: {name}")));
+    }
+    let mut out = Vec::new();
+    for layer in layers(data) {
+        match fs::read_to_string(layer.dir.join(path)) {
+            Ok(text) => out.push(json!({"source": layer.name, "text": text})),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Ok(Value::Array(out))
 }
 
 /// The hints of `module` from the highest-priority layer that has them.
@@ -1317,17 +1342,6 @@ async fn fetch(data: &Path, source: &Source, need: impl Fn(&str, &str) -> bool) 
 // ---------------------------------------------------------------------------------------
 // Changes between the applied copy and the source.
 
-/// The user's own configuration: what overrides source records.
-#[derive(Default)]
-pub struct Local {
-    /// `(profile, variable)` pairs the user changed or added.
-    pub dictionary: BTreeSet<(String, String)>,
-    /// `(module, section)` templates the user changed.
-    pub templates: BTreeSet<(String, String)>,
-    /// Modules whose hints the user changed.
-    pub hints: BTreeSet<String>,
-}
-
 /// A record that differs between the applied copy and the source.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct Change {
@@ -1356,6 +1370,10 @@ fn change(kind: &str, key: String, old: Option<&Value>, new: Option<&Value>) -> 
 fn records(value: Option<&Value>, field: Option<&str>) -> BTreeMap<String, Value> {
     let mut out = BTreeMap::new();
     let value = match (value, field) {
+        // A dictionary written before sets were named so keeps its sets in "profiles".
+        (Some(value), Some(DICTIONARY_SETS)) => {
+            value.get(DICTIONARY_SETS).or_else(|| value.get("profiles"))
+        }
         (Some(value), Some(field)) => value.get(field),
         (value, _) => value,
     };
@@ -1376,7 +1394,7 @@ fn records(value: Option<&Value>, field: Option<&str>) -> BTreeMap<String, Value
 fn changes(slug: &str, dir: &Path, applied: &Files, fetched: &Fetched) -> Result<Vec<Change>> {
     let mut out = Vec::new();
     for (name, kind, field) in [
-        (DICTIONARY, "dictionary", Some("profiles")),
+        (DICTIONARY, "dictionary", Some(DICTIONARY_SETS)),
         (TEMPLATES, "template", None),
     ] {
         if applied.get(name) == fetched.files.get(name) {
@@ -1426,22 +1444,6 @@ fn changes(slug: &str, dir: &Path, applied: &Files, fetched: &Fetched) -> Result
     Ok(out)
 }
 
-fn overridden(change: &Change, local: &Local) -> bool {
-    let pair = || {
-        change
-            .key
-            .split_once('/')
-            .map(|(a, b)| (a.to_owned(), b.to_owned()))
-            .unwrap_or_default()
-    };
-    match change.kind.as_str() {
-        "dictionary" => local.dictionary.contains(&pair()),
-        "template" => local.templates.contains(&pair()),
-        "hint" => local.hints.contains(&change.key),
-        _ => false,
-    }
-}
-
 // ---------------------------------------------------------------------------------------
 // Applying a source.
 
@@ -1450,20 +1452,24 @@ fn check_snapshot(dir: &Path) -> Result<()> {
     if let Ok(bytes) = fs::read(dir.join(DICTIONARY)) {
         let value: Value =
             serde_json::from_slice(&bytes).map_err(|e| Error::new(format!("{DICTIONARY}: {e}")))?;
-        let profiles = value["profiles"].as_object().ok_or_else(|| {
-            Error::new(format!(
-                "{DICTIONARY} must hold {{\"profiles\": {{\"<profile>\": {{\"<VARIABLE>\": value}}}}}}"
-            ))
-        })?;
-        for (name, variables) in profiles {
+        let sets = value
+            .get(DICTIONARY_SETS)
+            .or_else(|| value.get("profiles"))
+            .and_then(Value::as_object)
+            .ok_or_else(|| {
+                Error::new(format!(
+                    "{DICTIONARY} must hold {{\"sets\": {{\"<set>\": {{\"<VARIABLE>\": value}}}}}}"
+                ))
+            })?;
+        for (name, variables) in sets {
             if name.trim().is_empty() || name == "var" || name == "env" {
                 return Err(Error::new(format!(
-                    "{DICTIONARY}: \"{name}\" can't be a Dictionary profile"
+                    "{DICTIONARY}: \"{name}\" can't be a Dictionary set"
                 )));
             }
             if !variables.is_object() {
                 return Err(Error::new(format!(
-                    "{DICTIONARY}: profile \"{name}\" must be an object of variables"
+                    "{DICTIONARY}: set \"{name}\" must be an object of variables"
                 )));
             }
         }
@@ -1889,16 +1895,11 @@ impl Sources {
     /// Checks every source not checked since this host process started (`force` checks
     /// anyway), so DevTools checks once each time it opens the application:
     /// `{sources:[{name, slug, kind, repository?|path, checkedAt, error?, configs, applied,
-    /// changes:[{kind, key, change, overridden}], problems, modules:[offers]}],
+    /// changes:[{kind, key, change}], problems, modules:[offers]}],
     /// installed:{"<module>": {version, source?, notes, error?, name?, description?}}}`, where
     /// `installed` has the
     /// application too ([`APPLICATION_ID`]).
-    pub async fn check(
-        &self,
-        force: bool,
-        local: &Local,
-        installed: &[Installed],
-    ) -> Result<Value> {
+    pub async fn check(&self, force: bool, installed: &[Installed]) -> Result<Value> {
         let sources = sources(&self.data)?;
         let mut checks = read_checks(&self.data);
         let core = env!("CARGO_PKG_VERSION");
@@ -1925,14 +1926,13 @@ impl Sources {
         if changed {
             write_checks(&self.data, &checks)?;
         }
-        Ok(self.describe_checks(&sources, &checks, local, installed))
+        Ok(self.describe_checks(&sources, &checks, installed))
     }
 
     fn describe_checks(
         &self,
         sources: &[Source],
         checks: &BTreeMap<String, Checked>,
-        local: &Local,
         installed: &[Installed],
     ) -> Value {
         let described: Vec<Value> = sources
@@ -1944,11 +1944,7 @@ impl Sources {
                 let changes: Vec<Value> = checked
                     .changes
                     .iter()
-                    .map(|change| {
-                        let mut value = serde_json::to_value(change).unwrap_or_default();
-                        value["overridden"] = json!(overridden(change, local));
-                        value
-                    })
+                    .map(|change| serde_json::to_value(change).unwrap_or_default())
                     .collect();
                 let mut described = source.describe();
                 for (key, value) in [
@@ -2286,7 +2282,6 @@ pub fn migrate_team_folder(data: &Path) -> Result<()> {
 pub async fn dispatch(
     sources: &Sources,
     message: &Value,
-    local: impl FnOnce() -> Local,
     installed: &[Installed],
 ) -> Result<Value> {
     match message["op"].as_str().unwrap_or("get") {
@@ -2299,11 +2294,7 @@ pub async fn dispatch(
             result
         }
         "token" => sources.set_token(message),
-        "check" => {
-            sources
-                .check(message["force"] == true, &local(), installed)
-                .await
-        }
+        "check" => sources.check(message["force"] == true, installed).await,
         "apply" => {
             let slug = message["source"]
                 .as_str()
@@ -2413,9 +2404,7 @@ mod tests {
         sources
             .save(&json!({"sources": [folder_source("Team", team.path())]}))
             .unwrap();
-        let mut local = Local::default();
-        local.dictionary.insert(("stage".into(), "HOST".into()));
-        let checked = sources.check(false, &local, &[]).await.unwrap();
+        let checked = sources.check(false, &[]).await.unwrap();
         let team_check = &checked["sources"][0];
         assert_eq!(team_check["error"], Value::Null, "{team_check}");
         assert_eq!(team_check["applied"], false);
@@ -2428,10 +2417,10 @@ mod tests {
         assert_eq!(
             team_check["changes"],
             json!([
-                {"kind":"dictionary","key":"stage/HOST","change":"added","overridden":true},
-                {"kind":"dictionary","key":"stage/PORT","change":"added","overridden":false},
-                {"kind":"hint","key":"rest","change":"added","overridden":false},
-                {"kind":"skill","key":"team-deploy","change":"added","overridden":false},
+                {"kind":"dictionary","key":"stage/HOST","change":"added"},
+                {"kind":"dictionary","key":"stage/PORT","change":"added"},
+                {"kind":"hint","key":"rest","change":"added"},
+                {"kind":"skill","key":"team-deploy","change":"added"},
             ])
         );
         sources.apply("team").await.unwrap();
@@ -2448,24 +2437,21 @@ mod tests {
             Some(("Team".into(), "Use staging".into()))
         );
         let changes = |checked: Value| checked["sources"][0]["changes"].clone();
-        let before = changes(sources.check(false, &local, &[]).await.unwrap());
+        let before = changes(sources.check(false, &[]).await.unwrap());
         write(
             team.path(),
             "dictionary.json",
             r#"{"profiles":{"stage":{"HOST":"b","PORT":"1"}}}"#,
         );
         // A host process checks once; a new one checks again.
-        assert_eq!(
-            changes(sources.check(false, &local, &[]).await.unwrap()),
-            before
-        );
+        assert_eq!(changes(sources.check(false, &[]).await.unwrap()), before);
         let restarted = Sources {
             started: now() + 1,
             ..Sources::new(data)
         };
         assert_eq!(
-            changes(restarted.check(false, &local, &[]).await.unwrap()),
-            json!([{"kind":"dictionary","key":"stage/HOST","change":"changed","overridden":true}])
+            changes(restarted.check(false, &[]).await.unwrap()),
+            json!([{"kind":"dictionary","key":"stage/HOST","change":"changed"}])
         );
         // An invalid source keeps the applied copy.
         write(
@@ -2570,7 +2556,6 @@ mod tests {
         let checked = sources
             .check(
                 false,
-                &Local::default(),
                 &[
                     Installed {
                         id: "redis".into(),

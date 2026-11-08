@@ -10,4 +10,5 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 services-sdk = { path = "../../../api/sdk" }
+serde.workspace = true
 serde_json.workspace = true

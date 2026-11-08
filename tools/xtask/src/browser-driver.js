@@ -131,6 +131,8 @@
     assert(editor, `Editor not mounted: ${name}`);
     return editor;
   };
+  // The editor of `name` if it is mounted, for waits.
+  const editorAt = (name, doc = document) => { try { return editorOf(name, doc); } catch { return null; } };
   const sessionRecord = async (operation = 'get', win = window) => {
     const db = await new Promise((resolve, reject) => {
       const request = win.indexedDB.open('servicesConsole', 1);
@@ -222,9 +224,21 @@
   };
   const type = text => input('Input.insertText', { text });
   const move = (x, y) => input('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+  const frame = () => new Promise(resolve => requestAnimationFrame(() => resolve()));
+  // The element's box once the layout stops moving: a click lands where it was measured.
+  const settled = async element => {
+    let box = element.getBoundingClientRect();
+    for (let tries = 0; tries < 20; tries++) {
+      await frame();
+      const next = element.getBoundingClientRect();
+      if (next.left === box.left && next.top === box.top && next.width === box.width && next.height === box.height) break;
+      box = next;
+    }
+    return box;
+  };
   const click = async (element, x, y, clickCount = 1) => {
     element.scrollIntoView({ block: 'nearest' });
-    const box = element.getBoundingClientRect();
+    const box = await settled(element);
     x = box.left + (x ?? box.width / 2);
     y = box.top + (y ?? box.height / 2);
     await move(x, y);
@@ -241,29 +255,30 @@
     assert(element, `Button not found: ${text}`);
     return element;
   };
-  // Waits until the Sessions panel allows switching. On timeout it reports what kept it busy and
-  // what remains after a forced App render, which tells a stale attribute from a real busy state.
+  // Waits until the App allows switching sessions; on timeout it reports what kept it busy.
   const sessionsIdle = async (root = document) => {
-    const panel = () => root.querySelector('[data-testid="console-sessions"]')?.dataset ?? {};
-    try {
-      await wait(() => panel().busy === 'false',
-        () => `Sessions must become idle; busy because: ${panel().busyReason}`);
-    } catch (error) {
-      root.querySelector('[data-testid="session-new-name"]')?.dispatchEvent(new Event('input', { bubbles: true }));
-      await settle();
-      throw new Error(`${error.message}; after a forced render busy=${panel().busy}: ${panel().busyReason}`);
-    }
+    const state = () => root.querySelector('[data-testid="console-session-name"]')?.dataset ?? {};
+    await wait(() => state().busy === 'false',
+      () => `Sessions must become idle; busy because: ${state().busyReason}`);
   };
   const activateSession = async (id, root = document) => {
     await wait(() => visible(root.querySelector('[data-testid="console-session-name"]')),
       'Console session controls must finish asynchronous startup');
     if (testid('console-session-name',root).dataset.sessionId === String(id)) return;
-    const toggle=testid('console-sessions-toggle',root);
-    if(toggle.getAttribute('aria-pressed')!=='true') await click(toggle);
+    // The toolbar may still shift while panel modules load: a click that missed is repeated.
+    await wait(async () => {
+      const toggle=testid('console-sessions-toggle',root);
+      if(toggle.getAttribute('aria-pressed')==='true') return true;
+      await click(toggle);
+      await sleep(200);
+      return toggle.getAttribute('aria-pressed')==='true';
+    }, 'The Sessions panel must open');
     await sessionsIdle(root);
-    await click(testid(`session-switch-${id}`,root));
+    const switcher = await wait(() => [...root.querySelectorAll(`[data-testid="session-switch-${id}"]`)].find(visible),
+      () => `Session ${id} must be listed: ${root.querySelector(`[data-testid="sessions-panel"]`)?.innerText.slice(0,300)}`);
+    await click(switcher);
     await wait(()=>testid('console-session-name',root).dataset.sessionId===String(id),
-      ()=>`Session ${id} must become current: ${root.querySelector('[data-testid="console-sessions"]')?.innerText.slice(0,300)}`);
+      ()=>`Session ${id} must become current: ${root.querySelector(`[data-testid="sessions-panel"]`)?.innerText.slice(0,300)}`);
   };
   let sessionInitialized=false;
   const openConsole = async () => {
@@ -315,38 +330,54 @@
     await key('Enter');
     assert(editor.lineCount() === lines + 1, `${expected}: Enter must insert a line`);
   };
+  // Types `value` into a module UI field and commits it (its `on_input`, then `on_change`).
+  const fill = (field, value) => {
+    field.value = value;
+    field.dispatchEvent(new InputEvent('input', {bubbles:true}));
+    field.dispatchEvent(new Event('change', {bubbles:true}));
+  };
+  // Picks `value` in a module UI select.
+  const choose = (select, value) => {
+    assert([...select.options].some(option => option.value === value), `No option ${value} in ${select.dataset.testid}`);
+    select.value = value;
+    select.dispatchEvent(new Event('change', {bubbles:true}));
+  };
+  // Opens the side panel of the module `id` and waits for its UI.
+  const openPanel = async (id, frame = `${id}-panel`) => {
+    const toggle = testid(`console-${id}-toggle`);
+    if (toggle.getAttribute('aria-pressed') !== 'true') await click(toggle);
+    return wait(() => [...document.querySelectorAll(`[data-testid="${frame}"]`)].find(visible), `Panel ${id} must open`);
+  };
+  const closePanel = async id => {
+    const toggle = testid(`console-${id}-toggle`);
+    if (toggle.getAttribute('aria-pressed') === 'true') await click(toggle);
+    await wait(() => toggle.getAttribute('aria-pressed') !== 'true', `Panel ${id} must close`);
+  };
   // Opens Settings on one of its tabs: modules, sources or agent.
   const settingsTab = async name => {
-    const toggle = testid('console-settings-toggle');
-    if (toggle.getAttribute('aria-pressed') !== 'true') await click(toggle);
+    await openPanel('settings', 'settings');
     const tab = await wait(() => document.querySelector(`[data-testid="settings-tab-${name}"]`), `Settings tab ${name}`);
     if (tab.getAttribute('aria-selected') !== 'true') await click(tab);
-    await wait(() => document.querySelector(`[data-testid="settings-group-${name}"]`)?.hidden === false,
+    await wait(() => visible(document.querySelector(`[data-testid="settings-tab-${name}-body"]`)),
       `Settings tab ${name} must show its group`);
   };
   // Adds a folder source in the open Settings panel, then returns to the tab shown before.
   const addFolderSource = async (name, path) => {
     const previous = document.querySelector('[data-testid="settings-tabs"] [aria-selected="true"]')?.dataset.testid.slice('settings-tab-'.length);
     await settingsTab('sources');
-    const fill = (id, value) => {
-      const field = testid(id);
-      field.value = value;
-      field.dispatchEvent(new InputEvent('input', {bubbles:true}));
-    };
     await click(testid('source-add'));
-    fill('source-add-name', name);
-    const kind = testid('source-add-kind');
-    kind.value = 'folder';
-    kind.dispatchEvent(new Event('change', {bubbles:true}));
+    fill(await wait(() => document.querySelector('[data-testid="source-add-name"]'), 'Source form'), name);
+    choose(testid('source-add-kind'), 'folder');
     await wait(() => document.querySelector('[data-testid="source-add-path"]') && !document.querySelector('[data-testid="source-add-repository"]'),
       'A folder source asks only for its folder');
-    fill('source-add-path', path);
+    fill(testid('source-add-path'), path);
+    await settle();
     await click(testid('source-add-save'));
     if (previous && previous !== 'sources') await settingsTab(previous);
   };
-  globalThis.testDriver = { assert, sleep, seen, wait, waitFor, during, holds, settle, stable, frames, visible, find, testid, editorOf, key, type, move, input,
+  globalThis.testDriver = { assert, sleep, seen, wait, waitFor, during, holds, settle, stable, frames, visible, find, testid, editorOf, editorAt, key, type, move, input,
     click, doubleClick, button, openConsole, activateSession, sessionsIdle, setSource, commitRestUrl, candidates, suggest, pick, pickThenEnter,
-    assertNativeScrollbars, nativeTrackPaint, sessionLibrary, nativeHold, settingsTab, addFolderSource, clearSessions: () => sessionRecord('delete') };
+    assertNativeScrollbars, nativeTrackPaint, sessionLibrary, nativeHold, settingsTab, addFolderSource, fill, choose, openPanel, closePanel, clearSessions: () => sessionRecord('delete') };
   globalThis.testNativeHealth = () => new Promise(resolve => {
     const port = chrome.runtime.connectNative('com.chrome_extentions.host');
     const timer = setTimeout(() => { port.disconnect(); resolve({ ok: false, error: 'timeout' }); }, 10000);

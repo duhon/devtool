@@ -384,12 +384,19 @@ Kernel не знает ни одной панели: даёт точки рас�
 - History — отдельные Cmd (`insert`, `search`): поиск на kv не сделать.
 - Имена Cmd в SDK (`api/sdk/src/cmd.rs`): `driver.call`, `driver.stream`, `driver.cancel`;
   `vars.resolve` (`mode: "json"` — значения экранируются как содержимое JSON-строки);
-  `history.insert`, `history.search`; `vars.profiles` (временно, до панели Dictionary:
-  профили, из которых Variables подставляет — `var` сессии, Dictionary, `env`);
+  `history.insert`, `history.search` (хранилище — Host); `os.env` (окружение из Host),
+  `clipboard.read`/`write` (App); `sources.read` (сырые документы источников по порядку);
+  `editor.contribute`; `document.read`/`insert`/`replace`/`select`/`run`;
+  `workspace.list`/`restore`/`copy`/`delete`; `page.eval`, `page.network`; `agent.turn`
+  (стрим событий Copilot), `agent.stop`, `agent.reply` (ответ на `ToolCall`; ответы
+  остановленному ходу не доставляются), `agent.approve`, `agent.sessions`, `agent.models`,
+  `agent.options`; только встроенные: `modules.check`/`install`/`remove`,
+  `sources.list`/`save`/`token`/`apply`/`open`, `app.update`, `app.reload`;
   `run.output`, `run.result` (тело, исход, язык, Debug или ошибка); `status.set` (с меткой
-  запуска — статус запуска, например `3 rows`); `kv.get`/`put`/`delete`/`watch` (kv модуля
-  в `localStorage` `module:<id>:<key>`); `timer.after`; `lock.acquire`/`lock.release`
-  (именованный замок, общий для всех окон App — Web Locks); `notify`, `log`.
+  запуска — статус запуска, например `3 rows`; у занятого статуса App показывает время с
+  начала); `kv.get`/`put`/`delete`/`watch` (kv модуля в `localStorage` `module:<id>:<key>`,
+  сессионные ключи — в снимке сессии); `timer.after`; `lock.acquire`/`lock.release`
+  (именованный замок, общий для всех окон App — Web Locks); `notify`, `log`, `diagnostics`.
 - Запуск, который ведёт модуль (решено 07.11, вариант A): модуль, подписанный на `run`,
   получает `Run { tag, check }`, сам делает сколько нужно вызовов драйвера (ответы по меткам),
   берёт замки и таймеры и заканчивает Cmd `run.result`. Stop: модуль получает
@@ -401,7 +408,7 @@ Kernel не знает ни одной панели: даёт точки рас�
 
 | Msg | Когда |
 |---|---|
-| `Init { settings }` | старт модуля |
+| `Init { settings }` | старт модуля (`settings`: `timezoneOffset`, `instance` — id окна App) |
 | `Ui { msg, value }` | действие в своём UI: клик, ввод (`value` — текст поля) |
 | `Reply { tag, result }`, `End { tag }` | ответ на Cmd, куски стрима |
 | `Document { check, sections }` | документ сервиса изменился |
@@ -413,9 +420,9 @@ Kernel не знает ни одной панели: даёт точки рас�
   Variables → её хранилище; ответ приходит в `Reply { tag }`. `mode: "json"` (решено 07.11):
   App экранирует значения как содержимое JSON-строки — так GraphQL подставляет переменные в
   JSON. Модуль сам экранирует под свой язык (Terminal — кавычки shell после Resolve); App
-  ничего не подставляет после модуля. Kernel отвечает сам синхронным вызовом `resolve`
-  первой по `order` панели, которая держит переменные (Variables); без такой панели текст с
-  `{{` — ошибка.
+  ничего не подставляет после модуля. Kernel отвечает сам синхронными вызовами `resolve`
+  панелей, которые держат переменные (Variables, Dictionary), по `order`; без таких панелей
+  текст с `{{` — ошибка.
 | `Request { started / finished }` | запуск и завершение запросов |
 | `Workspace` | restore: сессия переключена |
 | `Storage { key }` | изменился ключ из `watch` |
@@ -478,7 +485,9 @@ Kernel вызывает модуль напрямую и сразу получа
 - Большие списки — виртуальный `List { total, rows }`: модуль отдаёт видимое окно, при
   прокрутке приходит `Ui` с новым диапазоном.
 - Поле ввода само хранит набираемый текст и сообщает `on_input` с задержкой или `on_change`
-  (Enter, blur); модуль задаёт значение, только когда меняет его сам.
+  (Enter, blur); модуль задаёт значение, только когда меняет его сам. Ещё не сообщённый
+  ввод App отдаёт модулю раньше любого другого его действия в UI и до закрытия панели.
+- Рисует дерево App: `app/ui/src/browser/view.rs` (узел → виджет, действие → `Ui`).
 - `Editor { language: "<id модуля>", text, on_change }` — подсветку даёт модуль с этим id
   (Templates показывает шаблон REST языком REST).
 - Места для UI сервиса фиксированы: форма Options, действия в верхнем меню (Export,
@@ -608,10 +617,8 @@ Settings. Пакеты выпуска — `dist/modules/`, как сейчас.
   запуска — только по завершении; предупреждения Artemis — в исходе и Debug; пакеты без
   платформы и без codesign.
 
-- Шаг 5 (частично): панели Variables и History — wasm-модули в `modules/panels/`
-  (`variables`, `history`), пакеты как у сервисов. Variables: профили через Cmd
-  `vars.profiles` и `kv.watch("profiles")` (App шлёт `Storage("profiles")` при смене
-  переменных сессии), `before_request` подставляет `{{…}}` во все строки вызова драйвера вне
+- Шаг 5, часть 1: панели Variables и History — wasm-модули в `modules/panels/`
+  (`variables`, `history`), пакеты как у сервисов. Variables: `before_request` подставляет `{{…}}` во все строки вызова драйвера вне
   запуска модуля, синхронный `resolve` отвечает на Cmd `vars.resolve` и на подстановку
   источника и заголовка запуска для History; секреты — имена `token`, `password`, … и
   зависимости. History: `after_response` по записи запуска (`checkId`, `sessionId`,
@@ -630,12 +637,29 @@ Settings. Пакеты выпуска — `dist/modules/`, как сейчас.
   ошибка переменной для сервиса без своего запуска — ошибка разбора без префикса
   «Variables could not be resolved»; тестовый счётчик discovery считает вызовы драйвера с
   меткой `discover:` (сообщение драйвера несёт `module` и `tag`).
-  Не перенесены (UI-дерево SDK App ещё не рисует): интерфейсы Variables и History, панели
-  Templates, Hints, Agent, Sessions, Settings, Dictionary — остаются компонентами App.
+
+- Шаг 5 завершён: App рисует UI-дерево SDK (`browser/view.rs`, стили виджетов —
+  `view.css`), все панели — wasm-модули в `modules/panels/` со своим интерфейсом из виджетов:
+  Variables (`var` сессии), Dictionary (наборы `dictionary.json`, источники, заменил
+  `vars.profiles`), History, Templates, Hints, Agent (чаты, ход, инструменты страницы,
+  `page-agent.js`), Sessions, Settings (встроенный, вкладки Modules, Sources, Agent;
+  установка, удаление, обновление App — только ему). `resolve` идёт по всем панелям,
+  держащим переменные, по `order` и повторяется, пока текст меняется: Variables отвечает за
+  `var` сессии и `env` (Cmd `os.env`), Dictionary — за свои наборы; оставшаяся ссылка —
+  ошибка. Закрытые панели выключены: Kernel не
+  доставляет им Ui, Storage и Reply (кроме Init, Shown и ответов загрузки); работают только
+  синхронные крючки. Удалены Yew-компоненты панелей App и их CSS, `vars.profiles` и операция
+  Host профилей; `page-agent.js` — в `modules/panels/agent/assets/`.
+  Отличия: у Dictionary нет переименования и порядка наборов, сброс к источнику — весь набор;
+  нет обнаружения конфликтов Hints и Dictionary между окнами; световой индикатор ошибки
+  сохранения Sessions виден только при открытой панели; History без aria- и
+  debug-атрибутов; Settings всегда показывает три вкладки, модель Agent — список выбора, а
+  шкалы Reasoning нет у моделей без него; у закрытой панели нет вида; список чатов Agent без
+  отметок прочитанного (бегущий ход — «●»), переименование не на месте и без Escape;
+  закрытие панели Agent останавливает её ходы; поле одной строки сохраняется по blur;
+  tree рисуется как JSON; `modules.update` слит с `modules.install`; hints — по сессии,
+  templates — общие.
 
 ## Решить
 
-- Рисовать UI-дерево SDK (`ui::Node`) в App, чтобы перенести интерфейсы панелей.
-- `vars.profiles` — временный Cmd до панели Dictionary; окружение (`env`) — из Host.
-- Закрытые панели получают Init, Reply и Storage (держат профили для крючков), хотя по
-  правилу закрытая панель выключена.
+- Пока нет открытых вопросов.

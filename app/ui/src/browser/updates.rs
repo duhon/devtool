@@ -1,6 +1,4 @@
-use super::{call, error, get, views::OperationStatus, window};
-use crate::activity::{Indicator, Signal};
-use serde_json::{Value, json};
+use super::{call, error, get, window};
 use wasm_bindgen::JsValue;
 
 #[derive(Clone, Copy, PartialEq, serde::Serialize)]
@@ -20,8 +18,6 @@ pub struct State {
     /// The source slug and version being installed.
     pub target: Option<(String, String)>,
     pub error: Option<String>,
-    pub signal: Signal,
-    pub status: OperationStatus,
 }
 
 impl Default for State {
@@ -30,11 +26,6 @@ impl Default for State {
             phase: Phase::Idle,
             target: None,
             error: None,
-            signal: Default::default(),
-            status: OperationStatus {
-                debug: json!({"operation":"Updates"}),
-                ..Default::default()
-            },
         }
     }
 }
@@ -47,17 +38,6 @@ impl State {
         )
     }
 
-    pub fn indicator(&self) -> Indicator {
-        if self.error.is_some() {
-            return Indicator::Error;
-        }
-        match self.phase {
-            Phase::Preparing | Phase::Installing | Phase::Reloading => Indicator::Running,
-            Phase::Error => Indicator::Error,
-            _ => Indicator::Ready,
-        }
-    }
-
     pub fn fail(&mut self, message: String) {
         self.phase = if matches!(self.phase, Phase::Installed | Phase::Reloading) {
             Phase::Installed
@@ -65,43 +45,11 @@ impl State {
             Phase::Error
         };
         self.error = Some(message);
-        self.signal = Default::default();
-        self.record(Value::Null);
-    }
-
-    pub fn begin(&mut self, phase: Phase, operation: &str, details: Value) {
-        self.status = OperationStatus::event(operation, js_sys::Date::now(), None);
-        self.phase = phase;
-        self.error = None;
-        self.record(details);
     }
 
     pub fn transition(&mut self, phase: Phase) {
         self.phase = phase;
         self.error = None;
-        self.signal = Default::default();
-        self.record(Value::Null);
-    }
-
-    pub fn record(&mut self, details: Value) {
-        let now = js_sys::Date::now();
-        self.status.text = self.text().to_owned();
-        self.status.running = self.busy();
-        let mut events = self.status.debug["events"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default();
-        events.push(json!({
-            "at":now,"phase":self.phase,"status":self.status.text,"details":details
-        }));
-        let (source, version) = self.target.clone().unzip();
-        self.status.debug = json!({
-            "operation":self.status.debug["operation"],
-            "phase":self.phase,"status":self.status.text,
-            "started":self.status.started,"elapsedMs":(now-self.status.started).max(0.0),
-            "currentVersion":env!("CARGO_PKG_VERSION"),
-            "source":source,"version":version,"error":self.error,"events":events
-        });
     }
 
     pub fn text(&self) -> &str {

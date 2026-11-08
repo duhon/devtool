@@ -226,9 +226,6 @@ async fn removing_a_module_with_its_data_deletes_its_history_and_hints() {
             })
             .await
             .unwrap();
-        host.send(json!({"service":"hints","op":"save","serviceName":service,"text":format!("{service} hint\n")}))
-            .await
-            .ok();
     }
     let total = |reply: services_testkit::Reply| reply.ok()["total"].clone();
     let check = |check: &str| json!({"checkId":check});
@@ -246,8 +243,6 @@ async fn removing_a_module_with_its_data_deletes_its_history_and_hints() {
     assert!(!modules.join("artemis").exists());
     assert_eq!(total(host.op("history", "list", check(ARTEMIS)).await), 0);
     assert_eq!(total(host.op("history", "list", check(MYSQL)).await), 1);
-    let hints = std::fs::read_to_string(host.path().join(".console-hints.txt")).unwrap();
-    assert_eq!(hints, "## mysql\nmysql hint\n");
 }
 
 #[tokio::test]

@@ -60,47 +60,6 @@ fn stream_body(result: &Value, stdout: &str, stderr: &str) -> String {
     }
     body
 }
-/// A saved run as History shows it: its source, then `#responce <time> · <outcome>` and the
-/// rendered body it saved, which is its response region.
-pub fn history_document(
-    snapshot: &str,
-    time: &str,
-) -> (String, Vec<crate::document::ResponseRegion>) {
-    let headers = [
-        ("\n\n#response success\n", "OK"),
-        ("\n\n#response error\n", "ERROR"),
-        ("\n\n#response stopped\n", "Stopped"),
-        ("\n\n#responce OK\n", "OK"),
-        ("\n\n#responce WARNING\n", "WARNING"),
-        ("\n\n#responce ERROR\n", "ERROR"),
-        ("\n\n#responce NOTICE\n", "NOTICE"),
-        ("\n\n#responce Stopped\n", "Stopped"),
-    ];
-    let Some((offset, marker, outcome)) = headers
-        .into_iter()
-        .filter_map(|(marker, outcome)| {
-            snapshot
-                .find(marker)
-                .map(|offset| (offset, marker, outcome))
-        })
-        .min_by_key(|(offset, _, _)| *offset)
-    else {
-        return (snapshot.into(), vec![]);
-    };
-    let request = snapshot[..offset].trim_end_matches('\n');
-    let body = &snapshot[offset + marker.len()..];
-    let text = format!("{request}\n#responce {time} · {outcome}\n{body}");
-    let region = crate::document::ResponseRegion {
-        request: request
-            .lines()
-            .position(crate::console::is_check)
-            .unwrap_or(0),
-        header: request.lines().count(),
-        end: text.split('\n').count(),
-        columns: Vec::new(),
-    };
-    (text, vec![region])
-}
 pub fn duration(ms: f64) -> String {
     if ms < 1000.0 {
         format!("{ms:.0}ms")

@@ -1,0 +1,10 @@
+{
+  "id": "hints",
+  "kind": "panel",
+  "name": "Hints",
+  "version": "3.7.0",
+  "description": "Completion hints of each service: from sources, or your own for the session.",
+  "abi": 1,
+  "app": ">=3.7",
+  "order": 3
+}

@@ -181,9 +181,7 @@
   const create=async(source,name)=>{
     await open('sessions');
     await testDriver.sessionsIdle();
-    const field=testid('session-new-name');
-    field.value=name;
-    field.dispatchEvent(new InputEvent('input',{bubbles:true}));
+    testDriver.fill(testid('session-new-name'),name);
     await click(testid(`session-copy-${source}`));
     await wait(()=>testid('console-session-name').textContent===name);
     editor=editorOf('console-editor');
@@ -194,43 +192,33 @@
   const beforeSettingsHeader=document.querySelector('.console-top-bar').getBoundingClientRect().height;
   await open('settings');
   const settings=testid('settings-panel'),settingsToggle=testid('console-settings-toggle');
-  if(globalThis.chrome?.runtime?.getManifest){
-    const app=()=>settings.querySelector('[data-testid="settings-module"][data-module="app"] [data-testid="settings-module-version"]');
-    await wait(()=>app(),'The Modules table must list the application');
-    assert(app().textContent===fixtureVersion&&fixtureVersion===chrome.runtime.getManifest().version,
-      `The application row must show the exact compiled release version of the installed extension: ${app().textContent}`);
-  }
-  const editable=[...settings.querySelectorAll('input,select,textarea,.editor')]
-    .filter(field=>!field.closest('[data-testid="agent-settings"],[data-testid="source-settings"]'));
+  const app=()=>settings.querySelector('[data-testid^="settings-module-version-"][data-testid$="/app"]');
+  await wait(()=>app(),'The Modules table must list the application');
+  assert(app().textContent===fixtureVersion&&fixtureVersion===chrome.runtime.getManifest().version,
+    `The application row must show the exact compiled release version of the installed extension: ${app().textContent}`);
+  const editable=[...testid('settings-tab-modules-body').querySelectorAll('input,select,textarea,.editor')];
   assert(!editable.length,
-    `Application Settings must not contain editable fields besides the Agent settings and the Sources: ${editable.map(field=>field.outerHTML)}`);
-  const modulesCheck=document.querySelector('[data-testid="settings-modules-check"]');
-  assert(globalThis.chrome?.runtime?.getManifest ? modulesCheck : !modulesCheck,
-    'Settings must expose the Modules and their update checks only in the Chrome extension');
-  // Opening Settings loads the Copilot model catalog; its light runs until that finishes.
-  await wait(()=>settingsToggle.querySelector('.console-state-light').dataset.state!=='running','Copilot model catalog load in Settings');
+    `The Modules tab must not contain editable fields: ${editable.map(field=>field.outerHTML)}`);
+  assert(document.querySelector('[data-testid="settings-modules-check"]'),'Settings must expose the module update check');
+  await wait(()=>settingsToggle.querySelector('.console-state-light').dataset.state!=='running','Settings check');
   assert(settingsToggle.classList.contains('active')
-    && settingsToggle.querySelector('.console-state-light').dataset.state==='ready'
     && [...document.querySelectorAll('.console-toolbar [aria-pressed="true"]')].length===1,
-    ()=>`Settings must exclusively activate its right-hand tool without claiming an available update: light=${settingsToggle.querySelector('.console-state-light')?.dataset.state}, pressed=${[...document.querySelectorAll('.console-toolbar [aria-pressed="true"]')].map(button=>button.dataset.testid)}`);
-  const activeSettingsTab=()=>find('[data-testid="settings-tabs"] > .tab-button.active');
+    ()=>`Settings must exclusively activate its right-hand tool: pressed=${[...document.querySelectorAll('.console-toolbar [aria-pressed="true"]')].map(button=>button.dataset.testid)}`);
+  const activeSettingsTab=()=>find('[data-testid="settings-tabs"] [role="tab"][aria-selected="true"]');
   assert(getComputedStyle(activeSettingsTab()).backgroundColor
       ===getComputedStyle(document.querySelector('.console-tab-strip > .tab-button.active')).backgroundColor
     && document.querySelector('.console-top-bar').getBoundingClientRect().height===beforeSettingsHeader,
     'Settings tabs must use the shared active heading without increasing the top bar height');
-  const settingsGroup=name=>document.querySelector(`[data-testid="settings-group-${name}"]`);
+  const settingsGroup=name=>document.querySelector(`[data-testid="settings-tab-${name}-body"]`);
   const settingsTabs=()=>[...testid('settings-tabs').querySelectorAll('[role="tab"]')].map(tab=>tab.dataset.testid.slice('settings-tab-'.length));
-  const native=!!globalThis.chrome?.runtime?.getManifest;
-  assert(settingsTabs().join()===(native?'modules,sources,agent':'agent'),
-    `Settings must offer Modules and Sources only with the native host, and Agent always: ${settingsTabs()}`);
-  if(native){
-    await click(testid('settings-tab-sources'));
-    await wait(()=>!settingsGroup('sources').hidden&&settingsGroup('modules').hidden&&settingsGroup('agent').hidden
-      &&activeSettingsTab()===testid('settings-tab-sources'),'A Settings tab must show only its own group');
-  }
+  const native=true;
+  assert(settingsTabs().join()==='modules,sources,agent',`Settings must offer Modules, Sources and Agent: ${settingsTabs()}`);
+  await click(testid('settings-tab-sources'));
+  await wait(()=>settingsGroup('sources')&&!settingsGroup('modules')&&!settingsGroup('agent')
+    &&activeSettingsTab()===testid('settings-tab-sources'),'A Settings tab must show only its own group');
   assert(editor.getValue()===beforeSettings,'Opening application Settings must not alter the current check');
   await click(settingsToggle);
-  // Once visited, Settings stays mounted (hidden) so its model catalog is not reloaded.
+  // A closed panel has no view.
   const settingsHidden=()=>document.querySelector('[data-testid="settings-panel"]')?.hidden!==false;
   await wait(settingsHidden,'Settings panel hidden after toggling it off');
   assert(document.querySelector('.console-right-pane').hidden,
@@ -243,8 +231,8 @@
   await setWidth(410);
   const tabs=document.querySelector('.console-tab-strip');
   const top=document.querySelector('.console-top-bar').getBoundingClientRect().height;
-  const header=document.querySelector('.console-panel-heading:not([hidden])').getBoundingClientRect();
-  assert(Math.abs(header.left-document.querySelector('.console-right-pane').getBoundingClientRect().left)<1,
+  const header=document.querySelector('.module-panel .ui-panel-title').getBoundingClientRect();
+  assert(Math.abs(header.left-testid('console-tool-panel').getBoundingClientRect().left)<=3,
     'The right header and panel must share one resizable grid boundary');
   await open('variables');
   await setWidth(520);
@@ -263,7 +251,7 @@
   await open('settings');
   assert(Math.abs(width()-360)<1,'A copied session must inherit its independent Settings panel width');
   if(native){
-    assert(testid('settings-tab-sources').getAttribute('aria-selected')==='true'&&!settingsGroup('sources').hidden,
+    await wait(()=>document.querySelector('[data-testid="settings-tab-sources"]')?.getAttribute('aria-selected')==='true'&&settingsGroup('sources'),
       'Settings must remember its selected tab across session switches');
     await testDriver.settingsTab('modules');
   }

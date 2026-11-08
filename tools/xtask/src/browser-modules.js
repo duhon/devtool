@@ -1,23 +1,20 @@
 (async () => {
   const {assert, wait, testid, click, openConsole, editorOf, key, setSource, addFolderSource} = testDriver;
   await openConsole();
-  // The service modules and the panel modules (History, Variables).
-  const shipped = ['artemis', 'graphql', 'grpc', 'history', 'mysql', 'opensearch', 'rest', 'splunk', 'terminal', 'variables'];
-  const status = () => document.querySelector('[data-testid="settings-update-status"] .console-status-text')?.textContent ?? '';
-  const rows = () => [...document.querySelectorAll('[data-testid="settings-module"]')];
-  const part = (row, name) => row?.querySelector(`[data-testid="settings-module-${name}"]`);
+  // The service modules and the panel modules (Settings is built into the App).
+  const shipped = ['agent', 'artemis', 'dictionary', 'graphql', 'grpc', 'hints', 'history', 'mysql', 'opensearch', 'rest',
+    'sessions', 'splunk', 'templates', 'terminal', 'variables'];
+  const status = () => document.querySelector('[data-testid="console-settings-status"] .console-status-text')?.textContent ?? '';
+  // A module row is keyed `settings-module-{source}/{module}`; its parts `settings-module-{part}-{source}/{module}`.
+  const rows = () => [...document.querySelectorAll('[data-testid="settings-modules"] tbody > tr')];
+  const keyOf = row => row.dataset.testid.slice('settings-module-'.length);
+  const moduleOf = row => keyOf(row).split('/')[1];
+  const part = (row, name) => row && document.querySelector(`[data-testid="settings-module-${name}-${keyOf(row)}"]`);
   // The modules installed, besides the application.
-  const listed = () => rows().filter(row => row.dataset.module !== 'app' && part(row, 'remove'))
-    .map(row => row.dataset.module).sort().join();
-  const row = (id, source = '') => rows().find(row => row.dataset.module === id && row.dataset.source === source);
-  // Details are the rows following a module's row.
-  const detail = (row, name) => {
-    const testid = `settings-module-${name}`;
-    for (let next = row?.nextElementSibling; next && next.dataset.testid !== 'settings-module'; next = next.nextElementSibling) {
-      const found = next.dataset.testid === testid ? next : next.querySelector(`[data-testid="${testid}"]`);
-      if (found) return found;
-    }
-  };
+  const listed = () => rows().filter(row => moduleOf(row) !== 'app' && part(row, 'remove'))
+    .map(moduleOf).sort().join();
+  const row = (id, source = '') => rows().find(row => keyOf(row) === `${source}/${id}`);
+  const detail = part;
   const tab = id => document.querySelector(`[data-testid="console-service-${id}"]`);
   const settings = async open => {
     if (open) return testDriver.settingsTab('modules');
@@ -42,26 +39,27 @@
   await wait(() => detail(row('rest'), 'description') && !detail(row('rest'), 'description').textContent.includes('No details.'),
     'The name must show the module description');
   // A long, multi-line description wraps inside the table instead of resizing its columns.
-  detail(row('rest'), 'description').querySelector('pre').textContent =
-    `${'A long module description line. '.repeat(12)}\nhttps://github.com/example/${'long-path-'.repeat(30)}`;
+  editorOf('settings-module-description-/rest').setValue(
+    `${'A long module description line. '.repeat(12)}\nhttps://github.com/example/${'long-path-'.repeat(30)}`);
   const table = testid('settings-modules');
   assert(columns() === closedColumns && table.getBoundingClientRect().width <= table.parentElement.clientWidth,
     `Opening a description must not move the columns: ${closedColumns} -> ${columns()}; table ${table.getBoundingClientRect().width} of ${table.parentElement.clientWidth}`);
   await click(part(row('rest'), 'name'));
 
-  const confirmation = (id, source) => detail(row(id, source), 'confirm');
-  const confirmPart = (id, name, source) => confirmation(id, source)?.querySelector(`[data-testid="settings-module-${name}"]`);
+  const confirmation = () => document.querySelector('[data-testid="settings-module-confirm"]');
+  const confirmPart = (id, name) => confirmation()?.querySelector(`[data-testid="settings-module-${name}"]`);
+  const forget = () => confirmPart('', 'forget')?.querySelector('input');
   const ask = async (id, source) => {
     await click(part(row(id, source), 'remove'));
     await wait(() => confirmPart(id, 'remove-confirm', source) && part(row(id, source), 'remove').disabled,
       () => `Removal of ${id} must ask first`);
   };
   await ask('terminal');
-  const question = confirmation('terminal').querySelector('p').textContent;
-  assert(question.includes('Remove module "Terminal"') && question.includes('kept') && !confirmPart('terminal', 'forget').checked,
+  const question = confirmation().querySelector('.ui-text').textContent;
+  assert(question.includes('Remove module "Terminal"') && question.includes('kept') && !forget().checked,
     `Removal must say consoles are kept and keep them by default: ${question}`);
   await click(confirmPart('terminal', 'remove-cancel'));
-  await wait(() => !confirmation('terminal') && !part(row('terminal'), 'remove').disabled, 'Cancel must close the confirmation');
+  await wait(() => !confirmation() && !part(row('terminal'), 'remove').disabled, 'Cancel must close the confirmation');
   await testDriver.sleep(300);
   assert(row('terminal') && tab('terminal') && !status().includes('Remove'), 'A cancelled removal must change nothing');
   await ask('terminal');
@@ -72,14 +70,17 @@
 
   // A folder source offering modules; its invalid file is a problem of the source, not a module.
   await addFolderSource('Modules', fixtureModules);
-  const source = () => document.querySelector('[data-testid="source"][data-source="modules"]');
+  await testDriver.settingsTab('sources');
+  const problems = await wait(() => document.querySelector('[data-testid="source-problems-modules"]'),
+    () => `The folder source must be checked: ${testid('source-settings').textContent}`);
+  assert(problems.textContent.includes('broken.module.tgz'),
+    () => `An invalid package file must be a source problem: ${problems.textContent}`);
+  await testDriver.settingsTab('modules');
   await wait(() => part(row('terminal', 'modules'), 'install') && part(row('echo', 'modules'), 'install'),
     () => `The source must offer its modules: ${testid('settings-modules').textContent}; ${status()}`);
-  assert(source().querySelector('[data-testid="source-problems"]')?.textContent.includes('broken.module.tgz')
-    && !rows().some(row => row.dataset.module === 'broken'),
-    () => `An invalid package file must be a source problem: ${source().textContent}`);
+  assert(!rows().some(row => moduleOf(row) === 'broken'), 'An invalid package file must not be a module');
   const offered = row('terminal', 'modules');
-  assert(part(offered, 'source').textContent === 'Modules' && part(offered, 'source').title === fixtureModules
+  assert(part(offered, 'source').textContent === 'Modules'
     && part(offered, 'version').textContent === '—' && !part(offered, 'remove'),
     `A module offered but not installed has no version: ${offered.textContent}`);
   await click(part(offered, 'new-version'));
@@ -116,23 +117,18 @@
   await wait(() => echoed().includes('sent through a module'),
     () => `The example module must answer with its text: ${echo.getValue().slice(-500)}`);
   await settings(true);
-  const drafts = 'servicesConsole.templateDrafts';
-  const draftKeys = () => Object.keys(JSON.parse(localStorage.getItem(drafts) ?? '{}'));
-  localStorage.setItem(drafts, JSON.stringify({...JSON.parse(localStorage.getItem(drafts) ?? '{}'),
-    'echo/text': {text: 'draft of a removed module', base: ''}}));
   await ask('echo', 'modules');
-  await click(confirmPart('echo', 'forget', 'modules'));
-  await wait(() => confirmPart('echo', 'forget', 'modules').checked, 'The data checkbox must toggle');
-  await click(confirmPart('echo', 'remove-confirm', 'modules'));
+  await click(forget());
+  await wait(() => forget().checked, 'The data checkbox must toggle');
+  await click(confirmPart('echo', 'remove-confirm'));
   await wait(() => status() === 'Removed echo and its data' && !tab('echo') && part(row('echo', 'modules'), 'install'),
     () => `The example module must be removable with its data and stay offered: ${status()}; ${listed()}`);
   const leftovers = async () => (await testDriver.sessionLibrary()).sessions.filter(session =>
     ['documents', 'responses', 'checkIdentities'].some(key => session.snapshot.console?.[key]?.echo !== undefined)
-    || (session.snapshot.console?.order ?? []).includes('echo') || session.snapshot.hints?.echo !== undefined);
+    || (session.snapshot.console?.order ?? []).includes('echo'));
   let left = [];
   await wait(async () => (left = await leftovers()).length === 0,
     () => `No session may keep the console of a module removed with its data: ${left.map(s => s.id)}`);
-  assert(!draftKeys().some(key => key.startsWith('echo/')), `Its Templates drafts must be deleted: ${draftKeys()}`);
   await click(part(row('echo', 'modules'), 'install'));
   await wait(echoInstalled, () => `The example module must install again: ${status()}; ${listed()}`);
   await settings(false);
@@ -141,7 +137,7 @@
     `The deleted console must not come back: ${editorOf('console-editor').getValue().slice(0, 300)}`);
   await settings(true);
   await ask('echo', 'modules');
-  await click(confirmPart('echo', 'remove-confirm', 'modules'));
+  await click(confirmPart('echo', 'remove-confirm'));
   await wait(() => status() === 'Removed echo' && !tab('echo') && part(row('echo', 'modules'), 'install'),
     () => `The example module must be removable: ${status()}; ${listed()}`);
   assert(listed() === shipped.join(), `Only the shipped modules must stay: ${listed()}`);

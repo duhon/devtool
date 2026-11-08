@@ -567,13 +567,13 @@ async fn installed_reload(
       if(testid('console-sessions-toggle').getAttribute('aria-pressed')!=='true') await click(testid('console-sessions-toggle'));
       await testDriver.sessionsIdle();
       await testDriver.settingsTab('modules');
-      const install=()=>document.querySelector('[data-testid="settings-module"][data-module="app"][data-source="updates"] [data-testid="settings-module-install"]');
-      await wait(()=>install()?.closest('tr').querySelector('[data-testid="settings-module-new-version"]')?.textContent==='99.0.1',
+      const install=()=>document.querySelector('[data-testid="settings-module-install-updates/app"]');
+      await wait(()=>install() && document.querySelector('[data-testid="settings-module-new-version-updates/app"]')?.textContent==='99.0.1',
         ()=>`The update source must offer the new version: ${testid('settings-panel').innerText}`);
       updateFixture.reloads=0;
       chrome.runtime.reload=()=>{updateFixture.reloads++;};
-      // Install refuses while any request is in flight; opening Settings loads the Agent model catalog.
-      await wait(()=>document.querySelector('[data-testid="agent-model-input"]')?.disabled===false, 'Agent model catalog to load before Install', 60000);
+      // Install refuses while any request is in flight: the sources check finishes first.
+      await wait(()=>!testid('settings-modules-check').disabled, 'Sources check to finish before Install', 60000);
       await wait(()=>testid('console-session-name').dataset.storageBusy==='false', 'Session save to finish before Install');
       await click(install());
       await wait(()=>updateFixture.reloads===1,
@@ -1176,49 +1176,55 @@ fn update_source(
     Ok(())
 }
 
-/// Writes the legacy native variables and hints every scenario starts from.
-fn seed_data(data: &Path, fixture_port: u16) -> Result<Vec<(PathBuf, String)>> {
-    let seeds = vec![
-        (
-            data.join(".variable-profiles.json"),
-            json!({
-                "order":["default","second","var"],
-                "profiles":{"default":{"TOKEN":"fixture","REF":"{{second:TOKEN}}"},"second":{"TOKEN":"resolved-fixture"},
-                    "var":{
-                        "sku":"fixture-materialized-sku",
-                        "magento":format!("localhost:{fixture_port}"),
-                        "magentoBase":format!("http://localhost:{fixture_port}"),
-                        "magentoToken":format!("http://localhost:{fixture_port}/rest/default/V1/integration/admin/token")
-                    }},
-            })
-            .to_string(),
-        ),
-        (
-            // No sources: the Standard one would reach GitHub from every panel.
-            data.join(".sources.json"),
-            json!({"version":1,"sources":[]}).to_string(),
-        ),
-        (
-            data.join(".console-hints.txt"),
-            [
-                ("mysql", "mysql://mysql.fixture.invalid"),
-                ("rest", "https://rest.fixture.invalid"),
-                ("graphql", "https://graphql.fixture.invalid"),
-                ("grpc", "grpc://grpc.fixture.invalid:9000"),
-                ("splunk", "https://splunk.fixture.invalid"),
-                ("artemis", "http://artemis.fixture.invalid:8161"),
-                ("opensearch", "http://opensearch.fixture.invalid:9200"),
-            ]
-            .into_iter()
-            .map(|(service, url)| format!("## {service}\n#endpoint\n{url}\n"))
-            .collect::<String>(),
-        ),
-    ];
+/// Writes the Host data every scenario starts from.
+fn seed_data(data: &Path) -> Result<Vec<(PathBuf, String)>> {
+    let seeds = vec![(
+        // No sources: the Standard one would reach GitHub from every panel.
+        data.join(".sources.json"),
+        json!({"version":1,"sources":[]}).to_string(),
+    )];
     fs::create_dir_all(data)?;
     for (path, contents) in &seeds {
         fs::write(path, contents)?;
     }
     Ok(seeds)
+}
+
+/// A script that gives a fresh origin storage the fixture variables before the App loads: the
+/// session variables of the Variables panel, the user's Dictionary sets and Hints.
+fn seed_storage(fixture_port: u16) -> String {
+    let variables = json!({
+        "sku":"fixture-materialized-sku",
+        "magento":format!("localhost:{fixture_port}"),
+        "magentoBase":format!("http://localhost:{fixture_port}"),
+        "magentoToken":format!("http://localhost:{fixture_port}/rest/default/V1/integration/admin/token")
+    });
+    let sets = json!({
+        "order":["default","second"],
+        "sets":{"default":{"TOKEN":"fixture","REF":"{{second:TOKEN}}"},"second":{"TOKEN":"resolved-fixture"}},
+    });
+    let hints: serde_json::Map<String, Value> = [
+        ("mysql", "mysql://mysql.fixture.invalid"),
+        ("rest", "https://rest.fixture.invalid"),
+        ("graphql", "https://graphql.fixture.invalid"),
+        ("grpc", "grpc://grpc.fixture.invalid:9000"),
+        ("splunk", "https://splunk.fixture.invalid"),
+        ("artemis", "http://artemis.fixture.invalid:8161"),
+        ("opensearch", "http://opensearch.fixture.invalid:9200"),
+    ]
+    .into_iter()
+    .map(|(service, url)| (service.to_owned(), json!(format!("#endpoint\n{url}\n"))))
+    .collect();
+    format!(
+        "if (location.protocol === 'chrome-extension:' && localStorage.getItem('__fixtureSeeded') === null) {{\n\
+         localStorage.setItem('__fixtureSeeded', '1');\n\
+         localStorage.setItem('module:variables:var', {});\n\
+         localStorage.setItem('module:dictionary:sets', {});\n\
+         localStorage.setItem('module:hints:hints', {});\n}}",
+        json!(variables.to_string()),
+        json!(sets.to_string()),
+        json!(Value::Object(hints).to_string())
+    )
 }
 
 /// Native-host PIDs in `ps -o pid=,command=` output whose executable lies in the harness directory `marker`.
@@ -1534,7 +1540,7 @@ impl Harness {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
         let fixture_port = listener.local_addr()?.port();
         let fixture_url = format!("http://{}", listener.local_addr()?);
-        let seeds = seed_data(&data, fixture_port)?;
+        let seeds = seed_data(&data)?;
         let (browser, mut cdp) = launch_browser(
             &chrome,
             &home,
@@ -1709,7 +1715,8 @@ impl Harness {
 
     async fn panel(&mut self) -> Result<String> {
         let url = self.panel_url();
-        let page = self.cdp.page(&url, INIT).await?;
+        let init = format!("{}\n{INIT}", seed_storage(self.fixture_port));
+        let page = self.cdp.page(&url, &init).await?;
         self.pages.push(page.clone());
         // A team's folder source: a skill and a Dictionary profile.
         let source = self.temporary.path().join("team source");
@@ -1830,7 +1837,7 @@ impl Harness {
                         &format!(
                             "globalThis.pageAgentScript = {}; true",
                             serde_json::to_string(include_str!(
-                                "../../../app/ui/assets/page-agent.js"
+                                "../../../modules/panels/agent/assets/page-agent.js"
                             ))?
                         ),
                     )
@@ -1870,7 +1877,7 @@ impl Harness {
         let payload = extract(&self.archive, &root.join("package"))?;
         let base = home.join("Library/Application Support/ServicesDevTools");
         let data = base.join("data");
-        seed_data(&data, self.fixture_port)?;
+        seed_data(&data)?;
         // An earlier release's user: the modules they installed stay through updates.
         services_installer::copy_tree(&self.modules, &data.join(services_installer::MODULES))?;
         services_installer::install(&home, &payload)

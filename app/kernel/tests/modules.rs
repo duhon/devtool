@@ -245,6 +245,7 @@ fn a_shown_panel_runs_its_commands_and_redraws_from_replies() {
             text: "fetching".into(),
             indicator: "busy".into(),
             detail: Value::Null,
+            since: Some(0.0),
         })
     );
     let errors = &texts(modules.view("panel").unwrap())[1];
@@ -540,7 +541,12 @@ impl Module for Vars {
             _ => Vec::new(),
         }
     }
-    fn resolve(&self, text: &str, _: bool) -> Option<Result<services_sdk::Resolution, String>> {
+    fn resolve(
+        &self,
+        text: &str,
+        _: bool,
+        _: bool,
+    ) -> Option<Result<services_sdk::Resolution, String>> {
         Some(if text.contains("{{var:nope}}") {
             Err("Unknown variable \"nope\" in profile \"var\"".into())
         } else {
@@ -747,4 +753,62 @@ fn a_run_owns_its_calls_and_locks_until_it_finishes_or_stops() {
         "a stopped run's result is dropped"
     );
     assert!(modules.reply("runner", "r2:call", Ok(json!({}))).is_empty());
+}
+
+/// A chat panel: watches its kv key and runs an Agent turn on Shown.
+#[derive(Default)]
+struct Chat {
+    heard: Vec<String>,
+}
+
+impl Module for Chat {
+    type Msg = ();
+    fn update(&mut self, event: Event<()>) -> Vec<Cmd> {
+        match event {
+            Event::Init { .. } => vec![cmd::kv_watch("chats")],
+            Event::Shown => vec![cmd::agent_turn("turn", &json!({"prompt": "hi"}))],
+            Event::Storage { key } => {
+                self.heard.push(key);
+                Vec::new()
+            }
+            Event::ToolCall { name, .. } => {
+                self.heard.push(name);
+                Vec::new()
+            }
+            _ => Vec::new(),
+        }
+    }
+    fn view(&self) -> Option<ui::Node> {
+        Some(ui::panel(
+            "Chat",
+            vec![ui::text(self.heard.join(","))],
+            Vec::new(),
+        ))
+    }
+}
+
+#[test]
+fn a_chat_panel_hears_its_watched_keys_and_its_turn_stops_when_hidden() {
+    let mut modules = modules();
+    modules
+        .load(
+            manifest("chat", "panel", 1),
+            Box::new(Linked::<Chat>::default()),
+            json!({}),
+        )
+        .unwrap();
+    let effects = modules.show("chat");
+    assert!(effects.iter().any(|effect| matches!(effect,
+        Effect::Command { cmd, .. } if cmd.name == "agent.turn")));
+    assert!(modules.storage("chat", "other").is_empty());
+    modules.storage("chat", "chats");
+    modules.tool_call("chat", "call", "page_read", &json!({}));
+    assert_eq!(texts(modules.view("chat").unwrap()), ["chats,page_read"]);
+
+    // A closed panel is off: its running turn is cancelled.
+    let effects = modules.hide("chat");
+    assert!(effects.contains(&Effect::Cancel {
+        module: "chat".into(),
+        tag: "turn".into()
+    }));
 }

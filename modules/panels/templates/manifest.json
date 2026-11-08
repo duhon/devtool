@@ -1,0 +1,10 @@
+{
+  "id": "templates",
+  "kind": "panel",
+  "name": "Templates",
+  "version": "3.7.0",
+  "description": "Templates of whole checks and sections that completion inserts by @name.",
+  "abi": 1,
+  "app": ">=3.7",
+  "order": 2
+}

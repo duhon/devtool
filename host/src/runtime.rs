@@ -1,9 +1,7 @@
 use crate::core::{
     error::{Result, text},
-    hints::Hints,
     registry::Registry,
     sources::{self, Sources},
-    variables::VariableStore,
 };
 use serde_json::{Value, json};
 use std::path::PathBuf;
@@ -12,22 +10,16 @@ pub struct Runtime {
     pub operations: crate::core::operations::Operations,
     pub agent: crate::agent::Agent,
     pub registry: Registry,
-    pub variable_store: VariableStore,
-    pub dictionary_store: VariableStore,
-    pub hints: Hints,
-    pub templates: crate::core::templates::Templates,
     pub history: crate::core::history::History,
     pub sources: Sources,
     pub drivers: crate::drivers::Drivers,
 }
 impl Runtime {
+    /// Secrets the Agent must not see: sensitive environment variables and the session's
+    /// variables (`__consoleVariables`, from the Variables panel) with a sensitive name.
     pub fn agent_session_sensitive_values(&self, params: &Value) -> Result<Vec<String>> {
         let mut values = self.agent_sensitive_values()?;
         if let Some(variables) = params.get("__consoleVariables") {
-            let context = self
-                .variable_store
-                .session_dispatch(&json!({"op":"list"}), variables)?;
-            Self::collect_sensitive(&context["context"]["resolvedProfiles"], &mut values);
             Self::collect_sensitive(variables, &mut values);
         }
         Ok(values)
@@ -47,10 +39,6 @@ impl Runtime {
     }
     pub fn agent_sensitive_values(&self) -> Result<Vec<String>> {
         let mut values = Vec::new();
-        Self::collect_sensitive(
-            &self.variable_store.list()?["context"]["resolvedProfiles"],
-            &mut values,
-        );
         for (name, value) in std::env::vars() {
             if crate::agent::Redactor::sensitive_name(&name) {
                 values.push(value);
@@ -68,17 +56,11 @@ impl Runtime {
         if let Err(error) = sources::migrate_team_folder(&path) {
             eprintln!("Team skills folder migration failed: {}", error.message);
         }
-        let variable_store = VariableStore::new(path.join(".variable-profiles.json"));
-        let dictionary_store = variable_store.dictionary();
-        let registry = Registry::new(variable_store.clone())?;
+        let registry = Registry::new(&path)?;
         Ok(Self {
             operations: Default::default(),
             agent: crate::agent::Agent::new(path.join(".agent")),
             registry,
-            variable_store,
-            dictionary_store,
-            hints: Hints::new(path.join(".console-hints.txt")),
-            templates: crate::core::templates::Templates::new(path.join(".console-templates.json")),
             history: crate::core::history::History::new(path.join(".console-history.sqlite3")),
             sources: Sources::new(path),
             drivers: crate::drivers::Drivers::new()?,
@@ -125,8 +107,7 @@ impl Runtime {
     /// `digest`) and the packages that failed to load;
     /// `op:"wasm"` with a `module` id: the wasm module as base64;
     /// `op:"install"` with the `source`, `module` and `version` of a source's offer, and
-    /// `op:"remove"` with a `module` folder change the modules folder; `forget:true` also deletes the module's history, local templates and
-    /// hints. This host keeps the modules it loaded; a new host process loads the change.
+    /// `op:"remove"` with a `module` folder change the modules folder; `forget:true` also deletes the module's history. This host keeps the modules it loaded; a new host process loads the change.
     async fn modules(&self, message: &Value) -> Result<Value> {
         use crate::core::{error::Error, install};
         use base64::Engine;
@@ -176,24 +157,16 @@ impl Runtime {
                 sources::remove_module_source(self.sources.data(), &name)?;
                 let mut reply = json!({"removed": name});
                 if message["forget"] == true {
-                    let (history, templates, hints) = (
-                        self.history.clone(),
-                        self.templates.clone(),
-                        self.hints.clone(),
-                    );
-                    let forgotten = tokio::task::spawn_blocking(move || -> Result<()> {
-                        history.forget(&name)?;
-                        templates.forget(&name)?;
-                        hints.forget(&name)
-                    })
-                    .await
-                    .map_err(|e| Error::new(e.to_string()))
-                    .and_then(|result| result);
+                    let history = self.history.clone();
+                    let forgotten = tokio::task::spawn_blocking(move || history.forget(&name))
+                        .await
+                        .map_err(|e| Error::new(e.to_string()))
+                        .and_then(|result| result);
                     match forgotten {
-                        Ok(()) => reply["forgotten"] = json!(true),
+                        Ok(_) => reply["forgotten"] = json!(true),
                         Err(e) => {
                             reply["warning"] = json!(format!(
-                                "The module was removed, but its history, templates or hints were not deleted: {}",
+                                "The module was removed, but its history was not deleted: {}",
                                 e.message
                             ))
                         }
@@ -254,23 +227,16 @@ impl Runtime {
             } else {
                 self.history.dispatch(message).await
             }
-        } else if service == "sessions" {
-            (|| -> Result<Value> {
-                let variables = self.variable_store.list()?;
-                let hints: serde_json::Map<String, Value> = self
-                    .registry
-                    .wasm()
-                    .iter()
-                    .map(|module| {
-                        let id = module.manifest.id.clone();
-                        let text = self.hints.get(&id, "")["text"].clone();
-                        (id, text)
-                    })
-                    .collect();
-                Ok(json!({"variables":variables["profiles"]["var"],"hints":hints}))
-            })()
         } else if service == "modules" {
             self.modules(message).await
+        } else if service == "env" {
+            Ok(Value::Object(
+                std::env::vars()
+                    .map(|(name, value)| (name, json!(value)))
+                    .collect(),
+            ))
+        } else if service == "sources" && message["op"] == "read" {
+            sources::read(self.sources.data(), &text(message, "name"))
         } else if service == "sources" {
             let installed: Vec<sources::Installed> = self
                 .registry
@@ -297,44 +263,7 @@ impl Runtime {
                         }),
                 )
                 .collect();
-            let local = || sources::Local {
-                dictionary: self.dictionary_store.local().unwrap_or_default(),
-                templates: self.templates.local().unwrap_or_default(),
-                hints: self.hints.local(),
-            };
-            sources::dispatch(&self.sources, message, local, &installed).await
-        } else if service == "vars" {
-            if let Some(variables) = message.get("sessionVariables") {
-                self.variable_store.session_dispatch(message, variables)
-            } else {
-                self.variable_store.dispatch(message)
-            }
-        } else if service == "dictionary" {
-            if let Some(variables) = message.get("sessionVariables") {
-                self.dictionary_store.session_dispatch(message, variables)
-            } else {
-                self.dictionary_store.dispatch(message)
-            }
-        } else if service == "templates" {
-            match message["op"].as_str() {
-                Some("get") => self.templates.get(),
-                Some("save") => self.templates.save(message),
-                Some("reset") => self.templates.reset(message),
-                _ => Err(crate::core::error::Error::new(
-                    "Unknown templates operation",
-                )),
-            }
-        } else if service == "hints" {
-            let service = text(message, "serviceName");
-            let default = "";
-            match message["op"].as_str() {
-                Some("save") => self.hints.save(&service, &text(message, "text"), default),
-                Some("reset") => self
-                    .hints
-                    .forget(&service)
-                    .map(|()| self.hints.get(&service, default)),
-                _ => Ok(self.hints.get(&service, default)),
-            }
+            sources::dispatch(&self.sources, message, &installed).await
         } else {
             Err(crate::core::error::Error::new(format!(
                 "Unknown service \"{service}\""

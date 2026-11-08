@@ -1,38 +1,6 @@
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
-pub fn validate_hints(text: &str) -> Result<(), String> {
-    for (index, line) in text.lines().enumerate() {
-        if line.trim().starts_with("##") {
-            return Err(format!(
-                "Line {}: ## service headers are managed automatically; use a single # for sections.",
-                index + 1
-            ));
-        }
-        if line.contains('\0') {
-            return Err(format!(
-                "Line {}: NUL characters are not supported.",
-                index + 1
-            ));
-        }
-        let mut rest = line;
-        while let Some(start) = rest.find("{{") {
-            let Some(end) = rest[start + 2..].find("}}") else {
-                return Err(format!(
-                    "Line {}: incomplete variable reference.",
-                    index + 1
-                ));
-            };
-            let reference = &rest[start + 2..start + 2 + end];
-            if reference.contains(['{', '}']) || !reference.contains(':') {
-                return Err(format!("Line {}: invalid variable reference.", index + 1));
-            }
-            rest = &rest[start + 2 + end + 2..];
-        }
-    }
-    Ok(())
-}
-
 /// The `#marker` sections of a service: what its module completes, then the console's
 /// `#options` unless the module has its own.
 pub fn markers(service: &str) -> Vec<String> {
