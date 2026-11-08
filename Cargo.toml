@@ -1,5 +1,5 @@
 [workspace]
-members = ["api/protocol", "api/sdk", "app/kernel", "modules/services/rest", "modules/services/graphql", "modules/services/grpc", "modules/services/mysql", "modules/services/splunk", "modules/services/terminal", "modules/services/artemis", "modules/services/opensearch", "modules/panels/variables", "modules/panels/history", "modules/panels/dictionary", "modules/panels/hints", "modules/panels/templates", "modules/panels/sessions", "modules/panels/agent", "modules/panels/settings", "examples/echo", "host", "app/ui", "installer", "tools/testkit", "tools/xtask"]
+members = ["api/protocol", "api/sdk", "app/kernel", "modules/services/rest", "modules/services/graphql", "modules/services/grpc", "modules/services/mysql", "modules/services/splunk", "modules/services/terminal", "modules/services/artemis", "modules/services/opensearch", "modules/panels/variables", "modules/panels/history", "modules/panels/dictionary", "modules/panels/hints", "modules/panels/templates", "modules/panels/sessions", "modules/panels/agent", "modules/panels/settings", "examples/echo", "host", "app/widgets", "app/shell", "installer", "tools/testkit", "tools/xtask"]
 resolver = "3"
 
 [workspace.package]

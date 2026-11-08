@@ -365,7 +365,7 @@ fn archived_install_native_services_update_and_uninstall() {
         );
     }
     assert!(
-        members.contains("extension/wasm/services_ui_bg.wasm"),
+        members.contains("extension/wasm/app_bg.wasm"),
         "archive must ship compiled WASM UI"
     );
     let extracted = fixture.directory.path().join("extracted payload");

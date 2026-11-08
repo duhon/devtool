@@ -1,0 +1,40 @@
+/* The state light of a tab, button or check. */
+
+.console-state-light {
+  position: absolute;
+  bottom: -1px;
+  left: -1px;
+  width: calc(100% + 2px);
+  height: 2px;
+  pointer-events: none;
+  background: transparent;
+  z-index: 2;
+}
+
+.console-state-light.is-ready {
+  background: transparent;
+}
+
+.console-state-light.is-warning {
+  background: var(--warning);
+}
+
+.console-state-light.is-error {
+  background: var(--error);
+}
+
+.console-state-light.is-running {
+  background: linear-gradient(90deg, var(--running-dark), var(--running-light), var(--running-dark), var(--running-light), var(--running-dark));
+  background-size: 200% 100%;
+  animation: console-state-flow 1.5s linear infinite;
+}
+
+@keyframes console-state-flow {
+  to { background-position: 200% 200%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .console-state-light {
+    animation: none;
+  }
+}

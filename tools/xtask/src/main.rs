@@ -344,7 +344,7 @@ fn build_extension(root: &Path, output: &Path, prerelease: bool) -> Result<Strin
         &[
             "--release",
             "-p",
-            "services-ui",
+            "services-shell",
             "--target",
             "wasm32-unknown-unknown",
         ],
@@ -354,7 +354,7 @@ fn build_extension(root: &Path, output: &Path, prerelease: bool) -> Result<Strin
         fs::remove_dir_all(output)?;
     }
     fs::create_dir_all(output.join("wasm"))?;
-    let wasm = target(root).join("wasm32-unknown-unknown/release/services_ui.wasm");
+    let wasm = target(root).join("wasm32-unknown-unknown/release/services_shell.wasm");
     run(
         root,
         "wasm-bindgen",
@@ -362,7 +362,7 @@ fn build_extension(root: &Path, output: &Path, prerelease: bool) -> Result<Strin
             "--target",
             "web",
             "--out-name",
-            "services_ui",
+            "app",
             "--out-dir",
             output
                 .join("wasm")
@@ -389,9 +389,10 @@ fn build_extension(root: &Path, output: &Path, prerelease: bool) -> Result<Strin
     }
     fs::write(output.join("devtools.js"), devtools)?;
     fs::copy(source.join("panel.js"), output.join("panel.js"))?;
-    fs::create_dir_all(output.join("shared"))?;
-    let shared = root.join("app/ui/assets");
-    fs::copy(shared.join("styles.css"), output.join("shared/styles.css"))?;
+    fs::copy(
+        root.join("app/shell/src/theme.css"),
+        output.join("theme.css"),
+    )?;
     let mut manifest: Value = serde_json::from_slice(&fs::read(source.join("manifest.json"))?)?;
     if prerelease {
         manifest["key"] = json!(PRERELEASE_KEY);
@@ -621,7 +622,7 @@ fn test(root: &Path, args: &[String]) -> Result<()> {
             words("test -p services-native --test conformance --test host"),
             words("test -p services-contracts"),
         ],
-        Some("ui") => vec![words("test -p services-ui")],
+        Some("ui") => vec![words("test -p services-widgets -p services-shell")],
         Some("browser") => return browser::run(root, browser::Selection::parse(&args[1..])?),
         Some("install") => vec![words("test -p services-installer")],
         Some("perf") => vec![words(

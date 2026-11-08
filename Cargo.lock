@@ -3109,25 +3109,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "services-testkit"
-version = "3.7.0"
-dependencies = [
- "axum 0.8.9",
- "serde_json",
- "services-contracts",
- "services-native",
- "tokio",
- "tokio-util",
-]
-
-[[package]]
-name = "services-ui"
+name = "services-shell"
 version = "3.7.0"
 dependencies = [
  "base64 0.22.1",
  "js-sys",
- "pulldown-cmark",
- "regex",
  "serde",
  "serde-wasm-bindgen 0.6.5",
  "serde_json",
@@ -3149,6 +3135,37 @@ dependencies = [
  "services-module-templates",
  "services-module-terminal",
  "services-module-variables",
+ "services-sdk",
+ "services-widgets",
+ "url",
+ "uuid",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "yew",
+]
+
+[[package]]
+name = "services-testkit"
+version = "3.7.0"
+dependencies = [
+ "axum 0.8.9",
+ "serde_json",
+ "services-contracts",
+ "services-native",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
+name = "services-widgets"
+version = "3.7.0"
+dependencies = [
+ "js-sys",
+ "pulldown-cmark",
+ "serde",
+ "serde-wasm-bindgen 0.6.5",
+ "serde_json",
  "services-sdk",
  "url",
  "uuid",

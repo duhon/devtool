@@ -1,4 +1,4 @@
-import init from './wasm/services_ui.js';
+import init from './wasm/app.js';
 
 try {
   await init();

@@ -282,28 +282,37 @@ app/
 │   │                   ← browser/updates.rs
 │   ├── events.rs       события модулям
 │   └── activity.rs     состояния и индикаторы
-├── widgets/src/        без логики приложения; CSS рядом с виджетом, цвета — только
-│   │                   var(--…) из темы Shell
+├── widgets/src/        без логики приложения и без Kernel; CSS рядом с виджетом (`CSS`),
+│   │                   цвета — только var(--…) из темы Shell
 │   ├── lib.rs
-│   ├── view.rs         UI-дерево модуля → виджеты, действия → msg
+│   ├── dom.rs          общие обёртки web-sys/js-sys  ← browser/mod.rs
+│   ├── view.rs         UI-дерево модуля → виджеты (Tabs, List, Table, PanelFrame…),
+│   │                   действия → msg; view.css
 │   ├── editor.rs       View + Handle  ← browser/editor/{mod,view,handle}.rs
 │   ├── editor/         state, text, commands, history, layout, render, highlight (кеш;
 │   │                   токены от модуля), fold (механика), brackets, model (модель одного
-│   │                   редактора, ← editor/session.rs), facade; editor.css. Уходят:
-│   │                   json.rs, sql.rs → модули, mount.rs
-│   ├── find_bar.rs     ← find.rs, browser/find.rs
-│   ├── check_rail.rs, status_bar.rs, tree.rs, indicator.rs  ← browser/check_rail.rs, views.rs
+│   │                   редактора, ← editor/session.rs), facade; document, identity
+│   │                   (← checks.rs), syntax, hover (← profiles.rs), json; language.rs —
+│   │                   трейт `Language`, который ставит Shell; editor.css. mount.rs — пока
+│   │                   (table-performance)
+│   ├── find_bar.rs     ← find.rs, browser/find.rs (+ find_bar/view.rs)
+│   ├── check_rail.rs   ← browser/check_rail.rs
+│   ├── status_bar.rs, tree.rs, indicator.rs  ← views.rs, activity.rs
 │   ├── resizer.rs      ← browser/pane_resizer.rs
-│   ├── markdown.rs     ← browser/agent_markdown.rs
-│   ├── banner.rs, overlay.rs  уведомление сверху и экран поверх окна (статус Host, ошибки,
-│   │                   обновление); когда показывать — решает Shell
-│   └── tabs.rs, list.rs, table.rs, form.rs, panel_frame.rs (новые)
+│   └── markdown.rs     ← browser/agent_markdown.rs
 ├── shell/src/          → app.wasm; точка сборки: единственная часть, знающая и Kernel, и
 │   │                   Widgets
 │   ├── lib.rs          старт: Kernel, монтирование, связывание виджетов с Kernel
-│   ├── layout.rs       + layout.css: вся раскладка (верхнее меню, рабочая область, боковая
-│   │                   панель, нижняя строка) — одна CSS-сетка
-│   └── theme.css       тема: переменные цветов и шрифтов, body
+│   ├── language.rs     язык редактора из модулей Kernel и консоли
+│   ├── browser/        корневой компонент app.rs (+ app/console_panel, kernel_panel,
+│   │                   agent), transport, updates, sessions, session_database,
+│   │                   kernel_modules
+│   ├── console.rs, completion.rs, template_completion.rs, format.rs, kernel.rs,
+│   │                   services.rs, sessions.rs, storage.rs, agent_workspace.rs
+│   ├── layout.css      вся раскладка (верхнее меню, рабочая область, боковая панель,
+│   │                   нижняя строка); раскладка в коде — пока в browser/app
+│   └── theme.css       тема: переменные цветов и шрифтов, body; panel.html подключает её
+│                       ссылкой (`theme.css`), чтобы до загрузки wasm не было белого экрана
 ```
 
 Ушли из Kernel в панели: подстановка переменных (Variables), History и маскировка
@@ -491,7 +500,7 @@ Kernel вызывает модуль напрямую и сразу получа
 - Вкладка `Tabs` может переименовываться на месте (`on_rename`: двойной щелчок, Enter или
   blur — сохранить, Escape — отменить) и нести свет (`indicator`); `Tabs.on_reorder` —
   перетаскивание вкладок, значение `["from","to"]`.
-- Рисует дерево App: `app/ui/src/browser/view.rs` (узел → виджет, действие → `Ui`).
+- Рисует дерево App: `app/widgets/src/view.rs` (узел → виджет, действие → `Ui`).
 - `Editor { language: "<id модуля>", text, on_change }` — подсветку даёт модуль с этим id
   (Templates показывает шаблон REST языком REST).
 - Места для UI сервиса фиксированы: форма Options, действия в верхнем меню (Export,
@@ -520,9 +529,10 @@ devtool/
 │   │                             (services.html/js вместо panel.html/js)
 │   ├── kernel/                   Kernel: modules (загрузка wasm), workspace, document,
 │   │                             editor, requests, storage, locks, page, updates, events
-│   ├── widgets/                  Widgets: view, editor/, find_bar, check_rail, status_bar,
-│   │                             tree, resizer, markdown, tabs, list, form, panel_frame;
-│   │                             CSS рядом с виджетом (тема — в Shell)
+│   ├── widgets/                  Widgets: view (tabs, list, table, panel_frame),
+│   │                             editor/, find_bar, check_rail, status_bar, tree,
+│   │                             indicator, resizer, markdown; CSS рядом с виджетом
+│   │                             (тема — в Shell)
 │   └── shell/                    Shell → app.wasm: lib (старт, связывание), layout, theme
 ├── host/                         Host                       ← rust/native
 │   └── src/ bridge/              native messaging, framing, chunks, router, health
@@ -671,6 +681,30 @@ Settings. Пакеты выпуска — `dist/modules/`, как сейчас.
   `kv.put`. Export и Import всегда занимают место в меню (скрыты, пока сервис их не даёт),
   кнопки панелей — из статических манифестов, так меню не сдвигается при загрузке модулей.
   Свет кнопки Sessions показывает автосохранение App (идёт, ошибка) и при закрытой панели.
+
+- Шаг 6: монолит `app/ui` (services-ui) разделён на `app/widgets` (services-widgets) и
+  `app/shell` (services-shell, точка сборки `app.wasm`); `app/ui` и папка `assets/` удалены.
+  Widgets не зависят от Kernel: язык редактора (сервис ли режим, маркеры, подсветка и
+  свёртки модуля, подсказки, hints, переменные) — трейт `editor::language::Language`,
+  реализация — `shell/src/language.rs`, ставится в `start()`; без неё — простой текст.
+  В Widgets ушли редактор с моделью документа (`document`, `identity` ← checks.rs, `syntax`,
+  `hover` ← profiles.rs, `json`), `view`, `find_bar`, `check_rail`, `status_bar` и `tree`
+  (← views.rs), `indicator` (← activity.rs), `resizer`, `markdown`, `dom` (обёртки web-sys
+  из browser/mod.rs); `RequestBlock`, `is_check` и `request_at` консоли — в
+  `editor::document` (`check_at`), `duration` — в `status_bar`, `prepare_insertion` и типы
+  подсказок — в `editor::language`. CSS разложен по владельцам (`<виджет>.css`,
+  `include_str!`), цвета — переменные `:root` из `shell/src/theme.css`; раскладка Shell —
+  `shell/src/layout.css` (из styles.css, console.css, ui.css); порядок каскада прежний (тема,
+  виджеты, раскладка, view). Тесты — в крейтах-владельцах (`widgets/tests/editor`,
+  `shell/tests/{core,modules}`); `xtask test ui` гоняет оба. Удалены мёртвые
+  `console::replace_response`, `Highlighter::state_before`, зависимость `regex`, скрытый
+  баннер `#native-host-status` в panel.html.
+  Отличия от плана: модель документа и `Language` — в Widgets, а не в `kernel/document.rs`
+  и `kernel/editor.rs` (Kernel пока не трогали); `layout.rs` не выделен — раскладка в
+  `browser/app`; banner, overlay, tabs, list, table, form, panel_frame отдельными файлами не
+  стали (баннер и оверлей — в Shell, остальное — в `view.rs`); `mount.rs` остался
+  (table-performance); `theme.css` подключается ссылкой из panel.html, а не `include_str!`
+  (иначе до загрузки wasm панель белая); классы `console-*` не переименованы.
 
 ## Решить
 

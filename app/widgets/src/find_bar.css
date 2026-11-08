@@ -1,0 +1,131 @@
+/* Find bar: drawn inside the editor it searches. */
+
+.console-find-target {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.console-find {
+  position: absolute;
+  top: 4px;
+  right: 16px;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  box-sizing: border-box;
+  width: 440px;
+  max-width: calc(100% - 24px);
+  padding: 4px 6px 6px;
+  font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: var(--fg);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 14px var(--shadow-strong);
+  cursor: default;
+}
+
+.console-find-scope {
+  overflow: hidden;
+  color: var(--fg-muted);
+  font-size: 11px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.console-find-scope strong {
+  color: var(--fg-secondary);
+  font-weight: 600;
+}
+
+.console-find-row {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.console-find-replace {
+  padding-left: 22px;
+}
+
+.console-find-input {
+  flex: 1;
+  min-width: 80px;
+  height: 22px;
+  box-sizing: border-box;
+  padding: 2px 6px;
+  font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  outline: none;
+}
+
+.console-find-input:focus {
+  border-color: var(--accent);
+}
+
+.console-find button {
+  height: 22px;
+  padding: 0 7px;
+  font: inherit;
+  line-height: 20px;
+}
+
+.console-find .console-find-option,
+.console-find .console-find-icon,
+.console-find .console-find-expand {
+  min-width: 22px;
+  padding: 0 4px;
+  color: var(--fg-secondary);
+  background: transparent;
+  border-color: transparent;
+}
+
+.console-find .console-find-option {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.console-find .console-find-option:hover,
+.console-find .console-find-icon:hover:not(:disabled),
+.console-find .console-find-expand:hover {
+  color: var(--fg);
+  background: var(--bg-hover);
+}
+
+.console-find .console-find-option.active {
+  color: var(--fg-bright);
+  background: var(--find-option-active);
+  border-color: var(--accent);
+}
+
+.console-find button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.console-find-count {
+  min-width: 64px;
+  padding: 0 4px;
+  overflow: hidden;
+  color: var(--fg-secondary);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  text-align: center;
+}
+
+.console-find-count.is-error {
+  color: var(--error);
+}
+
+.editor-find-match {
+  background: var(--find-match);
+  border-radius: 2px;
+}
+
+.editor-find-current {
+  background: var(--find-current);
+  outline: 1px solid var(--find-current-outline);
+}

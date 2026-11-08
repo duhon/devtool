@@ -1,0 +1,116 @@
+/* The check rail: one link per check of the editor beside it. */
+
+.console-check-link {
+  position: relative;
+}
+
+.console-check-link > .console-state-light {
+  top: -1px;
+  bottom: auto;
+  width: 2px;
+  height: calc(100% + 2px);
+}
+
+.console-check-link > .console-state-light {
+  right: -1px;
+  left: auto;
+}
+
+.console-check-link > .console-state-light.is-running {
+  background-image: linear-gradient(180deg, var(--running-dark), var(--running-light), var(--running-dark), var(--running-light), var(--running-dark));
+  background-size: 100% 200%;
+}
+
+.console-check-menu {
+  position: relative;
+  display: flex;
+  grid-column: 1;
+  grid-row: 2;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  overflow: hidden;
+  min-width: 28px;
+  max-width: min(320px, 40vw);
+}
+
+.console-check-links {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.console-check-links > .console-check-link {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  text-align: left;
+}
+
+.console-check-number {
+  flex: 0 0 20px;
+  text-align: center;
+}
+
+.console-check-comment {
+  display: none;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.console-check-menu.is-expanded .console-check-comment {
+  display: block;
+}
+
+.console-check-resizer {
+  position: absolute;
+  inset: 0 0 0 auto;
+  width: 4px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.console-check-resizer:is(:hover, :focus-visible) {
+  background: var(--border-strong);
+  outline: none;
+}
+
+.console-check-link {
+  flex: 0 0 auto;
+  padding: 2px;
+}
+
+.console-check-link.active {
+  color: var(--fg-bright);
+  background: var(--bg-active);
+  border-color: var(--accent);
+}
+
+.console-check-link {
+  box-sizing: border-box;
+  min-height: 22px;
+  border: 1px solid var(--border);
+  background: var(--bg-raised);
+  color: var(--fg-control);
+  font-size: 12px;
+  font-family: inherit;
+  font-weight: normal;
+  line-height: 16px;
+  cursor: pointer;
+}
+
+.console-check-link {
+  border-right: none;
+  border-radius: 4px 0 0 4px;
+}
+
+.console-check-link:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent);
+}

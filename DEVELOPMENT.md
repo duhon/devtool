@@ -55,7 +55,7 @@ cargo run -p xtask -- test <type>   # one kind at a time
 |---|---|---|
 | `behavior [--module NAME]` | What each module does, through the host protocol; the shared core | `host/tests/modules/`, `tests/core/` |
 | `contract` | Rules every module obeys; native messaging, shell environment, TLS | `host/tests/conformance.rs`, `tests/host/` |
-| `ui` | UI models, parsing, completion, rendering | `app/ui/tests/` |
+| `ui` | Widgets, UI models, parsing, completion, rendering | `app/widgets/tests/`, `app/shell/tests/` |
 | `browser [--scenario NAME] [--jobs N] [--list]` | User scenarios in the built extension, isolated Chrome profiles | `tools/xtask/src/browser*` |
 | `install` | Install, update, rollback, uninstall in a temporary HOME | `installer/tests` |
 | `perf` | Time budgets; release build, ignored by default | `host/tests/perf.rs` |
@@ -74,8 +74,10 @@ cargo run -p xtask -- test <type>   # one kind at a time
 - `modules/services/<id>` — the standard modules, each released on its own with its
   version, `RELEASE_NOTES.md` and Agent skill (`skill/SKILL.md`).
 - `examples/echo` — an unshipped example module and the module guide.
-- `app/ui` — the browser UI (Yew/WebAssembly), including its text editor;
-  `app/ui/assets` — styles.
+- `app/widgets` — generic UI widgets (Yew/WebAssembly) with no application logic,
+  including the text editor; each widget's CSS lies next to it.
+- `app/shell` — the App (`app.wasm`): layout, theme, toolbar, side panels, Console,
+  wiring of Kernel, widgets and Host.
 - `installer` — install, update, rollback, uninstall.
 - `tools/testkit` — test host, module catalog, wire fixtures.
 - `tools/xtask` — builds, module packages, test commands.

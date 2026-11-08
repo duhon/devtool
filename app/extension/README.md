@@ -38,10 +38,11 @@ chrome-extension://ckicpgdfkgcmgnclbfbcbkillcpaffnb/panel.html
 
 ## Runtime boundaries
 
-`app/ui/` owns application state, the Console, its Variables/Dictionary
+`app/shell/` owns application state, the Console, its Variables/Dictionary
 panels and the browser transport bindings. `src/panel.js` only loads the generated
 WASM module; `devtools.js` registers the Chrome panel. The text editor is
-part of the WASM module. Styles live in `app/ui/assets/`; no legacy web
+part of the WASM module (`app/widgets/`). Styles lie next to their owner widget;
+the Shell's theme is linked as `theme.css`; no legacy web
 application or Node build script is used.
 
 `host/` owns request execution. Native Messaging retains the

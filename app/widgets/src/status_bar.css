@@ -1,0 +1,128 @@
+/* The status line of a run or a module and its Debug tree below. */
+
+.tab-debug-body {
+  margin: 0;
+  padding: 8px;
+  height: 200px;
+  min-height: 40px;
+  overflow: auto;
+  resize: vertical;
+  font-family: monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.console-status {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  min-height: 22px;
+  margin-top: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-top: none;
+  border-radius: 0 0 4px 4px;
+  background: var(--bg-raised);
+  color: var(--fg-control);
+  font-family: monospace;
+  line-height: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.console-status-spinner {
+  box-sizing: border-box;
+  flex: 0 0 12px;
+  width: 12px;
+  height: 12px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: console-status-spin 0.8s linear infinite;
+  margin-left: 6px;
+}
+
+.console-status-elapsed {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.console-status-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-left: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.console-status-stop {
+  align-self: stretch;
+  flex: 0 0 22px;
+  min-height: 21px;
+  padding: 0;
+  border: none;
+  border-left: 1px solid var(--danger-border);
+  border-radius: 0 0 3px 0;
+  background: var(--danger-bg);
+  color: var(--error);
+  font: inherit;
+  cursor: pointer;
+}
+
+.console-status-stop:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.console-status-stop:not(:disabled):hover {
+  background: var(--danger-hover);
+}
+
+@keyframes console-status-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .console-status-spinner {
+    animation: none;
+  }
+}
+
+/* Overlap the status border so expanded Debug stays part of the same frame. */
+.console-debug-panel {
+  flex: 0 0 auto;
+  margin-top: -1px;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  background: var(--bg-raised);
+  max-height: 35vh;
+  overflow: auto;
+}
+
+.console-status:has(+ .console-debug-panel:not([hidden])) {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.console-status.is-warning {
+  color: var(--warning);
+}
+
+.console-status.is-ok,
+.console-status.is-running {
+  color: var(--running);
+}
+
+.console-status.is-error {
+  color: var(--error);
+}
+
+.console-debug-panel { max-height: 35vh; }

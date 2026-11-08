@@ -1,0 +1,117 @@
+/* The theme: colours (every widget uses only these variables), fonts, body and base controls. */
+
+:root {
+  color-scheme: dark;
+  --accent-light: #9cc3ff;
+  --accent-soft: #5794d2;
+  --accent: #3574f0;
+  --agent-edit-still: rgba(241, 250, 140, 0.2);
+  --agent-edit: rgba(241, 250, 140, 0.35);
+  --bg-active: #324b70;
+  --bg-band: #2d3035;
+  --bg-editor: #25272a;
+  --bg-hover: #393b40;
+  --bg-raised: #2b2d30;
+  --bg-sunken: #17181a;
+  --bg: #1e1f22;
+  --border-strong: #68717e;
+  --border: #43454a;
+  --bracket-mismatch: rgba(255, 85, 85, 0.16);
+  --danger-bg: #4a3030;
+  --danger-border: #68413f;
+  --danger-hover: #713a36;
+  --error-bg: #4e3236;
+  --error-border: #6e3b3b;
+  --error: #ff8980;
+  --fg-bright: #fff;
+  --fg-control: #d0d3d9;
+  --fg-muted: #868a91;
+  --fg-placeholder: #6b6d70;
+  --fg-quote: #a9adb5;
+  --fg-secondary: #a8adbd;
+  --fg: #dfe1e5;
+  --find-current-outline: #ffb84d;
+  --find-current: rgba(255, 140, 0, 0.55);
+  --find-match: rgba(255, 196, 0, 0.22);
+  --find-option-active: rgba(53, 116, 240, 0.35);
+  --link: #79b8ff;
+  --overlay: rgba(30, 31, 34, 0.96);
+  --running-dark: #245c35;
+  --running-light: #89ec9e;
+  --running: #89ca78;
+  --selection-outline: #8bcaff;
+  --selection: rgba(51, 127, 189, 0.12);
+  --session-border: #5e82c9;
+  --session-fg: #8fb0e6;
+  --shadow-soft: rgba(0, 0, 0, 0.3);
+  --shadow-strong: rgba(0, 0, 0, 0.45);
+  --shadow: rgba(0, 0, 0, 0.4);
+  --token-error: #ff5555;
+  --token-fragment: #f1fa8c;
+  --token-path-param: #c49a6c;
+  --token-placeholder-colon: #ffb3b3;
+  --token-type-condition: #3e9c70;
+  --warning: #e5c07b;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  margin: 0;
+  padding: 12px;
+  font-size: 13px;
+  color: var(--fg);
+  background: var(--bg);
+}
+
+button {
+  background: var(--bg-hover);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: var(--border);
+}
+
+.tab-button {
+  padding: 5px 8px 4px;
+  border: 1px solid var(--border);
+  border-bottom: none;
+  background: var(--bg-sunken);
+  color: var(--fg-muted);
+  cursor: pointer;
+  margin-right: 2px;
+  border-radius: 4px 4px 0 0;
+}
+
+.tab-button.active {
+  padding-top: 4px;
+  border-top: 2px solid var(--accent);
+  background: var(--bg-sunken);
+  font-weight: bold;
+  color: var(--accent);
+}
+
+.editor, .theme-dracula {
+  --editor-bg: #282a36;
+  --editor-fg: #f8f8f2;
+  --editor-gutter-fg: #6d8a88;
+  --editor-caret: #f8f8f0;
+  --editor-selection: rgba(255, 255, 255, .1);
+  --editor-fold: #8be9fd;
+  --editor-comment: #6272a4;
+  --editor-yellow: #f1fa8c;
+  --editor-purple: #bd93f9;
+  --editor-green: #50fa7b;
+  --editor-white: white;
+  --editor-pink: #ff79c6;
+  --editor-cyan: #66d9ef;
+  --editor-orange: #ffb86c;
+  --editor-function: #8be9fd;
+  --editor-dim: #6b6d70;
+  --editor-red: #ff5555;
+  --editor-field: #4f8ff7;
+}

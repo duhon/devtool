@@ -65,7 +65,7 @@ jobs:
         run: |
           cargo fmt --all -- --check
           cargo test --workspace --locked
-          cargo clippy --locked -p services-ui --target wasm32-unknown-unknown --lib -- -D warnings
+          cargo clippy --locked -p services-widgets -p services-shell --target wasm32-unknown-unknown --lib -- -D warnings
       - name: Build distribution
         run: cargo run --locked -p xtask -- build --repository "$GITHUB_REPOSITORY" --branch "$GITHUB_REF_NAME"
       - name: Verify clean installation and updates
