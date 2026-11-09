@@ -186,6 +186,10 @@ fn curl_export_and_import_go_through_the_module() {
         "curl \\\n  --request POST \\\n  --url 'https://a' \\\n  --data '{}'"
     );
     assert_eq!(
+        console::export("rest", "#endpoint\nGET https://{{var:host}}/a").unwrap_err(),
+        "Variables could not be resolved: Unknown variable \"host\" in var"
+    );
+    assert_eq!(
         console::import("rest", "curl -X POST https://a -d '{}'").unwrap(),
         "#endpoint\nPOST https://a\n#body\n{}"
     );

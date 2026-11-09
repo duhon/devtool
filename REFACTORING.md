@@ -519,10 +519,10 @@ Kernel вызывает модуль напрямую и сразу получа
 | | `fold(check) -> ranges` | свёртки |
 | Сервис | `build(check) -> driver call` | Run |
 | | `render(chunk) -> response text, metadata` | ответ или кусок стрима (`stream: true` — по куску) |
-| | `export(check) -> text`, `import(text) -> check` | Export, Import |
+| | `export(check) -> text`, `import(text) -> check` | Export (чек с подставленными переменными, секреты тоже), Import |
 | Панель | `before_request(call) -> call or error` | перед драйвером |
 | | `after_response(call, response) -> cmds` | после ответа |
-| | `resolve(text, mode) -> text, secrets` | Cmd `vars.resolve`, Run сервиса |
+| | `resolve(text, mode) -> text, secrets` | Cmd `vars.resolve`, Run и Export сервиса |
 
 - Метаданные ответа (решено, meta=A): `render` отдаёт кроме текста типы колонок, как их
   сообщил сервер (`text`, `number`, `boolean`, `datetime`, `json`; MySQL — из метаданных

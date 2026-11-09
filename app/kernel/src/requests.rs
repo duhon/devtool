@@ -181,8 +181,13 @@ pub fn import(service: &str, command: &str) -> Result<String, String> {
     crate::modules::registry::with(|modules| modules.import(service, command.to_owned()))
 }
 
+/// The check as a command (curl, grpcurl…) with its variables resolved, secrets included:
+/// the command runs elsewhere, where the variables don't exist.
 pub fn export(service: &str, source: &str) -> Result<String, String> {
-    let (check, _) = kernel_run(service, source)?;
+    let source = crate::modules::registry::with(|modules| modules.resolve(source, false))
+        .map_err(|error| format!("Variables could not be resolved: {error}"))?
+        .text;
+    let (check, _) = kernel_run(service, &source)?;
     crate::modules::registry::with(|modules| modules.export(service, check))
 }
 
