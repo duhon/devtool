@@ -799,6 +799,24 @@ Settings. Пакеты выпуска — `dist/modules/`, как сейчас.
     `serde-wasm-bindgen` и IndexedDB-возможности `web-sys`.
   - CI: `cargo clippy --workspace --all-targets -- -D warnings` перед тестами.
 
+- Уборка остатков (08.11):
+  - `installer/tests/packaged.rs` переведён на текущий протокол: Host отвечает за
+    `health`, источники, установку модулей (`<id>-<version>.module.tgz`) и их список после
+    перезапуска, `env` (окружение оболочки), драйверы `http` и `process`; сохранность
+    данных при обновлении и удалении проверяется по `.sources.json` (Variables живут
+    в App). Запросы `rest`/`vars`/`terminal`/`discover` к Host и OpenAPI-фикстура удалены.
+  - Удалён мёртвый код: `host/src/core/operations.rs` и поле `Runtime::operations`,
+    никогда не заполняемые `Error::duration_ms`/`Error::history` и `Error::with_debug`,
+    `services_contracts::ParamConfig`, `Reply::into_value` (testkit).
+  - Неиспользуемые зависимости (`cargo machete --with-metadata`): `serde` в Shell,
+    `wasm-bindgen-futures` в Widgets, `prost` (dev) в mysql и opensearch.
+  - Удалены устаревшие сборка `app/extension/dist/` (со старыми `panel.*`; собирается
+    заново), пустые `app/extension/test/` и `.distribution-cache/` (и его строка
+    в `.gitignore`); заголовки тестов Host обновлены (нет CLI и «core вокруг модулей»).
+  - Оставлены строки `.gitignore` старых данных (`.variable-profiles.json`,
+    `.dictionary-profiles.json`, `.console-hints.txt` и т. п.): такие файлы с данными
+    пользователя лежат в корне рабочих копий, без строк они попадут в `git status`.
+
 ## Решить
 
 Открытых решений нет.

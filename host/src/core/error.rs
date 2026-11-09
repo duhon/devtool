@@ -4,38 +4,18 @@ use serde_json::{Value, json};
 pub struct Error {
     pub message: String,
     pub debug: Option<Box<Value>>,
-    pub duration_ms: Option<u128>,
-    pub history: Option<Box<Value>>,
 }
 impl Error {
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
             debug: None,
-            duration_ms: None,
-            history: None,
         }
-    }
-    pub fn with_debug(mut self, request: Value) -> Self {
-        if let Some(debug) = &mut self.debug {
-            debug["request"] = request;
-        } else {
-            self.debug = Some(Box::new(
-                json!({"request":request,"error":{"name":"Error","message":self.message}}),
-            ));
-        }
-        self
     }
     pub fn json(&self) -> Value {
         let mut value = json!({"error":self.message});
         if let Some(debug) = &self.debug {
             value["debug"] = (**debug).clone();
-        }
-        if let Some(duration) = self.duration_ms {
-            value["durationMs"] = json!(duration);
-        }
-        if let Some(history) = &self.history {
-            value["history"] = (**history).clone();
         }
         value
     }

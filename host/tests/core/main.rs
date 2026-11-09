@@ -1,4 +1,4 @@
-//! BEHAVIOR of the shared core that wraps every module call: history
-//! recording. Core stays in the host; modules plug into it.
+//! BEHAVIOR of the Host's history store: the runs the History panel saves
+//! through `history.insert`.
 
 mod history;

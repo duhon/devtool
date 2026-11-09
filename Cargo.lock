@@ -2985,7 +2985,6 @@ dependencies = [
 name = "services-module-mysql"
 version = "3.2.2"
 dependencies = [
- "prost",
  "serde_json",
  "services-sdk",
 ]
@@ -2994,7 +2993,6 @@ dependencies = [
 name = "services-module-opensearch"
 version = "1.0.0"
 dependencies = [
- "prost",
  "serde_json",
  "services-sdk",
  "url",
@@ -3118,7 +3116,6 @@ name = "services-shell"
 version = "3.7.0"
 dependencies = [
  "js-sys",
- "serde",
  "serde_json",
  "services-contracts",
  "services-kernel",
@@ -3172,7 +3169,6 @@ dependencies = [
  "services-sdk",
  "url",
  "wasm-bindgen",
- "wasm-bindgen-futures",
  "web-sys",
  "yew",
 ]

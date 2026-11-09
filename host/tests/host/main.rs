@@ -1,5 +1,6 @@
-//! CONTRACT: the transports every module is reached through: native
-//! messaging, the CLI binary, the login-shell environment and TLS setup.
+//! CONTRACT: how the App reaches the Host: native messaging through the
+//! `services-devtools` binary, the http driver, module packages, the
+//! login-shell environment and TLS setup.
 
 mod drivers;
 mod native;

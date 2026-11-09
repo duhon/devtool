@@ -2,7 +2,6 @@ pub mod error;
 pub mod history;
 pub mod install;
 pub mod modules;
-pub mod operations;
 pub(crate) mod process;
 pub mod registry;
 pub mod skills;

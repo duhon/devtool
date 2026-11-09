@@ -190,12 +190,7 @@ impl HttpFixture {
                         }
                         let request = String::from_utf8_lossy(&bytes);
                         let path = request.split_whitespace().nth(1).unwrap_or("/");
-                        let body = if path == "/openapi.json" {
-                            json!({"openapi":"3.0.0","info":{"title":"Install smoke test","version":"1.0"},
-                                "paths":{"/smoke":{"get":{"responses":{"200":{"description":"OK"}}}}}}).to_string()
-                        } else {
-                            json!({"installedHost":true,"path":path}).to_string()
-                        };
+                        let body = json!({"installedHost":true,"path":path}).to_string();
                         let _ = write!(
                             stream,
                             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
@@ -356,7 +351,8 @@ fn archived_install_native_services_update_and_uninstall() {
         assert!(
             !member.ends_with(".pem")
                 && !member.contains("prototypes/")
-                && !member.contains(".variable-profiles.json")
+                && !member.contains(".sources.json")
+                && !member.contains(".console-history.sqlite3")
                 && !member.contains("/.git/")
                 && !member.contains("native/bin/node")
                 && !member.contains("native/app/")
@@ -429,7 +425,10 @@ fn archived_install_native_services_update_and_uninstall() {
     let mut host = Host::new(&fixture, &paths.base.join("extension/native/host"));
     let (health, _) = host.request(json!({"id":1,"type":"health"}));
     assert_eq!(health["ok"], true, "installed host health must succeed");
-    assert_eq!(health["result"]["protocolVersion"], 1);
+    assert_eq!(
+        health["result"]["protocolVersion"],
+        services_contracts::PROTOCOL_VERSION
+    );
     // The release installs no modules: the user adds the released packages in Settings.
     let mut modules: Vec<PathBuf> = fs::read_dir(repository().join("dist/modules"))
         .expect("missing dist/modules; run cargo run -p xtask -- build first")
@@ -443,79 +442,76 @@ fn archived_install_native_services_update_and_uninstall() {
     assert_eq!(saved["ok"], true, "{saved}");
     let (checked, _) = host.request(json!({"id":99,"service":"sources","op":"check","force":true}));
     assert_eq!(checked["ok"], true, "{checked}");
+    let mut ids = Vec::new();
     for (index, file) in modules.iter().enumerate() {
-        // <id>-<version>-<platform>.module.tgz
+        // <id>-<version>.module.tgz
         let name = file.file_name().unwrap().to_str().unwrap();
-        let (module, rest) = name.split_once('-').unwrap();
-        let version = rest.split_once('-').unwrap().0;
+        let (module, version) = name
+            .strip_suffix(".module.tgz")
+            .and_then(|stem| stem.rsplit_once('-'))
+            .unwrap_or_else(|| panic!("unexpected module package name {name}"));
         let (installed, _) = host.request(json!({"id":100 + index,"service":"modules",
             "op":"install","source":"dist","module":module,"version":version}));
         assert_eq!(installed["ok"], true, "{}: {installed}", file.display());
+        ids.push(module.to_owned());
     }
     host.close();
     drop(host);
     // A new host process loads the installed modules.
     let mut host = Host::new(&fixture, &paths.base.join("extension/native/host"));
-    let (response, _) = host.request(json!({"id":2,"service":"rest","params":{
-        "method":"GET","url":format!("http://{}/smoke?env={{{{env:SERVICES_DEVTOOLS_INSTALL_ENV}}}}", server.address)}}));
+    let (listed, _) = host.request(json!({"id":2,"service":"modules"}));
+    assert_eq!(listed["ok"], true, "{listed}");
+    assert!(listed["result"].get("failed").is_none(), "{listed}");
+    let mut loaded: Vec<String> = listed["result"]["wasm"]
+        .as_array()
+        .expect("the host must list its wasm modules")
+        .iter()
+        .map(|module| module["id"].as_str().unwrap().to_owned())
+        .collect();
+    loaded.sort();
+    assert_eq!(loaded, ids, "the new host must load every installed module");
+    let (env, _) = host.request(json!({"id":3,"service":"env"}));
     assert_eq!(
-        response["ok"], true,
-        "REST must succeed with shell-imported environment"
+        env["result"]["SERVICES_DEVTOOLS_INSTALL_ENV"], "installed-shell-fixture",
+        ".zprofile environment was not imported"
     );
+    assert_eq!(
+        env["result"]["SERVICES_DEVTOOLS_INSTALL_INTERACTIVE"], "installed-interactive-fixture",
+        ".zshrc environment was not imported"
+    );
+    let (response, _) = host.request(
+        json!({"id":4,"service":"drivers","driver":"http","op":"call",
+        "request":{"method":"GET","url":format!("http://{}/smoke", server.address),"text":true}}),
+    );
+    assert_eq!(response["ok"], true, "HTTP driver must succeed: {response}");
     let body: Value = serde_json::from_str(
         response["result"]["body"]
             .as_str()
-            .expect("REST body must be text"),
+            .expect("HTTP body must be text"),
     )
     .unwrap();
+    assert_eq!(body, json!({"installedHost":true,"path":"/smoke"}));
+    let (process, events) = host.request(json!({"id":5,"service":"drivers","driver":"process",
+        "op":"stream","request":{"program":"/bin/sh","args":["-c","printf installed-process"],"text":true}}));
     assert_eq!(
-        body,
-        json!({"installedHost":true,"path":"/smoke?env=installed-shell-fixture"})
-    );
-    let (saved, _) = host.request(json!({"id":3,"service":"vars","op":"save","name":"var","variables":{"marker":"survives-update"}}));
-    assert_eq!(saved["ok"], true, "Variables save must succeed: {saved}");
-    assert!(
-        saved["result"]["profiles"]["env"]["SERVICES_DEVTOOLS_INSTALL_ENV"]
-            == "installed-shell-fixture",
-        ".zprofile environment was not imported"
-    );
-    assert!(
-        saved["result"]["profiles"]["env"]["SERVICES_DEVTOOLS_INSTALL_INTERACTIVE"]
-            == "installed-interactive-fixture",
-        ".zshrc environment was not imported"
-    );
-    let variables = paths.data.join(".variable-profiles.json");
-    assert!(
-        variables.is_file(),
-        "Variables must persist in isolated installation data"
-    );
-    let (marker, marker_events) = host.request(json!({"id":50,"service":"terminal","params":{"endpoint":"/bin/sh -c","command":"printf '{{var:marker}}'"}}));
-    assert!(
-        format!("{marker} {marker_events:?}").contains("survives-update"),
-        "installed host must use saved Variables: {marker} {marker_events:?}"
-    );
-    let (terminal, events) = host.request(json!({"id":4,"service":"terminal","params":{"endpoint":"/bin/sh -c","command":"printf installed-terminal"}}));
-    assert_eq!(
-        terminal["info"]["code"], 0,
-        "Terminal must exit successfully"
+        process["info"]["code"], 0,
+        "process must exit successfully: {process}"
     );
     let text: String = events
         .iter()
-        .filter_map(|event| event["data"].as_str())
+        .filter_map(|event| event["stdout"].as_str())
         .collect();
-    assert!(
-        text.contains("installed-terminal"),
-        "Terminal must stream fixture output"
-    );
-    let (discovery, _) = host.request(json!({"id":5,"type":"discover","service":"rest","params":{"url":format!("http://{}", server.address)}}));
-    assert_eq!(discovery["ok"], true, "OpenAPI discovery must succeed");
-    assert_eq!(discovery["result"]["paths"], json!(["/smoke"]));
     assert_eq!(
-        discovery["result"]["methodsByPath"]["/smoke"],
-        json!(["GET"])
+        text, "installed-process",
+        "process driver must stream output"
     );
     host.close();
     drop(host);
+    let settings = paths.data.join(".sources.json");
+    assert!(
+        settings.is_file(),
+        "sources must persist in isolated installation data"
+    );
 
     let updated_expected = fixture.expected_output();
     assert!(
@@ -524,7 +520,7 @@ fn archived_install_native_services_update_and_uninstall() {
             .is_dir()
     );
     let extension_path = fs::canonicalize(paths.base.join("extension")).unwrap();
-    let before = fs::read(&variables).unwrap();
+    let before = fs::read(&settings).unwrap();
     // Seed remembered ownership instead of opening Chrome; CDP tests cover discovery.
     let custom = fixture
         .home
@@ -568,8 +564,8 @@ fn archived_install_native_services_update_and_uninstall() {
         "updates must deduplicate remembered registrations"
     );
     assert!(
-        fs::read(&variables).unwrap() == before,
-        "updates must preserve Variables byte-for-byte"
+        fs::read(&settings).unwrap() == before,
+        "updates must preserve user data byte-for-byte"
     );
 
     fixture.successful(fixture.command(paths.base.join("uninstall")));
@@ -587,7 +583,7 @@ fn archived_install_native_services_update_and_uninstall() {
         );
     }
     assert!(
-        fs::read(&variables).unwrap() == before,
-        "uninstall must preserve Variables byte-for-byte"
+        fs::read(&settings).unwrap() == before,
+        "uninstall must preserve user data byte-for-byte"
     );
 }

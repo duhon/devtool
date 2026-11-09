@@ -14,7 +14,6 @@
 app/extension/dist/
 app/extension/pinned-key.pem
 /dist/
-/.distribution-cache/
 /target/
 /.playwright-mcp/
 __pycache__/

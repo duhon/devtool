@@ -7,7 +7,6 @@ use serde_json::{Value, json};
 use std::path::PathBuf;
 #[derive(Clone)]
 pub struct Runtime {
-    pub operations: crate::core::operations::Operations,
     pub agent: crate::agent::Agent,
     pub registry: Registry,
     pub history: crate::core::history::History,
@@ -58,7 +57,6 @@ impl Runtime {
         }
         let registry = Registry::new(&path)?;
         Ok(Self {
-            operations: Default::default(),
             agent: crate::agent::Agent::new(path.join(".agent")),
             registry,
             history: crate::core::history::History::new(path.join(".console-history.sqlite3")),

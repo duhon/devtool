@@ -14,7 +14,6 @@ services-sdk = { path = "../../api/sdk" }
 services-widgets = { path = "../widgets" }
 # Built in on every target: Settings is part of the App.
 services-module-settings = { path = "../../modules/panels/settings" }
-serde.workspace = true
 serde_json.workspace = true
 url = "2"
 uuid = { version = "1.29.0", features = ["v7", "js"] }

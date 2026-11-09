@@ -1,6 +1,3 @@
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use std::collections::BTreeMap;
 pub mod agent;
 pub mod native_messaging;
 pub mod package;
@@ -21,20 +18,3 @@ pub const APPLICATION: &str = if PRERELEASE {
 } else {
     "ServicesDevTools"
 };
-
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-pub struct ParamConfig {
-    pub name: String,
-    #[serde(rename = "type")]
-    pub kind: String,
-    #[serde(default)]
-    pub required: bool,
-    #[serde(default)]
-    pub multi: bool,
-    #[serde(default)]
-    pub default: Option<Value>,
-    #[serde(default)]
-    pub resolve: Option<String>,
-    #[serde(default)]
-    pub keys: BTreeMap<String, String>,
-}
