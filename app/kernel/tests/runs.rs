@@ -3,12 +3,12 @@
 //! for modules to start.
 
 use serde_json::{Value, json};
+use services_kernel::Callback;
 use services_kernel::host::Reply;
 use services_kernel::modules::registry::{self, Link};
 use services_kernel::runtime::{
-    Event, Kernel, Local, Origin, Platform, RunRequest, RunView, Source,
+    Event, Kernel, Local, Origin, Platform, RunRequest, RunView, Source, Started,
 };
-use services_kernel::{Callback, Effect};
 use services_sdk::{
     Check, Chunk, Cmd, DriverCall, Event as ModuleEvent, Failure, Linked, Manifest, Module,
     Rendered, Subscriptions, cmd, http,
@@ -140,9 +140,6 @@ fn linked() -> Vec<registry::Module> {
     ]
 }
 
-/// Hears the first effects of the modules that started and their ids.
-type Started = Callback<(Vec<Effect>, Vec<String>)>;
-
 /// A Host request the Kernel sent, with the callback that hears its answers.
 struct Sent {
     message: Value,
@@ -159,7 +156,7 @@ struct Fake {
     cleared: RefCell<Vec<i32>>,
     serial: Cell<i32>,
     locks: RefCell<Vec<(String, String)>>,
-    load: RefCell<Option<Started>>,
+    load: RefCell<Option<Callback<Started>>>,
 }
 
 impl Platform for Fake {
@@ -216,7 +213,7 @@ impl Platform for Fake {
     fn modules(&self, list: &Value) -> Result<bool, String> {
         Ok(registry::declare(registry::parse(list)?))
     }
-    fn load(&self, done: Callback<(Vec<Effect>, Vec<String>)>) {
+    fn load(&self, _first: &str, done: Callback<Started>) {
         *self.load.borrow_mut() = Some(done);
     }
     fn agent_workspace_id(&self) -> String {
@@ -540,7 +537,11 @@ fn a_console_run_waits_for_the_declared_panels_to_start() {
     )
     .unwrap();
     let done = window.fake.load.borrow_mut().take().expect("modules load");
-    done.emit((effects, vec!["late".into()]));
+    done.emit(Started {
+        effects,
+        started: vec!["late".into()],
+        done: true,
+    });
     assert_eq!(window.kernel.loading(), 0);
     let drivers = window.fake.to("drivers");
     assert_eq!(drivers[0]["request"]["url"], "https://example.test/a");

@@ -54,9 +54,9 @@ pub trait Platform {
     fn unlock(&self, module: &str, name: &str);
     /// Takes the Host's module list; `true` when what the Kernel runs changed.
     fn modules(&self, list: &Value) -> Result<bool, String>;
-    /// Starts the declared modules the Kernel lacks; `done` hears their first effects and
-    /// the ids that started.
-    fn load(&self, done: Callback<(Vec<Effect>, Vec<String>)>);
+    /// Starts the declared modules the Kernel lacks, `first` before the others; `loaded`
+    /// hears of each as it starts, then once more with `done`.
+    fn load(&self, first: &str, loaded: Callback<Started>);
     /// The per-window id the Host checks Agent workspace tool calls against.
     fn agent_workspace_id(&self) -> String;
     /// Reads (`options` null) or saves the options new Agent chats get.
@@ -127,6 +127,16 @@ pub enum Event {
     Busy,
 }
 
+/// A step of a module load ([`Platform::load`]).
+#[derive(Default)]
+pub struct Started {
+    /// The first effects of the modules that started, or of unloading the dropped ones.
+    pub effects: Vec<Effect>,
+    pub started: Vec<String>,
+    /// The load is over: every module started or failed.
+    pub done: bool,
+}
+
 /// What comes back to the Kernel from outside.
 enum Input {
     /// The Host answered the driver call of a run.
@@ -149,8 +159,8 @@ enum Input {
     Turn(String, String, Reply),
     /// The Host's module list.
     Modules(Reply),
-    /// Modules started.
-    Started((Vec<Effect>, Vec<String>)),
+    /// Modules started, or the load ended.
+    Started(Started),
     /// The quiet time after an edit of `service` is over.
     DocumentDue(String),
 }
@@ -506,7 +516,7 @@ impl Core {
             Input::RepeatSaved(check, reply) => self.repeat_saved(&check, reply),
             Input::Turn(module, tag, reply) => self.turn_replied(&module, &tag, reply),
             Input::Modules(reply) => self.modules_listed(reply),
-            Input::Started((effects, started)) => self.started(effects, started),
+            Input::Started(loaded) => self.started(loaded),
             Input::DocumentDue(service) => {
                 if self.timers.remove(&service).is_some() {
                     self.emit(Event::DocumentDue(service));
@@ -770,8 +780,8 @@ impl Core {
         match self.platform.modules(&value) {
             Ok(changed) => {
                 self.loading += 1;
-                let done = self.callback(Input::Started);
-                self.platform.load(done);
+                let loaded = self.callback(Input::Started);
+                self.platform.load(&self.service, loaded);
                 if changed {
                     self.emit(Event::ModulesListed);
                 }
@@ -780,9 +790,17 @@ impl Core {
         }
     }
 
-    /// Modules started: they hear of the current check; a console run that waited goes.
-    fn started(&mut self, effects: Vec<Effect>, started: Vec<String>) {
-        self.loading = self.loading.saturating_sub(1);
+    /// Modules started: once the console's service and every panel run, the service hears
+    /// of the current check (it may resolve variables); a console run that waited goes.
+    fn started(&mut self, loaded: Started) {
+        let Started {
+            effects,
+            started,
+            done,
+        } = loaded;
+        if done {
+            self.loading = self.loading.saturating_sub(1);
+        }
         for id in &started {
             self.sent.remove(id);
         }
@@ -793,7 +811,10 @@ impl Core {
         {
             self.run(request);
         }
-        if started.contains(&self.service) {
+        if (done || !started.is_empty())
+            && registry::loaded(&self.service)
+            && !registry::panels_loading()
+        {
             let service = self.service.clone();
             self.emit(Event::DocumentDue(service));
         }
@@ -819,7 +840,7 @@ impl Core {
         if let Some(id) = self.timers.remove(service) {
             self.platform.clear(id);
         }
-        if self.hidden || !registry::loaded(service) {
+        if self.hidden || !registry::loaded(service) || registry::panels_loading() {
             return;
         }
         let Some(check) = check else {

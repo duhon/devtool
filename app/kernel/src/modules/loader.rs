@@ -7,6 +7,7 @@ use crate::Callback;
 use crate::Effect;
 use crate::host::{Reply, Transport};
 use crate::js::{error, get, set, window};
+use crate::runtime::Started;
 use crate::storage::database::request;
 use base64::Engine;
 use js_sys::{Object, Promise, Uint8Array};
@@ -49,10 +50,12 @@ pub fn accept(value: &Value) -> Result<bool, String> {
 }
 
 /// Starts the declared modules the Kernel lacks (or runs at another digest) for the drivers
-/// the Host offers, then hands over their first effects and the ids that started. A module
-/// that fails to start reports why on use.
-pub fn prepare(transport: &Rc<Transport>, done: Callback<(Vec<Effect>, Vec<String>)>) {
+/// the Host offers, all at once, `first` asked for first. `loaded` hears of each module as
+/// it starts, with its first effects, then once more with `done`. A module that fails to
+/// start reports why on use.
+pub fn prepare(transport: &Rc<Transport>, first: &str, loaded: Callback<Started>) {
     let transport = transport.clone();
+    let first = first.to_owned();
     spawn_local(async move {
         let health = json!({"type": "health", "capabilities": {"chunkedResponses": true}});
         match ask(&transport, health).await {
@@ -71,36 +74,63 @@ pub fn prepare(transport: &Rc<Transport>, done: Callback<(Vec<Effect>, Vec<Strin
                 web_sys::console::warn_1(&format!("The Host drivers are unknown: {failure}").into())
             }
         }
-        let (mut effects, wanted) = registry::retain();
-        let mut started = Vec::new();
-        if !wanted.is_empty() {
-            let cache = match open().await {
-                Ok(database) => Some(database),
-                Err(failure) => {
-                    web_sys::console::warn_1(&format!("Modules are not cached: {failure}").into());
-                    None
-                }
-            };
-            for (manifest, digest) in wanted {
+        let (effects, mut wanted) = registry::retain();
+        if !effects.is_empty() {
+            loaded.emit(Started {
+                effects,
+                ..Started::default()
+            });
+        }
+        if wanted.is_empty() {
+            loaded.emit(Started {
+                done: true,
+                ..Started::default()
+            });
+            return;
+        }
+        wanted.sort_by_key(|(manifest, _)| manifest.id != first);
+        let cache = match open().await {
+            Ok(database) => Some(Rc::new(database)),
+            Err(failure) => {
+                web_sys::console::warn_1(&format!("Modules are not cached: {failure}").into());
+                None
+            }
+        };
+        let left = Rc::new(std::cell::Cell::new(wanted.len()));
+        for (manifest, digest) in wanted {
+            let (transport, cache, loaded, left) = (
+                transport.clone(),
+                cache.clone(),
+                loaded.clone(),
+                left.clone(),
+            );
+            spawn_local(async move {
                 let id = manifest.id.clone();
                 let name = manifest.name.clone();
-                match load(cache.as_ref(), &transport, manifest, &digest).await {
-                    Ok(first) => {
-                        effects.extend(first);
-                        started.push(id);
-                    }
+                match load(cache.as_deref(), &transport, manifest, &digest).await {
+                    Ok(effects) => loaded.emit(Started {
+                        effects,
+                        started: vec![id],
+                        done: false,
+                    }),
                     Err(failure) => {
                         let failure = format!("The {name} module failed to load: {failure}");
                         web_sys::console::error_1(&failure.clone().into());
                         registry::fail(&id, failure);
                     }
                 }
-            }
-            if let Some(cache) = cache {
-                cache.close();
-            }
+                left.set(left.get() - 1);
+                if left.get() == 0 {
+                    if let Some(cache) = cache {
+                        cache.close();
+                    }
+                    loaded.emit(Started {
+                        done: true,
+                        ..Started::default()
+                    });
+                }
+            });
         }
-        done.emit((effects, started));
     });
 }
 

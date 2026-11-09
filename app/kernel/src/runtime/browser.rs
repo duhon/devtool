@@ -1,12 +1,12 @@
 //! The browser's [`Platform`]: the Host port, window timers, Web Locks, the session store
 //! and `localStorage`, the clipboard and the inspected page.
 
-use super::{Event, Kernel, Local, Platform};
+use super::{Event, Kernel, Local, Platform, Started};
+use crate::Callback;
 use crate::host::{Reply, Transport};
 use crate::js::{call, error, get, window};
 use crate::locks::Locks;
 use crate::workspace::store::Shared;
-use crate::{Callback, Effect};
 use serde_json::Value;
 use services_sdk::{Cmd, Failure};
 use std::cell::RefCell;
@@ -107,8 +107,8 @@ impl Platform for Browser {
         crate::modules::loader::accept(list)
     }
 
-    fn load(&self, done: Callback<(Vec<Effect>, Vec<String>)>) {
-        crate::modules::loader::prepare(&self.transport, done);
+    fn load(&self, first: &str, loaded: Callback<Started>) {
+        crate::modules::loader::prepare(&self.transport, first, loaded);
     }
 
     fn agent_workspace_id(&self) -> String {
