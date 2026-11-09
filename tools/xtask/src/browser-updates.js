@@ -13,10 +13,7 @@
   const key = source => `${source}/app`;
   const app = source => document.querySelector(`[data-testid="settings-module-${key(source)}"]`);
   const part = (source, name) => document.querySelector(`[data-testid="settings-module-${name}-${key(source)}"]`);
-  const detail = (source, name) => {
-    const element = part(source, name);
-    return element && (element.editor || element.nextElementSibling?.editor)?.getValue();
-  };
+  const detail = (source, name) => part(source, name)?.textContent;
   await settingsTab('modules');
   await click(testid('settings-modules-check'));
   await wait(() => app('') && !testid('settings-modules-check').disabled,

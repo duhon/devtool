@@ -393,7 +393,7 @@ pub fn status(text: &str, indicator: &str) -> Cmd {
 }
 
 /// A [`status`] the user can stop: the status line's Stop button (`testid`, `console-<panel>-stop`
-/// when empty) is enabled while the indicator is `busy` and sends `stop` to the module's `update`.
+/// when empty) is enabled while the indicator is `busy` or `warning` and sends `stop` to the module's `update`.
 pub fn status_stoppable(text: &str, indicator: &str, stop: &impl Serialize, testid: &str) -> Cmd {
     Cmd::new(
         "",
@@ -402,19 +402,21 @@ pub fn status_stoppable(text: &str, indicator: &str, stop: &impl Serialize, test
     )
 }
 
-/// A [`status_stoppable`] with structured details for its Debug.
+/// A [`status_stoppable`] with structured details for its Debug; `disabled` keeps Stop disabled
+/// whatever the indicator, e.g. while the module is already stopping.
 pub fn status_stoppable_with(
     text: &str,
     indicator: &str,
     detail: &impl Serialize,
     stop: &impl Serialize,
     testid: &str,
+    disabled: bool,
 ) -> Cmd {
     Cmd::new(
         "",
         "status.set",
         &json!({"text": text, "indicator": indicator, "detail": detail,
-            "stop": {"msg": stop, "testid": testid}}),
+            "stop": {"msg": stop, "testid": testid, "disabled": disabled}}),
     )
 }
 

@@ -17,7 +17,12 @@ const SOURCES: &str = "sources";
 const DOCUMENT: &str = "document";
 const FILE: &str = "templates.json";
 const TAB: &str = "templates-section-";
-const HINT: &str = "Templates · @name description, then the body; @@ = @ at a line start";
+const HINT: &str = "@@ = @";
+
+/// The status line text: what happened, then the escaping hint.
+fn said(text: &str) -> String {
+    format!("{text} · {HINT}")
+}
 
 #[derive(Serialize, Deserialize)]
 pub enum Msg {
@@ -156,7 +161,7 @@ impl Templates {
                 self.drafts.insert(self.key(), json!(text));
                 vec![
                     self.put_drafts(),
-                    cmd::status(&format!("ERROR: {error}"), "error"),
+                    cmd::status(&said(&format!("ERROR: {error}")), "error"),
                 ]
             }
         }
@@ -170,7 +175,7 @@ impl Templates {
             .and_then(Value::as_str)
             .map(templates::parse)
         {
-            Some(Err(error)) => cmd::status(&format!("ERROR: {error}"), "error"),
+            Some(Err(error)) => cmd::status(&said(&format!("ERROR: {error}")), "error"),
             _ => cmd::status(HINT, "idle"),
         }
     }
@@ -223,10 +228,13 @@ impl Module for Templates {
                     self.drafts = drafts.as_object().cloned().unwrap_or_default();
                     Vec::new()
                 }
-                ("save", Ok(_)) => vec![cmd::status("Templates saved · OK", "ok")],
-                ("reset", Ok(_)) => vec![cmd::status("Templates reset · OK", "ok")],
+                ("save", Ok(_)) => vec![cmd::status(&said("Templates saved · OK"), "ok")],
+                ("reset", Ok(_)) => vec![cmd::status(&said("Templates reset · OK"), "ok")],
                 (_, Err(failure)) => {
-                    vec![cmd::status(&format!("ERROR: {}", failure.message), "error")]
+                    vec![cmd::status(
+                        &said(&format!("ERROR: {}", failure.message)),
+                        "error",
+                    )]
                 }
                 _ => Vec::new(),
             },
@@ -284,13 +292,30 @@ impl Module for Templates {
             .get(&self.service)
             .is_some_and(|sections| sections.contains_key(&section));
         let mut header = Vec::new();
+        if self.drafts.contains_key(&self.key()) {
+            header.push(
+                ui::button("Discard draft", &Msg::Discard)
+                    .key("templates-discard")
+                    .title("Discard draft and reload saved templates"),
+            );
+        }
         match (own, source) {
             (true, Some(source)) => {
                 header.push(
                     ui::badge(format!("Yours, over source {source}")).key("templates-origin-label"),
                 );
                 header.push(
-                    ui::button(format!("Reset to {source}"), &Msg::Reset).key("templates-reset"),
+                    ui::button(format!("Reset to {source}"), &Msg::Reset)
+                        .key("templates-reset")
+                        .title("Delete your own templates of this section"),
+                );
+            }
+            (true, None) => {
+                header.push(ui::badge("Yours").key("templates-origin-label"));
+                header.push(
+                    ui::button("Reset", &Msg::Reset)
+                        .key("templates-reset")
+                        .title("Delete your own templates of this section"),
                 );
             }
             (false, Some(source)) => {
@@ -298,9 +323,6 @@ impl Module for Templates {
                     .push(ui::badge(format!("From source {source}")).key("templates-origin-label"));
             }
             _ => {}
-        }
-        if self.drafts.contains_key(&self.key()) {
-            header.push(ui::button("Discard draft", &Msg::Discard).key("templates-discard"));
         }
         let mut actions = Vec::new();
         if !header.is_empty() {
@@ -312,7 +334,14 @@ impl Module for Templates {
                 self.shown(),
                 &Msg::Edit,
             )
-            .key("templates-editor"),
+            .key("templates-editor")
+            .placeholder(if section == "check" {
+                "@example Description\n#endpoint\n...\n"
+            } else {
+                "@example Description\nText to insert\n"
+            })
+            .label(format!("Templates · {section}"))
+            .debounce(500),
         ];
         let tabs = self
             .sections

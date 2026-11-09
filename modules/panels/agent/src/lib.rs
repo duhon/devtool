@@ -20,6 +20,7 @@ pub const MAX_PROMPT: usize = 32 * 1024;
 pub const INTRO: &str = "Ask about the active check or the inspected web page. Console runs require approval. In DevTools, page reading and interaction require separate permission for each Copilot turn and site.";
 pub const STOPPED: &str = "Agent stopped. Cancellation was requested for its running Console requests. Already committed changes are not rolled back.";
 const CHAT_PREFIX: &str = "agent-chat-";
+const LIST_TAB: &str = "agent-chat-list-toggle";
 /// A finished chat outcome counts as seen after this long on screen.
 const SEEN: &str = "seen:";
 pub const SEEN_AFTER_MS: u32 = 500;
@@ -30,6 +31,8 @@ pub enum Msg {
     /// A chat tab chosen (the value is its key).
     Select,
     Close(String),
+    /// The × of a chat tab (the value is its key).
+    CloseTab,
     /// A chat tab renamed in place (the value is the new name).
     Renamed(String),
     Draft,
@@ -691,7 +694,30 @@ impl Agent {
             debug["sessionId"] = json!(self.active);
             debug["chat"] = json!(title);
         }
-        cmd::status_with(&text, indicator, &debug)
+        if !self.list_open {
+            // Another chat's turn keeps the panel busy, but this chat has nothing to stop.
+            let idle = !self.turns.contains_key(&self.active);
+            cmd::status_stoppable_with(&text, indicator, &debug, &Msg::Stop, "agent-stop", idle)
+        } else {
+            cmd::status_with(&text, indicator, &debug)
+        }
+    }
+
+    /// The light of the `#` tab: the state of the last list operation.
+    fn list_light(&self) -> &'static str {
+        match &self.list_outcome {
+            _ if self.deleting.is_some() => "busy",
+            Some(outcome) => outcome.indicator,
+            None => "",
+        }
+    }
+
+    fn view_list_body(&self) -> Vec<ui::Node> {
+        let mut body = vec![self.view_list()];
+        if let Some(error) = &self.error {
+            body.push(ui::text(error.clone()).key("agent-error").variant("danger"));
+        }
+        body
     }
 
     fn view_list(&self) -> ui::Node {
@@ -727,27 +753,43 @@ impl Agent {
                 let action = if closed {
                     ui::button("Restore", &Msg::Restore(chat.id.clone()))
                         .key("agent-chat-restore")
+                        .title("Reopen this chat in the current session")
                         .disabled(busy)
                 } else {
                     ui::button("Close", &Msg::Close(chat.id.clone()))
                         .key("agent-chat-close")
+                        .title("Close this chat; its history is kept")
                         .disabled(busy)
                 };
-                ui::TableRow::new(
+                let here = !closed && Some(chat.console_session) == self.session;
+                let row = ui::TableRow::new(
                     format!("agent-chat-row-{}", chat.id),
                     vec![
-                        ui::text(chat.title.clone()).key("agent-chat-title"),
-                        ui::text(session).key("agent-chat-session"),
+                        ui::text(chat.title.clone())
+                            .key("agent-chat-title")
+                            .title(chat.title.clone()),
+                        ui::text(session)
+                            .key("agent-chat-session")
+                            .title(format!("Console session {}", chat.console_session)),
                         ui::text(messages.to_string()).key("agent-chat-messages"),
                         ui::text(activity).key("agent-chat-state"),
                         ui::row(vec![
                             action,
                             ui::button("Delete", &Msg::Delete(chat.id.clone()))
                                 .key("agent-chat-delete")
+                                .title("Delete its messages and Copilot history from this computer")
                                 .disabled(busy),
-                        ]),
+                        ])
+                        .variant("end nowrap"),
                     ],
-                )
+                );
+                if here {
+                    row.variant("current")
+                } else if closed {
+                    row.variant("muted")
+                } else {
+                    row
+                }
             })
             .collect();
         ui::table(
@@ -756,6 +798,8 @@ impl Agent {
                 .to_vec(),
             rows,
         )
+        .widths(vec![40, 25, 0, 35, 0])
+        .variant("roomy")
         .key("agent-chat-list")
     }
 
@@ -772,11 +816,10 @@ impl Agent {
                     "user" => ui::text(message.text.clone())
                         .key(key)
                         .variant("quote accent"),
-                    role => ui::text(format!(
-                        "{}: {}",
-                        if role == "error" { "Error" } else { "Notice" },
-                        message.text
-                    ))
+                    role => ui::column(vec![
+                        ui::text(if role == "error" { "Error" } else { "Notice" }).variant("bold"),
+                        ui::text(message.text.clone()),
+                    ])
                     .key(key)
                     .variant(if role == "error" {
                         "quote danger"
@@ -791,7 +834,7 @@ impl Agent {
         }
         body.push(
             ui::column(transcript)
-                .variant("primary")
+                .variant("primary inset")
                 .key("agent-transcript"),
         );
         if let Some(approval) = self.page.approval(&chat.id) {
@@ -823,7 +866,9 @@ impl Agent {
                     ))
                     .variant("heading"),
                     ui::text(format!("Target: {}", field("endpoint"))),
-                    ui::text(field("request")).key("agent-run-request"),
+                    ui::text(field("request"))
+                        .key("agent-run-request")
+                        .variant("pre"),
                     ui::row(vec![
                         ui::button("Approve run", &Msg::ApproveRun(true)).key("agent-approve-run"),
                         ui::button("Deny", &Msg::ApproveRun(false)).key("agent-deny-run"),
@@ -837,7 +882,8 @@ impl Agent {
             body.push(ui::text(error.clone()).key("agent-error").variant("danger"));
         }
         body.push(
-            ui::input(self.composer.clone(), "Message to Copilot", &Msg::Send)
+            ui::input(self.composer.clone(), "", &Msg::Send)
+                .label("Message to Copilot")
                 .key("agent-composer")
                 .variant("multiline")
                 .on_input(&Msg::Draft),
@@ -1028,54 +1074,51 @@ impl Module for Agent {
     }
 
     fn view(&self) -> Option<ui::Node> {
-        let actions = vec![
-            ui::row(vec![
-                ui::button("#", &Msg::ToggleList)
-                    .key("agent-chat-list-toggle")
-                    .variant(if self.list_open { "primary" } else { "" }),
-                ui::button("+", &Msg::New).key("agent-new-session"),
-                ui::button("Close chat", &Msg::Close(self.active.clone()))
-                    .key("agent-session-close")
-                    .disabled(self.list_open),
-            ])
-            .key("agent-chat-actions"),
+        let mut tabs = vec![
+            ui::tab(
+                LIST_TAB,
+                "#",
+                if self.list_open {
+                    self.view_list_body()
+                } else {
+                    Vec::new()
+                },
+            )
+            .plain()
+            .title("All chats: restore or delete")
+            .indicator(self.list_light()),
         ];
-        let running = !self.list_open && self.turns.contains_key(&self.active);
-        let footer = vec![
-            ui::button("Stop", &Msg::Stop)
-                .key("agent-stop")
-                .disabled(!running),
-        ];
-        let panel = if self.list_open {
-            let mut body = vec![self.view_list()];
-            if let Some(error) = &self.error {
-                body.push(ui::text(error.clone()).key("agent-error").variant("danger"));
-            }
-            ui::panel("Agent", body, footer)
+        tabs.extend(self.open().into_iter().map(|chat| {
+            let content = if chat.id == self.active && !self.list_open {
+                self.view_chat(chat)
+            } else {
+                Vec::new()
+            };
+            ui::tab(
+                format!("{CHAT_PREFIX}{}", chat.id),
+                chat.title.clone(),
+                content,
+            )
+            .closable(&Msg::CloseTab)
+            .close_key("agent-session-close")
+            .title("Close chat")
+            .renamed(&Msg::Renamed(chat.id.clone()))
+            .indicator(self.chat_light(&chat.id))
+        }));
+        let active = if self.list_open {
+            LIST_TAB.to_owned()
         } else {
-            let tabs = self
-                .open()
-                .into_iter()
-                .map(|chat| {
-                    let content = if chat.id == self.active {
-                        self.view_chat(chat)
-                    } else {
-                        Vec::new()
-                    };
-                    ui::tab(
-                        format!("{CHAT_PREFIX}{}", chat.id),
-                        chat.title.clone(),
-                        content,
-                    )
-                    .renamed(&Msg::Renamed(chat.id.clone()))
-                    .indicator(self.chat_light(&chat.id))
-                })
-                .collect();
-            let tabs = ui::tabs(tabs, format!("{CHAT_PREFIX}{}", self.active), &Msg::Select)
-                .key("agent-sessions");
-            ui::tabbed_panel(tabs, Vec::new(), footer)
+            format!("{CHAT_PREFIX}{}", self.active)
         };
-        Some(panel.actions(actions).key("console-agent"))
+        let tabs = ui::tabs(tabs, active, &Msg::Select)
+            .on_add(&Msg::New)
+            .add_button("agent-new-session", "New chat session")
+            .key("agent-sessions");
+        Some(
+            ui::tabbed_panel(tabs, Vec::new(), Vec::new())
+                .variant("flush")
+                .key("console-agent"),
+        )
     }
 }
 
@@ -1088,6 +1131,9 @@ impl Agent {
                 Vec::new()
             }
             Msg::Select => {
+                if value.as_deref() == Some(LIST_TAB) {
+                    return self.ui(Msg::ToggleList, None);
+                }
                 if let Some(id) = value
                     .as_deref()
                     .and_then(|key| key.strip_prefix(CHAT_PREFIX))
@@ -1109,6 +1155,13 @@ impl Agent {
                     Vec::new()
                 }
             }
+            Msg::CloseTab => match value
+                .as_deref()
+                .and_then(|key| key.strip_prefix(CHAT_PREFIX))
+            {
+                Some(id) => self.ui(Msg::Close(id.to_owned()), None),
+                None => Vec::new(),
+            },
             Msg::Renamed(id) => {
                 let title = value.unwrap_or_default();
                 let title = title.trim();

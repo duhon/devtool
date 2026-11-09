@@ -17,10 +17,14 @@
       () => `Model catalog did not load: ${status()}; ${testid('settings-tab-agent-body').textContent}`);
   };
   const model = () => testid('agent-model-input');
-  const selectModel = async (id, category) => {
-    choose(model(), id);
-    await wait(() => model().value === id && testid('agent-model-category').textContent === category,
-      () => `Model ${id} must be selected with its category: ${model().value}; ${document.querySelector('[data-testid="agent-model-category"]')?.textContent}`);
+  const category = () => document.querySelector('[data-testid="agent-model-input-detail"]')?.textContent;
+  const modelOption = id => document.querySelector(`[data-testid="agent-model-input-option-${id}"]`);
+  const selectModel = async (id, expected, name) => {
+    model().focus();
+    await wait(() => modelOption(id), () => `Model ${id} must be listed: ${testid('agent-model-input-options').textContent}`);
+    await click(modelOption(id));
+    await wait(() => model().value === name && category() === expected,
+      () => `Model ${id} must be selected with its category: ${model().value}; ${category()}`);
   };
   const assistants = () => testid('agent-transcript').querySelectorAll('[data-testid^="agent-message-assistant-"]');
   const ask = async prompt => {
@@ -48,14 +52,17 @@
   };
   try {
     await settings();
-    assert(model().value === 'auto' && model().selectedOptions[0].textContent.startsWith('Copilot Fusion'),
+    assert(model().value.startsWith('Copilot Fusion'),
       `An unconfigured client must default to Copilot Fusion: ${model().value}`);
-    assert(testid('agent-model-category').textContent === 'Automatic', 'Fusion must be identified as the automatic router');
-    assert(!document.querySelector('[data-testid="agent-reasoning"]') && testid('agent-reasoning-value').textContent === 'Not supported',
+    assert(category() === 'Automatic', 'Fusion must be identified as the automatic router');
+    assert(testid('agent-reasoning').disabled && testid('agent-reasoning-value').textContent === 'Not supported',
       'Fusion must manage Reasoning automatically');
-    assert(![...model().options].some(option => option.value === 'sample-disabled'), 'Disabled models must not be selectable');
+    model().focus();
+    await wait(() => modelOption('sample-powerful'), 'The model list must open');
+    assert(!modelOption('sample-disabled'), 'Disabled models must not be selectable');
+    model().blur();
     assert(localStorage.getItem('servicesConsole.agentOptions') === originalOptions, 'Opening Settings must not save a model');
-    await selectModel('sample-powerful', 'Powerful');
+    await selectModel('sample-powerful', 'Powerful', 'Sample Powerful');
     const reasoning = () => testid('agent-reasoning');
     const levels = () => [...document.querySelectorAll('[data-testid^="agent-reasoning-level-"]')].map(level => level.textContent).join(',');
     const reasoningValue = () => testid('agent-reasoning-value').textContent;
@@ -79,14 +86,14 @@
     assert(saved?.options.model === 'sample-powerful' && saved.options.reasoningEffort === 'low',
       'A chat must persist its captured defaults');
     await settings();
-    assert(model().value === 'sample-powerful' && reasoning().value === '0' && reasoningValue() === 'low',
+    assert(model().value === 'Sample Powerful' && reasoning().value === '0' && reasoningValue() === 'low',
       'Reopening Settings must retain choices');
     await click(testid('agent-reasoning-level-high'));
     await wait(() => stored().model === 'sample-powerful' && stored().reasoningEffort === null
       && reasoning().value === '1' && reasoningValue() === 'high · default',
       () => `Choosing the model default must follow the model again: ${JSON.stringify(stored())}; ${reasoningValue()}`);
-    await selectModel('sample-light', 'Lightweight');
-    assert(!document.querySelector('[data-testid="agent-reasoning"]') && !levels() && reasoningValue() === 'Not supported',
+    await selectModel('sample-light', 'Lightweight', 'Sample Light');
+    assert(reasoning().disabled && !levels() && reasoningValue() === 'Not supported',
       'Models without Reasoning must disable and reset the slider');
     await agent();
     await click(testid('agent-sessions').querySelector(`[data-testid="${powerfulChat}"]`));
@@ -154,7 +161,7 @@
       if (!tab) continue;
       await click(tab);
       await wait(() => selected() === id);
-      await click(testid('agent-session-close'));
+      await click(document.querySelector('[data-testid="agent-sessions"] [aria-selected="true"] [data-testid="agent-session-close"]'));
       await wait(() => !testid('agent-sessions').querySelector(`[data-testid="${id}"]`));
     }
     const original = testid('agent-sessions').querySelector(`[data-testid="${originalChat}"]`);

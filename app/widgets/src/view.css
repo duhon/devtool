@@ -296,6 +296,10 @@ textarea.ui-input { resize: vertical; min-height: 56px; max-height: 30vh; }
 
 .ui-table.is-fixed { table-layout: fixed; }
 
+.ui-table.is-fit td { white-space: nowrap; }
+
+.ui-table.is-fit td.is-clipped { max-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
 .ui-table.is-fixed td > .ui-text { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 
 .ui-table.is-roomy th { padding: 5px; color: var(--fg); font-weight: bold; border-bottom: 1px solid var(--border); }
@@ -310,7 +314,7 @@ textarea.ui-input { resize: vertical; min-height: 56px; max-height: 30vh; }
 
 .ui-table tr.ui-table-detail > td { padding-bottom: 6px; border-top: 0; color: var(--fg-quote); }
 
-.ui-table tr.ui-table-detail > td > * { width: 0; min-width: 100%; overflow-wrap: anywhere; }
+.ui-table tr.ui-table-detail > td > * { display: block; width: 0; min-width: 100%; overflow-wrap: anywhere; }
 
 .ui-combobox { position: relative; min-width: 0; }
 

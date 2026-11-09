@@ -286,8 +286,12 @@ pub fn render(node: &Node, on: &Callback<Action>) -> Html {
                 .max()
                 .unwrap_or(1)
                 .max(1);
+            // A column of width 0 fits its content; the others share the rest and clip.
+            let fit = table.widths.contains(&0) && table.widths.iter().any(|width| *width > 0);
+            let clipped: &[u32] = if fit { &table.widths } else { &[] };
             html! {
-                <table class={classes!(classes(node, "ui-table"), (!table.widths.is_empty()).then_some("is-fixed"))}
+                <table class={classes!(classes(node, "ui-table"),
+                    (!table.widths.is_empty() && !fit).then_some("is-fixed"), fit.then_some("is-fit"))}
                     data-key={data_key.clone()} data-testid={data_key} title={tip} aria-label={aria}>
                     if !table.widths.is_empty() {
                         <colgroup>
@@ -300,7 +304,7 @@ pub fn render(node: &Node, on: &Callback<Action>) -> Html {
                         <thead><tr>{for table.columns.iter().map(|column| html! {<th>{column.clone()}</th>})}</tr></thead>
                     }
                     <tbody>
-                        {for table.rows.iter().map(|row| table_row(row, span, on))}
+                        {for table.rows.iter().map(|row| table_row(row, span, clipped, on))}
                     </tbody>
                 </table>
             }
@@ -410,10 +414,12 @@ pub fn render(node: &Node, on: &Callback<Action>) -> Html {
 }
 
 /// A row of a table, then its detail across the width of the table.
-fn table_row(row: &ui::TableRow, span: usize, on: &Callback<Action>) -> Html {
+fn table_row(row: &ui::TableRow, span: usize, clipped: &[u32], on: &Callback<Action>) -> Html {
     let mut rows = vec![html! {
         <tr key={row.key.clone()} class={variants(&row.variant)} data-key={row.key.clone()} data-testid={row.key.clone()}>
-            {for row.cells.iter().map(|cell| html! {<td>{render(cell, on)}</td>})}
+            {for row.cells.iter().enumerate().map(|(index, cell)| html! {
+                <td class={clipped.get(index).is_some_and(|width| *width > 0).then_some("is-clipped")}>{render(cell, on)}</td>
+            })}
         </tr>
     }];
     if !row.detail.is_empty() {

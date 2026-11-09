@@ -29,8 +29,10 @@ pub struct Hints {
     sources: BTreeMap<String, (String, String)>,
     own: Map<String, Value>,
     drafts: Map<String, Value>,
-    /// The level of the last status, shown as the title's light.
-    light: String,
+    /// The level of the last status by service, shown as the title's light.
+    light: BTreeMap<String, String>,
+    /// A save of the user's hints is not answered yet.
+    saving: bool,
 }
 
 /// Checks hints the way completion reads them.
@@ -111,6 +113,7 @@ impl Hints {
             Ok(()) => {
                 self.drafts.remove(&service);
                 self.own.insert(service, json!(text));
+                self.saving = true;
                 vec![
                     cmd::kv_put("save", OWN, &Value::Object(self.own.clone()), true),
                     self.put_drafts(),
@@ -198,12 +201,21 @@ impl Module for Hints {
                     }
                     vec![self.contribution()]
                 }
-                ("save", Ok(_)) => vec![self.status("Hints save · OK", "ok")],
-                ("reset", Ok(_)) => vec![self.status("Hints reset · OK", "ok")],
-                (tag @ ("save" | "reset"), Err(failure)) => vec![self.status(
-                    &format!("Hints {tag} · ERROR · {}", failure.message),
-                    "error",
-                )],
+                ("save", Ok(_)) => {
+                    self.saving = false;
+                    vec![self.status("Hints save · OK", "ok")]
+                }
+                ("reset", Ok(_)) => {
+                    self.saving = false;
+                    vec![self.status("Hints reset · OK", "ok")]
+                }
+                (tag @ ("save" | "reset"), Err(failure)) => {
+                    self.saving = false;
+                    vec![self.status(
+                        &format!("Hints {tag} · ERROR · {}", failure.message),
+                        "error",
+                    )]
+                }
                 (_, Err(failure)) => {
                     vec![self.status(&format!("ERROR: {}", failure.message), "error")]
                 }
@@ -218,6 +230,7 @@ impl Module for Hints {
             } => {
                 self.own.remove(&self.service);
                 self.drafts.remove(&self.service);
+                self.saving = true;
                 vec![
                     cmd::kv_put("reset", OWN, &Value::Object(self.own.clone()), true),
                     self.put_drafts(),
@@ -245,12 +258,21 @@ impl Module for Hints {
                 origin.push(
                     ui::badge(format!("Yours, over source {source}")).key("hints-origin-label"),
                 );
-                origin
-                    .push(ui::button(format!("Reset to {source}"), &Msg::Reset).key("hints-reset"));
+                origin.push(
+                    ui::button(format!("Reset to {source}"), &Msg::Reset)
+                        .variant("tab")
+                        .disabled(self.saving)
+                        .key("hints-reset"),
+                );
             }
             (true, None) => {
                 origin.push(ui::badge("Yours").key("hints-origin-label"));
-                origin.push(ui::button("Reset", &Msg::Reset).key("hints-reset"));
+                origin.push(
+                    ui::button("Reset to the module's", &Msg::Reset)
+                        .variant("tab")
+                        .disabled(self.saving)
+                        .key("hints-reset"),
+                );
             }
             (false, Some(source)) => {
                 origin.push(ui::badge(format!("From source {source}")).key("hints-origin-label"));
@@ -263,15 +285,13 @@ impl Module for Hints {
         }
         let body = vec![
             ui::editor(format!("hints/{}", self.service), self.shown(), &Msg::Edit)
+                .label(format!("Hints · {name}"))
                 .key("console-hints"),
         ];
         Some(
             ui::panel(format!("{name} completion hints"), body, Vec::new())
-                .indicator(if self.light.is_empty() {
-                    "idle"
-                } else {
-                    &self.light
-                })
+                .key("console-hints-heading")
+                .indicator(self.light.get(&self.service).map_or("idle", String::as_str))
                 .actions(actions),
         )
     }
@@ -279,7 +299,7 @@ impl Module for Hints {
 
 impl Hints {
     fn status(&mut self, text: &str, level: &str) -> Cmd {
-        self.light = level.to_owned();
+        self.light.insert(self.service.clone(), level.to_owned());
         cmd::status(text, level)
     }
 }

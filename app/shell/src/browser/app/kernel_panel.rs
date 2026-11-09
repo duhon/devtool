@@ -311,8 +311,10 @@ impl App {
         };
         let (status, debug) = services_kernel::activity::panel(id);
         // A module that can be stopped says what Stop sends it.
+        let mut stop_disabled = false;
         let (onstop, stop_testid) = match status.stop.clone() {
             Some(stop) => {
+                stop_disabled = stop.disabled;
                 let (link, module) = (ctx.link().clone(), id.clone());
                 let testid = if stop.testid.is_empty() {
                     format!("console-{id}-stop")
@@ -330,7 +332,7 @@ impl App {
         };
         html! {
             <ConsoleStatus testid={format!("console-{id}-status")} text={status.text.clone()} {debug}
-                running={status.indicator == "busy"} started={status.since} {onstop} {stop_testid}
+                running={status.indicator == "busy"} {stop_disabled} stoppable={status.indicator == "warning"} started={status.since} {onstop} {stop_testid}
                 state={services_widgets::view::indicator_state(&status.indicator)}/>
         }
     }

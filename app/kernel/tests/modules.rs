@@ -249,6 +249,7 @@ fn a_shown_panel_runs_its_commands_and_redraws_from_replies() {
             stop: Some(services_kernel::Stop {
                 msg: serde_json::to_vec(&json!("stop")).unwrap(),
                 testid: "panel-stop".into(),
+                disabled: false,
             }),
         })
     );

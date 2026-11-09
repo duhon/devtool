@@ -84,7 +84,10 @@ fn edits_save_the_session_variables_or_keep_a_draft() {
     });
     assert_eq!(
         commands[1],
-        cmd::status("ERROR: Line 1: expected NAME: value.", "error")
+        cmd::status(
+            "Variables validation · ERROR · Line 1: expected NAME: value.",
+            "error"
+        )
     );
     // The last saved variables still resolve.
     assert_eq!(pass(&variables, "{{var:A}}", false).unwrap(), "1");

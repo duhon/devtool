@@ -471,8 +471,9 @@ impl Node {
         }
         self
     }
-    /// Table: column widths in percent (0 for the rest); the columns are then fixed and a
-    /// cell's text is clipped with an ellipsis.
+    /// Table: column widths in percent; the columns are then fixed and a cell's text is clipped
+    /// with an ellipsis. With some widths 0, those columns fit their content instead and the
+    /// others share the rest.
     pub fn widths(mut self, widths: Vec<u32>) -> Self {
         if let Some(node::Kind::Table(table)) = &mut self.kind {
             table.widths = widths;

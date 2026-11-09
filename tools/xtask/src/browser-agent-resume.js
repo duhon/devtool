@@ -16,7 +16,7 @@
   assert(transcript().includes('Edited live check'), 'A new window must restore chat history');
   assert([...testid('agent-transcript').querySelectorAll('[data-testid^="agent-message-assistant-"]')]
     .every(message => message.textContent.trim()), 'Empty entries from saved older histories must remain hidden');
-  assert(tab(chat).textContent === 'Products discussion', 'Chat names must survive a new window');
+  assert(tab(chat).querySelector('.tab-label')?.textContent === 'Products discussion', 'Chat names must survive a new window');
   const closedIds = () => Object.values(chats()).filter(chat => chat.closed).map(chat => chat.id);
   assert(openTabs() === 1 && closedIds().every(id => !tab(id)), 'Closed tabs must not reopen in a new window');
   assert(!document.querySelector('[data-testid="agent-share-context"]'), 'Restored chats must not require sharing approval');
@@ -30,7 +30,7 @@
   await wait(() => testid('agent-stop').disabled);
   assert(transcript().includes('Edited live check'), 'Resuming must not replace earlier messages');
   const lastSession = selected();
-  await click(testid('agent-session-close'));
+  await click(document.querySelector('[data-testid="agent-sessions"] [aria-selected="true"] [data-testid="agent-session-close"]'));
   await wait(() => openTabs() === 1 && selected() && selected() !== lastSession);
   assert(testid('agent-transcript').querySelectorAll('[data-testid^="agent-message-"]').length === 0 && composer().value === '',
     'Closing the last tab must create a fresh empty chat');
@@ -124,7 +124,7 @@
   const moved = selected();
   const home = consoleSession();
   await wait(() => record(moved)?.console_session === Number(home), 'A chat with a draft is saved in its session');
-  await click(testid('agent-session-close'));
+  await click(document.querySelector('[data-testid="agent-sessions"] [aria-selected="true"] [data-testid="agent-session-close"]'));
   await wait(() => closedIds().includes(moved), 'The chat to move is closed');
   await testDriver.activateSession(0);
   await openAgent();
@@ -150,7 +150,7 @@
 
   // Agent settings saved in an earlier window show the saved Reasoning once the model catalog loads.
   await testDriver.settingsTab('agent');
-  await wait(() => document.querySelector('[data-testid="agent-model-input"]')?.value === 'sample-powerful'
+  await wait(() => document.querySelector('[data-testid="agent-model-input"]')?.value === 'Sample Powerful'
     && document.querySelector('[data-testid="agent-reasoning"]'),
     () => `Saved Agent settings did not load: ${document.querySelector('[data-testid="agent-model-input"]')?.value}`);
   assert(testid('agent-reasoning').value === '0' && testid('agent-reasoning-value').textContent === 'low',

@@ -82,7 +82,7 @@
   variables.focus();
   await key('Mod+F');
   await wait(()=>bar()&&variables.getWrapperElement().contains(bar()),'Mod+F must open the find bar in Variables');
-  assert(/Find in Editor · headers/.test(testid('find-scope').textContent),`Wrong scope: ${testid('find-scope').textContent}`);
+  assert(/Find in Variables · /.test(testid('find-scope').textContent),`Wrong scope: ${testid('find-scope').textContent}`);
   editor.focus();
   await key('Mod+F');
   await wait(()=>bar()&&wrapper.contains(bar()),'Mod+F in the Console must move the bar back');

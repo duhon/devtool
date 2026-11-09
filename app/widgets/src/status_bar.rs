@@ -27,6 +27,12 @@ mod view {
         pub testid: String,
         #[prop_or_default]
         pub waiting: bool,
+        /// Stop stays enabled while not running, e.g. during a pending approval.
+        #[prop_or_default]
+        pub stoppable: bool,
+        /// Stop stays disabled whatever the state.
+        #[prop_or_default]
+        pub stop_disabled: bool,
         #[prop_or_default]
         pub state: Option<Indicator>,
     }
@@ -94,7 +100,7 @@ mod view {
                 </span>
                 <button type="button" class="status-bar-stop" data-testid={props.stop_testid.clone()}
                     title="Stop this operation" aria-label="Stop this operation"
-                    disabled={!props.running || props.onstop.is_none()}
+                    disabled={props.stop_disabled || !(props.running || props.stoppable) || props.onstop.is_none()}
                     onclick={{let onstop=props.onstop.clone();Callback::from(move |event:MouseEvent|{
                         event.stop_propagation();
                         if let Some(onstop)=&onstop {onstop.emit(());}

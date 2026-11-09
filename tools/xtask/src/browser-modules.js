@@ -6,7 +6,7 @@
     'sessions', 'splunk', 'templates', 'terminal', 'variables'];
   const status = () => document.querySelector('[data-testid="console-settings-status"] .status-bar-text')?.textContent ?? '';
   // A module row is keyed `settings-module-{source}/{module}`; its parts `settings-module-{part}-{source}/{module}`.
-  const rows = () => [...document.querySelectorAll('[data-testid="settings-modules"] tbody > tr')];
+  const rows = () => [...document.querySelectorAll('[data-testid="settings-modules"] tbody > tr')].filter(row => !row.dataset.testid.endsWith('-detail'));
   const keyOf = row => row.dataset.testid.slice('settings-module-'.length);
   const moduleOf = row => keyOf(row).split('/')[1];
   const part = (row, name) => row && document.querySelector(`[data-testid="settings-module-${name}-${keyOf(row)}"]`);
@@ -39,8 +39,7 @@
   await wait(() => detail(row('rest'), 'description') && !detail(row('rest'), 'description').textContent.includes('No details.'),
     'The name must show the module description');
   // A long, multi-line description wraps inside the table instead of resizing its columns.
-  editorOf('settings-module-description-/rest').setValue(
-    `${'A long module description line. '.repeat(12)}\nhttps://github.com/example/${'long-path-'.repeat(30)}`);
+  detail(row('rest'), 'description').textContent = `${'A long module description line. '.repeat(12)} https://github.com/example/${'long-path-'.repeat(30)}`;
   const table = testid('settings-modules');
   assert(columns() === closedColumns && table.getBoundingClientRect().width <= table.parentElement.clientWidth,
     `Opening a description must not move the columns: ${closedColumns} -> ${columns()}; table ${table.getBoundingClientRect().width} of ${table.parentElement.clientWidth}`);

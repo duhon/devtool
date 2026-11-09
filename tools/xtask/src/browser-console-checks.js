@@ -638,7 +638,7 @@
       && !document.querySelector('[data-testid="variables-panel"]'),
       'Dictionary must be a separate panel with no var or env tabs');
     const dictionary = () => testDriver.editorAt('console-dictionary');
-    const dictionarySet = panelTabs().find(el => el.getAttribute('aria-selected') === 'true').textContent;
+    const dictionarySet = panelTabs().find(el => el.getAttribute('aria-selected') === 'true').querySelector('.tab-label').textContent;
     const originalDictionary = (await wait(() => dictionary())).getValue();
     dictionary().setValue(`${originalDictionary}\nDICTIONARY_PANEL_FIXTURE: shared`);
     await wait(() => toolStatus().textContent.includes('Dictionary save · OK'));
@@ -659,7 +659,8 @@
       'Reopening Dictionary must keep its draft and status');
     dictionary().setValue(originalDictionary);
     await wait(() => toolStatus().textContent.includes('Dictionary save · OK'));
-    fill(testid('dictionary-add'), 'console-panel-fixture');
+    window.prompt = () => 'console-panel-fixture';
+    await click(testid('dictionary-tabs-add'));
     await wait(() => document.querySelector('[data-testid="dictionary-set-console-panel-fixture"]')?.getAttribute('aria-selected') === 'true'
       && toolStatus().textContent.includes('Dictionary add · OK'), 'A new set opens');
     await doubleClick(testid('dictionary-set-console-panel-fixture'));
@@ -674,7 +675,8 @@
     await wait(() => toolStatus().textContent.includes('Dictionary reorder · OK')
       && panelTabs()[0].dataset.testid === 'dictionary-set-console-panel-renamed', 'Dictionary sets reorder by dragging their tabs');
     await click(testid('dictionary-set-console-panel-renamed'));
-    await click(testid('dictionary-delete'));
+    window.confirm = () => true;
+    await click(testid('dictionary-tabs-close-dictionary-set-console-panel-renamed'));
     await wait(() => !document.querySelector('[data-testid="dictionary-set-console-panel-renamed"]')
       && toolStatus().textContent.includes('Dictionary delete · OK'), 'A set of the user\'s own can be deleted');
     await click(testid(`dictionary-set-${dictionarySet}`));

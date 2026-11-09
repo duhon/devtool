@@ -228,6 +228,8 @@ pub struct History {
     /// The read the replies belong to; older ones are dropped.
     epoch: u64,
     error: Option<String>,
+    /// A list read is under way.
+    loading: bool,
 }
 
 impl History {
@@ -236,6 +238,7 @@ impl History {
             return vec![self.status()];
         }
         self.epoch += 1;
+        self.loading = true;
         let mut query = json!({"checkId": self.check, "limit": PAGE});
         let tag = if more {
             query["before"] = json!(self.next_before);
@@ -407,6 +410,7 @@ impl Module for History {
                         self.list(false)
                     }
                     (LIST | MORE, Ok(page)) if current => {
+                        self.loading = false;
                         self.error = self.page(&page, kind == MORE).err();
                         vec![self.status()]
                     }
@@ -418,7 +422,12 @@ impl Module for History {
                         match self.chunk(id.unwrap_or_default(), &chunk) {
                             Ok(next) => {
                                 self.error = None;
-                                next.into_iter().chain([self.status()]).collect()
+                                match next {
+                                    Some(next) => {
+                                        vec![next, cmd::status("History snapshot", "busy")]
+                                    }
+                                    None => vec![self.status()],
+                                }
                             }
                             Err(error) => {
                                 self.error = Some(error);
@@ -427,6 +436,7 @@ impl Module for History {
                         }
                     }
                     (LIST | MORE | SNAPSHOT, Err(failure)) if current => {
+                        self.loading = false;
                         self.error = Some(failure.message);
                         vec![self.status()]
                     }
@@ -480,11 +490,11 @@ impl Module for History {
     fn view(&self) -> Option<ui::Node> {
         let mut body = Vec::new();
         if self.check.is_empty() {
-            body.push(ui::text("Select a check to see its history."));
-        } else if self.entries.is_empty() {
-            body.push(ui::text("No executions recorded for this check."));
+            body.push(ui::text("Select a check to see its history.").variant("paragraph"));
+        } else if self.entries.is_empty() && !self.loading {
+            body.push(ui::text("No executions recorded for this check.").variant("paragraph"));
         }
-        let rows = self
+        let mut rows: Vec<ui::Node> = self
             .entries
             .iter()
             .map(|entry| {
@@ -504,17 +514,37 @@ impl Module for History {
                 }
             })
             .collect();
-        let total = self.total.max(self.entries.len() as u64) as u32;
-        body.push(ui::list(total, 0, rows, &Msg::Range).key("history-entries"));
         if self.next_before.is_some() {
-            body.push(ui::button("Older executions", &Msg::More).key("history-more"));
-        }
-        if let Some(text) = &self.shown {
-            body.push(
-                ui::viewer(format!("history/{}", self.service), text.clone()).key("history-editor"),
+            rows.push(
+                ui::button("Older executions", &Msg::More)
+                    .key("history-more")
+                    .variant("inline")
+                    .disabled(self.loading),
             );
         }
-        Some(ui::panel("History", body, Vec::new()).key("history-panel"))
+        let total = rows.len() as u32;
+        let variant = if self.selected.is_some() {
+            "dense capped"
+        } else {
+            "dense primary"
+        };
+        body.push(
+            ui::list(total, 0, rows, &Msg::Range)
+                .key("history-entries")
+                .variant(variant),
+        );
+        if let Some(text) = &self.shown {
+            body.push(
+                ui::viewer(format!("history/{}", self.service), text.clone())
+                    .key("history-editor")
+                    .variant("flush"),
+            );
+        }
+        Some(
+            ui::panel("History", body, Vec::new())
+                .key("history-panel")
+                .variant("flush"),
+        )
     }
 
     /// `response` is the run record (`Modules::finished`); a run without a check is not

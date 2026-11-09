@@ -16,6 +16,7 @@ pub enum Msg {
     Switch(u64),
     Copy(u64),
     Delete(u64),
+    Retry,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -131,6 +132,7 @@ impl Module for Sessions {
                     Msg::Switch(id) => cmd::workspace_restore("switch", id),
                     Msg::Copy(id) => cmd::workspace_copy("copy", id, &self.name),
                     Msg::Delete(id) => cmd::workspace_delete("delete", id),
+                    Msg::Retry => cmd::workspace_retry("retry"),
                     Msg::Name => return Vec::new(),
                 };
                 vec![command, cmd::status("Sessions · Running…", "busy")]
@@ -148,21 +150,23 @@ impl Module for Sessions {
             } else {
                 "Saved"
             })
+            .variant("paragraph")
             .key("session-storage-status"),
         ];
         if let Some(error) = &self.library.import_error {
-            body.push(
+            body.push(ui::row(vec![
                 ui::text(format!("Original workspace import is pending: {error}"))
-                    .variant("danger")
                     .key("session-import-error"),
-            );
+                ui::button("Retry import", &Msg::Retry).key("session-import-retry"),
+            ]));
         }
-        body.push(ui::row(vec![
-            ui::text("New session name"),
+        body.push(ui::field(
+            "New session name",
             ui::input(None, "", &Msg::Name)
                 .key("session-new-name")
+                .size(20)
                 .on_input(&Msg::Name),
-        ]));
+        ));
         let current = self.library.current;
         let rows = self
             .rows()
@@ -196,15 +200,20 @@ impl Module for Sessions {
                 ["#", "Session", "Actions"].map(str::to_owned).to_vec(),
                 rows,
             )
+            .variant("roomy")
             .key("session-list"),
         );
-        body.push(ui::text(
-            "0 is temporary. Creating from 0 starts empty. Named sessions save \
+        body.push(
+            ui::text(
+                "0 is temporary. Creating from 0 starts empty. Named sessions save \
              automatically. Dictionary and environment variables are shared. Agent chats \
              belong to their session; deleting a session closes them.",
-        ));
+            )
+            .variant("paragraph"),
+        );
         Some(
             ui::panel("Sessions", body, Vec::new())
+                .variant("padded")
                 .indicator("idle")
                 .key("console-sessions"),
         )

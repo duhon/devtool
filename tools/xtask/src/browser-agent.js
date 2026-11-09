@@ -263,7 +263,7 @@
   assert(transcript().includes('Edited live check'), 'Session history must survive tab switches');
   await click(tab(secondSession));
   await wait(() => selectedChat() === secondSession);
-  await click(testid('agent-session-close'));
+  await click(document.querySelector('[data-testid="agent-sessions"] [aria-selected="true"] [data-testid="agent-session-close"]'));
   await wait(() => !tab(secondSession) && selectedChat() === firstSession
     && testid('agent-composer').value === 'Draft survives panel changes',
     'Closing a chat must select the remaining chat with its draft');
@@ -274,7 +274,7 @@
   const runningSession = selectedChat();
   await send('agent run closing');
   await wait(() => document.querySelector('[data-testid="agent-run-approval"]'));
-  await click(testid('agent-session-close'));
+  await click(document.querySelector('[data-testid="agent-sessions"] [aria-selected="true"] [data-testid="agent-session-close"]'));
   await wait(() => !tab(runningSession) && !document.querySelector('[data-testid="agent-run-approval"]'));
   assert(selectedChat() === firstSession, 'Closing the active chat must select an adjacent remaining chat');
   assert(await count() === initialCount + 1, 'Closing an active Agent chat must revoke approval without executing');

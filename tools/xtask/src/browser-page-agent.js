@@ -259,7 +259,7 @@
     await beginGuide('closing');
     await guideStep(1);
     const closedCleanups = guideCleanups;
-    await click(testid('agent-session-close'));
+    await click(document.querySelector('[data-testid="agent-sessions"] [aria-selected="true"] [data-testid="agent-session-close"]'));
     await wait(async () => !await page(`!!document.getElementById('services-devtools-page-guide')`));
     await wait(() => guideCleanups >= closedCleanups + 2);
     await beginGuide('application hidden');
@@ -306,7 +306,7 @@
   } finally {
     if (original) Object.defineProperty(chrome, 'devtools', original);
     else delete chrome.devtools;
-    await click(testid('agent-session-close'));
+    await click(document.querySelector('[data-testid="agent-sessions"] [aria-selected="true"] [data-testid="agent-session-close"]'));
     await closePanel('agent');
   }
   return true;

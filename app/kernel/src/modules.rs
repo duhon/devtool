@@ -117,6 +117,8 @@ pub struct Status {
 pub struct Stop {
     pub msg: Vec<u8>,
     pub testid: String,
+    /// The module has nothing of its own to stop right now (or is already stopping it).
+    pub disabled: bool,
 }
 
 /// Synchronous calls over this many milliseconds are noted in the module's log.
@@ -630,6 +632,7 @@ impl Modules {
                         Some(Stop {
                             msg: serde_json::to_vec(stop.get("msg")?).ok()?,
                             testid: stop["testid"].as_str().unwrap_or_default().to_owned(),
+                            disabled: stop["disabled"].as_bool().unwrap_or(false),
                         })
                     }),
                 });

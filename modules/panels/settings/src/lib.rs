@@ -17,6 +17,7 @@ use std::collections::BTreeSet;
 const MODULES: &str = "settings-tab-modules";
 const SOURCES: &str = "settings-tab-sources";
 const AGENT: &str = "settings-tab-agent";
+const TABS: [&str; 3] = [MODULES, SOURCES, AGENT];
 /// The kv key of the tab shown last.
 const TAB: &str = "tab";
 const CHECK: &str = "check";
@@ -58,7 +59,6 @@ pub enum Msg {
     Apply(String),
     Model,
     Reasoning,
-    ReasoningLevel(usize),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -90,6 +90,10 @@ struct Draft {
 
 #[derive(Default)]
 pub struct Settings {
+    /// The light of each tab: the state of its last operation.
+    lights: [&'static str; 3],
+    /// The tab a forced check was asked on.
+    check_tab: &'static str,
     offset: f64,
     tab: String,
     /// The last check of the sources; `Null` where the Host can't check (no native host).
@@ -307,6 +311,12 @@ fn outcome(
 }
 
 impl Settings {
+    fn tab_name(&self) -> &'static str {
+        TABS.into_iter()
+            .find(|tab| *tab == self.tab)
+            .unwrap_or(MODULES)
+    }
+
     fn status(&self) -> Cmd {
         match &self.status {
             Some((text, indicator)) => cmd::status(text, indicator),
@@ -314,13 +324,17 @@ impl Settings {
         }
     }
 
-    fn report(&mut self, text: String, indicator: &'static str) -> Cmd {
+    /// Reports an operation on the status line and the light of the tab it belongs to.
+    fn report(&mut self, tab: &'static str, text: String, indicator: &'static str) -> Cmd {
+        if let Some(light) = TABS.iter().position(|known| *known == tab) {
+            self.lights[light] = indicator;
+        }
         self.status = Some((text, indicator));
         self.status()
     }
 
-    fn running(&mut self, operation: &str) -> Cmd {
-        self.report(format!("{operation} · Running…"), "busy")
+    fn running(&mut self, tab: &'static str, operation: &str) -> Cmd {
+        self.report(tab, format!("{operation} · Running…"), "busy")
     }
 
     fn date(&self, seconds: &Value) -> String {
@@ -331,12 +345,15 @@ impl Settings {
         self.generation += 1;
         self.checking = true;
         self.forced = force;
+        if force {
+            self.check_tab = self.tab_name();
+        }
         let mut commands = vec![cmd::modules_check(
             format!("{CHECK}:{}", self.generation),
             force,
         )];
         if force {
-            commands.push(self.running("Check sources"));
+            commands.push(self.running(self.check_tab, "Check sources"));
         }
         commands
     }
@@ -384,7 +401,13 @@ impl Settings {
         let speak = self.forced || (!notice.is_empty() && notice != self.notice);
         self.notice = notice;
         if speak {
-            vec![self.report(text, indicator)]
+            // Automatic checks report source problems on Sources, updates on Modules.
+            let tab = match (self.forced, indicator) {
+                (true, _) => self.check_tab,
+                (false, "warning" | "error") => SOURCES,
+                (false, _) => MODULES,
+            };
+            vec![self.report(tab, text, indicator)]
         } else {
             Vec::new()
         }
@@ -400,14 +423,14 @@ impl Settings {
         if self.tab == AGENT && self.catalog.is_none() && !self.loading_models {
             self.loading_models = true;
             commands.push(cmd::agent_models(MODELS));
-            commands.push(self.running("Load Copilot models"));
+            commands.push(self.running(AGENT, "Load Copilot models"));
         }
         commands
     }
 
     fn change(&mut self, operation: &str, command: Cmd, forgetting: Option<String>) -> Vec<Cmd> {
         self.busy = Some((operation.to_owned(), forgetting));
-        vec![command, self.running(operation)]
+        vec![command, self.running(operation_tab(operation), operation)]
     }
 
     /// Saves `list`; configured sources are sent with their slug so they keep their data.
@@ -481,7 +504,7 @@ impl Settings {
         } else if operation == "Load sources" {
             self.sources_loaded = true;
         }
-        commands.push(self.report(text, indicator));
+        commands.push(self.report(operation_tab(&operation), text, indicator));
         commands
     }
 
@@ -542,10 +565,11 @@ impl Settings {
                 self.options = options;
                 vec![
                     cmd::agent_options(SAVE_OPTIONS, Some(&value)),
-                    self.running("New Agent chat settings"),
+                    self.running(AGENT, "New Agent chat settings"),
                 ]
             }
             Err(error) => vec![self.report(
+                AGENT,
                 format!("New Agent chat settings · ERROR · {error}"),
                 "error",
             )],
@@ -585,9 +609,21 @@ impl Settings {
             Ok(())
         });
         vec![match loaded {
-            Ok(()) => self.report("Load Copilot models · OK".into(), "ok"),
-            Err(error) => self.report(format!("Load Copilot models · ERROR · {error}"), "error"),
+            Ok(()) => self.report(AGENT, "Load Copilot models · OK".into(), "ok"),
+            Err(error) => self.report(
+                AGENT,
+                format!("Load Copilot models · ERROR · {error}"),
+                "error",
+            ),
         }]
+    }
+}
+
+/// The tab an operation belongs to.
+fn operation_tab(operation: &str) -> &'static str {
+    match operation {
+        "Install module" | "Remove module" => MODULES,
+        _ => SOURCES,
     }
 }
 
@@ -630,17 +666,34 @@ impl Module for Settings {
     }
 
     fn view(&self) -> Option<ui::Node> {
-        let tabs = vec![
-            ui::tab(MODULES, "Modules", self.view_modules()),
-            ui::tab(SOURCES, "Sources", self.view_sources()),
-            ui::tab(AGENT, "Agent", self.view_agent()),
-        ];
+        let light = |tab: &str| {
+            TABS.iter()
+                .position(|known| *known == tab)
+                .map_or("idle", |index| match self.lights[index] {
+                    "" => "idle",
+                    light => light,
+                })
+        };
+        // Without the native host there are no modules and sources to manage.
+        let native = !matches!(self.check, Some(Value::Null));
+        let mut tabs = Vec::new();
+        if native {
+            tabs.push(ui::tab(MODULES, "Modules", self.view_modules()).indicator(light(MODULES)));
+            tabs.push(ui::tab(SOURCES, "Sources", self.view_sources()).indicator(light(SOURCES)));
+        }
+        tabs.push(ui::tab(AGENT, "Agent", self.view_agent()).indicator(light(AGENT)));
+        let active = if native {
+            self.tab.clone()
+        } else {
+            AGENT.into()
+        };
         Some(
             ui::tabbed_panel(
-                ui::tabs(tabs, self.tab.clone(), &Msg::Tab).key("settings-tabs"),
+                ui::tabs(tabs, active, &Msg::Tab).key("settings-tabs"),
                 Vec::new(),
                 Vec::new(),
             )
+            .variant("padded")
             .key("settings"),
         )
     }
@@ -669,6 +722,7 @@ impl Settings {
             OPEN => match result {
                 Ok(_) => Vec::new(),
                 Err(failure) => vec![self.report(
+                    MODULES,
                     format!("Open source · ERROR · {}", failure.message),
                     "error",
                 )],
@@ -679,16 +733,23 @@ impl Settings {
                     self.updating = false;
                     // Installed, but the App could not reload itself: the Reload action retries.
                     match value["warning"].as_str() {
-                        Some(warning) => vec![
-                            self.report(format!("Install update · ERROR · {warning}"), "error"),
-                        ],
-                        None => vec![self.report("Install update · OK".into(), "ok")],
+                        Some(warning) => vec![self.report(
+                            MODULES,
+                            format!("Install update · ERROR · {warning}"),
+                            "error",
+                        )],
+                        None => vec![self.report(
+                            MODULES,
+                            "Update installed. Reload the extension to finish.".into(),
+                            "ok",
+                        )],
                     }
                 }
                 Err(failure) => {
                     self.updating = false;
                     self.installed = None;
                     vec![self.report(
+                        MODULES,
                         format!("Install update · ERROR · {}", failure.message),
                         "error",
                     )]
@@ -697,7 +758,7 @@ impl Settings {
             MODELS => self.models_loaded(result),
             SAVE_OPTIONS => {
                 let (text, indicator) = outcome("New Agent chat settings", &result);
-                vec![self.report(text, indicator)]
+                vec![self.report(AGENT, text, indicator)]
             }
             _ => Vec::new(),
         }
@@ -748,7 +809,7 @@ impl Settings {
                     self.installed = Some(source.clone());
                     return vec![
                         cmd::app_update(UPDATE, &source, &version),
-                        self.running("Install update"),
+                        self.running(MODULES, "Install update"),
                     ];
                 }
                 self.change(
@@ -869,7 +930,6 @@ impl Settings {
                 Ok(level) if level >= 0.0 => self.reasoning(level as usize),
                 _ => Vec::new(),
             },
-            Msg::ReasoningLevel(level) => self.reasoning(level),
         }
     }
 
@@ -879,6 +939,7 @@ impl Settings {
                 ui::heading("Modules").key("settings-modules-title"),
                 ui::spacer().key("settings-modules-spacer"),
                 ui::button("Check for updates", &Msg::Check)
+                    .variant("tab")
                     .key("settings-modules-check")
                     .disabled(self.checking),
             ])
@@ -907,16 +968,13 @@ impl Settings {
             );
             return body;
         }
-        let mut table = Vec::new();
-        let mut details = Vec::new();
-        for row in &rows {
-            let (cells, extra) = self.view_row(row, app_version);
-            table.push(ui::TableRow::new(
-                format!("settings-module-{}", row.key()),
-                cells,
-            ));
-            details.extend(extra);
-        }
+        let table = rows
+            .iter()
+            .map(|row| {
+                let (cells, details) = self.view_row(row, app_version);
+                ui::TableRow::new(format!("settings-module-{}", row.key()), cells).detail(details)
+            })
+            .collect();
         body.push(
             ui::table(
                 ["Name", "Source", "Version", "New version", ""]
@@ -924,9 +982,9 @@ impl Settings {
                     .to_vec(),
                 table,
             )
+            .variant("roomy")
             .key("settings-modules"),
         );
-        body.extend(details);
         body
     }
 
@@ -938,6 +996,7 @@ impl Settings {
         if source["kind"] == "folder" {
             let slug = row.slug.unwrap_or_default().to_owned();
             return ui::link(name, &Msg::OpenSource(slug))
+                .title(text(source, "path"))
                 .key(format!("settings-module-source-{}", row.key()));
         }
         let repository = text(source, "repository");
@@ -952,8 +1011,7 @@ impl Settings {
                 None => format!("https://github.com/{repository}"),
             },
         };
-        ui::markdown(format!("[{name}]({url})"))
-            .key(format!("settings-module-source-{}", row.key()))
+        ui::anchor(name, url).key(format!("settings-module-source-{}", row.key()))
     }
 
     /// A module row's cells, and what shows under the table for it.
@@ -995,32 +1053,43 @@ impl Settings {
         let mut actions = Vec::new();
         let install = Msg::Install(slug.clone(), row.id.to_owned(), new_version.clone());
         if reload || (installed_app && self.installed.as_deref() == Some("")) {
-            actions.push(ui::button("Reload extension", &Msg::Reload).key(id("reload")));
+            actions.push(
+                ui::button("Reload extension", &Msg::Reload)
+                    .variant("tab")
+                    .key(id("reload")),
+            );
         } else if newest.is_some() && row.installed.is_some() {
             actions.push(
                 ui::button("Update", &install)
+                    .variant("tab")
                     .key(id("update"))
                     .disabled(busy),
             );
         } else if newest.is_some() {
             actions.push(
                 ui::button("Install", &install)
+                    .variant("tab")
                     .key(id("install"))
                     .disabled(busy),
             );
         }
         if row.installed.is_some() {
-            actions.push(
-                ui::button("Remove", &Msg::Remove(key.clone(), row.id.to_owned()))
-                    .key(id("remove"))
-                    .disabled(self.busy.is_some() || confirming || row.app()),
-            );
+            let remove = ui::button("Remove", &Msg::Remove(key.clone(), row.id.to_owned()))
+                .variant("tab")
+                .key(id("remove"))
+                .disabled(self.busy.is_some() || confirming || row.app());
+            actions.push(if row.app() {
+                remove.title("The application can't be removed")
+            } else {
+                remove
+            });
         }
         let version_cell = if row.installed.is_some() {
             let link = ui::link(
                 version.unwrap_or("failed"),
                 &Msg::Detail(key.clone(), Detail::Notes),
             )
+            .title("Release notes")
             .key(id("version"));
             if error.is_some() {
                 link.variant("link danger")
@@ -1032,35 +1101,26 @@ impl Settings {
         };
         let new_cell = if newest.is_some() {
             ui::link(&new_version, &Msg::Detail(key.clone(), Detail::NewNotes))
+                .title("Release notes")
                 .key(id("new-version"))
         } else {
             ui::text("")
         };
         let cells = vec![
-            ui::link(row.title(), &Msg::Detail(key.clone(), Detail::Description)).key(id("name")),
+            ui::link(row.title(), &Msg::Detail(key.clone(), Detail::Description))
+                .title("Description")
+                .key(id("name")),
             self.view_source_link(row),
             version_cell,
             new_cell,
-            ui::row(
-                std::iter::once(ui::spacer().key(id("spacer")))
-                    .chain(actions)
-                    .collect(),
-            ),
+            ui::row(actions).variant("end nowrap"),
         ];
         let mut extra = Vec::new();
         if let Some(error) = error {
-            extra.push(
-                ui::text(format!("{}: {error}", row.title()))
-                    .variant("danger")
-                    .key(id("error")),
-            );
+            extra.push(ui::text(error).variant("danger").key(id("error")));
         }
         if let Some(reason) = unsupported {
-            extra.push(
-                ui::text(format!("{}: {reason}", row.title()))
-                    .variant("muted")
-                    .key(id("unsupported")),
-            );
+            extra.push(ui::text(reason).variant("muted").key(id("unsupported")));
         }
         let detail = |name: &str, text: &str| {
             let text = if text.trim().is_empty() {
@@ -1068,7 +1128,7 @@ impl Settings {
             } else {
                 text
             };
-            ui::viewer("text", text).key(id(name))
+            ui::text(text).variant("muted").key(id(name))
         };
         if shown(Detail::Description) {
             extra.push(detail("description", row.description()));
@@ -1092,15 +1152,23 @@ impl Settings {
                     ui::text(format!(
                         "Remove module \"{}\"? Its consoles, checks, history, templates and hints are kept and come back when it is installed again.",
                         row.title()
-                    )),
-                    ui::checkbox("Delete them too, in every session", self.forget, &Msg::Forget)
-                        .key("settings-module-forget"),
+                    ))
+                    .variant("muted"),
                     ui::row(vec![
+                        ui::checkbox(
+                            "Delete them too, in every session",
+                            self.forget,
+                            &Msg::Forget,
+                        )
+                        .key("settings-module-forget"),
+                        ui::spacer(),
                         ui::button("Remove", &Msg::RemoveConfirm)
+                            .variant("tab")
                             .key("settings-module-remove-confirm")
-                            .variant("danger")
                             .disabled(self.busy.is_some()),
-                        ui::button("Cancel", &Msg::RemoveCancel).key("settings-module-remove-cancel"),
+                        ui::button("Cancel", &Msg::RemoveCancel)
+                            .variant("tab")
+                            .key("settings-module-remove-cancel"),
                     ]),
                 ])
                 .key("settings-module-confirm"),
@@ -1118,7 +1186,7 @@ impl Settings {
         if let Some(warning) = &self.warning {
             body.push(
                 ui::text(warning.clone())
-                    .variant("danger")
+                    .variant("warning")
                     .key("sources-warning"),
             );
         }
@@ -1133,6 +1201,7 @@ impl Settings {
         if self.draft.is_none() {
             actions.push(
                 ui::button("Add source…", &Msg::Adding(true))
+                    .variant("tab")
                     .key("source-add")
                     .disabled(busy || !self.sources_loaded),
             );
@@ -1146,6 +1215,7 @@ impl Settings {
                 },
                 &Msg::Check,
             )
+            .variant("tab")
             .key("sources-check")
             .disabled(self.checking),
         );
@@ -1165,12 +1235,14 @@ impl Settings {
             .variant("secret")
             .key("sources-token"),
             ui::button("Save", &Msg::Token(true))
+                .variant("tab")
                 .key("sources-token-save")
                 .disabled(busy || self.token.trim().is_empty()),
         ];
         if self.token_set {
             token.push(
                 ui::button("Clear", &Msg::Token(false))
+                    .variant("tab")
                     .key("sources-token-clear")
                     .disabled(busy),
             );
@@ -1180,7 +1252,11 @@ impl Settings {
             ui::text("For private repositories and higher GitHub limits. Without a saved token, the token of a signed-in GitHub CLI (gh auth token) is used.")
                 .variant("muted"),
         );
-        vec![ui::column(body).key("source-settings")]
+        vec![
+            ui::column(body)
+                .variant("ruled loose")
+                .key("source-settings"),
+        ]
     }
 
     fn view_source(&self, index: usize, source: &Value, count: usize, busy: bool) -> ui::Node {
@@ -1194,35 +1270,56 @@ impl Settings {
                     .on_input(&Msg::RenameInput)
                     .key(id("name-input")),
                 ui::button("Save", &Msg::RenameSave)
+                    .variant("tab")
                     .key(id("rename-save"))
                     .disabled(busy),
-                ui::button("Cancel", &Msg::Rename(None)).key(id("rename-cancel")),
+                ui::button("Cancel", &Msg::Rename(None))
+                    .variant("tab")
+                    .key(id("rename-cancel")),
             ])),
             None => lines.push(ui::row(vec![
-                ui::text(name.clone()).key(id("name")),
-                ui::text(location(source)).variant("muted"),
+                ui::column(vec![
+                    ui::text(name.clone()).variant("bold").key(id("name")),
+                    ui::text(location(source))
+                        .variant("muted truncate")
+                        .title(location(source)),
+                ])
+                .variant("grow"),
                 ui::button("↑", &Msg::Move(index, true))
+                    .variant("tab")
+                    .title("Move up")
+                    .label(format!("Move {name} up"))
                     .key(id("up"))
                     .disabled(busy || index == 0),
                 ui::button("↓", &Msg::Move(index, false))
+                    .variant("tab")
+                    .title("Move down")
+                    .label(format!("Move {name} down"))
                     .key(id("down"))
                     .disabled(busy || index + 1 == count),
                 ui::button("Rename", &Msg::Rename(Some(index)))
+                    .variant("tab")
                     .key(id("rename"))
                     .disabled(busy),
                 ui::button("Remove", &Msg::RemoveSource(Some(index)))
+                    .variant("tab")
                     .key(id("remove"))
                     .disabled(busy || self.removing == Some(index)),
             ])),
         }
         if self.removing == Some(index) {
-            lines.push(ui::row(vec![
-                ui::text(format!("Remove source \"{name}\"? Its applied settings and skills are removed; modules installed from it stay.")),
-                ui::button("Remove", &Msg::RemoveSourceConfirm)
-                    .key(id("remove-confirm"))
-                    .variant("danger")
-                    .disabled(busy),
-                ui::button("Cancel", &Msg::RemoveSource(None)).key(id("remove-cancel")),
+            lines.push(ui::column(vec![
+                ui::text(format!("Remove source \"{name}\"? Its applied settings and skills are removed; modules installed from it stay."))
+                    .variant("muted"),
+                ui::row(vec![
+                    ui::button("Remove", &Msg::RemoveSourceConfirm)
+                        .variant("tab")
+                        .key(id("remove-confirm"))
+                        .disabled(busy),
+                    ui::button("Cancel", &Msg::RemoveSource(None))
+                        .variant("tab")
+                        .key(id("remove-cancel")),
+                ]),
             ]));
         }
         let applied = &source["applied"];
@@ -1275,18 +1372,27 @@ impl Settings {
                 "Settings not applied yet:"
             })];
             for change in &changes {
-                list.push(ui::text(format!(
+                let mut line = vec![ui::text(format!(
                     "{} {} {}",
                     text(change, "kind"),
                     text(change, "key"),
                     text(change, "change")
-                )));
+                ))];
+                if change["overridden"] == true {
+                    line.push(
+                        ui::text("local override")
+                            .variant("badge")
+                            .title("Your own change stays on top of this one"),
+                    );
+                }
+                list.push(ui::column(vec![ui::row(line)]).variant("indent"));
             }
-            list.push(
+            list.push(ui::row(vec![
                 ui::button("Apply", &Msg::Apply(slug.to_owned()))
+                    .variant("tab")
                     .key(id("apply"))
                     .disabled(busy),
-            );
+            ]));
             lines.push(ui::column(list).key(id("changes")));
         } else if checked["configs"] == true {
             lines.push(
@@ -1299,7 +1405,7 @@ impl Settings {
             .as_array()
             .into_iter()
             .flatten()
-            .map(|problem| ui::text(problem.as_str().unwrap_or_default()).variant("danger"))
+            .map(|problem| ui::text(problem.as_str().unwrap_or_default()).variant("warning"))
             .collect();
         if !problems.is_empty() {
             lines.push(ui::column(problems).key(id("problems")));
@@ -1309,36 +1415,30 @@ impl Settings {
 
     fn view_draft(&self, draft: &Draft, busy: bool) -> ui::Node {
         let field = |field: Field, key: &str, label: &str, value: &str, placeholder: &str| {
-            ui::row(vec![
-                ui::text(label),
+            ui::field(
+                label,
                 ui::input(Some(value.to_owned()), placeholder, &Msg::Field(field))
                     .on_input(&Msg::Field(field))
                     .key(format!("source-add-{key}")),
-            ])
+            )
+            .variant("grid")
         };
         let github = draft.kind != "folder";
         let mut lines = vec![
             field(Field::Name, "name", "Name", &draft.name, "Team"),
-            ui::row(vec![
-                ui::text("Kind"),
+            ui::field(
+                "Kind",
                 ui::select(
                     vec![
-                        ui::Choice {
-                            value: "github".into(),
-                            label: "GitHub repository".into(),
-                            ..Default::default()
-                        },
-                        ui::Choice {
-                            value: "folder".into(),
-                            label: "Folder".into(),
-                            ..Default::default()
-                        },
+                        ui::Choice::new("github", "GitHub repository"),
+                        ui::Choice::new("folder", "Folder"),
                     ],
                     draft.kind.clone(),
                     &Msg::Field(Field::Kind),
                 )
                 .key("source-add-kind"),
-            ]),
+            )
+            .variant("grid"),
         ];
         if github {
             lines.push(field(
@@ -1373,11 +1473,14 @@ impl Settings {
         }
         lines.push(ui::row(vec![
             ui::button("Add", &Msg::Add)
+                .variant("tab")
                 .key("source-add-save")
                 .disabled(busy),
-            ui::button("Cancel", &Msg::Adding(false)).key("source-add-cancel"),
+            ui::button("Cancel", &Msg::Adding(false))
+                .variant("tab")
+                .key("source-add-cancel"),
         ]));
-        ui::column(lines).key("source-add-form")
+        ui::column(lines).variant("loose").key("source-add-form")
     }
 
     fn view_agent(&self) -> Vec<ui::Node> {
@@ -1392,43 +1495,35 @@ impl Settings {
                 .variant("muted")
                 .key("agent-models-loading"),
             );
-            return vec![ui::column(body).key("agent-settings")];
+            return vec![
+                ui::column(body)
+                    .variant("ruled loose")
+                    .key("agent-settings"),
+            ];
         };
         let current = self.model_id();
         let mut choices: Vec<ui::Choice> = catalog
             .models
             .iter()
             .filter(|model| model.enabled)
-            .map(|model| ui::Choice {
-                value: model.id.clone(),
-                label: format!("{} · {}", model.name, category(model)),
-                ..Default::default()
+            .map(|model| {
+                ui::Choice::new(model.id.clone(), model.name.clone()).detail(category(model))
             })
             .collect();
         if !choices.iter().any(|choice| choice.value == current) {
-            choices.insert(
-                0,
-                ui::Choice {
-                    value: current.clone(),
-                    label: if current == FUSION_MODEL_ID {
-                        FUSION_MODEL_NAME.into()
-                    } else {
-                        current.clone()
-                    },
-                    ..Default::default()
-                },
-            );
+            let label = if current == FUSION_MODEL_ID {
+                FUSION_MODEL_NAME.to_owned()
+            } else {
+                current.clone()
+            };
+            choices.insert(0, ui::Choice::new(current.clone(), label));
         }
-        body.push(ui::text("Copilot model"));
-        let mut model = vec![ui::select(choices, current, &Msg::Model).key("agent-model-input")];
-        if let Some(model_info) = self.current() {
-            model.push(
-                ui::text(category(model_info))
-                    .variant("muted")
-                    .key("agent-model-category"),
-            );
-        }
-        body.push(ui::row(model));
+        body.push(
+            ui::combobox(choices, current, &Msg::Model)
+                .empty_text("No matching models")
+                .label("Model")
+                .key("agent-model-input"),
+        );
         let efforts = self.efforts();
         let level = self.reasoning_level();
         let value = match level {
@@ -1436,44 +1531,38 @@ impl Settings {
             None if efforts.is_empty() => "Not supported".into(),
             None => "Default".into(),
         };
-        let is_default =
-            level.is_some_and(|index| Some(efforts[index].as_str()) == self.default_effort());
+        let default_index = self
+            .default_effort()
+            .and_then(|default| efforts.iter().position(|effort| effort == default));
+        let mut value = vec![ui::text(value).variant("bold")];
+        if level.is_some() && level == default_index {
+            value.push(ui::text(" · default").variant("muted small"));
+        }
         body.push(ui::row(vec![
             ui::text("Reasoning"),
-            ui::text(if is_default {
-                format!("{value} · default")
-            } else {
-                value
-            })
-            .key("agent-reasoning-value"),
+            ui::spacer(),
+            ui::row(value)
+                .variant("nowrap")
+                .key("agent-reasoning-value"),
         ]));
-        if !efforts.is_empty() {
-            body.push(
-                ui::slider(
-                    0.0,
-                    efforts.len().saturating_sub(1) as f64,
-                    1.0,
-                    level.unwrap_or_default() as f64,
-                    &Msg::Reasoning,
-                )
-                .key("agent-reasoning"),
-            );
-            body.push(ui::row(
-                efforts
-                    .iter()
-                    .enumerate()
-                    .map(|(index, effort)| {
-                        let button = ui::button(effort, &Msg::ReasoningLevel(index))
-                            .key(format!("agent-reasoning-level-{effort}"));
-                        if level == Some(index) {
-                            button.variant("primary")
-                        } else {
-                            button
-                        }
-                    })
-                    .collect(),
-            ));
+        let mut slider = ui::slider(
+            0.0,
+            efforts.len().saturating_sub(1) as f64,
+            1.0,
+            level.unwrap_or_default() as f64,
+            &Msg::Reasoning,
+        )
+        .labels(efforts.to_vec())
+        .disabled(efforts.is_empty())
+        .key("agent-reasoning");
+        if let Some(index) = default_index {
+            slider = slider.marker(index as u32, "Model default");
         }
-        vec![ui::column(body).key("agent-settings")]
+        body.push(slider);
+        vec![
+            ui::column(body)
+                .variant("ruled loose")
+                .key("agent-settings"),
+        ]
     }
 }

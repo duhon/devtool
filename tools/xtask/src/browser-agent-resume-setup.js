@@ -30,7 +30,7 @@
   await wait(() => selected() !== chat, 'A new chat tab must be selected');
   const closedChat = selected();
   input('Closed chat draft');
-  await click(testid('agent-session-close'));
+  await click(document.querySelector('[data-testid="agent-sessions"] [aria-selected="true"] [data-testid="agent-session-close"]'));
   await wait(() => !testid('agent-sessions').querySelector(`[data-testid="agent-chat-${closedChat}"]`)
     && selected() === chat, 'Closing the new chat selects the first one');
   await doubleClick(testid(`agent-chat-${chat}`));

@@ -371,6 +371,8 @@ pub struct Dictionary {
     /// What the user typed in a set since it was last loaded: the editor keeps it as typed.
     typed: Map<String, Value>,
     tab: String,
+    /// The first load was reported; showing the panel again keeps the last status.
+    loaded: bool,
 }
 
 impl Dictionary {
@@ -732,7 +734,8 @@ impl Dictionary {
         }
     }
 
-    fn view_set(&self, name: &str) -> Vec<ui::Node> {
+    /// The header items of the set: where it comes from and what the user changed in it.
+    fn origin(&self, name: &str) -> Vec<ui::Node> {
         let mut header = Vec::new();
         match self.base.sources.get(name) {
             Some(source) => {
@@ -752,11 +755,17 @@ impl Dictionary {
                 if !yours.is_empty() {
                     header.push(ui::text("Yours:").variant("muted"));
                     for variable in yours {
+                        let title = if from.is_some_and(|from| from.contains_key(&variable)) {
+                            format!("Reset {variable} to the value of {source}")
+                        } else {
+                            format!("Remove {variable}; {source} doesn't have it")
+                        };
                         header.push(
                             ui::button(
                                 format!("{variable} ↺"),
                                 &Msg::Reset(Some(variable.clone())),
                             )
+                            .title(title)
                             .key(format!("dictionary-reset-variable-{variable}")),
                         );
                     }
@@ -766,19 +775,41 @@ impl Dictionary {
                     );
                 }
             }
-            None => {
-                header.push(ui::badge("Your own set").key("dictionary-origin-label"));
-                header.push(ui::button("Delete set", &Msg::Delete).key("dictionary-delete"));
-            }
+            None => header.push(ui::badge("Your own set").key("dictionary-origin-label")),
         }
         if self.conflicts.contains(name) && self.drafts.contains_key(name) {
-            header
-                .push(ui::button("Discard draft", &Msg::Discard).key("console-dictionary-discard"));
+            header.push(
+                ui::button("Discard draft", &Msg::Discard)
+                    .title("Discard draft and load the saved profile")
+                    .key("console-dictionary-discard"),
+            );
         }
+        header
+    }
+
+    fn view_set(&self, name: &str) -> Vec<ui::Node> {
         vec![
-            ui::row(header).key("dictionary-origin"),
-            ui::editor("headers", self.shown(name), &Msg::Edit).key("console-dictionary"),
+            ui::editor("headers", self.shown(name), &Msg::Edit)
+                .placeholder("# comments start with #\nNAME: value\nlocale: en_US")
+                .label(format!("Dictionary · {name}"))
+                .debounce(600)
+                .key("console-dictionary"),
         ]
+    }
+
+    /// The light of a set's tab: a save still queued, or a draft that conflicts.
+    fn light(&self, name: &str) -> &'static str {
+        if self.conflicts.contains(name) {
+            "error"
+        } else if self
+            .queue
+            .iter()
+            .any(|op| matches!(op, Op::Save { name: set, .. } if set == name))
+        {
+            "busy"
+        } else {
+            ""
+        }
     }
 }
 
@@ -809,6 +840,9 @@ impl Module for Dictionary {
                     self.ready = true;
                     self.merge();
                     let mut commands = vec![self.contribution()];
+                    if !std::mem::replace(&mut self.loaded, true) {
+                        commands.push(cmd::status("Dictionary load · OK", "ok"));
+                    }
                     commands.extend(self.start());
                     commands
                 }
@@ -880,9 +914,13 @@ impl Module for Dictionary {
                 value: Some(name),
             } => self.add(&name),
             Event::Ui {
-                msg: Msg::Delete, ..
+                msg: Msg::Delete,
+                value,
             } => {
-                let Some(name) = self.active().map(str::to_owned) else {
+                let Some(name) = value
+                    .map(|key| key.trim_start_matches(TAB).to_owned())
+                    .or_else(|| self.active().map(str::to_owned))
+                else {
                     return Vec::new();
                 };
                 self.forget(&name);
@@ -925,38 +963,46 @@ impl Module for Dictionary {
     }
 
     fn view(&self) -> Option<ui::Node> {
-        let add = ui::input(None, "New set name", &Msg::Add).key("dictionary-add");
-        match self.active() {
-            Some(active) => {
-                let tabs = self
-                    .state
-                    .order
-                    .iter()
-                    .map(|name| {
-                        let body = if name == active {
-                            self.view_set(name)
-                        } else {
-                            Vec::new()
-                        };
-                        let tab = ui::tab(format!("{TAB}{name}"), name.clone(), body);
-                        if self.base.sets.contains_key(name) {
-                            tab
-                        } else {
-                            tab.renamed(&Msg::Rename(name.clone()))
-                        }
-                    })
-                    .collect();
-                let tabs = ui::tabs(tabs, format!("{TAB}{active}"), &Msg::Tab(String::new()))
-                    .on_reorder(&Msg::Reorder)
-                    .key("dictionary-tabs");
-                Some(ui::tabbed_panel(tabs, Vec::new(), vec![add]))
-            }
-            None => Some(ui::panel(
-                "Dictionary",
-                vec![ui::text("No sets yet: add one below.").variant("muted")],
-                vec![add],
-            )),
-        }
+        let add = |tabs: ui::Node| tabs.on_add(&Msg::Add).add_prompt("New set name");
+        let Some(active) = self.active() else {
+            let tabs =
+                add(ui::tabs(Vec::new(), "", &Msg::Tab(String::new())).key("dictionary-tabs"));
+            return Some(ui::tabbed_panel(
+                tabs,
+                vec![ui::text("Create a dictionary set with +.").variant("muted")],
+                Vec::new(),
+            ));
+        };
+        let tabs = self
+            .state
+            .order
+            .iter()
+            .map(|name| {
+                let body = if name == active {
+                    self.view_set(name)
+                } else {
+                    Vec::new()
+                };
+                let tab =
+                    ui::tab(format!("{TAB}{name}"), name.clone(), body).indicator(self.light(name));
+                if self.base.sets.contains_key(name) {
+                    tab
+                } else {
+                    tab.renamed(&Msg::Rename(name.clone()))
+                        .closable(&Msg::Delete)
+                        .confirm(format!("Delete profile \"{name}\"?"))
+                }
+            })
+            .collect();
+        let tabs = add(
+            ui::tabs(tabs, format!("{TAB}{active}"), &Msg::Tab(String::new()))
+                .on_reorder(&Msg::Reorder)
+                .key("dictionary-tabs"),
+        );
+        Some(
+            ui::tabbed_panel(tabs, Vec::new(), Vec::new())
+                .actions(vec![ui::row(self.origin(active)).key("dictionary-origin")]),
+        )
     }
 
     fn resolve(&self, text: &str, json: bool, _last: bool) -> Option<Result<Resolution, String>> {
