@@ -265,7 +265,15 @@ app/
 ├── kernel/src/         без UI
 │   ├── lib.rs          `Callback` — чем Kernel отвечает (Shell оборачивает в него свои)
 │   ├── js.rs           обёртки web-sys/js-sys (wasm)
-│   ├── host.rs         связь с Host: connectNative, куски, отмена   ← browser/transport.rs
+│   ├── host.rs         `Reply` — ответ Host; host/port.rs — `Transport` (wasm):
+│   │                   connectNative, куски, отмена   ← browser/transport.rs
+│   ├── runtime.rs      `Kernel` окна: API для Shell (`run`/`stop`/`check_changed`,
+│   │                   `apply`, `reply`, `load_modules`, `document`, …), `Event` — что
+│   │                   слышит Shell, трейт `Platform` (запросы к Host, таймеры, замки,
+│   │                   загрузка модулей, kv/буфер/страница); исполнение эффектов модулей,
+│   │                   ответы Host, список и старт модулей; runtime/runs.rs — запуски
+│   │                   (← console_panel, kernel_panel), runtime/turns.rs — ходы Agent
+│   │                   (← agent.rs), runtime/browser.rs — `Platform` браузера
 │   ├── modules.rs      загрузка wasm, MVU: update(model, msg) -> (model, cmds), protobuf
 │   │                   на границе, исполнение команд; wasm.rs — wasm-экземпляр
 │   ├── modules/        registry.rs — модули App и их состояние (← kernel.rs; встроенные
@@ -323,7 +331,8 @@ app/
 │   ├── language.rs     `Language`: реализация `Extension` и `Languages` над Kernel
 │   │                   (document + editor), `Modules` — реализация `kernel::editor::Services`
 │   ├── browser/        корневой компонент app.rs (+ app/console_panel, kernel_panel,
-│   │                   agent): раскладка, запуски и их таймеры, редакторы, статусы;
+│   │                   agent): раскладка, редакторы, показ запусков и статусов по
+│   │                   событиям Kernel, команды, которые обслуживает Shell;
 │   │                   sessions.rs — компонент Host (открывает workspace и модули), mount
 │   │                   (`window.__servicesMountEditor`)
 │   ├── layout.css      вся раскладка (верхнее меню, рабочая область, боковая панель,
@@ -332,9 +341,22 @@ app/
 │                       ссылкой (`theme.css`), чтобы до загрузки wasm не было белого экрана
 ```
 
-В Shell остаётся то, что живёт в состоянии Yew-компонента App: запуски (`Run`, Repeat,
-ожидание загрузки модуля), их таймеры (`setTimeout` → сообщения компонента), редакторы,
-показ статусов и обработка ответов Host по сообщениям компонента (решено 08.11).
+Kernel — маршрутизатор между редактором/Agent, модулями и Host (решено 09.11). Он ведёт
+весь запуск: разбор чека (`parse_run`) → `build`/`Run` модуля → `before_request` → вызов
+драйвера через Host → поток и частичный вывод → `render` → `after_response`; Stop,
+повторный запуск того же чека, Repeat и его таймеры, ожидание загрузки модулей, id
+запусков, замки, ходы Agent и его запуски — тем же путём. API: `Kernel::run(RunRequest
+{service, source, line, check, title, history, origin})` → ключ запуска, `stop(key)`,
+`stop_request(id)`, `check_changed(key, source)` (правка чека заканчивает Repeat);
+изменения Kernel сообщает своим `Callback<Event>` (`Run(RunView)`, `Response`, `Notice`,
+`Changed`, `Command`, `AgentTool`, …), отложенно — когда сам закончил шаг. Браузер Kernel
+видит через `Platform` (wasm — `runtime/browser.rs`: `setTimeout` через web-sys, Web Locks
+и `Transport`), тесты — через подделку (`kernel/tests/runs.rs`). Shell только
+передаёт события виджетов в Kernel и показывает его состояние: раскладка, редакторы,
+вставка ответа, строка статуса и индикаторы из `RunView`; команды, которым нужен
+документ или workspace Shell (`document.read`, `workspace.*`, `app.update`,
+`app.reload`, `agent.approve`) и инструменты консоли Agent, Kernel передаёт Shell
+событиями, Shell отвечает `reply`/`agent_result`.
 
 Исключение из правила «CSS рядом с владельцем через `include_str!`» (решено 08.11):
 `shell/src/theme.css` подключается ссылкой из `services.html` (xtask кладёт его в расширение
@@ -793,7 +815,8 @@ Settings. Пакеты выпуска — `dist/modules/`, как сейчас.
     знает модулей App: Shell передаёт их `services_shell::link()` (Settings; натив — все
     модули), тесты Shell вызывают его первым. Текст строки статуса (`status_text`) остался
     в Shell: в нём длительность из `status_bar`. В Shell остались запуски и их таймеры,
-    редакторы и показ статусов (состояние компонента App) и компонент Host. Тест
+    редакторы и показ статусов (состояние компонента App) и компонент Host (запуски и
+    строка статуса потом ушли в Kernel — см. «Запуски в Kernel»). Тест
     форматирования — `kernel/tests/format.rs`; тесты workspace и Agent остались в Shell:
     им нужны связанные модули. Из Shell удалены зависимости `base64`,
     `serde-wasm-bindgen` и IndexedDB-возможности `web-sys`.
@@ -816,6 +839,43 @@ Settings. Пакеты выпуска — `dist/modules/`, как сейчас.
   - Оставлены строки `.gitignore` старых данных (`.variable-profiles.json`,
     `.dictionary-profiles.json`, `.console-hints.txt` и т. п.): такие файлы с данными
     пользователя лежат в корне рабочих копий, без строк они попадут в `git status`.
+
+- Запуски в Kernel (09.11): прежняя запись «в Shell остаются запуски, их таймеры и ответы
+  Host (08.11)» не была решением и заменена (см. «App»).
+  - `kernel/src/runtime.rs` — `Kernel` окна (`Kernel::new(on_event, platform)`, в браузере
+    `Kernel::browser`), `Event`, `Platform`; исполнение эффектов модулей (вызовы
+    драйверов и стримы, таймеры, замки, команды, которые обслуживает Host, вклады в
+    редактор), список и старт модулей, Document по паузе в правке. `runtime/runs.rs` —
+    запуски (`RunRequest`, `Source::{Check, Approved}`, `Origin::{Console, Agent}`,
+    `RunView`, `Repeating`): разбор, конвейер `requests::Run`, вывод, Stop, повтор,
+    Repeat с коммитом History, ожидание модулей, остановка при скрытии. `runtime/turns.rs`
+    — ходы Agent (стрим, инструменты, подтверждения, Stop). `runtime/browser.rs` —
+    `Platform` браузера. `host.rs` теперь только `Reply`; `Transport` — `host/port.rs`.
+    `requests::format::duration` и строка статуса запуска — в Kernel.
+  - Shell (`browser/app.rs`, `app/{console_panel,kernel_panel,agent}.rs`) переводит
+    события виджетов в вызовы Kernel и `Event` — в сообщение `Msg::Kernel`: показ
+    запуска (`RunView` + якорь в документе), вставка ответа, статусы, ответы на
+    `Event::Command`/`AgentTool`. Из Shell удалены `execute`, `send_run`, `receive`,
+    `repeat_*`, `client_error`, `status_text`, сообщения ответов Host, `agent_turns`,
+    `run_serial`, `transport`.
+  - Тесты: `kernel/tests/runs.rs` (поддельный `Platform`, модули теста): запуск драйвера
+    с `after_response`, ошибка разбора, Stop, повторный запуск, Repeat и его коммит,
+    правка повторяемого чека, запуск модулем с замком и выводом, его Stop, ожидание
+    старта панелей, скрытие консоли с запуском Agent. Тестов запусков в Shell не было.
+  - Отличия поведения: повторный запуск узнаётся по id чека (без id — по строке), а не по
+    строке якоря; при ожидании модуля документ сохраняется сразу, а ждёт сам
+    `RunRequest` (раньше Shell повторял `ConsoleRun`); команды, которые обслуживает Shell,
+    отвечаются асинхронно (событием); подсветка после старта модулей — после их первых
+    эффектов; заголовок запуска с ошибкой разбора — строка заголовка чека (было пусто);
+    исчезнувший якорь повторяемого запуска заканчивает Repeat как «Check edited»;
+    установка обновления App и импорт из буфера (натив) идут через
+    `Kernel::host_request`; удалена мёртвая проверка `console:{service}` в
+    `console_edit_check`. `duration` есть и в Kernel (`requests::format`), и в
+    `status_bar` виджетов.
+  - `Transport` сообщает (`Event::Busy`) о каждом изменении запросов в полёте, пока связь
+    занята, а не только о переходе занята/свободна: ответы Host, которые Kernel обрабатывает
+    сам, больше не перерисовывают Shell, и без этого `data-busy-reason` устаревал
+    (сценарий sessions).
 
 ## Решить
 

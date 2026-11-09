@@ -8,7 +8,6 @@ pub mod agent;
 pub mod document;
 pub mod editor;
 pub mod events;
-#[cfg(target_arch = "wasm32")]
 pub mod host;
 #[cfg(target_arch = "wasm32")]
 mod js;
@@ -18,6 +17,7 @@ pub mod modules;
 #[cfg(target_arch = "wasm32")]
 pub mod page;
 pub mod requests;
+pub mod runtime;
 pub mod storage;
 pub mod updates;
 #[cfg(target_arch = "wasm32")]

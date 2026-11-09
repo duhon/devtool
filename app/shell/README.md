@@ -3,8 +3,11 @@
 `services-shell` is the App's Rust 2024 Yew client (`app.wasm`): layout, toolbar, side
 panels, the Console and the wiring between the Kernel, the widgets and the Host. The
 Kernel (`services-kernel`, `app/kernel`) owns everything without UI: modules, the request
-pipeline, the workspace and its storage, the Host connection, locks, the inspected page,
-updates and module activity; the Shell links the App's modules into it (`link()`: the
+pipeline and the whole run lifecycle (Stop, Repeat, waiting for modules, Agent turns and
+runs), the workspace and its storage, the Host connection, locks, the inspected page,
+updates and module activity. The Shell forwards widget events to the Kernel
+(`kernel.run`, `kernel.stop`, …) and renders what it hears (`runtime::Event`: runs,
+responses, statuses, notices); the Shell links the App's modules into it (`link()`: the
 built-in Settings panel, and natively every module so tests run them). The generic
 widgets, including the text editor, are in `services-widgets` (`app/widgets`). Only generated
 wasm-bindgen glue is a JavaScript runtime dependency.
@@ -85,15 +88,14 @@ Shared parsing/section catalogs live in `services-contracts::templates`. Complet
 offers Splunk's `options` block instead of separate `from`, `to`, `app`, and `count`
 sections. Separate `#from`, `#to`, `#app`, and `#count` sections are rejected;
 their parameters belong only in `#options`, including in templates.
-Every service has `#options`: the Shell (`console::markers`) adds the section
-unless the module has its own. Its `Repeat`, `Repeat-Until` and `Format`
-keys belong to the Console (`console::parse_run`) and are removed before the module request.
+Every service has `#options`: the Kernel (`requests::markers`) adds the section
+unless the module has its own. Its `Repeat` and `Repeat-Until`
+keys belong to the Console (the Kernel's `requests::parse_run`) and are removed before the module request.
 `Repeat: 5s` (`s`, `m` or `h`, 1s to 24h) runs again after each response until Stop, an edit
 of the check or a hidden panel, or with `Repeat-Until: changed` until the response changes;
 completion offers Repeat-Until only under a Repeat line;
-History saves the last run once, through a deferred snapshot and a `commit` op. Format
-changes only how table responses are shown: the Console and History
-read it from the check; the saved result stays the same.
+History saves the last run once, through a deferred snapshot and a `commit` op;
+the Kernel's run (`runtime/runs.rs`) keeps the repeat and its timer.
 Completion inserts literal bodies with one undo step, normalizing inline `#section @name`
 and replacing `#check @name` with the entire supplied check. Check templates
 without their own check header receive `#check <description>` (falling back to

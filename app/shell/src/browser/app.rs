@@ -3,7 +3,8 @@ use crate::language::Language;
 use agent::{Approval, WorkspaceRequest};
 use serde_json::{Value, json};
 use services_kernel::document::DocumentEdit;
-use services_kernel::host::{Reply, Transport};
+use services_kernel::host::Reply;
+use services_kernel::runtime::{Event as KernelEvent, Kernel, Origin, RunRequest, RunView, Source};
 use services_kernel::storage;
 use services_kernel::updates::{self, Phase as UpdatePhase};
 use services_widgets::editor::{
@@ -29,48 +30,18 @@ mod agent;
 mod console_panel;
 mod kernel_panel;
 
-#[derive(Default)]
+/// A run as the console shows it: the Kernel's view of it, where its check is in the editor
+/// and how long its status was seen.
 struct Run {
-    editor: String,
-    title: String,
-    agent_session: Option<String>,
-    stopping: bool,
-    result: Value,
-    debug: Value,
-    status: String,
-    running: bool,
-    stream: Option<u32>,
-    stdout: String,
-    stderr: String,
-    line: Option<usize>,
-    started: f64,
+    view: RunView,
     anchor: Option<Anchor>,
     signal: services_widgets::indicator::Signal,
-    duplicate_error: Option<String>,
-    repeat: Option<Repeat>,
 }
 impl Run {
     /// Running, or waiting for the next run of a repeat.
     fn active(&self) -> bool {
-        self.running || self.repeat.is_some()
+        self.view.active()
     }
-}
-/// A check that runs again after each response (`Repeat:` in `#options`).
-struct Repeat {
-    every: u32,
-    until_changed: bool,
-    /// Finished runs.
-    count: u32,
-    /// Whether the last response differs from the one before it.
-    changed: bool,
-    timer: Option<i32>,
-    /// What every run sends: the first run's request and History context.
-    message: Value,
-    last: Option<String>,
-    /// The check's request text; an edit of it ends the repeat.
-    source: String,
-    /// The check was edited while a run was in flight; the repeat ends after it.
-    edited: bool,
 }
 #[derive(Clone, Default)]
 struct CheckOwner {
@@ -141,19 +112,15 @@ pub enum Msg {
     Seen,
     CheckMenuWidth(u32),
     PanelWidth(String, u32),
-    ModulesChanged,
     /// A module was removed with its data: drop what this window and the sessions keep for it.
     ForgetModule(String),
     ModuleForgotten(Result<(), String>),
-    /// A source's settings were applied: reload what comes from them.
-    SourcesApplied,
     /// Installs the application version offered by a source: (source slug, version).
     InstallUpdate((String, String)),
     UpdatePrepared(Result<(), String>),
     UpdateInstalled(Reply),
     ReloadUpdate,
     UpdateReloadReady(Result<(), String>),
-    Modules(Reply),
     SessionSelect(u64),
     SessionCopy(u64, String),
     SessionDelete(u64),
@@ -167,26 +134,14 @@ pub enum Msg {
     ConsoleEditor(String, EditorMsg),
     ExportEditor(EditorMsg),
     ConsoleRun(String, usize),
-    /// The wait of a repeating check is over.
-    RepeatRun(String),
-    /// History answered the save of a finished repeat.
-    RepeatSaved(String, Reply),
-    Reply(String, String, Reply),
-    Connection(Option<String>),
-    /// Native requests started or finished; the Sessions guard must be re-rendered.
-    TransportBusy,
     Retry,
     Discover,
     Scroll(String, services_kernel::document::CheckViewport),
     Check(usize),
     EditorError(String),
-    /// An event of an Agent turn a module started: (module, turn tag, reply).
-    AgentReply(String, String, Reply),
     /// A console tool answered: (turn tag, call id, result).
     AgentToolResult(String, String, Value),
     AgentEdited(u64, Result<(), String>),
-    /// The inspected page answered a module: (module, tag, result).
-    PageReplied(String, String, Result<Value, String>),
     Import,
     Imported(String, Result<String, String>),
     ClipboardError(String, String),
@@ -195,25 +150,14 @@ pub enum Msg {
     Visibility(bool),
     ClearNotice,
     CloseExport,
-    /// Kernel modules started: their effects and the ids that started.
-    KernelStarted((Vec<services_kernel::Effect>, Vec<String>)),
-    /// A driver answered a module's call: (module, tag, reply).
-    KernelReplied(String, String, Reply),
-    /// A module's driver stream sent an event or ended.
-    KernelStreamed(String, String, Reply),
-    /// The Host answered a module's command: (module, tag, what follows, reply).
-    KernelHosted(String, String, services_kernel::requests::After, Reply),
-    KernelTimer(String, String),
+    /// What the Kernel tells the console.
+    Kernel(KernelEvent),
     /// Another window changed the kv key of a module: (module, key).
     KernelStorage(String, String),
-    /// A module's session kv write reached the saved session: (module, tag, outcome).
-    KernelSaved(String, String, Result<(), String>),
     /// Opens or closes the side panel of a panel module.
     TogglePanel(String),
     /// An action in a panel module's UI tree.
     PanelUi(String, services_widgets::view::Action),
-    KernelRunReplied(String, Reply),
-    KernelDocument(String),
     /// This App shows a workspace just restored: panels are closed and modules hear of it.
     KernelMounted,
     /// The user asked a Kernel service for hints at an offset of a check.
@@ -236,7 +180,8 @@ pub struct App {
     seen: SeenTimer,
     console_service: String,
     console_order: Vec<String>,
-    transport: Rc<Transport>,
+    kernel: Kernel,
+    /// The runs the console shows, by key: those in flight and the last of each check.
     runs: BTreeMap<String, Run>,
     connection: Option<String>,
     notice: Option<Notice>,
@@ -253,10 +198,8 @@ pub struct App {
     agent_edit: Option<AgentEdit>,
     agent_serial: u64,
     agent_run: Option<AgentRun>,
-    kernel: kernel_panel::KernelState,
-    /// Agent turns in flight by tag.
-    agent_turns: BTreeMap<String, agent::AgentTurn>,
-    run_serial: u64,
+    /// The check whose Hints (or Discover) started each module's current status.
+    owners: BTreeMap<String, CheckOwner>,
     hidden: bool,
     viewports: BTreeMap<String, services_kernel::document::CheckViewport>,
     /// The console editors by `console:{service}`.
@@ -272,11 +215,7 @@ impl Component for App {
     fn create(ctx: &Context<Self>) -> Self {
         let sessions = ctx.props().sessions.clone();
         let snapshot = sessions.borrow().library.snapshot().clone();
-        let transport = Transport::new(
-            on(ctx.link().callback(Msg::Connection)),
-            on(ctx.link().callback(|_| Msg::TransportBusy)),
-        );
-        transport.bind_session(sessions.clone());
+        let kernel = Kernel::browser(sessions.clone(), on(ctx.link().callback(Msg::Kernel)));
         let saved = snapshot.console;
         let console_service = saved["service"]
             .as_str()
@@ -316,7 +255,7 @@ impl Component for App {
             seen: SeenTimer::default(),
             console_service,
             console_order,
-            transport,
+            kernel,
             runs: BTreeMap::new(),
             connection: None,
             notice: None,
@@ -333,9 +272,7 @@ impl Component for App {
             agent_edit: None,
             agent_serial: 0,
             agent_run: None,
-            kernel: Default::default(),
-            agent_turns: BTreeMap::new(),
-            run_serial: 0,
+            owners: BTreeMap::new(),
             hidden: false,
             viewports: BTreeMap::new(),
             editors: RefCell::default(),
@@ -349,11 +286,8 @@ impl Component for App {
         {
             app.persist_console();
         }
-        app.transport.request(
-            json!({"service":"modules"}),
-            false,
-            on(ctx.link().callback(Msg::Modules)),
-        );
+        app.kernel.set_service(&app.console_service);
+        app.kernel.load_modules();
         for (event, visible) in [
             ("services-console-hidden", false),
             ("services-console-shown", true),
@@ -399,18 +333,6 @@ impl Component for App {
                 self.observe_statuses();
                 return true;
             }
-            Msg::ModulesChanged => {
-                self.transport.request(
-                    json!({"service":"modules"}),
-                    false,
-                    on(ctx.link().callback(Msg::Modules)),
-                );
-            }
-            Msg::SourcesApplied => {
-                // Panels read their sources' files again.
-                let effects = services_kernel::events::broadcast(services_kernel::events::workspace());
-                self.kernel_effects(ctx, effects);
-            }
             Msg::ForgetModule(service) => {
                 let mut editors = self.editors.borrow_mut();
                 editors.remove(&format!("console:{service}"));
@@ -447,7 +369,7 @@ impl Component for App {
                     .and_then(|()| updates::ensure_single_window(ROOT));
                 self.updates.transition(UpdatePhase::Preparing);
                 if let Err(error) = ready {
-                    self.update_failed(ctx, error);
+                    self.update_failed(error);
                     return true;
                 }
                 self.persist_console();
@@ -465,20 +387,20 @@ impl Component for App {
             Msg::UpdatePrepared(result) => match result {
                 Ok(()) => {
                     if let Err(error) = updates::ensure_single_window(ROOT) {
-                        self.update_failed(ctx, error);
+                        self.update_failed(error);
                         return true;
                     }
                     let Some((source, version)) = self.updates.target.clone() else {
-                        self.update_failed(ctx, "The version to install is missing".into());
+                        self.update_failed("The version to install is missing".into());
                         return true;
                     };
                     let request =
                         json!({"service":"updates","op":"install","source":source,"version":version});
                     self.updates.transition(UpdatePhase::Installing);
-                    self.transport
-                        .request(request, false, on(ctx.link().callback(Msg::UpdateInstalled)));
+                    self.kernel
+                        .host_request(request, on(ctx.link().callback(Msg::UpdateInstalled)));
                 }
-                Err(error) => self.update_failed(ctx, error),
+                Err(error) => self.update_failed(error),
             },
             Msg::UpdateInstalled(reply) => match reply {
                 Reply::Result(value)
@@ -490,7 +412,7 @@ impl Component for App {
                     self.updates.transition(UpdatePhase::Installed);
                     ctx.link().send_message(Msg::ReloadUpdate);
                 }
-                Reply::Error(value) => self.update_failed(ctx, err_text(&value)),
+                Reply::Error(value) => self.update_failed(error_text(&value)),
                 _ => self
                     .updates
                     .fail("Updater did not confirm successful installation".into()),
@@ -500,7 +422,7 @@ impl Component for App {
                     return false;
                 }
                 if let Err(error) = self.session_guard() {
-                    self.update_failed(ctx, format!(
+                    self.update_failed(format!(
                         "Update is installed, but reloading is blocked: {error}"
                     ));
                     return true;
@@ -518,7 +440,7 @@ impl Component for App {
             Msg::UpdateReloadReady(result) => {
                 match result.and_then(|()| updates::reload(ROOT)) {
                     Ok(()) => self.updates.transition(UpdatePhase::Installed),
-                    Err(error) => self.update_failed(ctx, format!("Update is installed, but automatic reload failed: {error}. Reload the extension manually.")),
+                    Err(error) => self.update_failed(format!("Update is installed, but automatic reload failed: {error}. Reload the extension manually.")),
                 }
             }
             Msg::CheckMenuWidth(width) => {
@@ -540,7 +462,7 @@ impl Component for App {
             }
             Msg::SessionSelect(id) => {
                 if let Err(error) = self.session_guard() {
-                    self.session_result(ctx, Err(error));
+                    self.session_result(Err(error));
                 } else {
                     self.session_loading = true;
                     let sessions = self.sessions.clone();
@@ -554,7 +476,7 @@ impl Component for App {
             }
             Msg::SessionCopy(source, name) => {
                 if let Err(error) = self.session_guard() {
-                    self.session_result(ctx, Err(error));
+                    self.session_result(Err(error));
                 } else {
                     self.session_loading = true;
                     let sessions = self.sessions.clone();
@@ -568,7 +490,7 @@ impl Component for App {
             }
             Msg::SessionDelete(id) => {
                 if let Err(error) = self.session_guard() {
-                    self.session_result(ctx, Err(error));
+                    self.session_result(Err(error));
                 } else {
                     self.session_loading = true;
                     let sessions = self.sessions.clone();
@@ -582,7 +504,7 @@ impl Component for App {
             }
             Msg::SessionFinished(result) => {
                 self.session_loading = false;
-                self.session_result(ctx, result.as_ref().map(|_| ()).map_err(Clone::clone));
+                self.session_result(result.as_ref().map(|_| ()).map_err(Clone::clone));
                 if let Ok(id) = result {
                     ctx.props().onselect.emit(id);
                 }
@@ -600,12 +522,13 @@ impl Component for App {
                 }
                 let switched = service != self.console_service;
                 self.console_service = service.clone();
+                self.kernel.set_service(&service);
                 self.export_text = None;
                 self.persist_console();
                 if switched {
-                    self.kernel_switched(ctx, &service);
+                    self.kernel_switched(&service);
                 }
-                self.kernel_schedule(ctx, &service);
+                self.kernel.schedule_document(&service);
             }
             Msg::ConsoleText(text) => {
                 let old = self
@@ -628,16 +551,16 @@ impl Component for App {
                 self.docs.insert(self.console_service.clone(), text);
                 self.persist_console();
                 let service = self.console_service.clone();
-                self.stop_edited_repeats(ctx, &service);
-                self.kernel_schedule(ctx, &service);
+                self.observe_repeats(&service);
+                self.kernel.schedule_document(&service);
             }
             Msg::ConsoleEdited(service, edit) => {
                 self.checks.insert(service.clone(), edit.checks);
                 self.docs.insert(service.clone(), edit.text);
                 self.response_regions.insert(service.clone(), edit.regions);
                 self.persist_console();
-                self.stop_edited_repeats(ctx, &service);
-                self.kernel_schedule(ctx, &service);
+                self.observe_repeats(&service);
+                self.kernel.schedule_document(&service);
             }
             Msg::ConsoleEditor(service, msg) => {
                 let events = self.console_editor(&service).update(msg);
@@ -657,10 +580,6 @@ impl Component for App {
                     return false;
                 }
                 let service = self.console_service.clone();
-                if self.kernel_busy(&service) {
-                    self.kernel.waiting = Some((service, text, line));
-                    return false;
-                }
                 let old = self.docs.get(&service).cloned().unwrap_or_default();
                 services_kernel::document::remap(
                     &old,
@@ -674,7 +593,7 @@ impl Component for App {
                 );
                 self.docs.insert(service.clone(), text.clone());
                 self.persist_console();
-                self.stop_edited_repeats(ctx, &service);
+                self.observe_repeats(&service);
                 match services_kernel::document::request_at(
                     &text,
                     line,
@@ -683,19 +602,15 @@ impl Component for App {
                         .map(Vec::as_slice)
                         .unwrap_or(&[]),
                 ) {
-                    Some(block) => match services_kernel::requests::parse_run(&service, &block.text) {
-                        Ok((params, options)) => {
-                            self.execute_console(
-                                ctx,
-                                &service,
-                                params,
-                                block.start,
-                                None,
-                                options,
-                            );
-                        }
-                        Err(e) => self.client_error(ctx, &service, e, block.start),
-                    },
+                    Some(block) => {
+                        let request = self.run_request(
+                            &service,
+                            block.start,
+                            Source::Check(block.text),
+                            Origin::Console,
+                        );
+                        self.kernel.run(request);
+                    }
                     None => {
                         self.notice = Some(Notice::new(
                             "Put the cursor inside a #check block, then press Shift+Enter.",
@@ -703,49 +618,22 @@ impl Component for App {
                     }
                 }
             }
-            Msg::RepeatRun(key) => self.repeat_run(ctx, &key),
-            Msg::RepeatSaved(check, reply) => self.repeat_saved(ctx, &check, reply),
-            Msg::Reply(key, service, reply) => {
-                self.receive(&key, &service, reply);
-                self.continue_repeat(ctx, &key);
-                if self
-                    .agent_run
-                    .as_ref()
-                    .is_some_and(|run| run.started && key == run.operation)
-                    && self.runs.get(&key).is_some_and(|run| !run.running)
-                {
-                    let pending = self.agent_run.take().unwrap();
-                    let run = &self.runs[&key];
-                    pending.request.reply.emit(if run.result["cancelled"] == true {
-                        json!({"error":"Request cancelled by the user","cancelled":true,"status":run.status})
-                    } else if run.result.get("error").is_some() {
-                        json!({"error":err_text(&run.result),"status":run.status,
-                            "details":"Read console_read_debug for this check's full Debug"})
-                    } else {
-                        json!({"complete":true,"service":service,"checkId":pending.check_id,"status":run.status})
-                    });
-                }
-            }
-            Msg::Connection(message) => self.connection = message,
-            Msg::TransportBusy => {}
             Msg::Retry => {
-                if self.transport.is_native() {
-                    self.transport.connect();
-                }
+                self.kernel.reconnect();
                 if self.sessions.borrow().error.is_some() {
                     ctx.props().onretry.emit(());
                 }
             }
             Msg::Discover => {
                 let service = self.console_service.clone();
-                self.kernel_discover(ctx, &service);
+                self.kernel_discover(&service);
             }
             Msg::Scroll(service, viewport) => {
                 let active = self.active_console_line(&service);
                 self.viewports.insert(service.clone(), viewport);
                 let moved = active != self.active_console_line(&service);
                 if moved {
-                    self.kernel_schedule(ctx, &service);
+                    self.kernel.schedule_document(&service);
                 }
                 return moved;
             }
@@ -763,37 +651,8 @@ impl Component for App {
             Msg::EditorError(message) => {
                 self.notice = Some(Notice::new(format!("Editor · ERROR · {message}")));
             }
-            Msg::Modules(reply) => {
-                // Hosts without module lists keep the cached or built-in one.
-                let Reply::Result(value) = reply else {
-                    return false;
-                };
-                match services_kernel::modules::loader::accept(&value) {
-                    Ok(changed) => {
-                        self.kernel.loading += 1;
-                        services_kernel::modules::loader::prepare(
-                            &self.transport,
-                            on(ctx.link().callback(Msg::KernelStarted)),
-                        );
-                        if !changed {
-                            return false;
-                        }
-                        self.sync_services();
-                    }
-                    Err(error) => {
-                        self.notice = Some(Notice::new(format!("Modules · ERROR · {error}")));
-                    }
-                }
-            }
-            Msg::AgentReply(module, tag, reply) => self.agent_reply(ctx, &module, &tag, reply),
             Msg::AgentToolResult(tag, call_id, result) => {
-                self.agent_tool_result(&tag, &call_id, result);
-            }
-            Msg::PageReplied(module, tag, result) => {
-                let effects = services_kernel::modules::registry::with(|modules| {
-                    modules.reply(&module, &tag, result.map_err(services_sdk::Failure::new))
-                });
-                self.kernel_effects(ctx, effects);
+                self.kernel.agent_result(&tag, &call_id, result);
             }
             Msg::AgentEdited(serial, result) => {
                 if self
@@ -821,17 +680,16 @@ impl Component for App {
             }
             Msg::Import => {
                 let service = self.console_service.clone();
-                if self.transport.is_native() {
-                    self.transport.request(
+                if self.kernel.native() {
+                    self.kernel.host_request(
                         json!({"type":"clipboardRead"}),
-                        false,
                         on(ctx.link().callback(move |reply| {
                             let result = match reply {
                                 Reply::Result(value) => value["text"]
                                     .as_str()
                                     .map(str::to_string)
                                     .ok_or("Companion returned invalid clipboard text".into()),
-                                Reply::Error(e) => Err(err_text(&e)),
+                                Reply::Error(e) => Err(error_text(&e)),
                                 _ => Err("Unexpected clipboard response from companion".into()),
                             };
                             Msg::Imported(service.clone(), result)
@@ -927,104 +785,35 @@ impl Component for App {
                 let service = self.console_service.clone();
                 if let Some(key) = self
                     .console_run_entry(&service, self.active_console_line(&service))
-                    .filter(|(_, run)| !run.running && run.repeat.is_some())
+                    .filter(|(_, run)| run.active())
                     .map(|(key, _)| key.to_owned())
                 {
-                    self.finish_repeat(ctx, &key, "Repeat stopped");
+                    self.kernel.stop(&key);
                     return true;
                 }
-                if let Some(key) = self
-                    .console_run_entry(&service, self.active_console_line(&service))
-                    .filter(|(_, run)| run.running)
-                    .map(|(key, _)| key.to_owned())
-                    && self.kernel_stop(ctx, &key)
+                let (run, discovery) = self.selected_status(&service);
+                if run.is_none()
+                    && let Some(id) = discovery.and_then(|status| status.request)
                 {
-                    return true;
-                }
-                let (run, discovery) = self.selected_status(&self.console_service);
-                let id = if let Some(run) = run {
-                    run.running.then_some(run.stream).flatten()
-                } else {
-                    discovery.and_then(|status| status.request)
-                };
-                if let Some(id) = id {
-                    for run in self.runs.values_mut().filter(|run| run.stream == Some(id)) {
-                        run.stopping = true;
-                        run.debug["state"] = json!("stopping");
-                    }
-                    if let Err(error) = self.transport.stop(id) {
-                        self.notice = Some(Notice::new(format!("Stop failed: {error}")));
-                    }
+                    self.kernel.stop_request(id);
                 }
             }
             Msg::Visibility(visible) => {
                 self.hidden = !visible;
-                if !visible {
-                    self.kernel_hidden();
-                    self.agent_stop_all(ctx);
-                    for run in self.runs.values_mut().filter(|run| run.running) {
-                        run.stopping = true;
-                    }
-                    let running: Vec<_> = self
-                        .runs
-                        .iter()
-                        .filter(|(_, run)| run.running)
-                        .map(|(key, _)| key.clone())
-                        .collect();
-                    for key in running {
-                        self.kernel_stop(ctx, &key);
-                    }
-                    let waiting: Vec<_> = self
-                        .runs
-                        .iter()
-                        .filter(|(_, run)| !run.running && run.repeat.is_some())
-                        .map(|(key, _)| key.clone())
-                        .collect();
-                    for key in waiting {
-                        self.finish_repeat(ctx, &key, "Repeat stopped: panel hidden");
-                    }
-                    if let Err(error) = self.transport.stop_all() {
-                        self.notice = Some(Notice::new(format!("Stop failed: {error}")));
-                    }
-                }
+                self.kernel.visibility(visible);
             }
             Msg::ClearNotice => self.notice = None,
             Msg::CloseExport => self.export_text = None,
-            Msg::KernelStarted((effects, started)) => {
-                self.kernel_started(ctx, effects, started.clone());
-                if !started.is_empty() {
-                    self.sync_services();
-                }
-                // A panel opened before its module started is shown once it runs.
-                if let Some(id) = self.side.clone() {
-                    let effects = services_kernel::modules::registry::with(|modules| modules.show(&id));
-                    self.kernel_effects(ctx, effects);
-                }
-            }
-            Msg::KernelReplied(module, tag, reply) => self.kernel_replied(ctx, module, tag, reply),
-            Msg::KernelStreamed(module, tag, reply) => {
-                self.kernel_streamed(ctx, module, tag, reply);
-            }
-            Msg::KernelHosted(module, tag, saved, reply) => {
-                self.kernel_hosted(ctx, module, tag, saved, reply);
-            }
-            Msg::KernelTimer(module, tag) => self.kernel_timer(ctx, &module, &tag),
-            Msg::KernelSaved(module, tag, saved) => {
-                let result = saved.map(|()| Value::Null).map_err(services_sdk::Failure::new);
-                let effects = services_kernel::modules::registry::with(|modules| modules.reply(&module, &tag, result));
-                self.kernel_effects(ctx, effects);
-            }
+            Msg::Kernel(event) => return self.kernel_event(ctx, event),
             Msg::KernelStorage(module, key) => {
-                let effects = services_kernel::modules::registry::with(|modules| modules.storage(&module, &key));
-                self.kernel_effects(ctx, effects);
+                self.kernel.modules(|modules| modules.storage(&module, &key));
             }
             Msg::TogglePanel(id) => {
                 let open = self.side.as_deref() != Some(id.as_str());
-                self.close_side(ctx);
+                self.close_side();
                 if open {
                     self.side = Some(id.clone());
-                    let effects = services_kernel::modules::registry::with(|modules| modules.show(&id));
-                    self.kernel_effects(ctx, effects);
+                    self.kernel.modules(|modules| modules.show(&id));
                 }
             }
             Msg::PanelUi(id, (msg, value)) => {
@@ -1033,12 +822,13 @@ impl Component for App {
                     effects.extend(services_kernel::modules::registry::with(|modules| modules.ui(&id, msg, value)));
                 }
                 effects.extend(services_kernel::modules::registry::with(|modules| modules.ui(&id, msg, value)));
-                self.kernel_effects(ctx, effects);
+                self.kernel.apply(effects);
             }
-            Msg::KernelRunReplied(key, reply) => self.kernel_run_replied(ctx, &key, reply),
-            Msg::KernelDocument(service) => self.kernel_document(ctx, &service),
-            Msg::KernelMounted => self.kernel_mounted(ctx),
-            Msg::KernelHints(check, pos) => self.kernel_hints(ctx, check, pos),
+            Msg::KernelMounted => {
+                self.contributed();
+                self.kernel.mounted();
+            }
+            Msg::KernelHints(check, pos) => self.kernel_hints(check, pos),
         }
         true
     }
@@ -1076,13 +866,6 @@ impl Component for App {
         self.seen
             .schedule(wait, ctx.link().callback(|()| Msg::Seen));
     }
-    fn destroy(&mut self, _: &Context<Self>) {
-        for repeat in self.runs.values_mut().filter_map(|run| run.repeat.as_mut()) {
-            if let Some(id) = repeat.timer.take() {
-                window().clear_timeout_with_handle(id);
-            }
-        }
-    }
 }
 impl App {
     /// Counts on-screen time of every visible status and returns the wait until the nearest
@@ -1105,11 +888,12 @@ impl App {
         self.console_order = storage::console_order(&json!(self.console_order));
         if !services_kernel::modules::services::contains(&self.console_service) {
             self.console_service = self.console_order.first().cloned().unwrap_or_default();
+            self.kernel.set_service(&self.console_service);
         }
     }
 
     /// The App update failed; the module that asked hears of it.
-    fn update_failed(&mut self, ctx: &Context<Self>, message: String) {
+    fn update_failed(&mut self, message: String) {
         self.updates.fail(message.clone());
         if let Some((module, tag)) = self.update_reply.take() {
             let installed = self.updates.phase == UpdatePhase::Installed;
@@ -1118,10 +902,7 @@ impl App {
             } else {
                 Err(services_sdk::Failure::new(message))
             };
-            let effects = services_kernel::modules::registry::with(|modules| {
-                modules.reply(&module, &tag, result)
-            });
-            self.kernel_effects(ctx, effects);
+            self.kernel.reply(&module, &tag, result);
         }
     }
 
@@ -1141,7 +922,7 @@ impl App {
         if self.updates.busy() {
             reasons.push("update in progress".into());
         }
-        if self.kernel.loading > 0 {
+        if self.kernel.loading() > 0 {
             reasons.push("modules loading".into());
         }
         if self.sessions.borrow().saving() {
@@ -1150,13 +931,9 @@ impl App {
         if self.forgetting > 0 {
             reasons.push("removing module data".into());
         }
-        if self.transport.busy() {
-            reasons.push(self.transport.busy_reason());
-        }
-        for (service, run) in &self.runs {
-            if run.running {
-                reasons.push(format!("run {service}"));
-            }
+        reasons.extend(self.kernel.host_busy());
+        for key in self.kernel.running() {
+            reasons.push(format!("run {key}"));
         }
         if self.agent_run.is_some() {
             reasons.push("agent run".into());
@@ -1164,7 +941,7 @@ impl App {
         if self.agent_edit.is_some() {
             reasons.push("agent edit".into());
         }
-        for tag in self.agent_turns.keys() {
+        for tag in self.kernel.turns() {
             reasons.push(format!("agent {tag}"));
         }
         reasons
@@ -1183,7 +960,7 @@ impl App {
         self.notice = Some(Notice::new(format!("{operation} · ERROR · {error}")));
     }
     /// A workspace operation ended: the module that asked for it hears how.
-    fn session_result(&mut self, ctx: &Context<Self>, result: Result<(), String>) {
+    fn session_result(&mut self, result: Result<(), String>) {
         let Some((module, tag)) = self.session_reply.take() else {
             if let Err(error) = result {
                 self.session_error("Sessions", error);
@@ -1193,10 +970,7 @@ impl App {
         let result = result
             .map(|()| json!({}))
             .map_err(services_sdk::Failure::new);
-        let effects = services_kernel::modules::registry::with(|modules| {
-            modules.reply(&module, &tag, result)
-        });
-        self.kernel_effects(ctx, effects);
+        self.kernel.reply(&module, &tag, result);
     }
     /// The saved workspaces as `workspace.list` answers.
     pub(super) fn workspace_list(&self) -> Value {
@@ -1214,33 +988,6 @@ impl App {
             "saveError": store.save_error(),
             "importError": store.error,
         })
-    }
-    fn stop_agent_requests(&mut self, ctx: &Context<Self>, session: &str) {
-        let keys: Vec<_> = self
-            .runs
-            .iter()
-            .filter(|(_, run)| run.running && run.agent_session.as_deref() == Some(session))
-            .map(|(key, _)| key.clone())
-            .collect();
-        for key in keys {
-            self.kernel_stop(ctx, &key);
-        }
-        let ids: Vec<_> = self
-            .runs
-            .values_mut()
-            .filter(|run| run.running && run.agent_session.as_deref() == Some(session))
-            .filter_map(|run| {
-                run.stopping = true;
-                run.stream
-            })
-            .collect();
-        for id in ids {
-            if let Err(error) = self.transport.stop(id) {
-                self.notice = Some(Notice::new(format!(
-                    "Agent · Could not stop its Console request: {error}"
-                )));
-            }
-        }
     }
     fn cancel_agent_edit(&mut self) {
         if let Some(pending) = self.agent_edit.take() {
@@ -1268,11 +1015,7 @@ impl App {
                 "Console is not active. Return to Console before using workspace tools.".into(),
             );
         }
-        if self
-            .agent_turns
-            .get(&request.session)
-            .is_none_or(|turn| turn.stopping())
-        {
+        if !self.kernel.turn_live(&request.session) {
             return Err("Agent is stopping; workspace access revoked".into());
         }
         let args = &request.arguments;
@@ -1323,7 +1066,7 @@ impl App {
                         "status":discovery.text,"running":discovery.request.is_some(),
                         "debug":agent_debug(&discovery.debug, false)
                     }),
-                    (Some(run), None) => json!({
+                    (Some(Run { view: run, .. }), None) => json!({
                         "service":service,"checkId":check_id,"source":"request",
                         "status":if run.stopping && run.running { "Stopping…" } else { run.status.as_str() },
                         "running":run.running,"debug":agent_debug(&run.debug, true)
@@ -1345,6 +1088,7 @@ impl App {
                     return Err("Wait for the current Agent edit to finish before selecting another service".into());
                 }
                 self.console_service = service.clone();
+                self.kernel.set_service(&service);
                 self.persist_console();
                 self.agent_workspace
                     .context(&service, self.active_console_line(&service).unwrap_or(0))?
@@ -1352,15 +1096,6 @@ impl App {
             "console_edit_check" | "console_create_check" => {
                 if self.agent_edit.is_some() {
                     return Err("Another Agent edit is being applied".into());
-                }
-                if self
-                    .runs
-                    .get(&format!("console:{service}"))
-                    .is_some_and(|run| run.running)
-                {
-                    return Err(
-                        "Wait for the current service request to finish before editing".into(),
-                    );
                 }
                 self.agent_serial += 1;
                 let create = request.tool == "console_create_check";
@@ -1379,6 +1114,7 @@ impl App {
                     identity,
                 });
                 self.console_service = service.clone();
+                self.kernel.set_service(&service);
                 self.persist_console();
                 let editor = self.console_editor(&service);
                 let result = editor.with(|session| {
@@ -1404,7 +1140,7 @@ impl App {
                 let line = self.agent_workspace.check_line(&service, &check_id)?;
                 if self
                     .console_run(&service, Some(line))
-                    .is_some_and(|run| run.running)
+                    .is_some_and(|run| run.view.running)
                 {
                     return Err(
                         "A request is already running for this check; use a separate check".into(),
@@ -1466,7 +1202,7 @@ impl App {
         request.reply.emit(value);
         Ok(())
     }
-    fn approve_agent_run(&mut self, ctx: &Context<Self>, approve: bool) {
+    fn approve_agent_run(&mut self, approve: bool) {
         let Some(mut pending) = self.agent_run.take() else {
             return;
         };
@@ -1494,14 +1230,14 @@ impl App {
                 pending.started = true;
                 let params = pending.params.clone();
                 self.console_service = service.clone();
-                if let Some(key) = self.execute_console(
-                    ctx,
+                self.kernel.set_service(&service);
+                let request = self.run_request(
                     &service,
-                    params,
                     line,
-                    Some(pending.request.session.clone()),
-                    services_kernel::requests::RunOptions::default(),
-                ) {
+                    Source::Approved(params),
+                    Origin::Agent(pending.request.session.clone()),
+                );
+                if let Some(key) = self.kernel.run(request) {
                     pending.operation = key;
                     self.agent_run = Some(pending);
                 } else {
@@ -1617,13 +1353,7 @@ async fn clipboard(
         .await
         .map_err(error)
 }
-fn err_text(value: &Value) -> String {
-    value["error"]
-        .as_str()
-        .or(value["message"].as_str())
-        .unwrap_or("Unknown request error")
-        .into()
-}
+use services_kernel::runtime::error_text;
 fn time() -> String {
     js_sys::Date::new_0()
         .to_locale_time_string("en-US")

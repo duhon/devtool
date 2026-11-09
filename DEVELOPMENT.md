@@ -75,14 +75,16 @@ cargo run -p xtask -- test <type>   # one kind at a time
 - `app/kernel` — the Kernel, no UI: runs wasm modules in the App (`modules`: registry,
   loader, console services), the document model (`document`: checks, responses,
   identities), the editor bridge to modules (`editor`: highlighting, folds, completion,
-  templates), the request pipeline (`requests`), the workspace and its saving
+  templates), the request pipeline (`requests`), the runtime the Shell drives (`runtime`:
+  runs with Stop and Repeat, Agent turns, module effects, on a `Platform`), the workspace and its saving
   (`workspace`, `storage`), the Host connection (`host`), Web Locks (`locks`), the
   inspected page (`page`), updates, module events and activity.
 - `app/widgets` — generic UI widgets (Yew/WebAssembly) with no application logic: the
   UI-tree view, the text editor, find bar, check rail, status bar, tree, resizer,
   indicator; each widget's CSS lies next to it.
 - `app/shell` — the App (`app.wasm`): layout, theme, toolbar, side panels, Console,
-  and the wiring of Kernel, widgets and Host (`language.rs` gives the editor its
+  and the wiring of Kernel, widgets and Host (it forwards widget events to the Kernel
+  and renders the Kernel's events) (`language.rs` gives the editor its
   language from the Kernel; `link()` links the App's modules into the Kernel — tests
   call it first).
 - `app/extension/src` — Chrome manifest, HTML, minimal bootstrap.

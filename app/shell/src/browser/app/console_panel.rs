@@ -1,7 +1,6 @@
-//! The console panel of [`App`]: check runs and their status, execution and responses,
-//! discovery, completions and the console view.
+//! The console panel of [`App`]: the runs the Kernel reports and their responses in the
+//! document, check statuses, discovery, completions and the console view.
 use super::*;
-use crate::browser::on;
 
 impl App {
     /// The console editor of `service`, showing its document from the first use.
@@ -52,10 +51,17 @@ impl App {
         self.console_editor(service)
             .read(|session| session.anchor(line))
     }
-    /// The line of the `anchor` of a run of `owner` (`console:{service}`).
-    pub(super) fn anchor_line(&self, owner: &str, anchor: Anchor) -> Option<usize> {
-        self.console_editor(owner.trim_start_matches("console:"))
+    /// The line of `anchor` in the console editor of `service`.
+    pub(super) fn anchor_line(&self, service: &str, anchor: Anchor) -> Option<usize> {
+        self.console_editor(service)
             .read(|session| session.anchor_line(anchor))
+    }
+    /// The line of the check of `run` now.
+    fn run_line(&self, run: &Run) -> Option<usize> {
+        match run.anchor {
+            Some(anchor) => self.anchor_line(&run.view.service, anchor),
+            None => Some(run.view.line),
+        }
     }
     fn console_editor_stale(&self, service: &str, editor: &Handle) -> bool {
         editor.read(|session| {
@@ -189,19 +195,12 @@ impl App {
         service: &str,
         line: Option<usize>,
     ) -> Option<(&str, &Run)> {
-        let owner = format!("console:{service}");
         self.runs
             .iter()
             .filter(|(_, run)| {
-                run.editor == owner
-                    && line.is_some()
-                    && (if let Some(anchor) = run.anchor {
-                        self.anchor_line(&owner, anchor)
-                    } else {
-                        run.line
-                    }) == line
+                run.view.service == service && line.is_some() && self.run_line(run) == line
             })
-            .max_by(|(_, a), (_, b)| a.started.total_cmp(&b.started))
+            .max_by(|(_, a), (_, b)| a.view.started.total_cmp(&b.view.started))
             .map(|(key, run)| (key.as_str(), run))
     }
     pub(super) fn check_status(
@@ -219,7 +218,8 @@ impl App {
             .filter(|status| line.is_some() && status.check_line(&editor) == line)
             .max_by(|a, b| a.started.total_cmp(&b.started));
         if run.is_some_and(Run::active)
-            || discovery.is_none_or(|status| run.is_some_and(|run| run.started >= status.started))
+            || discovery
+                .is_none_or(|status| run.is_some_and(|run| run.view.started >= status.started))
         {
             (run, None)
         } else {
@@ -236,7 +236,7 @@ impl App {
     ) -> services_widgets::indicator::Indicator {
         let (run, discovery) = self.check_status(service, Some(line));
         if let Some(run) = run {
-            services_widgets::indicator::Indicator::status(&run.status, run.active())
+            services_widgets::indicator::Indicator::status(&run.view.status, run.active())
         } else if let Some(status) = discovery {
             services_widgets::indicator::Indicator::status(&status.text, status.request.is_some())
         } else {
@@ -279,7 +279,7 @@ impl App {
         let mut wait = None;
         for (key, run) in &mut self.runs {
             if run_key.as_ref() == Some(key) {
-                let state = Indicator::status(&run.status, run.running);
+                let state = Indicator::status(&run.view.status, run.view.running);
                 wait = sooner(wait, run.signal.observe(state, now));
             } else {
                 run.signal.hide();
@@ -365,105 +365,66 @@ impl App {
             history.push(previous);
         }
     }
-    pub(super) fn execute_console(
-        &mut self,
-        ctx: &Context<Self>,
+    /// A check to run from the console document of `service`: the check whose header is at
+    /// `line`, with what History keeps of it.
+    pub(super) fn run_request(
+        &self,
         service: &str,
-        params: Value,
         line: usize,
-        session: Option<String>,
-        options: services_kernel::requests::RunOptions,
-    ) -> Option<String> {
-        if self.hidden {
-            return None;
-        }
-        if self.cancel_duplicate_check(ctx, service, line) {
-            return None;
-        }
-        self.run_serial += 1;
-        let key = format!("console:{service}:{}", self.run_serial);
-        let title = self
-            .docs
+        source: Source,
+        origin: Origin,
+    ) -> RunRequest {
+        let doc = self.docs.get(service).map_or("", String::as_str);
+        let identity = self
+            .checks
             .get(service)
-            .and_then(|source| source.lines().nth(line))
-            .unwrap_or("#check")
-            .to_owned();
-        // Completed runs are replaced only for this check; concurrent sibling
-        // checks retain their own reply routing and response anchors.
-        self.prune_console_runs(service, line);
-        self.execute(ctx, service, &key, params, line, &options);
-        if let Some(run) = self.runs.get_mut(&key) {
-            run.agent_session = session;
-            run.title = title;
-        }
-        Some(key)
-    }
-    /// Shift+Enter on a check that is running stops it; one waiting to repeat stops repeating.
-    pub(super) fn cancel_duplicate_check(
-        &mut self,
-        ctx: &Context<Self>,
-        service: &str,
-        line: usize,
-    ) -> bool {
-        let Some((key, running)) = self
-            .console_run_entry(service, Some(line))
-            .filter(|(_, run)| run.active())
-            .map(|(key, run)| (key.to_owned(), run.running))
-        else {
-            return false;
-        };
-        if !running {
-            self.finish_repeat(ctx, &key, "Repeat stopped");
-            return true;
-        }
-        let message = "Repeated run rejected: this check was already running. Cancellation was requested; no new request was started.";
-        if self.kernel_running(&key) {
-            if let Some(run) = self.runs.get_mut(&key) {
-                run.stopping = true;
-                run.debug["duplicateRun"] = json!({
-                    "error":message,"phase":"duplicate-run","cancellationRequested":true
-                });
-                run.duplicate_error = Some(message.to_owned());
-            }
-            self.kernel_stop(ctx, &key);
-            return true;
-        }
-        let run = self.runs.get_mut(&key).unwrap();
-        let stopped = run
-            .stream
-            .ok_or_else(|| "Running request has no cancellation handle".to_owned())
-            .and_then(|id| self.transport.stop(id));
-        let message = match stopped {
-            Ok(()) => {
-                run.stopping = true;
-                run.debug["state"] = json!("stopping");
-                message.to_owned()
-            }
-            Err(error) => {
-                run.stopping = false;
-                let message = format!(
-                    "Repeated run rejected: this check was already running. Cancellation failed: {error}"
-                );
-                run.status = format!("ERROR · {message}");
-                message
-            }
-        };
-        run.debug["duplicateRun"] = json!({
-            "error":message,"phase":"duplicate-run","cancellationRequested":run.stopping
+            .and_then(|checks| checks.iter().find(|check| check.line == line));
+        let history = identity.and_then(|check| {
+            let block = services_kernel::document::request_at(doc, line, self.regions(service))?;
+            Some(json!({"checkId":check.id,"sessionId":self.workspace_id,
+                "title":doc.lines().nth(line).unwrap_or("#check"),"createdAt":check.created_at,
+                "source":doc.lines().skip(line).take(block.end-line).collect::<Vec<_>>().join("\n")}))
         });
-        run.duplicate_error = Some(message);
-        true
+        RunRequest {
+            service: service.to_owned(),
+            source,
+            line,
+            check: identity.map(|check| check.id.clone()),
+            title: doc.lines().nth(line).unwrap_or("#check").to_owned(),
+            history,
+            origin,
+        }
     }
-    pub(super) fn prune_console_runs(&mut self, service: &str, line: usize) {
-        let owner = format!("console:{service}");
+    /// The Kernel reports a run: a new one replaces the finished run of its check.
+    pub(super) fn run_changed(&mut self, view: RunView) {
+        let key = view.key.clone();
+        if let Some(run) = self.runs.get_mut(&key) {
+            run.view = view;
+        } else {
+            // Completed runs are replaced only for this check; concurrent sibling checks
+            // keep their own response anchors.
+            self.prune_console_runs(&view.service, view.line);
+            let anchor = self.anchor(&view.service, view.line);
+            self.runs.insert(
+                key.clone(),
+                Run {
+                    view,
+                    anchor,
+                    signal: Default::default(),
+                },
+            );
+        }
+        self.agent_run_ended(&key);
+    }
+    fn prune_console_runs(&mut self, service: &str, line: usize) {
         let editor = self.console_editor(service);
         self.runs.retain(|_, run| {
-            run.editor != owner
+            run.view.service != service
                 || run.active()
                 || (if let Some(anchor) = run.anchor {
                     editor.read(|session| session.anchor_line(anchor))
                 } else {
-                    run.line
+                    Some(run.view.line)
                 })
                 .is_some_and(|previous| previous != line)
         });
@@ -490,77 +451,6 @@ impl App {
             self.session_error("Console save", e);
         }
     }
-    pub(super) fn execute(
-        &mut self,
-        ctx: &Context<Self>,
-        service: &str,
-        key: &str,
-        params: Value,
-        line: usize,
-        options: &services_kernel::requests::RunOptions,
-    ) {
-        if self.runs.get(key).is_some_and(|r| r.running) {
-            self.notice = Some(Notice::new(
-                "This request is already running. Stop the current stream first.",
-            ));
-            return;
-        }
-        let started = js_sys::Date::now();
-        self.runs.insert(
-            key.into(),
-            Run {
-                editor: format!("console:{service}"),
-                running: true,
-                status: "Running…".into(),
-                line: Some(line),
-                started,
-                debug: run_debug(service, &params, started),
-                anchor: self.anchor(service, line),
-                ..Default::default()
-            },
-        );
-        let mut message = json!({"service":service,"params":params});
-        if let Some(check) = self
-            .checks
-            .get(service)
-            .and_then(|checks| checks.iter().find(|check| check.line == line))
-            && let Some(source) = self.docs.get(service)
-            && let Some(block) = services_kernel::document::request_at(
-                source,
-                line,
-                self.response_regions
-                    .get(service)
-                    .map(Vec::as_slice)
-                    .unwrap_or(&[]),
-            )
-        {
-            message["history"] = json!({"checkId":check.id,"sessionId":self.workspace_id,
-                "title":source.lines().nth(line).unwrap_or("#check"),"createdAt":check.created_at,
-                "source":source.lines().skip(line).take(block.end-line).collect::<Vec<_>>().join("\n")});
-            if options.repeat.is_some() {
-                message["history"]["defer"] = json!(true);
-                message["history"]["startedAt"] = json!(started as u64);
-            }
-        }
-        if let Some(every) = options.repeat {
-            let source = self.check_source(service, Some(line)).unwrap_or_default();
-            self.runs.get_mut(key).unwrap().repeat = Some(Repeat {
-                every,
-                until_changed: options.until_changed,
-                count: 0,
-                changed: false,
-                timer: None,
-                message: message.clone(),
-                last: None,
-                source,
-                edited: false,
-            });
-        }
-        self.send_run(ctx, service, key, message);
-    }
-    fn send_run(&mut self, ctx: &Context<Self>, service: &str, key: &str, message: Value) {
-        self.kernel_send(ctx, service, key, message);
-    }
     /// The request text of the check at `line`.
     fn check_source(&self, service: &str, line: Option<usize>) -> Option<String> {
         services_kernel::document::request_at(
@@ -574,317 +464,66 @@ impl App {
         .filter(|block| Some(block.start) == line)
         .map(|block| block.text)
     }
-    /// Whether the check of a repeating run is gone or its request text changed.
-    fn repeat_edited(&self, run: &Run) -> bool {
-        let Some(repeat) = &run.repeat else {
-            return false;
-        };
-        let service = run.editor.trim_start_matches("console:");
-        let line = run
-            .anchor
-            .and_then(|anchor| self.anchor_line(&run.editor, anchor));
-        repeat.edited || self.check_source(service, line).as_ref() != Some(&repeat.source)
-    }
-    /// An edit of a repeating check ends its repeat; a run in flight finishes first.
-    pub(super) fn stop_edited_repeats(&mut self, ctx: &Context<Self>, service: &str) {
-        let owner = format!("console:{service}");
-        let edited: Vec<_> = self
+    /// The Kernel hears what the checks of the repeating runs of `service` are now: an edit
+    /// ends a repeat.
+    pub(super) fn observe_repeats(&self, service: &str) {
+        let repeating: Vec<(String, Option<String>)> = self
             .runs
             .iter()
-            .filter(|(_, run)| run.editor == owner && self.repeat_edited(run))
-            .map(|(key, run)| (key.clone(), run.running))
+            .filter(|(_, run)| run.view.service == service && run.view.repeat.is_some())
+            .map(|(key, run)| (key.clone(), self.check_source(service, self.run_line(run))))
             .collect();
-        for (key, running) in edited {
-            if running {
-                if let Some(repeat) = self.runs.get_mut(&key).and_then(|run| run.repeat.as_mut()) {
-                    repeat.edited = true;
-                }
-            } else {
-                self.finish_repeat(ctx, &key, "Check edited");
-            }
+        for (key, source) in repeating {
+            self.kernel.check_changed(&key, source.as_deref());
         }
     }
-    /// After a run of a repeating check: stop, or wait and run again.
-    pub(super) fn continue_repeat(&mut self, ctx: &Context<Self>, key: &str) {
-        let hidden = self.hidden;
-        let edited = self
-            .runs
-            .get(key)
-            .is_some_and(|run| self.repeat_edited(run));
-        let Some(run) = self.runs.get_mut(key) else {
-            return;
-        };
-        let Some(repeat) = run.repeat.as_mut() else {
-            return;
-        };
-        if run.running || repeat.timer.is_some() {
-            return;
-        }
-        let stop = if run.stopping || hidden || run.duplicate_error.is_some() {
-            Some("Repeat stopped")
-        } else if edited {
-            Some("Check edited")
-        } else if repeat.until_changed && repeat.changed {
-            Some("Response changed")
-        } else {
-            None
-        };
-        if let Some(reason) = stop {
-            self.finish_repeat(ctx, key, reason);
-            return;
-        }
-        let link = ctx.link().clone();
-        let next = key.to_owned();
-        let callback = Closure::once_into_js(move || link.send_message(Msg::RepeatRun(next)));
-        match window().set_timeout_with_callback_and_timeout_and_arguments_0(
-            callback.unchecked_ref(),
-            repeat.every as i32,
-        ) {
-            Ok(id) => repeat.timer = Some(id),
-            Err(e) => {
-                let reason = format!("Repeat failed: {}", error(e));
-                self.finish_repeat(ctx, key, &reason);
-            }
-        }
-    }
-    /// The next run of a repeating check, with the request of its first run.
-    pub(super) fn repeat_run(&mut self, ctx: &Context<Self>, key: &str) {
-        let hidden = self.hidden;
-        let edited = self
-            .runs
-            .get(key)
-            .is_some_and(|run| self.repeat_edited(run));
-        let line = self
-            .runs
-            .get(key)
-            .and_then(|run| self.anchor_line(&run.editor, run.anchor?));
-        let Some(run) = self.runs.get_mut(key) else {
-            return;
-        };
-        let Some(repeat) = run.repeat.as_mut() else {
-            return;
-        };
-        repeat.timer = None;
-        let message = repeat.message.clone();
-        if hidden || line.is_none() {
-            self.finish_repeat(ctx, key, "Repeat stopped");
-            return;
-        }
-        if edited {
-            self.finish_repeat(ctx, key, "Check edited");
-            return;
-        }
-        let started = js_sys::Date::now();
-        run.line = line;
-        run.running = true;
-        run.stopping = false;
-        run.status = "Running…".into();
-        run.started = started;
-        run.result = Value::Null;
-        run.stdout.clear();
-        run.stderr.clear();
-        run.debug = json!({"operation":"request","service":message["service"],
-            "params":message["params"],"started":started,"state":"running"});
-        let service = run.editor.trim_start_matches("console:").to_owned();
-        self.send_run(ctx, &service, key, message);
-    }
-    /// Ends a repeat that is not running, and saves its last run to History.
-    pub(super) fn finish_repeat(&mut self, ctx: &Context<Self>, key: &str, reason: &str) {
-        let Some(run) = self.runs.get_mut(key) else {
-            return;
-        };
-        let Some(mut repeat) = run.repeat.take() else {
-            return;
-        };
-        if let Some(id) = repeat.timer.take() {
-            window().clear_timeout_with_handle(id);
-        }
-        let runs = if repeat.count == 1 { "run" } else { "runs" };
-        run.status = format!("{} · {reason} after {} {runs}", run.status, repeat.count);
-        if repeat.count > 0 && repeat.message.get("history").is_some() {
-            let check = repeat.message["history"]["checkId"].clone();
-            let owner = check.as_str().unwrap_or_default().to_owned();
-            self.transport.request(
-                json!({"service":"history","op":"commit","checkId":check}),
-                false,
-                on(ctx
-                    .link()
-                    .callback(move |reply| Msg::RepeatSaved(owner.clone(), reply))),
-            );
-        }
-    }
-    /// A save to History ended: its panel lists the check again, a failure is a notice.
-    pub(super) fn repeat_saved(&mut self, ctx: &Context<Self>, check: &str, reply: Reply) {
-        let error = match reply {
-            Reply::Result(value) if value["saved"] == true => None,
-            Reply::Result(value) if value["empty"] == true || value["deferred"] == true => return,
-            Reply::Result(value) | Reply::Exit(value) | Reply::Error(value) => Some(
-                value["error"]
-                    .as_str()
-                    .unwrap_or("History could not be saved")
-                    .to_owned(),
-            ),
-            Reply::Data(_) => return,
-        };
-        if let Some(error) = error {
-            self.notice = Some(Notice::new(format!("History · ERROR · {error}")));
-        } else if !check.is_empty() {
-            let effects = services_kernel::modules::registry::with(|modules| {
-                modules.reply("history", check, Ok(json!({})))
-            });
-            self.kernel_effects(ctx, effects);
-        }
-    }
-    pub(super) fn client_error(
+    /// What the run `key` shows under its check now.
+    pub(super) fn show_response(
         &mut self,
-        ctx: &Context<Self>,
+        key: &str,
         service: &str,
-        message: String,
-        line: usize,
+        status: &str,
+        body: &str,
+        columns: Vec<(String, String)>,
     ) {
-        if self.cancel_duplicate_check(ctx, service, line) {
+        let Some(line) = self.runs.get(key).and_then(|run| self.run_line(run)) else {
             return;
-        }
-        self.prune_console_runs(service, line);
-        self.run_serial += 1;
-        let key = format!("console:{service}:{}", self.run_serial);
-        self.runs.insert(
-            key.clone(),
-            Run {
-                editor: format!("console:{service}"),
-                started: js_sys::Date::now(),
-                line: Some(line),
-                title: self
-                    .docs
-                    .get(service)
-                    .and_then(|source| source.lines().nth(line))
-                    .unwrap_or("")
-                    .into(),
-                anchor: self.anchor(service, line),
-                ..Default::default()
-            },
-        );
-        self.receive(
-            &key,
-            service,
-            Reply::Error(json!({"error":message,"phase":"validation"})),
-        );
-    }
-    pub(super) fn receive(&mut self, key: &str, service: &str, reply: Reply) {
+        };
         let editor = self.console_editor(service);
-        let run = self.runs.entry(key.into()).or_default();
-        let reply = match (reply, run.duplicate_error.as_ref()) {
-            (Reply::Result(value) | Reply::Exit(value) | Reply::Error(value), Some(error)) => {
-                Reply::Error(json!({
-                    "error":error,"phase":"duplicate-run","cancellationRequested":run.stopping,
-                    "request":run.debug,"previousOperation":value
-                }))
-            }
-            (reply, _) => reply,
-        };
-        match reply {
-            Reply::Data(event) => {
-                let data = event["data"].as_str().unwrap_or("");
-                if event["type"] == "stderr" {
-                    run.stderr.push_str(data);
-                } else {
-                    run.stdout.push_str(data);
-                }
-            }
-            Reply::Result(result) | Reply::Exit(result) => {
-                if let Some(repeat) = run.repeat.as_mut() {
-                    repeat.count += 1;
-                }
-                run.running = false;
-                run.stream = None;
-                run.status = if result["cancelled"] == true {
-                    format!(
-                        "{} · Stopped · {}",
-                        time(),
-                        result["warning"]
-                            .as_str()
-                            .unwrap_or("Request stopped before dispatch")
-                    )
-                } else {
-                    format!("{} · {}", time(), status_text(&result))
-                };
-                run.debug = result.clone();
-                run.result = result;
-            }
-            Reply::Error(e) => {
-                if let Some(repeat) = run.repeat.as_mut() {
-                    repeat.count += 1;
-                }
-                run.running = false;
-                run.stream = None;
-                run.status = format!("{} · ERROR · {}", time(), err_text(&e));
-                run.debug = e.clone();
-                run.result = e;
-            }
-        }
-        let anchored_line = run
-            .anchor
-            .and_then(|anchor| editor.read(|session| session.anchor_line(anchor)));
-        let response_line = if run.anchor.is_some() {
-            anchored_line
-        } else {
-            run.line
-        };
-        if let Some(line) = response_line {
-            let body = services_kernel::requests::format::check_response(
-                &run.result,
-                &run.stdout,
-                &run.stderr,
-            );
-            let outcome = if run.running {
-                "Running"
-            } else {
-                services_kernel::requests::format::outcome(&run.result)
-            };
-            let mut response_status = format!("{} · {outcome}", time());
-            if let Some(repeat) = run.repeat.as_mut() {
-                let count = repeat.count + u32::from(run.running);
-                response_status.push_str(&format!(" · Run {count}"));
-                if !run.running {
-                    repeat.changed = repeat.last.as_ref().is_some_and(|last| *last != body);
-                    repeat.last = Some(body.clone());
-                }
-            }
-            let doc = self.docs.entry(service.into()).or_default();
-            let preserve_after = services_kernel::document::check_lines(
-                doc,
-                self.response_regions
-                    .get(service)
-                    .map(Vec::as_slice)
-                    .unwrap_or(&[]),
-            )
-            .into_iter()
-            .find(|next| *next > line)
-            .map(|next| {
-                doc.split_inclusive('\n')
-                    .take(next)
-                    .map(str::len)
-                    .sum::<usize>()
-                    - 1
-            });
-            let old_doc = doc.clone();
-            *doc = services_kernel::document::replace_response(
-                doc,
-                line,
-                &response_status,
-                &body,
-                services_kernel::document::columns_of(&run.result),
-                self.response_regions.entry(service.into()).or_default(),
-            );
-            services_kernel::document::identity::remap_text(
-                &old_doc,
-                doc,
-                self.checks.entry(service.into()).or_default(),
-            );
-            // Move the anchors now: Yew may batch several replies into one render.
-            editor.with(|session| self.sync_console_session(service, session, preserve_after));
-            self.persist_console();
-        }
+        let doc = self.docs.entry(service.into()).or_default();
+        let preserve_after = services_kernel::document::check_lines(
+            doc,
+            self.response_regions
+                .get(service)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]),
+        )
+        .into_iter()
+        .find(|next| *next > line)
+        .map(|next| {
+            doc.split_inclusive('\n')
+                .take(next)
+                .map(str::len)
+                .sum::<usize>()
+                - 1
+        });
+        let old_doc = doc.clone();
+        *doc = services_kernel::document::replace_response(
+            doc,
+            line,
+            status,
+            body,
+            columns,
+            self.response_regions.entry(service.into()).or_default(),
+        );
+        services_kernel::document::identity::remap_text(
+            &old_doc,
+            doc,
+            self.checks.entry(service.into()).or_default(),
+        );
+        // Move the anchors now: Yew may batch several replies into one render.
+        editor.with(|session| self.sync_console_session(service, session, preserve_after));
+        self.persist_console();
     }
     /// What completion in the editor of `service` reads besides hints: its module's status
     /// (with its details) and how many variable resolutions the module got; a change reopens
@@ -968,7 +607,7 @@ impl App {
             )
         } else {
             (
-                run.map(|run| {
+                run.map(|Run { view: run, .. }| {
                     let repeat = run
                         .repeat
                         .as_ref()
@@ -992,10 +631,10 @@ impl App {
                     )
                 })
                 .unwrap_or_default(),
-                run.map(|run| run.debug.clone())
+                run.map(|run| run.view.debug.clone())
                     .unwrap_or(json!({"note":"No debug info yet - run a request first."})),
                 run.is_some_and(Run::active),
-                run.map(|run| run.started),
+                run.map(|run| run.view.started),
             )
         };
         let checks: Vec<_> = self
@@ -1070,30 +709,4 @@ fn interval(ms: u32) -> String {
         seconds if seconds.is_multiple_of(60) => format!("{}m", seconds / 60),
         seconds => format!("{seconds}s"),
     }
-}
-
-/// A running request as Debug shows it; a Kernel driver call shows its request as `params`,
-/// so the URL is visible without unfolding.
-fn run_debug(service: &str, params: &Value, started: f64) -> Value {
-    let mut debug = json!({"operation":"request","service":service,"params":params,
-        "started":started,"state":"running"});
-    if let Some(driver) = params["driver"].as_str() {
-        debug["driver"] = json!(driver);
-        debug["params"] = params["request"].clone();
-        debug["stream"] = params["stream"].clone();
-    }
-    debug
-}
-
-/// A run's status line: `123 ms · 200 OK · 3 rows`.
-fn status_text(result: &Value) -> String {
-    let mut parts = Vec::new();
-    if let Some(ms) = result["durationMs"].as_f64() {
-        parts.push(services_widgets::status_bar::duration(ms));
-    }
-    parts.push(services_kernel::requests::format::outcome(result).into());
-    if let Some(summary) = result["summary"].as_str() {
-        parts.push(summary.into());
-    }
-    parts.join(" · ")
 }
