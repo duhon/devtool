@@ -1,6 +1,7 @@
 //! A module's UI tree (`services_sdk::ui::Node`) as widgets; actions go back to the module as
 //! `Ui` messages. Modules have no HTML or CSS of their own: only the widgets and their
-//! variants (`primary`, `danger`, `muted`).
+//! variants (`primary`, `danger`, `muted`, `link`, `heading`, `badge`, …; several may be given,
+//! separated by spaces).
 use crate::editor;
 use crate::editor::extension;
 use crate::editor::model::{Event as EditorEvent, Setup};
@@ -105,11 +106,16 @@ fn send(on: &Callback<Action>, msg: &Option<Vec<u8>>, value: Option<String>) {
     }
 }
 
+/// `is-<name>` for each space-separated name of a variant.
+fn variants(variant: &str) -> Classes {
+    variant
+        .split_whitespace()
+        .map(|name| format!("is-{name}"))
+        .collect()
+}
+
 fn classes(node: &Node, kind: &'static str) -> Classes {
-    classes!(
-        kind,
-        (!node.variant.is_empty()).then(|| format!("is-{}", node.variant))
-    )
+    classes!(kind, variants(&node.variant))
 }
 
 fn key(node: &Node) -> Option<AttrValue> {
@@ -218,7 +224,7 @@ pub fn render(node: &Node, on: &Callback<Action>) -> Html {
                 }
                 <tbody>
                     {for table.rows.iter().map(|row| html! {
-                        <tr key={row.key.clone()} data-key={row.key.clone()} data-testid={row.key.clone()}>
+                        <tr key={row.key.clone()} class={variants(&row.variant)} data-key={row.key.clone()} data-testid={row.key.clone()}>
                             {for row.cells.iter().map(|cell| html! {<td>{render(cell, on)}</td>})}
                         </tr>
                     })}
@@ -527,10 +533,7 @@ fn virtual_list(props: &ListProps) -> Html {
             }
         })
     };
-    let class = classes!(
-        "ui-list",
-        (!props.variant.is_empty()).then(|| format!("is-{}", props.variant))
-    );
+    let class = classes!("ui-list", variants(&props.variant));
     html! {
         <div {class} data-key={props.data_key.clone()} data-testid={props.data_key.clone()} data-total={list.total.to_string()} {onscroll}>
             if before > 0.0 {<div class="ui-list-space" style={format!("height:{before}px")}/>}
@@ -708,10 +711,7 @@ fn text_input(props: &InputProps) -> Html {
         }
         change(event.target_unchecked_into::<HtmlInputElement>().value());
     });
-    let class = classes!(
-        "ui-input",
-        (!props.variant.is_empty()).then(|| format!("is-{}", props.variant))
-    );
+    let class = classes!("ui-input", variants(&props.variant));
     let placeholder = props.input.placeholder.clone();
     // The text is set by the effect above only: a field keeps what is typed until the module
     // sends another text.
@@ -800,7 +800,7 @@ fn text_editor(props: &EditorProps) -> Html {
     };
     let testid = props.data_key.clone().unwrap_or_default();
     html! {
-        <div class="ui-editor" data-key={props.data_key.clone()}>
+        <div class={classes!("ui-editor", readonly.then_some("is-viewer"))} data-key={props.data_key.clone()}>
             <editor::View handle={(*handle).clone()} {on} {testid} label={testid_label(&props.editor.language)}/>
         </div>
     }

@@ -111,7 +111,11 @@ endpoints) to highlight and complete them.
 `view() -> Option<ui::Node>` is the module's UI while it is shown: a panel's body, a
 service's Options form. It is data, not HTML or CSS: `ui::panel`, `row`, `column`,
 `tabs`, `list`, `table`, `text`, `markdown`, `tree`, `button`, `input`, `select`,
-`checkbox`, `slider`, `indicator`, `viewer` and `editor`. A handler holds a `Msg`; the
+`checkbox`, `slider`, `indicator`, `viewer` and `editor`. Look helpers: `ui::link`
+(inline clickable text), `ui::heading` (bold), `ui::badge` (bordered chip) and
+`ui::spacer()` (inside a `row`, pushes the following items to the end). `.variant(..)`
+takes space-separated names (`"link danger"`); `TableRow::new(key, cells).variant("active")`
+highlights a row. Use `danger` only on a confirm button. A handler holds a `Msg`; the
 Kernel sends it back as `Event::Ui`. The App draws the tree with its widgets and
 theme, so a module looks like the rest of the App.
 

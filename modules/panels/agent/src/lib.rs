@@ -733,9 +733,9 @@ impl Agent {
                         .key("agent-chat-close")
                         .disabled(busy)
                 };
-                ui::TableRow {
-                    key: format!("agent-chat-row-{}", chat.id),
-                    cells: vec![
+                ui::TableRow::new(
+                    format!("agent-chat-row-{}", chat.id),
+                    vec![
                         ui::text(chat.title.clone()).key("agent-chat-title"),
                         ui::text(session).key("agent-chat-session"),
                         ui::text(messages.to_string()).key("agent-chat-messages"),
@@ -744,11 +744,10 @@ impl Agent {
                             action,
                             ui::button("Delete", &Msg::Delete(chat.id.clone()))
                                 .key("agent-chat-delete")
-                                .variant("danger")
                                 .disabled(busy),
                         ]),
                     ],
-                }
+                )
             })
             .collect();
         ui::table(
@@ -769,15 +768,21 @@ impl Agent {
             .map(|message| {
                 let key = format!("agent-message-{}-{}", message.role, message.id);
                 match message.role.as_str() {
-                    "assistant" => ui::markdown(message.text.clone()).key(key),
-                    "user" => ui::text(message.text.clone()).key(key).variant("primary"),
+                    "assistant" => ui::markdown(message.text.clone()).key(key).variant("quote"),
+                    "user" => ui::text(message.text.clone())
+                        .key(key)
+                        .variant("quote accent"),
                     role => ui::text(format!(
                         "{}: {}",
                         if role == "error" { "Error" } else { "Notice" },
                         message.text
                     ))
                     .key(key)
-                    .variant(if role == "error" { "danger" } else { "muted" }),
+                    .variant(if role == "error" {
+                        "quote danger"
+                    } else {
+                        "quote"
+                    }),
                 }
             })
             .collect();
@@ -792,17 +797,18 @@ impl Agent {
         if let Some(approval) = self.page.approval(&chat.id) {
             body.push(
                 ui::column(vec![
-                    ui::text("Page interaction permission").variant("primary"),
+                    ui::heading("Page interaction permission"),
                     ui::text(approval.origin.clone()),
                     ui::text(format!("{} · {}", approval.title, approval.url)),
                     ui::text("Allow clicks, typing and other control actions on this page? Permission lasts across turns until navigation or reload. Actions may be irreversible."),
                     ui::text("Guide only allows reading, scrolling and visual hints; you click and enter data yourself.").variant("muted"),
                     ui::row(vec![
-                        ui::button("Allow on this page", &Msg::ApprovePage).key("agent-approve-page").variant("primary"),
+                        ui::button("Allow on this page", &Msg::ApprovePage).key("agent-approve-page"),
                         ui::button("Allow guide only", &Msg::GuidePage).key("agent-approve-guide"),
-                        ui::button("Deny", &Msg::DenyPage).key("agent-deny-page").variant("danger"),
+                        ui::button("Deny", &Msg::DenyPage).key("agent-deny-page"),
                     ]),
                 ])
+                .variant("warning")
                 .key("agent-page-approval"),
             );
         }
@@ -815,18 +821,15 @@ impl Agent {
                         field("service"),
                         field("title")
                     ))
-                    .variant("primary"),
+                    .variant("heading"),
                     ui::text(format!("Target: {}", field("endpoint"))),
                     ui::text(field("request")).key("agent-run-request"),
                     ui::row(vec![
-                        ui::button("Approve run", &Msg::ApproveRun(true))
-                            .key("agent-approve-run")
-                            .variant("primary"),
-                        ui::button("Deny", &Msg::ApproveRun(false))
-                            .key("agent-deny-run")
-                            .variant("danger"),
+                        ui::button("Approve run", &Msg::ApproveRun(true)).key("agent-approve-run"),
+                        ui::button("Deny", &Msg::ApproveRun(false)).key("agent-deny-run"),
                     ]),
                 ])
+                .variant("warning")
                 .key("agent-run-approval"),
             );
         }
@@ -1041,7 +1044,6 @@ impl Module for Agent {
         let footer = vec![
             ui::button("Stop", &Msg::Stop)
                 .key("agent-stop")
-                .variant("danger")
                 .disabled(!running),
         ];
         let panel = if self.list_open {

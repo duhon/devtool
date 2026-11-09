@@ -15,7 +15,7 @@ fn the_panel_switches_copies_and_deletes_through_the_workspace() {
     assert_eq!(commands[0].name, "timer.after");
     let view = format!("{:?}", sessions.view());
     assert!(
-        view.contains("session-switch-0") && view.contains("2 · Work"),
+        view.contains("session-switch-0") && view.contains("Work"),
         "{view}"
     );
     sessions.update(Event::Reply {

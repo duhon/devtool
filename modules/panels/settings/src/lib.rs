@@ -876,7 +876,8 @@ impl Settings {
     fn view_modules(&self) -> Vec<ui::Node> {
         let mut body = vec![
             ui::row(vec![
-                ui::text("Modules").variant("primary"),
+                ui::heading("Modules").key("settings-modules-title"),
+                ui::spacer().key("settings-modules-spacer"),
                 ui::button("Check for updates", &Msg::Check)
                     .key("settings-modules-check")
                     .disabled(self.checking),
@@ -910,10 +911,10 @@ impl Settings {
         let mut details = Vec::new();
         for row in &rows {
             let (cells, extra) = self.view_row(row, app_version);
-            table.push(ui::TableRow {
-                key: format!("settings-module-{}", row.key()),
+            table.push(ui::TableRow::new(
+                format!("settings-module-{}", row.key()),
                 cells,
-            });
+            ));
             details.extend(extra);
         }
         body.push(
@@ -936,8 +937,7 @@ impl Settings {
         let name = text(source, "name");
         if source["kind"] == "folder" {
             let slug = row.slug.unwrap_or_default().to_owned();
-            return ui::button(name, &Msg::OpenSource(slug))
-                .variant("muted")
+            return ui::link(name, &Msg::OpenSource(slug))
                 .key(format!("settings-module-source-{}", row.key()));
         }
         let repository = text(source, "repository");
@@ -1013,38 +1013,39 @@ impl Settings {
             actions.push(
                 ui::button("Remove", &Msg::Remove(key.clone(), row.id.to_owned()))
                     .key(id("remove"))
-                    .variant("danger")
                     .disabled(self.busy.is_some() || confirming || row.app()),
             );
         }
         let version_cell = if row.installed.is_some() {
-            let button = ui::button(
+            let link = ui::link(
                 version.unwrap_or("failed"),
                 &Msg::Detail(key.clone(), Detail::Notes),
             )
             .key(id("version"));
             if error.is_some() {
-                button.variant("danger")
+                link.variant("link danger")
             } else {
-                button
+                link
             }
         } else {
             ui::text("—").key(id("version"))
         };
         let new_cell = if newest.is_some() {
-            ui::button(&new_version, &Msg::Detail(key.clone(), Detail::NewNotes))
+            ui::link(&new_version, &Msg::Detail(key.clone(), Detail::NewNotes))
                 .key(id("new-version"))
         } else {
             ui::text("")
         };
         let cells = vec![
-            ui::button(row.title(), &Msg::Detail(key.clone(), Detail::Description))
-                .variant("muted")
-                .key(id("name")),
+            ui::link(row.title(), &Msg::Detail(key.clone(), Detail::Description)).key(id("name")),
             self.view_source_link(row),
             version_cell,
             new_cell,
-            ui::row(actions),
+            ui::row(
+                std::iter::once(ui::spacer().key(id("spacer")))
+                    .chain(actions)
+                    .collect(),
+            ),
         ];
         let mut extra = Vec::new();
         if let Some(error) = error {
@@ -1110,7 +1111,7 @@ impl Settings {
 
     fn view_sources(&self) -> Vec<ui::Node> {
         let busy = self.busy.is_some();
-        let mut body = vec![ui::text(
+        let mut body = vec![ui::heading("Sources"), ui::text(
             "Modules and shared settings (dictionary, templates, hints, skills) come from these sources. Later sources override earlier ones; your own changes override them all.",
         )
         .variant("muted")];
@@ -1198,7 +1199,7 @@ impl Settings {
                 ui::button("Cancel", &Msg::Rename(None)).key(id("rename-cancel")),
             ])),
             None => lines.push(ui::row(vec![
-                ui::text(name.clone()).variant("primary").key(id("name")),
+                ui::text(name.clone()).key(id("name")),
                 ui::text(location(source)).variant("muted"),
                 ui::button("↑", &Msg::Move(index, true))
                     .key(id("up"))
@@ -1211,7 +1212,6 @@ impl Settings {
                     .disabled(busy),
                 ui::button("Remove", &Msg::RemoveSource(Some(index)))
                     .key(id("remove"))
-                    .variant("danger")
                     .disabled(busy || self.removing == Some(index)),
             ])),
         }
@@ -1285,7 +1285,6 @@ impl Settings {
             list.push(
                 ui::button("Apply", &Msg::Apply(slug.to_owned()))
                     .key(id("apply"))
-                    .variant("primary")
                     .disabled(busy),
             );
             lines.push(ui::column(list).key(id("changes")));
@@ -1373,7 +1372,6 @@ impl Settings {
         lines.push(ui::row(vec![
             ui::button("Add", &Msg::Add)
                 .key("source-add-save")
-                .variant("primary")
                 .disabled(busy),
             ui::button("Cancel", &Msg::Adding(false)).key("source-add-cancel"),
         ]));
@@ -1381,7 +1379,7 @@ impl Settings {
     }
 
     fn view_agent(&self) -> Vec<ui::Node> {
-        let mut body = vec![ui::text("New Agent chats").variant("primary")];
+        let mut body = vec![ui::heading("New Agent chats")];
         let Some(catalog) = &self.catalog else {
             body.push(
                 ui::text(if self.loading_models {

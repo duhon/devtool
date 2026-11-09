@@ -10,7 +10,7 @@ pub struct Node {
     /// Required for the rows of lists and tables.
     #[prost(string, tag = "1")]
     pub key: String,
-    /// `primary`, `danger`, `muted`, … or empty.
+    /// Space-separated looks: `primary`, `danger`, `muted`, … or empty.
     #[prost(string, tag = "2")]
     pub variant: String,
     #[prost(
@@ -163,6 +163,23 @@ pub struct TableRow {
     pub key: String,
     #[prost(message, repeated, tag = "2")]
     pub cells: Vec<Node>,
+    /// `active` highlights the row.
+    #[prost(string, tag = "3")]
+    pub variant: String,
+}
+
+impl TableRow {
+    pub fn new(key: impl Into<String>, cells: Vec<Node>) -> Self {
+        Self {
+            key: key.into(),
+            cells,
+            variant: String::new(),
+        }
+    }
+    pub fn variant(mut self, variant: impl Into<String>) -> Self {
+        self.variant = variant.into();
+        self
+    }
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -323,6 +340,20 @@ pub fn text(text: impl Into<String>) -> Node {
     node(node::Kind::Text(text.into()))
 }
 
+/// A bold section title.
+pub fn heading(text: impl Into<String>) -> Node {
+    text_with(text, "heading")
+}
+
+/// A small bordered label, such as where a panel's content comes from.
+pub fn badge(text: impl Into<String>) -> Node {
+    text_with(text, "badge")
+}
+
+fn text_with(text: impl Into<String>, variant: &str) -> Node {
+    self::text(text).variant(variant)
+}
+
 pub fn markdown(text: impl Into<String>) -> Node {
     node(node::Kind::Markdown(text.into()))
 }
@@ -337,6 +368,12 @@ pub fn row(children: Vec<Node>) -> Node {
 
 pub fn column(children: Vec<Node>) -> Node {
     node(node::Kind::Column(Children { children }))
+}
+
+/// An empty stretch that takes the free space of a [`row`], pushing the items after it to
+/// the row's end.
+pub fn spacer() -> Node {
+    row(Vec::new()).variant("spacer")
 }
 
 /// A side panel headed by its title.
@@ -400,6 +437,12 @@ pub fn button(label: impl Into<String>, on_click: &impl Serialize) -> Node {
         on_click: msg(on_click),
         disabled: false,
     }))
+}
+
+/// Clickable inline text (dotted underline) that opens more about what it names, in place
+/// of a boxed [`button`].
+pub fn link(label: impl Into<String>, on_click: &impl Serialize) -> Node {
+    button(label, on_click).variant("link")
 }
 
 /// An input that reports Enter/blur with `on_change`; set `value` only to replace the text.

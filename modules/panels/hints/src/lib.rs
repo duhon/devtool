@@ -243,23 +243,23 @@ impl Module for Hints {
         match (own, source) {
             (true, Some(source)) => {
                 origin.push(
-                    ui::text(format!("Yours, over source {source}")).key("hints-origin-label"),
+                    ui::badge(format!("Yours, over source {source}")).key("hints-origin-label"),
                 );
                 origin
                     .push(ui::button(format!("Reset to {source}"), &Msg::Reset).key("hints-reset"));
             }
             (true, None) => {
-                origin.push(ui::text("Yours").key("hints-origin-label"));
+                origin.push(ui::badge("Yours").key("hints-origin-label"));
                 origin.push(ui::button("Reset", &Msg::Reset).key("hints-reset"));
             }
             (false, Some(source)) => {
-                origin.push(ui::text(format!("From source {source}")).key("hints-origin-label"));
+                origin.push(ui::badge(format!("From source {source}")).key("hints-origin-label"));
             }
             (false, None) => {}
         }
         let mut actions = Vec::new();
         if !origin.is_empty() {
-            actions.push(ui::row(origin).variant("muted").key("hints-origin"));
+            actions.push(ui::row(origin).key("hints-origin"));
         }
         let body = vec![
             ui::editor(format!("hints/{}", self.service), self.shown(), &Msg::Edit)

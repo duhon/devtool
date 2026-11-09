@@ -287,7 +287,7 @@ impl Module for Templates {
         match (own, source) {
             (true, Some(source)) => {
                 header.push(
-                    ui::text(format!("Yours, over source {source}")).key("templates-origin-label"),
+                    ui::badge(format!("Yours, over source {source}")).key("templates-origin-label"),
                 );
                 header.push(
                     ui::button(format!("Reset to {source}"), &Msg::Reset).key("templates-reset"),
@@ -295,7 +295,7 @@ impl Module for Templates {
             }
             (false, Some(source)) => {
                 header
-                    .push(ui::text(format!("From source {source}")).key("templates-origin-label"));
+                    .push(ui::badge(format!("From source {source}")).key("templates-origin-label"));
             }
             _ => {}
         }
@@ -304,7 +304,7 @@ impl Module for Templates {
         }
         let mut actions = Vec::new();
         if !header.is_empty() {
-            actions.push(ui::row(header).variant("muted").key("templates-origin"));
+            actions.push(ui::row(header).key("templates-origin"));
         }
         let body = vec![
             ui::editor(

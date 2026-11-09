@@ -480,9 +480,9 @@ impl Module for History {
     fn view(&self) -> Option<ui::Node> {
         let mut body = Vec::new();
         if self.check.is_empty() {
-            body.push(ui::text("Select a check to see its history.").variant("muted"));
+            body.push(ui::text("Select a check to see its history."));
         } else if self.entries.is_empty() {
-            body.push(ui::text("No executions recorded for this check.").variant("muted"));
+            body.push(ui::text("No executions recorded for this check."));
         }
         let rows = self
             .entries

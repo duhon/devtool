@@ -80,6 +80,9 @@
 
 .ui-row > .ui-input { flex: 1 1 120px; }
 
+/* Takes the free space of a row: the items after it sit at its end. */
+.ui-row.is-spacer { flex: 1 1 0; min-width: 0; }
+
 .ui-text { overflow-wrap: anywhere; white-space: pre-wrap; }
 
 .ui-markdown { overflow-wrap: anywhere; line-height: 1.5; }
@@ -124,11 +127,31 @@
 
 .ui-button.is-danger { background: var(--danger-bg); border-color: var(--danger-border); color: var(--error); }
 
-.ui-button.is-muted, .ui-text.is-muted { color: var(--fg-muted); }
+.ui-button.is-muted, .ui-text.is-muted { color: var(--fg-quote); }
+
+/* Inline text that opens more about what it names; not a boxed button. */
+.ui-button.is-link { padding: 0; border: 0; border-radius: 0; background: none; color: inherit; font: inherit; text-align: left; text-decoration: underline dotted var(--fg-muted); text-underline-offset: 3px; }
+
+.ui-button.is-link:hover { background: none; text-decoration-color: currentColor; }
+
+.ui-button.is-link.is-danger { color: var(--error); }
 
 .ui-text.is-danger { color: var(--error); }
 
 .ui-text.is-primary { color: var(--accent); font-weight: bold; }
+
+.ui-text.is-heading { font-weight: bold; }
+
+/* Where something comes from: a small bordered label. */
+.ui-text.is-badge { flex: none; padding: 0 4px; border: 1px solid var(--border); border-radius: 3px; color: var(--fg-quote); font-size: 11px; line-height: 16px; white-space: nowrap; }
+
+/* A message of a conversation; `accent` marks the user's own. */
+:is(.ui-text, .ui-markdown).is-quote { padding: 6px; border-left: 2px solid var(--border); }
+
+:is(.ui-text, .ui-markdown).is-quote.is-accent { border-left-color: var(--accent-soft); background: var(--bg-raised); }
+
+/* A question that needs an answer before going on. */
+.ui-column.is-warning { padding: 6px; border: 1px solid var(--warning); margin: 4px 6px; }
 
 .ui-indicator { position: relative; display: inline-flex; align-items: center; gap: 4px; min-width: 10px; min-height: 14px; }
 
@@ -148,9 +171,9 @@
 
 .ui-list.is-primary { flex: 1 1 auto; }
 
-.ui-list > .ui-button { text-align: left; }
+.ui-list > .ui-button { display: block; width: 100%; padding: 5px 8px; border-radius: 0; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-.ui-list > .ui-button.is-primary { box-shadow: inset 3px 0 0 var(--accent-light); }
+.ui-list > .ui-button.is-primary { background: var(--bg-active); border-color: var(--bg-active); color: var(--fg-bright); box-shadow: inset 3px 0 0 var(--accent-light); }
 
 .ui-table { border-collapse: collapse; width: 100%; }
 
@@ -158,7 +181,17 @@
 
 .ui-table th { color: var(--fg-muted); font-weight: normal; }
 
+.ui-table tr.is-active { background: var(--bg-active); }
+
+
 .ui-table td > .ui-input { width: 100%; box-sizing: border-box; }
+
+/* An editor that is the panel's content fills it edge to edge; what sits beside it keeps a margin. */
+:is(.ui-panel-body, .ui-tab-body):has(> .ui-editor:not(.is-viewer)) { padding: 0; gap: 0; }
+
+:is(.ui-panel-body, .ui-tab-body):has(> .ui-editor:not(.is-viewer)) > :not(.ui-editor:not(.is-viewer)) { margin: 4px 6px; }
+
+:is(.ui-panel-body, .ui-tab-body) > .ui-editor:not(.is-viewer) > .editor { border: none; }
 
 .ui-editor { display: flex; flex-direction: column; flex: 1 1 200px; min-height: 120px; }
 

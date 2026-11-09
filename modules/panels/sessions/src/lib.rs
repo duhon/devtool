@@ -157,44 +157,52 @@ impl Module for Sessions {
                     .key("session-import-error"),
             );
         }
-        body.push(
-            ui::input(None, "New session name", &Msg::Name)
+        body.push(ui::row(vec![
+            ui::text("New session name"),
+            ui::input(None, "", &Msg::Name)
                 .key("session-new-name")
                 .on_input(&Msg::Name),
-        );
+        ]));
         let current = self.library.current;
         let rows = self
             .rows()
             .map(|(id, name)| {
-                let label = ui::text(format!("{id} · {name}"));
-                let label = if id == current {
-                    label.variant("primary")
+                let row = ui::TableRow::new(
+                    format!("session-{id}"),
+                    vec![
+                        ui::text(id.to_string()),
+                        ui::text(name),
+                        ui::row(vec![
+                            ui::button("Switch", &Msg::Switch(id))
+                                .key(format!("session-switch-{id}"))
+                                .disabled(id == current),
+                            ui::button("Delete", &Msg::Delete(id))
+                                .key(format!("session-delete-{id}"))
+                                .disabled(id == 0),
+                            ui::button("Create from", &Msg::Copy(id))
+                                .key(format!("session-copy-{id}")),
+                        ]),
+                    ],
+                );
+                if id == current {
+                    row.variant("active")
                 } else {
-                    label
-                };
-                ui::row(vec![
-                    label,
-                    ui::button("Switch", &Msg::Switch(id))
-                        .key(format!("session-switch-{id}"))
-                        .disabled(id == current),
-                    ui::button("Delete", &Msg::Delete(id))
-                        .key(format!("session-delete-{id}"))
-                        .variant("danger")
-                        .disabled(id == 0),
-                    ui::button("Create from", &Msg::Copy(id)).key(format!("session-copy-{id}")),
-                ])
-                .key(format!("session-{id}"))
+                    row
+                }
             })
             .collect();
-        body.push(ui::column(rows).key("session-list"));
         body.push(
-            ui::text(
-                "0 is temporary. Creating from 0 starts empty. Named sessions save \
-                 automatically. Dictionary and environment variables are shared. Agent chats \
-                 belong to their session; deleting a session closes them.",
+            ui::table(
+                ["#", "Session", "Actions"].map(str::to_owned).to_vec(),
+                rows,
             )
-            .variant("muted"),
+            .key("session-list"),
         );
+        body.push(ui::text(
+            "0 is temporary. Creating from 0 starts empty. Named sessions save \
+             automatically. Dictionary and environment variables are shared. Agent chats \
+             belong to their session; deleting a session closes them.",
+        ));
         Some(
             ui::panel("Sessions", body, Vec::new())
                 .indicator("idle")

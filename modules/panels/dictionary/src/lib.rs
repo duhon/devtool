@@ -737,9 +737,7 @@ impl Dictionary {
         match self.base.sources.get(name) {
             Some(source) => {
                 header.push(
-                    ui::text(format!("From source {source}"))
-                        .variant("muted")
-                        .key("dictionary-origin-label"),
+                    ui::badge(format!("From source {source}")).key("dictionary-origin-label"),
                 );
                 let from = self.base.sets.get(name).and_then(Value::as_object);
                 let yours: Vec<String> = self
@@ -769,16 +767,8 @@ impl Dictionary {
                 }
             }
             None => {
-                header.push(
-                    ui::text("Your own set")
-                        .variant("muted")
-                        .key("dictionary-origin-label"),
-                );
-                header.push(
-                    ui::button("Delete set", &Msg::Delete)
-                        .variant("danger")
-                        .key("dictionary-delete"),
-                );
+                header.push(ui::badge("Your own set").key("dictionary-origin-label"));
+                header.push(ui::button("Delete set", &Msg::Delete).key("dictionary-delete"));
             }
         }
         if self.conflicts.contains(name) && self.drafts.contains_key(name) {
