@@ -536,7 +536,22 @@ fn build_distribution(root: &Path, args: &[String]) -> Result<()> {
     if modules.exists() {
         fs::remove_dir_all(&modules)?;
     }
-    archives(root, &packages(root)?, &modules)?;
+    let mut shipped = packages(root)?;
+    if prerelease {
+        // Each pre-release build of the modules is newer than the last, so the pre-release
+        // finds them with Check for updates in its `dist` folder source.
+        let stamp = Command::new("/bin/date").arg("+%y%m%d%H%M").output()?;
+        ensure!(stamp.status.success(), "date: {}", stamp.status);
+        let stamp = String::from_utf8(stamp.stdout)?.trim().to_owned();
+        for package in &mut shipped {
+            let (release, _) = package
+                .version
+                .rsplit_once('.')
+                .context("Module version must be X.Y.Z")?;
+            package.version = format!("{release}.{stamp}");
+        }
+    }
+    archives(root, &shipped, &modules)?;
     let id = build_extension(root, &payload.join("extension"), prerelease)?;
     let manifest: Value =
         serde_json::from_slice(&fs::read(payload.join("extension/manifest.json"))?)?;
