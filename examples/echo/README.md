@@ -45,11 +45,13 @@ examples/echo/
   `dictionary`, `hints`, `history`, `modules`, `sessions`, `templates`, `updates`, `vars`.
 - `kind` — `service` for a Console tab, `panel` for a side tool.
 - `name`, `description` — shown in the tab and in Settings → Modules.
-- `abi` — the SDK ABI version (`services_sdk::ABI`, `1`); `app` — the application
+- `abi` — the SDK ABI version (`services_sdk::ABI`, `2`); `app` — the application
   versions it works with (`">=3.7"`).
 - `drivers` — the drivers it calls and their versions (`{"http": "1"}`); the Kernel
   refuses a module whose drivers the host lacks.
-- Optional: `order`, the tab or tool position.
+- Optional: `order`, the tab or tool position and the order of the hooks; `toolbar`, the
+  position of a panel's toolbar button when it differs from `order` (Export and Import sit
+  at 2).
 
 The version is the crate version; `package` writes it into `package.json`.
 Versions are `X.Y.Z`.
@@ -118,6 +120,20 @@ takes space-separated names (`"link danger"`); `TableRow::new(key, cells).varian
 highlights a row. Use `danger` only on a confirm button. A handler holds a `Msg`; the
 Kernel sends it back as `Event::Ui`. The App draws the tree with its widgets and
 theme, so a module looks like the rest of the App.
+
+Shared widget features: any node takes `.title(tip)` and `.label(aria)`;
+`ui::tab(..).closable(&msg).confirm(q).plain().title(t)` and
+`ui::tabs(..).on_add(&msg).add_prompt(q)` make closable tabs and a `+`;
+`TableRow::new(..).detail(nodes)` puts content under a row and `ui::table(..).widths(vec![40, 60])`
+fixes column widths; `ui::field(label, control)`, `ui::anchor(label, url)`,
+`ui::combobox(options, value, &msg)` (`Choice::new(v, l).detail(d)`), `ui::slider(..).labels(..)
+.marker(i, tip)`, `ui::input(..).size(20)`, `ui::editor(..).placeholder(t).debounce(ms)`.
+Variants: panel `flush`/`padded`/`editor`; text `warning`, `bold`, `small`, `truncate`,
+`paragraph`, `pre`; button `tab`, `inline`; `grow`; row `nowrap`, `end`; column `ruled`,
+`loose`, `indent`, `inset`, `tight`, `quote`; list `dense`, `capped`; table `roomy`, row
+`current`, `muted`. A module's status line can carry Stop:
+`cmd::status_stoppable(text, "busy", &Msg::Stop, "my-stop")`; `cmd::workspace_retry(tag)`
+reconnects like the App's Retry.
 
 A panel's header row, level with the Console's service tabs, is either its title or its
 own tabs, never both:

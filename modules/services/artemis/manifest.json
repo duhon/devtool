@@ -4,7 +4,7 @@
   "name": "Artemis",
   "version": "4.0.1",
   "description": "Apache ActiveMQ Artemis over its Jolokia management API (the web console, port 8161). #endpoint is the broker URL; #action is a command, its /queue or /address and clauses: QUEUES, ADDRESSES and CONSUMERS list (WHERE messages > 0, LIMIT n), BROWSE shows messages without consuming them, RECEIVE removes and returns them (WHERE takes a JMS selector), SEND puts a message on a queue and PUBLISH on an address (SET property = 'value'), PURGE deletes messages, MOVE ... TO /queue moves them, RETRY sends dead letters back, PAUSE and RESUME stop and restart delivery, JOLOKIA sends #body to Jolokia as is. #headers are HTTP headers.",
-  "abi": 1,
+  "abi": 2,
   "app": ">=3.7",
   "drivers": {"http": "1"},
   "order": 7

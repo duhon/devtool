@@ -186,12 +186,20 @@
 
 .ui-table td > .ui-input { width: 100%; box-sizing: border-box; }
 
-/* An editor that is the panel's content fills it edge to edge; what sits beside it keeps a margin. */
-:is(.ui-panel-body, .ui-tab-body):has(> .ui-editor:not(.is-viewer)) { padding: 0; gap: 0; }
+/* An editor (or a viewer asked to be `flush`) that is the content of a panel or a tab fills it
+   edge to edge, also when a panel's tab body holds it; what sits beside it keeps a margin. */
+.ui-panel:has(> .ui-panel-body > .ui-tab-body > .ui-editor.is-flush) { gap: 0; }
 
-:is(.ui-panel-body, .ui-tab-body):has(> .ui-editor:not(.is-viewer)) > :not(.ui-editor:not(.is-viewer)) { margin: 4px 6px; }
+:is(.ui-panel-body, .ui-tab-body):has(> .ui-editor.is-flush),
+.ui-panel-body:has(> .ui-tab-body > .ui-editor.is-flush) { padding: 0; gap: 0; }
 
-:is(.ui-panel-body, .ui-tab-body) > .ui-editor:not(.is-viewer) > .editor { border: none; }
+.ui-panel-body:has(> .ui-tab-body > .ui-editor.is-flush) > .ui-tab-body { padding: 0; gap: 0; }
+
+:is(.ui-panel-body, .ui-tab-body):has(> .ui-editor.is-flush) > :not(.ui-editor.is-flush) { margin: 4px 6px; }
+
+:is(.ui-panel-body, .ui-tab-body) > .ui-editor.is-flush > .editor { border: none; }
+
+.ui-tabs:has(> .ui-tab-body > .ui-editor.is-flush) > .ui-tab-strip { margin-bottom: 0; }
 
 .ui-editor { display: flex; flex-direction: column; flex: 1 1 200px; min-height: 120px; }
 
@@ -201,4 +209,155 @@
 
 .ui-tab-strip .tab-label { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 
-.tab-label-input { width: 12ch; background: var(--bg-sunken); color: var(--fg); border: 1px solid var(--accent); border-radius: 3px; padding: 0 4px; font: inherit; }
+.tab-label-input { box-sizing: border-box; width: 100%; min-width: 40px; background: var(--bg-sunken); color: var(--fg); border: 1px solid var(--accent); border-radius: 3px; padding: 0 4px; font: inherit; }
+
+.tab-close { margin-left: 6px; color: var(--fg-muted); cursor: pointer; }
+
+.tab-close:hover { color: var(--error); }
+
+.ui-tab-add { margin-left: 2px; }
+
+:is(.ui-tab-strip, .ui-panel-title, .ui-panel-tabs) > .ui-tab-add { padding: 2px 8px; }
+
+/* A tab-style button: dim and sunken like a tab that is not selected. */
+.ui-button.is-tab { padding: 5px 8px 4px; border: 1px solid var(--border); border-bottom: none; border-radius: 4px 4px 0 0; background: var(--bg-sunken); color: var(--fg-muted); margin-right: 2px; }
+
+.ui-button.is-tab:hover { background: var(--bg-hover); }
+
+/* A button that keeps its natural width in a list. */
+.ui-list > .ui-button.is-inline { display: inline-block; width: auto; }
+
+.is-grow { flex: 1 1 0; min-width: 0; }
+
+.ui-text.is-warning { color: var(--warning); }
+
+.ui-text.is-bold { font-weight: bold; }
+
+.ui-text.is-small { font-size: 11px; }
+
+.ui-text.is-truncate { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+
+.ui-text.is-paragraph { display: block; margin: 5px 0; }
+
+.ui-text.is-pre { display: block; margin: 4px 0 6px; max-height: 120px; overflow: auto; font: inherit; white-space: pre-wrap; }
+
+.ui-row.is-nowrap { flex-wrap: nowrap; }
+
+.ui-row.is-end { justify-content: flex-end; }
+
+.ui-column.is-ruled { padding-top: 8px; border-top: 1px solid var(--border); }
+
+.ui-column.is-loose { gap: 6px; }
+
+.ui-column.is-indent { padding-left: 16px; }
+
+.ui-column.is-inset { padding: 6px; }
+
+.ui-column.is-tight { gap: 0; }
+
+.ui-column:is(.is-tight, .is-primary) > .is-quote { margin-bottom: 6px; }
+
+.ui-column.is-quote { padding: 6px; border-left: 2px solid var(--border); }
+
+.ui-list.is-dense { gap: 0; }
+
+.ui-list.is-capped { max-height: 35%; }
+
+/* Variants of a panel: `flush` has no padding, `padded` pads body and tabs, `editor` sits on
+   the editor's background. */
+.ui-panel.is-flush { gap: 0; }
+
+.ui-panel.is-flush > .ui-panel-body, .ui-panel.is-flush > .ui-panel-body > .ui-tab-body { padding: 0; gap: 0; }
+
+.ui-panel.is-padded > .ui-panel-body { padding: 8px; gap: 8px; }
+
+.ui-panel.is-padded .ui-tab-body { padding-top: 0; }
+
+.ui-panel.is-editor { background: var(--bg-editor); }
+
+/* Text areas: a composer that grows by hand. */
+textarea.ui-input { resize: vertical; min-height: 56px; max-height: 30vh; }
+
+:is(.ui-panel-body, .ui-tab-body) > textarea.ui-input { margin: 0 6px; }
+
+.ui-input.is-fixed, .ui-row > .ui-input[size] { flex: none; }
+
+.ui-link { color: var(--link); text-decoration: underline dotted var(--fg-muted); text-underline-offset: 3px; }
+
+.ui-link:hover { text-decoration-color: currentColor; }
+
+.ui-field { display: flex; gap: 8px; align-items: center; }
+
+.ui-field.is-grid { display: grid; grid-template-columns: 90px 1fr; gap: 6px; }
+
+.ui-field-label { flex: none; }
+
+.ui-field > .ui-input:not([size]), .ui-field > .ui-select, .ui-field > .ui-combobox { flex: 1 1 auto; min-width: 0; }
+
+.ui-table.is-fixed { table-layout: fixed; }
+
+.ui-table.is-fixed td > .ui-text { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+
+.ui-table.is-roomy th { padding: 5px; color: var(--fg); font-weight: bold; border-bottom: 1px solid var(--border); }
+
+.ui-table.is-roomy td { padding: 5px; border-bottom: 0; border-top: 1px solid var(--bg-band); }
+
+.ui-table.is-roomy td > .ui-button { margin: 2px; }
+
+.ui-table tr.is-current { background: var(--bg-raised); }
+
+.ui-table tr.is-muted td > .ui-text { color: var(--fg-muted); }
+
+.ui-table tr.ui-table-detail > td { padding-bottom: 6px; border-top: 0; color: var(--fg-quote); }
+
+.ui-table tr.ui-table-detail > td > * { width: 0; min-width: 100%; overflow-wrap: anywhere; }
+
+.ui-combobox { position: relative; min-width: 0; }
+
+.ui-combobox-current, .ui-combobox-option { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+
+.ui-combobox-current > .ui-input { flex: 1 1 auto; width: 100%; }
+
+.ui-combobox-detail { color: var(--fg-quote); font-size: 11px; white-space: nowrap; }
+
+.ui-combobox-options { position: absolute; z-index: 20; top: 100%; left: 0; right: 0; max-height: 240px; overflow: auto; background: var(--bg-editor); border: 1px solid var(--border); }
+
+.ui-combobox-option { width: 100%; text-align: left; }
+
+.ui-combobox-option.active { background: var(--border); }
+
+.ui-combobox-empty { display: block; padding: 6px; }
+
+.ui-slider { position: relative; min-width: 80px; }
+
+.ui-slider-track { position: relative; height: 22px; }
+
+.ui-slider-rail { position: absolute; top: 0; bottom: 0; left: 7px; right: 7px; }
+
+.ui-slider-rail::before { content: ""; position: absolute; top: 9px; left: 0; right: 0; height: 4px; border-radius: 2px; background: var(--bg-hover); }
+
+.ui-slider-fill { position: absolute; top: 9px; left: 0; height: 4px; border-radius: 2px; background: linear-gradient(90deg, var(--bg-active), var(--accent)); transition: width 0.15s; }
+
+.ui-slider-tick { position: absolute; top: 9px; width: 8px; height: 8px; margin: -2px 0 0 -4px; border-radius: 50%; background: var(--border); }
+
+.ui-slider-tick.on { background: var(--accent-soft); }
+
+.ui-slider-marker { position: absolute; top: -1px; margin-left: -3px; border: 3px solid transparent; border-top-color: var(--fg-quote); }
+
+.ui-slider-thumb { position: absolute; top: 4px; width: 14px; height: 14px; margin-left: -7px; border-radius: 50%; background: var(--fg); box-shadow: 0 0 0 3px var(--find-option-active); pointer-events: none; transition: left 0.15s; }
+
+.ui-slider-input { display: block; width: 100%; }
+
+.ui-slider-track .ui-slider-input { position: absolute; inset: 0; height: 100%; margin: 0; padding: 0; border: none; background: transparent; opacity: 0; cursor: pointer; }
+
+.ui-slider.is-disabled .ui-slider-fill, .ui-slider.is-disabled .ui-slider-tick.on { background: var(--border); }
+
+.ui-slider.is-disabled .ui-slider-thumb { background: var(--border-strong); box-shadow: none; }
+
+.ui-slider-levels { position: relative; height: 14px; margin: 0 7px; }
+
+.ui-slider-level { position: absolute; top: 0; padding: 0; border: none; background: none; color: var(--fg-muted); font: inherit; font-size: 11px; line-height: 14px; white-space: nowrap; cursor: pointer; }
+
+.ui-slider-level:hover:not(:disabled), .ui-slider-level.selected { background: none; color: var(--fg); }
+
+.ui-slider-level:disabled { cursor: default; }

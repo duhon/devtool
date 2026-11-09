@@ -211,7 +211,7 @@ fn rest_is_a_kernel_tab_ordered_by_its_manifest() {
 fn host_wasm_lists_declare_kernel_services_and_what_to_load() {
     services_shell::link();
     let entry = json!({"id":"rest","kind":"service","name":"REST","version":"3.7.0",
-        "description":"REST","abi":1,"app":">=3.7","drivers":{"http":"1"},"order":1,
+        "description":"REST","abi":2,"app":">=3.7","drivers":{"http":"1"},"order":1,
         "digest":"abc"});
     let parsed = kernel::parse(&json!({"wasm":[entry]})).unwrap();
     assert_eq!(parsed[0].1, "abc");

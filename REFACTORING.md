@@ -414,12 +414,14 @@ Kernel не знает ни одной панели: даёт точки рас�
 - Вид один: `service` или `panel`. Модулю нужны оба — два модуля в одном пакете.
 - Требования: драйверы и их версии, минимальная версия App, ABI; Kernel проверяет до
   загрузки.
-- `order` — порядок вкладки или кнопки и порядок крючков (Variables раньше остальных).
+- `order` — порядок вкладки или кнопки и порядок крючков (Variables раньше остальных);
+  `toolbar` (необязательно) — позиция кнопки панели в верхнем меню, если она не совпадает с
+  порядком крючков (Export и Import стоят на позиции 2 в том же списке). ABI 2 (09.11).
 
 ```json
 { "id": "rest", "kind": "service", "name": "REST", "version": "3.7.0",
   "description": "Send a REST request and inspect the response.",
-  "abi": 1, "app": ">=4.0", "drivers": {"http": "1"}, "order": 1 }
+  "abi": 2, "app": ">=4.0", "drivers": {"http": "1"}, "order": 1 }
 ```
 
 #### Cmd (05.11)
@@ -434,7 +436,7 @@ Kernel не знает ни одной панели: даёт точки рас�
 | ОС | окружение (`env`), буфер обмена | Variables, все |
 | Источники | сырые документы источников по порядку | Variables, Dictionary, Templates, Hints |
 | Документ | прочитать, вставить, заменить, выбрать чек, запустить чек | Templates, Agent |
-| Workspace | `snapshot`, `restore` | Sessions |
+| Workspace | `snapshot`, `restore`, `retry` (как Retry в Shell) | Sessions |
 | Страница | выполнить код на исследуемой странице | Agent |
 | Agent | ход диалога, Stop, регистрация инструментов | Agent |
 | Модули и App | установить, удалить, обновить; обновить App, reload | только встроенные (Settings) |
@@ -457,7 +459,8 @@ Kernel не знает ни одной панели: даёт точки рас�
   `sources.list`/`save`/`token`/`apply`/`open`, `app.update`, `app.reload`;
   `run.output`, `run.result` (тело, исход, язык, Debug или ошибка); `status.set` (с меткой
   запуска — статус запуска, например `3 rows`; у занятого статуса App показывает время с
-  начала); `kv.get`/`put`/`delete`/`watch` (kv модуля в `localStorage` `module:<id>:<key>`,
+  начала; необязательное `stop: {msg, testid}` — кнопка Stop в строке статуса панели,
+  `cmd::status_stoppable`); `workspace.retry`; `kv.get`/`put`/`delete`/`watch` (kv модуля в `localStorage` `module:<id>:<key>`,
   сессионные ключи — в снимке сессии; ответ на `put`/`delete` сессионного ключа с меткой
   приходит после записи сессии, ошибкой — если снимок изменило другое окно); `timer.after`; `lock.acquire`/`lock.release`
   (именованный замок, общий для всех окон App — Web Locks); `notify`, `log`, `diagnostics`.
@@ -554,6 +557,18 @@ Kernel вызывает модуль напрямую и сразу получа
 - Вкладка `Tabs` может переименовываться на месте (`on_rename`: двойной щелчок, Enter или
   blur — сохранить, Escape — отменить) и нести свет (`indicator`); `Tabs.on_reorder` —
   перетаскивание вкладок, значение `["from","to"]`.
+- Общие возможности виджетов (09.11, ABI 2): у любого узла `.title()` (подсказка) и `.label()`
+  (aria); `Tab`: `.closable(&msg)` (× со значением-ключом, `.confirm`, `.close_key`),
+  `.plain()`, `.title()`; `Tabs`: `.on_add` (кнопка `+`, `.add_prompt`, `.add_button`);
+  `TableRow.detail` (содержимое под строкой), `Table.widths` (проценты), варианты строк
+  `current`/`muted`, таблицы `roomy`; `Input.size`; `Editor`: `.placeholder`, `.debounce(мс)`,
+  краевой режим `is-flush` (в теле панели и вкладки); `ui::field(метка, элемент)`,
+  `ui::anchor(метка, url)` (только http/https), `ui::combobox` (поиск по списку,
+  `Choice.detail`), `Slider` с `.labels`, `.marker`, `.disabled`. Варианты: панель `flush`/
+  `padded`/`editor`; текст `warning`/`bold`/`small`/`truncate`/`paragraph`/`pre`; кнопка `tab`/
+  `inline`; `grow`; строка `nowrap`/`end`; колонка `ruled`/`loose`/`indent`/`inset`/`tight`/
+  `quote`; список `dense`/`capped` (строка, ставшая `primary`, прокручивается в видимую
+  область). Подробности — `examples/echo/README.md`.
 - Рисует дерево App: `app/widgets/src/view.rs` (узел → виджет, действие → `Ui`).
 - `Editor { language: "<id модуля>", text, on_change }` — подсветку даёт модуль с этим id
   (Templates показывает шаблон REST языком REST).
@@ -646,6 +661,12 @@ Settings. Пакеты выпуска — `dist/modules/`, как сейчас.
 
 ## Сделано
 
+- 09.11 (фаза 2a): общие возможности UI для возврата старого вида панелей, ABI 2 — вкладки
+  с × и `+`, подсказки и aria, таблицы (ширины, детали строк, варианты), combobox, ползунок с
+  метками, ссылка, поле с подписью, плейсхолдер/задержка/краевой режим редактора, варианты
+  текста/колонок/списков/панелей, Stop в строке статуса панели (`status.set`/`stop`),
+  Cmd `workspace.retry`, порядок кнопок меню (`toolbar` в манифесте, Export/Import в одном
+  списке с панелями). Не сделано: свой testid и `data-*` у узлов, `aria-current` у строк.
 - 09.11: внешний вид панелей возвращён к старому (1e94d2c) без CSS в модулях: новые
   элементы `link`, `heading`, `badge`, `spacer`, многозначный `variant`, `TableRow.variant`;
   исправлены Settings (таблица Modules, шапка), Sessions (таблица), Agent (сообщения,

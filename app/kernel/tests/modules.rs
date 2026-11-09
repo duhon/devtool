@@ -86,7 +86,7 @@ impl Module for Panel {
                 ),
                 Cmd::new("bad", "nope", &json!({})),
                 Cmd::new("install", "modules.install", &json!({})),
-                cmd::status("fetching", "busy"),
+                cmd::status_stoppable("fetching", "busy", &json!("stop"), "panel-stop"),
             ],
             Event::Ui {
                 msg: PanelMsg::Rename,
@@ -246,6 +246,10 @@ fn a_shown_panel_runs_its_commands_and_redraws_from_replies() {
             indicator: "busy".into(),
             detail: Value::Null,
             since: Some(0.0),
+            stop: Some(services_kernel::Stop {
+                msg: serde_json::to_vec(&json!("stop")).unwrap(),
+                testid: "panel-stop".into(),
+            }),
         })
     );
     let errors = &texts(modules.view("panel").unwrap())[1];

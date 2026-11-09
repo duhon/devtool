@@ -42,7 +42,7 @@ pub struct Resolution {
 }
 
 /// The ABI of the exports [`export!`] generates; the Kernel loads only an exact match.
-pub const ABI: u32 = 1;
+pub const ABI: u32 = 2;
 
 /// An event from the Kernel with the module's own UI message decoded.
 #[derive(Clone, Debug, PartialEq)]

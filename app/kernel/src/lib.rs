@@ -25,7 +25,7 @@ pub mod updates;
 pub mod wasm;
 pub mod workspace;
 
-pub use modules::{Effect, Instance, Loaded, Modules, Status};
+pub use modules::{Effect, Instance, Loaded, Modules, Status, Stop};
 
 use std::rc::Rc;
 

@@ -29,7 +29,7 @@ fn every_manifest_is_valid_and_names_known_drivers() {
     let host = Host::new();
     for manifest in served(&host) {
         let id = &manifest.id;
-        assert_eq!(manifest.abi, 1, "{id}");
+        assert_eq!(manifest.abi, services_sdk::ABI, "{id}");
         assert!(!manifest.drivers.is_empty(), "{id}: no drivers");
         for driver in manifest.drivers.keys() {
             assert!(

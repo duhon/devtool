@@ -4,7 +4,8 @@
   "name": "Dictionary",
   "version": "3.7.0",
   "description": "Named sets of variables ({{set:name}}) from sources and your own edits.",
-  "abi": 1,
+  "abi": 2,
   "app": ">=3.7",
-  "order": 5
+  "order": 5,
+  "toolbar": 7
 }

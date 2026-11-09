@@ -4,7 +4,8 @@
   "name": "Settings",
   "version": "3.7.0",
   "description": "Modules and their sources, App updates and the Agent's model. Built into the App.",
-  "abi": 1,
+  "abi": 2,
   "app": ">=3.7",
-  "order": 7
+  "order": 7,
+  "toolbar": 8
 }

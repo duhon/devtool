@@ -31,6 +31,7 @@ pub const NAMES: &[&str] = &[
     "workspace.restore",
     "workspace.copy",
     "workspace.delete",
+    "workspace.retry",
     "page.eval",
     "page.network",
     "agent.turn",
@@ -184,6 +185,12 @@ pub fn workspace_copy(tag: impl Into<String>, source: u64, name: &str) -> Cmd {
 /// Deletes saved workspace `id`; deleting the current one makes the temporary one current.
 pub fn workspace_delete(tag: impl Into<String>, id: u64) -> Cmd {
     Cmd::new(tag, "workspace.delete", &json!({"id": id}))
+}
+
+/// Retries what the App could not do at startup, such as importing the original workspace,
+/// and reconnects to the Host; replies when it was asked for.
+pub fn workspace_retry(tag: impl Into<String>) -> Cmd {
+    Cmd::new(tag, "workspace.retry", &json!({}))
 }
 
 /// What the module adds to the editors: `{"variables": [[reference, value], …]}` (completion
@@ -385,6 +392,32 @@ pub fn status(text: &str, indicator: &str) -> Cmd {
     )
 }
 
+/// A [`status`] the user can stop: the status line's Stop button (`testid`, `console-<panel>-stop`
+/// when empty) is enabled while the indicator is `busy` and sends `stop` to the module's `update`.
+pub fn status_stoppable(text: &str, indicator: &str, stop: &impl Serialize, testid: &str) -> Cmd {
+    Cmd::new(
+        "",
+        "status.set",
+        &json!({"text": text, "indicator": indicator, "stop": {"msg": stop, "testid": testid}}),
+    )
+}
+
+/// A [`status_stoppable`] with structured details for its Debug.
+pub fn status_stoppable_with(
+    text: &str,
+    indicator: &str,
+    detail: &impl Serialize,
+    stop: &impl Serialize,
+    testid: &str,
+) -> Cmd {
+    Cmd::new(
+        "",
+        "status.set",
+        &json!({"text": text, "indicator": indicator, "detail": detail,
+            "stop": {"msg": stop, "testid": testid}}),
+    )
+}
+
 /// A [`status`] with structured details for its Debug, e.g. what discovery found.
 pub fn status_with(text: &str, indicator: &str, detail: &impl Serialize) -> Cmd {
     Cmd::new(
@@ -401,4 +434,19 @@ pub fn notify(text: &str, level: &str) -> Cmd {
 /// A line in the module's Debug log.
 pub fn log(level: &str, text: &str) -> Cmd {
     Cmd::new("", "log", &json!({"level": level, "text": text}))
+}
+
+#[cfg(test)]
+mod stoppable_tests {
+    use super::*;
+
+    #[test]
+    fn a_stoppable_status_carries_its_stop() {
+        let cmd = status_stoppable("Running", "busy", &"stop", "x-stop");
+        let args = cmd.args();
+        assert_eq!(args["stop"]["msg"], "stop");
+        assert_eq!(args["stop"]["testid"], "x-stop");
+        assert!(NAMES.contains(&"workspace.retry"));
+        assert_eq!(workspace_retry("t").name, "workspace.retry");
+    }
 }

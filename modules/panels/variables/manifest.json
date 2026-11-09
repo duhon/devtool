@@ -4,7 +4,8 @@
   "name": "Variables",
   "version": "3.7.0",
   "description": "Session variables ({{var:name}}, {{:name}}) and the environment ({{env:NAME}}).",
-  "abi": 1,
+  "abi": 2,
   "app": ">=3.7",
-  "order": 4
+  "order": 4,
+  "toolbar": 6
 }

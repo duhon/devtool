@@ -108,6 +108,15 @@ pub struct Status {
     pub detail: Value,
     /// When the module became `busy` (milliseconds), for the elapsed clock.
     pub since: Option<f64>,
+    /// What Stop in the status line sends the module, if it can be stopped.
+    pub stop: Option<Stop>,
+}
+
+/// The Stop button of a module's status line: the module's own message and the test id.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Stop {
+    pub msg: Vec<u8>,
+    pub testid: String,
 }
 
 /// Synchronous calls over this many milliseconds are noted in the module's log.
@@ -617,6 +626,12 @@ impl Modules {
                     indicator,
                     detail: args.get("detail").cloned().unwrap_or(Value::Null),
                     since,
+                    stop: args.get("stop").and_then(|stop| {
+                        Some(Stop {
+                            msg: serde_json::to_vec(stop.get("msg")?).ok()?,
+                            testid: stop["testid"].as_str().unwrap_or_default().to_owned(),
+                        })
+                    }),
                 });
                 vec![Effect::Changed { module: owner }]
             }

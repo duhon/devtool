@@ -79,6 +79,10 @@ impl App {
                     return;
                 }
             }
+            "workspace.retry" => {
+                ctx.link().send_message(Msg::Retry);
+                Ok(Value::Null)
+            }
             "app.update" => {
                 if self.update_reply.is_some() || self.updates.busy() {
                     Err(Failure::new("An update is already being installed"))
@@ -301,46 +305,104 @@ impl App {
     }
 
     /// The status line of the panel module in the side panel (`status.set`).
-    pub(super) fn view_side_status(&self) -> Html {
+    pub(super) fn view_side_status(&self, ctx: &Context<Self>) -> Html {
         let Some(id) = &self.side else {
             return Html::default();
         };
         let (status, debug) = services_kernel::activity::panel(id);
+        // A module that can be stopped says what Stop sends it.
+        let (onstop, stop_testid) = match status.stop.clone() {
+            Some(stop) => {
+                let (link, module) = (ctx.link().clone(), id.clone());
+                let testid = if stop.testid.is_empty() {
+                    format!("console-{id}-stop")
+                } else {
+                    stop.testid
+                };
+                (
+                    Some(Callback::from(move |()| {
+                        link.send_message(Msg::PanelUi(module.clone(), (stop.msg.clone(), None)))
+                    })),
+                    testid,
+                )
+            }
+            None => (None, format!("console-{id}-stop")),
+        };
         html! {
             <ConsoleStatus testid={format!("console-{id}-status")} text={status.text.clone()} {debug}
-                running={status.indicator == "busy"} started={status.since}
+                running={status.indicator == "busy"} started={status.since} {onstop} {stop_testid}
                 state={services_widgets::view::indicator_state(&status.indicator)}/>
         }
     }
 
-    /// A toolbar button for each panel module, by `order`.
-    pub(super) fn view_panel_toggles(&self, ctx: &Context<Self>) -> Html {
-        services_kernel::modules::registry::panels()
+    /// The toolbar: a button for each panel module and the App's own Export and Import, in
+    /// one list by their `toolbar` position (a panel without one by its `order`).
+    pub(super) fn view_toolbar(&self, ctx: &Context<Self>, service: &str, supported: bool) -> Html {
+        let mut items: Vec<(u32, Html)> = services_kernel::modules::registry::panels()
             .into_iter()
             .map(|panel| {
-                let active = self.side.as_deref() == Some(panel.id.as_str());
-                let store = self.sessions.borrow();
-                // The App saves the session: the Sessions panel's light shows it even closed.
-                let state = if panel.id == SESSIONS_PANEL && store.saving() {
-                    services_widgets::indicator::Indicator::Running
-                } else if panel.id == SESSIONS_PANEL && store.save_error().is_some() {
-                    services_widgets::indicator::Indicator::Error
-                } else {
-                    services_kernel::modules::registry::status(&panel.id)
-                        .map(|status| services_widgets::view::indicator_state(&status.indicator))
-                        .unwrap_or_default()
-                };
-                drop(store);
-                let id = panel.id.clone();
-                html! {
-                    <button key={panel.id.clone()} class={classes!("console-hints-toggle", active.then_some("active"))}
-                        data-testid={format!("console-{}-toggle", panel.id)} aria-pressed={active.to_string()}
-                        onclick={ctx.link().callback(move |_| Msg::TogglePanel(id.clone()))}>
-                        {panel.name.clone()}{indicator(state, format!("{} status", panel.name))}
-                    </button>
-                }
+                (
+                    panel.toolbar.or(panel.order).unwrap_or(u32::MAX),
+                    self.view_panel_toggle(ctx, &panel),
+                )
             })
-            .collect()
+            .collect();
+        let transfer = |label: &str,
+                        testid: &str,
+                        kind: Transfer,
+                        onclick: Callback<MouseEvent>| {
+            html! {
+                <button key={testid.to_owned()} class={classes!("console-import-toggle", (!supported).then_some("is-unavailable"))}
+                    data-testid={testid.to_owned()} disabled={!supported} {onclick}>
+                    {label.to_owned()}{indicator(self.transfer_indicator(service, kind), format!("{label} status"))}
+                </button>
+            }
+        };
+        items.push((
+            EXPORT_POSITION,
+            transfer(
+                "Export",
+                "console-export",
+                Transfer::Export,
+                ctx.link().callback(|_| Msg::Export),
+            ),
+        ));
+        items.push((
+            EXPORT_POSITION,
+            transfer(
+                "Import",
+                "console-import",
+                Transfer::Import,
+                ctx.link().callback(|_| Msg::Import),
+            ),
+        ));
+        // Stable: Export stays before Import, and a panel keeps its place among equals.
+        items.sort_by_key(|(position, _)| *position);
+        items.into_iter().map(|(_, html)| html).collect()
+    }
+
+    fn view_panel_toggle(&self, ctx: &Context<Self>, panel: &services_sdk::Manifest) -> Html {
+        let active = self.side.as_deref() == Some(panel.id.as_str());
+        let store = self.sessions.borrow();
+        // The App saves the session: the Sessions panel's light shows it even closed.
+        let state = if panel.id == SESSIONS_PANEL && store.saving() {
+            services_widgets::indicator::Indicator::Running
+        } else if panel.id == SESSIONS_PANEL && store.save_error().is_some() {
+            services_widgets::indicator::Indicator::Error
+        } else {
+            services_kernel::modules::registry::status(&panel.id)
+                .map(|status| services_widgets::view::indicator_state(&status.indicator))
+                .unwrap_or_default()
+        };
+        drop(store);
+        let id = panel.id.clone();
+        html! {
+            <button key={panel.id.clone()} class={classes!("console-hints-toggle", active.then_some("active"))}
+                data-testid={format!("console-{}-toggle", panel.id)} aria-pressed={active.to_string()}
+                onclick={ctx.link().callback(move |_| Msg::TogglePanel(id.clone()))}>
+                {panel.name.clone()}{indicator(state, format!("{} status", panel.name))}
+            </button>
+        }
     }
 
     /// Closes the panel module of the side panel: it stops until opened again.
@@ -362,3 +424,6 @@ impl App {
 
 /// The built-in panel of the saved sessions.
 const SESSIONS_PANEL: &str = "sessions";
+
+/// Where Export and Import sit among the toolbar's panel buttons (a manifest's `toolbar`).
+const EXPORT_POSITION: u32 = 2;

@@ -4,7 +4,8 @@
   "name": "Hints",
   "version": "3.7.0",
   "description": "Completion hints of each service: from sources, or your own for the session.",
-  "abi": 1,
+  "abi": 2,
   "app": ">=3.7",
-  "order": 3
+  "order": 3,
+  "toolbar": 5
 }

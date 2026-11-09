@@ -1326,10 +1326,12 @@ impl Settings {
                         ui::Choice {
                             value: "github".into(),
                             label: "GitHub repository".into(),
+                            ..Default::default()
                         },
                         ui::Choice {
                             value: "folder".into(),
                             label: "Folder".into(),
+                            ..Default::default()
                         },
                     ],
                     draft.kind.clone(),
@@ -1400,6 +1402,7 @@ impl Settings {
             .map(|model| ui::Choice {
                 value: model.id.clone(),
                 label: format!("{} · {}", model.name, category(model)),
+                ..Default::default()
             })
             .collect();
         if !choices.iter().any(|choice| choice.value == current) {
@@ -1412,6 +1415,7 @@ impl Settings {
                     } else {
                         current.clone()
                     },
+                    ..Default::default()
                 },
             );
         }

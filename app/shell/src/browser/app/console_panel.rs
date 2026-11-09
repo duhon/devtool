@@ -684,14 +684,13 @@ impl App {
                         {self.view_side(ctx)}
                     </aside>
                     <div class="console-status-region console-right-status" hidden={self.side.is_none()}>
-                        {self.view_side_status()}
+                        {self.view_side_status(ctx)}
                     </div>
                 </div>
             <div class="console-session-name" data-testid="console-session-name" data-session-id={self.sessions.borrow().library.current.to_string()} data-storage-busy={self.sessions.borrow().saving().to_string()} data-busy={(!busy.is_empty()).to_string()} data-busy-reason={busy.join(", ")} title={self.sessions.borrow().library.name().to_owned()}>{self.sessions.borrow().library.name()}</div>
             <nav class="console-toolbar" aria-label="Console tools">
-                // Hidden but kept in place until the service can transfer, so the toolbar does not shift.
-                <button class={classes!("console-import-toggle",(!supported).then_some("is-unavailable"))} data-testid="console-export" disabled={!supported} onclick={ctx.link().callback(|_|Msg::Export)}>{"Export"}{indicator(self.transfer_indicator(service,Transfer::Export),"Export status".into())}</button><button class={classes!("console-import-toggle",(!supported).then_some("is-unavailable"))} data-testid="console-import" disabled={!supported} onclick={ctx.link().callback(|_|Msg::Import)}>{"Import"}{indicator(self.transfer_indicator(service,Transfer::Import),"Import status".into())}</button>
-                {self.view_panel_toggles(ctx)}
+                // Export and Import stay in place (unavailable) until the service can transfer, so the toolbar does not shift.
+                {self.view_toolbar(ctx,service,supported)}
             </nav>
             </div>
             if let Some(command)=&self.export_text{<div class="console-hints-overlay"><div class="console-hints-panel">

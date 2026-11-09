@@ -29,6 +29,10 @@ pub struct Manifest {
     /// Tab or button position and the order of request hooks.
     #[serde(default)]
     pub order: Option<u32>,
+    /// A panel's position among the toolbar buttons (the App's own buttons have fixed
+    /// ones); `order` when absent. Apart from `order`, which a panel's hooks run by.
+    #[serde(default)]
+    pub toolbar: Option<u32>,
 }
 
 impl Manifest {
