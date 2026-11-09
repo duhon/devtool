@@ -14,7 +14,7 @@
     const frame = document.createElement('iframe');
     frame.style.cssText = 'position:fixed;left:0;top:0;width:1000px;height:700px;opacity:0;pointer-events:none;border:0';
     const started = performance.now();
-    frame.src = 'panel.html';
+    frame.src = 'services.html';
     document.body.appendChild(frame);
     await waitFor(() => [...(frame.contentDocument?.querySelectorAll('.console-root .editor') || [])].some(visible),
       {message: 'A reopened panel must show its Console', interval: 2});

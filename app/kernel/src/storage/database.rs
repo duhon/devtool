@@ -1,5 +1,8 @@
-use super::{error, window};
-use crate::sessions::Library;
+//! The IndexedDB of saved sessions (`servicesConsole`/`sessions`, one `library` record):
+//! each change reads and writes it in one transaction.
+
+use crate::js::{error, window};
+use crate::workspace::Library;
 use js_sys::{Function, Promise};
 use std::rc::Rc;
 use wasm_bindgen::{JsCast, JsValue, closure::Closure};
@@ -16,7 +19,8 @@ fn settle(callback: &Function, value: &JsValue) {
     }
 }
 
-pub(super) async fn request(request: IdbRequest) -> Result<JsValue, String> {
+/// Waits for an IndexedDB request.
+pub(crate) async fn request(request: IdbRequest) -> Result<JsValue, String> {
     let mut success = None;
     let mut failure = None;
     let promise = Promise::new(&mut |resolve, reject| {

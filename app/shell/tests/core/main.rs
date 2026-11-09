@@ -4,7 +4,6 @@
 
 mod completion;
 mod console;
-mod format;
 mod language;
 mod services;
 mod storage;

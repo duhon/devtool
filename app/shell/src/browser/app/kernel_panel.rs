@@ -4,26 +4,22 @@
 //! carry out.
 
 use super::*;
+use crate::browser::on;
 use services_kernel::Effect;
-use services_sdk::{Chunk, Failure};
-use std::cell::Cell;
+use services_kernel::requests::{After, Finish, Hosted, Run as KernelRun, STOPPED, strip};
+use services_kernel::storage::{agent_options, kv};
+use services_sdk::Failure;
 use std::collections::VecDeque;
-use wasm_bindgen::JsValue;
-
-/// HTTP cannot take a request back once it is sent.
-const STOPPED: &str = "Client request stopped. The remote server may still finish processing; committed changes are not rolled back.";
 
 /// Quiet time after an edit before the module hears of the changed check.
 const DOCUMENT_DELAY_MS: i32 = 600;
-/// Module log lines a status's Debug shows.
-const STATUS_LOG: usize = 20;
 
 #[derive(Default)]
 pub(super) struct KernelState {
     /// Host requests of module driver calls in flight, by (module, tag).
     pub(super) calls: BTreeMap<(String, String), u32>,
-    /// Web Locks modules asked for, by (module, name): releasing them lets the next holder in.
-    locks: BTreeMap<(String, String), Lock>,
+    /// Web Locks modules asked for: releasing them lets the next holder in.
+    locks: services_kernel::locks::Locks,
     /// Runs in flight by run key.
     runs: BTreeMap<String, KernelRun>,
     /// The pending Document event of each service.
@@ -39,35 +35,6 @@ pub(super) struct KernelState {
     pub(super) waiting: Option<(String, String, usize)>,
 }
 
-struct KernelRun {
-    /// What the run sends: `params` (the driver call, or the `check` its module runs) and
-    /// `history`.
-    message: Value,
-    /// The source and title of the check with their variables resolved, and the values
-    /// of the sensitive ones: History masks them. `None` when they did not resolve.
-    resolved: Option<(String, String, Vec<String>)>,
-    /// The module runs the check itself (`Run`): it has started.
-    started: bool,
-    /// The module's status text for the run, like `3 rows`.
-    summary: Option<String>,
-}
-
-/// A Web Lock: `release` lets it go once granted; dropping it before then gives it back as
-/// soon as it is granted.
-pub(super) struct Lock {
-    release: Rc<RefCell<Option<js_sys::Function>>>,
-    dropped: Rc<Cell<bool>>,
-}
-
-impl Lock {
-    fn release(&self) {
-        self.dropped.set(true);
-        if let Some(release) = self.release.borrow_mut().take() {
-            let _ = release.call0(&JsValue::NULL);
-        }
-    }
-}
-
 impl App {
     /// A run of a Kernel service: the driver call the panels prepared, or the check its
     /// module runs itself.
@@ -78,43 +45,23 @@ impl App {
         key: &str,
         message: Value,
     ) {
-        let history = &message["history"];
-        let resolve = |text: &str| {
-            crate::kernel::with(|modules| modules.resolve(text, false))
-                .map(|resolution| (resolution.text, resolution.secrets))
-        };
-        let resolved =
-            resolve(history["source"].as_str().unwrap_or("")).and_then(|(source, mut secrets)| {
-                let (title, more) = resolve(history["title"].as_str().unwrap_or(""))?;
-                secrets.extend(more);
-                Ok((source, title, secrets))
-            });
         let module_runs = message["params"]["check"].as_str().map(str::to_owned);
-        self.kernel.runs.insert(
-            key.to_owned(),
-            KernelRun {
-                message,
-                resolved: None,
-                started: false,
-                summary: None,
-            },
-        );
+        let mut run = KernelRun::new(message);
+        let resolved = run.resolve();
+        self.kernel.runs.insert(key.to_owned(), run);
         if let Some(run) = self.runs.get_mut(key) {
             run.debug["service"] = json!(service);
         }
-        let resolved = match resolved {
-            Ok(resolved) => resolved,
-            Err(error) => {
-                let error = format!("Variables could not be resolved: {error}");
-                return self.kernel_finish(ctx, key, Finish::Failed(error, Value::Null));
-            }
-        };
+        if let Err(error) = resolved {
+            return self.kernel_finish(ctx, key, Finish::Failed(error, Value::Null));
+        }
         let state = self.kernel.runs.get_mut(key).expect("just inserted");
-        state.resolved = Some(resolved);
         if let Some(text) = module_runs {
             let check = services_kernel::document::check(service, &text, &json!({}));
             state.started = true;
-            let effects = crate::kernel::with(|modules| modules.start_run(service, key, check));
+            let effects = services_kernel::modules::registry::with(|modules| {
+                modules.start_run(service, key, check)
+            });
             return self.kernel_effects(ctx, effects);
         }
         let call = &state.message["params"];
@@ -124,8 +71,9 @@ impl App {
         let id = self.transport.request(
             request,
             false,
-            ctx.link()
-                .callback(move |reply| Msg::KernelRunReplied(k.clone(), reply)),
+            on(ctx
+                .link()
+                .callback(move |reply| Msg::KernelRunReplied(k.clone(), reply))),
         );
         if let Some(run) = self.runs.get_mut(key) {
             run.stream = Some(id);
@@ -156,126 +104,17 @@ impl App {
             return;
         };
         let service = run.editor.trim_start_matches("console:").to_owned();
-        let started = run.started;
-        let begun = state.message["history"]["startedAt"]
-            .as_f64()
-            .unwrap_or(started);
-        let ended = js_sys::Date::now();
-        let call = state.message["params"].clone();
-        // A check its module ran itself has no driver call of its own.
-        let driver_call = if call["check"].is_string() {
-            services_sdk::DriverCall::default()
-        } else {
-            crate::kernel::call_of(&call)
+        let (reply, effects) = state.finish(
+            &service,
+            finish,
+            &run.stdout,
+            run.started,
+            js_sys::Date::now(),
+        );
+        let reply = match reply {
+            Ok(result) => Reply::Result(result),
+            Err(error) => Reply::Error(error),
         };
-        let (reply, status, outcome, text) = match finish {
-            Finish::Stopped => {
-                let warning = STOPPED;
-                let mut result = json!({"cancelled":true,"warning":warning,"request":call});
-                if state.started && !run.stdout.is_empty() {
-                    result["body"] = json!(run.stdout);
-                }
-                (
-                    Reply::Result(result),
-                    "stopped",
-                    "Stopped".to_owned(),
-                    warning.to_owned(),
-                )
-            }
-            Finish::Ran(result) => {
-                let debug = &result["debug"];
-                let request = if debug["request"].is_null() {
-                    call.clone()
-                } else {
-                    debug["request"].clone()
-                };
-                if let Some(error) = result["error"].as_str() {
-                    (
-                        Reply::Error(json!({"error":error,"request":request,"debug":debug,
-                            "durationMs":ended - started})),
-                        "error",
-                        "ERROR".to_owned(),
-                        error.to_owned(),
-                    )
-                } else {
-                    let outcome = result["outcome"].as_str().unwrap_or("OK").to_owned();
-                    let body = result["body"].as_str().unwrap_or("").to_owned();
-                    let mut reply = json!({"body":body,"outcome":outcome,
-                        "language":result["language"],"durationMs":ended - started,
-                        "request":request,"debug":debug,"columns":result["columns"]});
-                    if let Some(summary) = &state.summary {
-                        reply["summary"] = json!(summary);
-                    }
-                    (
-                        Reply::Result(reply),
-                        if outcome == "ERROR" {
-                            "error"
-                        } else {
-                            "success"
-                        },
-                        outcome,
-                        body,
-                    )
-                }
-            }
-            Finish::Failed(error, details) => (
-                Reply::Error(json!({"error":error,"request":call,"reply":details,
-                    "durationMs":ended - started})),
-                "error",
-                "ERROR".to_owned(),
-                error,
-            ),
-            Finish::Answered(response) => {
-                let chunk = Chunk {
-                    call: Some(driver_call.clone()),
-                    response: serde_json::to_vec(&response).unwrap_or_default(),
-                    index: 0,
-                    last: true,
-                };
-                let rendered = crate::kernel::with(|modules| modules.render(&service, chunk));
-                match rendered {
-                    Ok(rendered) => (
-                        Reply::Result(json!({"body":rendered.text,"outcome":rendered.outcome,
-                            "language":rendered.language,"durationMs":ended - started,
-                            "request":call,"response":response,
-                            "columns":rendered.columns.iter()
-                                .map(|column| [&column.name, &column.kind])
-                                .collect::<Vec<_>>()})),
-                        if rendered.outcome == "ERROR" {
-                            "error"
-                        } else {
-                            "success"
-                        },
-                        rendered.outcome,
-                        rendered.text,
-                    ),
-                    Err(error) => {
-                        let error = format!("The response could not be shown: {error}");
-                        (
-                            Reply::Error(json!({"error":error,"request":call,"response":response,
-                                "durationMs":ended - started})),
-                            "error",
-                            "ERROR".to_owned(),
-                            error,
-                        )
-                    }
-                }
-            }
-        };
-        let history = &state.message["history"];
-        let mut record = json!({"service":service,"started":begun as u64,"ended":ended as u64,
-            "status":status,"outcome":outcome,"text":text,"defer":history["defer"] == true});
-        if history.is_object() {
-            record["checkId"] = history["checkId"].clone();
-            record["sessionId"] = history["sessionId"].clone();
-        }
-        // Without the resolved source the panels get none: it may hold secrets.
-        if let Some((source, title, secrets)) = &state.resolved {
-            record["source"] = json!(source);
-            record["title"] = json!(title);
-            record["secrets"] = json!(secrets);
-        }
-        let effects = crate::kernel::with(|modules| modules.finished(&driver_call, &record));
         self.kernel_effects(ctx, effects);
         Component::update(self, ctx, Msg::Reply(key.to_owned(), service, reply));
     }
@@ -322,9 +161,7 @@ impl App {
                     }
                 }
                 Effect::Unlock { module, name } => {
-                    if let Some(lock) = self.kernel.locks.remove(&(module, name)) {
-                        lock.release();
-                    }
+                    self.kernel.locks.release(module, name);
                 }
                 Effect::Notify { text, .. } => self.notice = Some(Notice::new(text)),
                 Effect::Command { module, cmd } => {
@@ -371,16 +208,18 @@ impl App {
             if cmd.tag.is_empty() {
                 Vec::new()
             } else {
-                crate::kernel::with(|modules| modules.reply(module, &cmd.tag, result))
+                services_kernel::modules::registry::with(|modules| {
+                    modules.reply(module, &cmd.tag, result)
+                })
             }
         };
         if let Some(effects) = self.agent_command(ctx, module, &cmd) {
             return effects;
         }
-        let mut after = After::Reply;
+        let after;
         let hosted = match cmd.name.as_str() {
             "kv.get" | "kv.put" | "kv.delete" => {
-                let result = self.kv(module, &cmd.name, &args);
+                let result = kv(&self.sessions, module, &cmd.name, &args);
                 // A session write answers once the saved session has it: a write over another
                 // window's change fails there.
                 if cmd.name != "kv.get"
@@ -390,7 +229,7 @@ impl App {
                     let (shared, link) = (self.sessions.clone(), ctx.link().clone());
                     let (module, tag) = (module.to_owned(), cmd.tag.clone());
                     spawn_local(async move {
-                        let saved = super::super::sessions::Store::flush(&shared).await;
+                        let saved = services_kernel::workspace::store::Store::flush(&shared).await;
                         let saved = saved.and_then(|()| match shared.borrow().save_error() {
                             Some(error) => Err(error),
                             None => Ok(()),
@@ -406,7 +245,7 @@ impl App {
                 });
             }
             "editor.contribute" => {
-                if crate::kernel::contribute(module, &args) {
+                if services_kernel::modules::registry::contribute(module, &args) {
                     self.contributed();
                 }
                 return Vec::new();
@@ -415,10 +254,10 @@ impl App {
                 let service = self.console_service.clone();
                 let text = self.docs.get(&service).cloned().unwrap_or_default();
                 let line = self.active_console_line(&service).unwrap_or(0);
-                let sections = crate::services::template_sections(&service);
-                let services: Vec<Value> = crate::services::ids()
+                let sections = services_kernel::modules::services::template_sections(&service);
+                let services: Vec<Value> = services_kernel::modules::services::ids()
                     .into_iter()
-                    .map(|id| json!({"name": crate::services::label(&id), "id": id}))
+                    .map(|id| json!({"name": services_kernel::modules::services::label(&id), "id": id}))
                     .collect();
                 let check_id = self
                     .active_console_line(&service)
@@ -445,20 +284,6 @@ impl App {
                 let _ = window().navigator().clipboard().write_text(&text);
                 return answer(Ok(Value::Null));
             }
-            "history.insert" => {
-                let mut request = args;
-                request["service"] = json!("history");
-                request["op"] = json!("insert");
-                request
-            }
-            "history.search" => {
-                let mut request = args;
-                request["service"] = json!("history");
-                if request["op"].is_null() {
-                    request["op"] = json!("list");
-                }
-                request
-            }
             "workspace.list" => return answer(Ok(self.workspace_list())),
             "workspace.restore" | "workspace.copy" | "workspace.delete" => {
                 if self.session_reply.is_some() {
@@ -475,33 +300,6 @@ impl App {
                 });
                 return Vec::new();
             }
-            "os.env" => json!({"service":"env"}),
-            "sources.read" => json!({"service":"sources","op":"read","name":args["name"]}),
-            "modules.check" if !self.transport.is_native() => return answer(Ok(Value::Null)),
-            "modules.check" => {
-                json!({"service":"sources","op":"check","force":args["force"] == true})
-            }
-            "modules.install" => {
-                after = After::Modules(None);
-                json!({"service":"modules","op":"install","source":args["source"],
-                    "module":args["module"],"version":args["version"]})
-            }
-            "modules.remove" => {
-                let module = args["module"].as_str().unwrap_or_default().to_owned();
-                after = After::Modules((args["forget"] == true).then_some(module));
-                json!({"service":"modules","op":"remove","module":args["module"],"forget":args["forget"] == true})
-            }
-            "sources.list" => json!({"service":"sources","op":"get"}),
-            "sources.save" => {
-                after = After::Sources;
-                json!({"service":"sources","op":"save","sources":args["sources"]})
-            }
-            "sources.token" => json!({"service":"sources","op":"token","token":args["token"]}),
-            "sources.apply" => {
-                after = After::Sources;
-                json!({"service":"sources","op":"apply","source":args["source"]})
-            }
-            "sources.open" => json!({"service":"sources","op":"open","source":args["source"]}),
             "app.update" => {
                 if self.update_reply.is_some() || self.updates.busy() {
                     return answer(Err(Failure::new("An update is already being installed")));
@@ -516,27 +314,28 @@ impl App {
                 ctx.link().send_message(Msg::ReloadUpdate);
                 return Vec::new();
             }
-            "agent.models" => {
-                after = After::Models;
-                json!({"service":"agent_models"})
-            }
             "agent.options" => return answer(agent_options(&args["options"])),
-            name => {
-                return answer(Err(Failure::new(format!(
-                    "\"{name}\" is not available to modules yet"
-                ))));
-            }
+            name => match services_kernel::requests::hosted(name, args, self.transport.is_native())
+            {
+                Some(Hosted::Request(request, then)) => {
+                    after = then;
+                    request
+                }
+                Some(Hosted::Done(value)) => return answer(Ok(value)),
+                None => {
+                    return answer(Err(Failure::new(format!(
+                        "\"{name}\" is not available to modules yet"
+                    ))));
+                }
+            },
         };
-        if cmd.name == "history.insert" {
-            after = After::History;
-        }
         let (m, t) = (module.to_owned(), cmd.tag.clone());
         let id = self.transport.request(
             hosted,
             false,
-            ctx.link().callback(move |reply| {
+            on(ctx.link().callback(move |reply| {
                 Msg::KernelHosted(m.clone(), t.clone(), after.clone(), reply)
-            }),
+            })),
         );
         if !cmd.tag.is_empty() {
             self.kernel.calls.insert((module.to_owned(), cmd.tag), id);
@@ -544,64 +343,11 @@ impl App {
         Vec::new()
     }
 
-    /// A module's kv: session keys live in the session snapshot, the others in
-    /// `localStorage` as `module:<id>:<key>`.
-    /// A session write of a saved session answers `true`: it is still being saved.
-    fn kv(&mut self, module: &str, name: &str, args: &Value) -> Result<Value, Failure> {
-        let key = args["key"].as_str().unwrap_or("").to_owned();
-        let session = self
-            .sessions
-            .borrow()
-            .library
-            .snapshot()
-            .modules
-            .get(module)
-            .and_then(|keys| keys.get(&key))
-            .cloned();
-        let failed = |error: String| Failure::new(error);
-        match name {
-            "kv.get" => match session {
-                Some(value) => Ok(value),
-                None => local(module, name, &key, args),
-            },
-            "kv.put" if args["session"] == true => {
-                let value = args["value"].clone();
-                self.sessions
-                    .borrow_mut()
-                    .update(|snapshot| {
-                        snapshot
-                            .modules
-                            .entry(module.to_owned())
-                            .or_default()
-                            .insert(key.clone(), value);
-                    })
-                    .map_err(failed)?;
-                Ok(Value::Bool(self.sessions.borrow().library.current != 0))
-            }
-            "kv.delete" if session.is_some() => {
-                self.sessions
-                    .borrow_mut()
-                    .update(|snapshot| {
-                        if let Some(keys) = snapshot.modules.get_mut(module) {
-                            keys.remove(&key);
-                            if keys.is_empty() {
-                                snapshot.modules.remove(module);
-                            }
-                        }
-                    })
-                    .map_err(failed)?;
-                local(module, name, &key, args)?;
-                Ok(Value::Bool(self.sessions.borrow().library.current != 0))
-            }
-            _ => local(module, name, &key, args),
-        }
-    }
-
     /// What the modules add to the editors changed: the console editors complete anew.
     fn contributed(&mut self) {
-        self.vars = crate::kernel::variables();
+        self.vars = services_kernel::modules::registry::variables();
         services_widgets::view::hints_changed();
-        self.templates = crate::kernel::contributions("templates")
+        self.templates = services_kernel::modules::registry::contributions("templates")
             .into_iter()
             .filter_map(|library| {
                 serde_json::from_value::<services_contracts::templates::Library>(library).ok()
@@ -610,7 +356,7 @@ impl App {
                 all.extend(library);
                 all
             });
-        self.hints = crate::kernel::contributions("hints")
+        self.hints = services_kernel::modules::registry::contributions("hints")
             .into_iter()
             .filter_map(|hints| serde_json::from_value::<BTreeMap<String, String>>(hints).ok())
             .fold(BTreeMap::new(), |mut all, hints| {
@@ -622,7 +368,8 @@ impl App {
     /// Whether a console run must wait: its module loads, or the panels read what their
     /// hooks need.
     pub(super) fn kernel_busy(&self, service: &str) -> bool {
-        (self.kernel.loading > 0 && crate::kernel::loading(service)) || crate::kernel::settling()
+        (self.kernel.loading > 0 && services_kernel::modules::registry::loading(service))
+            || services_kernel::modules::registry::settling()
     }
 
     /// The console run that waited goes once nothing holds it back.
@@ -654,13 +401,13 @@ impl App {
         self.transport.request(
             json!({"service":"drivers","driver":driver,"op":op,"request":request,"module":module,"tag":tag}),
             stream,
-            ctx.link().callback(move |reply| {
+            on(ctx.link().callback(move |reply| {
                 if stream {
                     Msg::KernelStreamed(m.clone(), t.clone(), reply)
                 } else {
                     Msg::KernelReplied(m.clone(), t.clone(), reply)
                 }
-            }),
+            })),
         )
     }
 
@@ -686,11 +433,14 @@ impl App {
             Reply::Result(value) => (Ok(strip(value)), true),
             Reply::Error(value) => (Err(services_kernel::modules::failure(&strip(value))), true),
         };
-        let mut effects = crate::kernel::with(|modules| modules.reply(module, tag, result));
+        let mut effects =
+            services_kernel::modules::registry::with(|modules| modules.reply(module, tag, result));
         if end {
             self.kernel.calls.remove(&key);
             let (module, tag) = &key;
-            effects.extend(crate::kernel::with(|modules| modules.end(module, tag)));
+            effects.extend(services_kernel::modules::registry::with(|modules| {
+                modules.end(module, tag)
+            }));
         }
         self.kernel_effects(ctx, effects);
     }
@@ -704,41 +454,10 @@ impl App {
         tag: &str,
         name: &str,
     ) -> Result<(), String> {
-        let locks = crate::browser::get(window().navigator().as_ref(), "locks");
-        if locks.is_undefined() {
-            return Err("Locks are not available in this browser".into());
-        }
-        let release: Rc<RefCell<Option<js_sys::Function>>> = Rc::default();
-        let dropped: Rc<Cell<bool>> = Rc::default();
         let link = ctx.link().clone();
         let (m, t) = (module.to_owned(), tag.to_owned());
-        let (held, gone) = (release.clone(), dropped.clone());
-        let granted = Closure::once_into_js(move |_: JsValue| -> js_sys::Promise {
-            js_sys::Promise::new(&mut |resolve, _| {
-                if gone.get() {
-                    let _ = resolve.call0(&JsValue::NULL);
-                } else {
-                    *held.borrow_mut() = Some(resolve);
-                    link.send_message(Msg::KernelTimer(m.clone(), t.clone()));
-                }
-            })
-        });
-        crate::browser::call(
-            &locks,
-            "request",
-            &[
-                JsValue::from_str(&format!("module:{module}:{name}")),
-                granted,
-            ],
-        )
-        .map_err(super::error)?;
-        if let Some(previous) = self.kernel.locks.insert(
-            (module.to_owned(), name.to_owned()),
-            Lock { release, dropped },
-        ) {
-            previous.release();
-        }
-        Ok(())
+        let granted = move |()| link.send_message(Msg::KernelTimer(m.clone(), t.clone()));
+        self.kernel.locks.acquire(module, name, granted.into())
     }
 
     /// Whether the run `key` is one its module runs itself.
@@ -756,7 +475,8 @@ impl App {
             .and_then(|rest| rest.rsplit_once(':'))
             .map_or("", |(service, _)| service)
             .to_owned();
-        let effects = crate::kernel::with(|modules| modules.cancel_run(&service, key));
+        let effects =
+            services_kernel::modules::registry::with(|modules| modules.cancel_run(&service, key));
         self.kernel_effects(ctx, effects);
         self.kernel_finish(ctx, key, Finish::Stopped);
         true
@@ -786,7 +506,9 @@ impl App {
                 Err(services_kernel::modules::failure(&strip(value)))
             }
         };
-        let effects = crate::kernel::with(|modules| modules.reply(&module, &tag, result));
+        let effects = services_kernel::modules::registry::with(|modules| {
+            modules.reply(&module, &tag, result)
+        });
         self.kernel_effects(ctx, effects);
     }
 
@@ -832,7 +554,9 @@ impl App {
     }
 
     pub(super) fn kernel_timer(&mut self, ctx: &Context<Self>, module: &str, tag: &str) {
-        let effects = crate::kernel::with(|modules| modules.reply(module, tag, Ok(Value::Null)));
+        let effects = services_kernel::modules::registry::with(|modules| {
+            modules.reply(module, tag, Ok(Value::Null))
+        });
         self.kernel_effects(ctx, effects);
     }
 
@@ -863,7 +587,7 @@ impl App {
     /// After an edit, a move to another check or a switch of service, the module hears of
     /// the current check once the user pauses.
     pub(super) fn kernel_schedule(&mut self, ctx: &Context<Self>, service: &str) {
-        if !crate::kernel::is_service(service) || self.hidden {
+        if !services_kernel::modules::registry::is_service(service) || self.hidden {
             return;
         }
         if let Some(id) = self.kernel.timers.remove(service) {
@@ -885,7 +609,7 @@ impl App {
         if let Some(id) = self.kernel.timers.remove(service) {
             window().clear_timeout_with_handle(id);
         }
-        if self.hidden || !crate::kernel::loaded(service) {
+        if self.hidden || !services_kernel::modules::registry::loaded(service) {
             return;
         }
         let Some(check) = self.kernel_check(service) else {
@@ -897,7 +621,7 @@ impl App {
         self.kernel
             .sent
             .insert(service.to_owned(), check.text.clone());
-        let effects = crate::kernel::broadcast(crate::kernel::document(check));
+        let effects = services_kernel::events::broadcast(services_kernel::events::document(check));
         self.kernel_effects(ctx, effects);
     }
 
@@ -909,8 +633,9 @@ impl App {
         let check = self
             .kernel_check(service)
             .unwrap_or_else(|| services_kernel::document::check(service, "", &json!({})));
-        let effects =
-            crate::kernel::with(|modules| modules.send(&id, crate::kernel::document(check)));
+        let effects = services_kernel::modules::registry::with(|modules| {
+            modules.send(&id, services_kernel::events::document(check))
+        });
         self.kernel_effects(ctx, effects);
     }
 
@@ -923,12 +648,13 @@ impl App {
         pos: u32,
     ) {
         let service = check.service.clone();
-        if self.hidden || !crate::kernel::loaded(&service) {
+        if self.hidden || !services_kernel::modules::registry::loaded(&service) {
             return;
         }
         let owner = self.status_owner(&service);
         self.kernel.owners.insert(service, owner);
-        let effects = crate::kernel::broadcast(crate::kernel::hints(check, pos));
+        let effects =
+            services_kernel::events::broadcast(services_kernel::events::hints(check, pos));
         self.kernel_effects(ctx, effects);
     }
 
@@ -938,8 +664,8 @@ impl App {
             return;
         }
         let owner = self.status_owner(service);
-        if !crate::kernel::loaded(service) {
-            let error = crate::kernel::unavailable(service);
+        if !services_kernel::modules::registry::loaded(service) {
+            let error = services_kernel::modules::registry::unavailable(service);
             self.set_module_status(
                 service,
                 format!("{} · Discovery · ERROR · {error}", time()),
@@ -952,7 +678,7 @@ impl App {
             return;
         };
         self.kernel.owners.insert(service.to_owned(), owner);
-        let effects = crate::kernel::broadcast(crate::kernel::discover(check));
+        let effects = services_kernel::events::broadcast(services_kernel::events::discover(check));
         self.kernel_effects(ctx, effects);
     }
 
@@ -967,7 +693,7 @@ impl App {
                 .map(Vec::as_slice)
                 .unwrap_or(&[]),
         )?;
-        console::kernel_run(service, &block.text)
+        services_kernel::requests::kernel_run(service, &block.text)
             .ok()
             .map(|(check, _)| check)
     }
@@ -975,22 +701,16 @@ impl App {
     /// Shows the module's status (`Discovery · OK`, …) where the console shows discovery,
     /// on the check that started it.
     fn kernel_status(&mut self, service: &str) {
-        let Some(services_kernel::Status {
-            text,
-            indicator,
-            detail,
-            ..
-        }) = crate::kernel::status(service)
+        let Some((
+            services_kernel::Status {
+                text, indicator, ..
+            },
+            debug,
+        )) = services_kernel::activity::service(service)
         else {
             return;
         };
         let busy = indicator == "busy";
-        let log: Vec<Value> = crate::kernel::log(service, STATUS_LOG)
-            .into_iter()
-            .map(|(level, text)| json!({"level":level,"text":text}))
-            .collect();
-        let debug = json!({"module":service,"status":text,"indicator":indicator,"detail":detail,
-            "log":log});
         let request = self
             .kernel
             .calls
@@ -1038,7 +758,7 @@ impl App {
         let Some(id) = self.side.clone() else {
             return Html::default();
         };
-        let node = crate::kernel::with(|modules| modules.view(&id).cloned());
+        let node = services_kernel::modules::registry::with(|modules| modules.view(&id).cloned());
         let on = ctx
             .link()
             .callback(move |action| Msg::PanelUi(id.clone(), action));
@@ -1047,7 +767,7 @@ impl App {
             <section class="module-panel" data-testid={format!("{id}-panel")} data-module={id.clone()}>
                 if let Some(node) = node {
                     <services_widgets::view::ModuleView module={id.clone()} node={std::rc::Rc::new(node)} {on}/>
-                } else if let Some(failure) = crate::kernel::failure(&id) {
+                } else if let Some(failure) = services_kernel::modules::registry::failure(&id) {
                     <span class="ui-text is-danger">{failure}</span>
                 }
             </section>
@@ -1059,21 +779,7 @@ impl App {
         let Some(id) = &self.side else {
             return Html::default();
         };
-        let status = crate::kernel::status(id).unwrap_or_default();
-        let log: Vec<Value> = crate::kernel::log(id, STATUS_LOG)
-            .into_iter()
-            .map(|(level, text)| json!({"level":level,"text":text}))
-            .collect();
-        // The module's details come first, so they show without unfolding.
-        let mut debug = match &status.detail {
-            Value::Object(detail) => Value::Object(detail.clone()),
-            Value::Null => json!({}),
-            detail => json!({"detail":detail}),
-        };
-        debug["module"] = json!(id);
-        debug["status"] = json!(status.text);
-        debug["indicator"] = json!(status.indicator);
-        debug["log"] = json!(log);
+        let (status, debug) = services_kernel::activity::panel(id);
         html! {
             <ConsoleStatus testid={format!("console-{id}-status")} text={status.text.clone()} {debug}
                 running={status.indicator == "busy"} started={status.since}
@@ -1083,7 +789,7 @@ impl App {
 
     /// A toolbar button for each panel module, by `order`.
     pub(super) fn view_panel_toggles(&self, ctx: &Context<Self>) -> Html {
-        crate::kernel::panels()
+        services_kernel::modules::registry::panels()
             .into_iter()
             .map(|panel| {
                 let active = self.side.as_deref() == Some(panel.id.as_str());
@@ -1094,7 +800,7 @@ impl App {
                 } else if panel.id == SESSIONS_PANEL && store.save_error().is_some() {
                     services_widgets::indicator::Indicator::Error
                 } else {
-                    crate::kernel::status(&panel.id)
+                    services_kernel::modules::registry::status(&panel.id)
                         .map(|status| services_widgets::view::indicator_state(&status.indicator))
                         .unwrap_or_default()
                 };
@@ -1116,9 +822,13 @@ impl App {
         if let Some(id) = self.side.take() {
             let mut effects = Vec::new();
             for (msg, value) in services_widgets::view::take_pending(&id) {
-                effects.extend(crate::kernel::with(|modules| modules.ui(&id, msg, value)));
+                effects.extend(services_kernel::modules::registry::with(|modules| {
+                    modules.ui(&id, msg, value)
+                }));
             }
-            effects.extend(crate::kernel::with(|modules| modules.hide(&id)));
+            effects.extend(services_kernel::modules::registry::with(|modules| {
+                modules.hide(&id)
+            }));
             self.kernel_effects(ctx, effects);
         }
     }
@@ -1127,18 +837,22 @@ impl App {
     /// hears of it. The Kernel outlives the App, so what the modules contributed is read.
     pub(super) fn kernel_mounted(&mut self, ctx: &Context<Self>) {
         self.contributed();
-        let panels: Vec<String> = crate::kernel::with(|modules| {
+        let panels: Vec<String> = services_kernel::modules::registry::with(|modules| {
             modules
                 .ordered(services_sdk::Kind::Panel)
                 .into_iter()
                 .map(|manifest| manifest.id.clone())
                 .collect()
         });
-        let mut effects = crate::kernel::boot();
+        let mut effects = services_kernel::modules::registry::boot();
         for id in panels {
-            effects.extend(crate::kernel::with(|modules| modules.hide(&id)));
+            effects.extend(services_kernel::modules::registry::with(|modules| {
+                modules.hide(&id)
+            }));
         }
-        effects.extend(crate::kernel::broadcast(crate::kernel::workspace()));
+        effects.extend(services_kernel::events::broadcast(
+            services_kernel::events::workspace(),
+        ));
         self.kernel_effects(ctx, effects);
     }
 
@@ -1153,86 +867,9 @@ impl App {
 /// The built-in panel of the saved sessions.
 const SESSIONS_PANEL: &str = "sessions";
 
-enum Finish {
-    Stopped,
-    Failed(String, Value),
-    Answered(Value),
-    /// The module finished its run (`run.result`).
-    Ran(Value),
-}
-
-/// A module's kv key kept in `localStorage` (shared by its windows).
-fn local(module: &str, name: &str, key: &str, args: &Value) -> Result<Value, Failure> {
-    let storage = window()
-        .local_storage()
-        .ok()
-        .flatten()
-        .ok_or_else(|| Failure::new("Storage is not available"))?;
-    let key = format!("module:{module}:{key}");
-    let failed = |error: JsValue| Failure::new(super::error(error));
-    match name {
-        "kv.get" => Ok(storage
-            .get_item(&key)
-            .map_err(failed)?
-            .and_then(|text| serde_json::from_str(&text).ok())
-            .unwrap_or(Value::Null)),
-        "kv.put" => storage
-            .set_item(&key, &args["value"].to_string())
-            .map(|()| Value::Null)
-            .map_err(failed),
-        _ => storage
-            .remove_item(&key)
-            .map(|()| Value::Null)
-            .map_err(failed),
-    }
-}
-
-/// A Host answer without what the transport adds for Debug.
-fn strip(mut value: Value) -> Value {
-    if let Some(map) = value.as_object_mut() {
-        map.remove("transportDebug");
-    }
-    value
-}
-
-/// What the App does once the Host answered a module's command.
-#[derive(Clone)]
-pub(in crate::browser) enum After {
-    Reply,
-    /// A History save: a failure is a notice.
-    History,
-    /// Modules were installed or removed (the one removed with its data).
-    Modules(Option<String>),
-    /// What sources apply changed: panels read their files again.
-    Sources,
-    /// The model catalog: the options new chats get come with it.
-    Models,
-}
-
-const AGENT_OPTIONS: &str = "servicesConsole.agentOptions";
-
-/// Reads (`options` null) or saves the options new Agent chats get; the reply is the
-/// options saved, or the defaults when none are.
-pub(super) fn agent_options(options: &Value) -> Result<Value, Failure> {
-    let storage = window()
-        .local_storage()
-        .ok()
-        .flatten()
-        .ok_or_else(|| Failure::new("Local storage is unavailable"))?;
-    if !options.is_null() {
-        storage
-            .set_item(AGENT_OPTIONS, &options.to_string())
-            .map_err(|_| Failure::new("Agent model settings could not be saved"))?;
-        return Ok(options.clone());
-    }
-    Ok(match storage.get_item(AGENT_OPTIONS).ok().flatten() {
-        Some(raw) => serde_json::from_str(&raw).unwrap_or(Value::String(raw)),
-        None => serde_json::to_value(services_contracts::agent::Options::for_new_chat())
-            .unwrap_or_default(),
-    })
-}
-
 /// Refuses a module's command: it gets the failure as its reply.
 fn refuse(module: &str, tag: &str, message: &str) -> Vec<Effect> {
-    crate::kernel::with(|modules| modules.reply(module, tag, Err(Failure::new(message))))
+    services_kernel::modules::registry::with(|modules| {
+        modules.reply(module, tag, Err(Failure::new(message)))
+    })
 }

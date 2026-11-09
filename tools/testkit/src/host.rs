@@ -179,7 +179,7 @@ impl fmt::Display for Reply {
     }
 }
 
-/// Variables expose the process environment as the `env` profile; failure
+/// Variables expose the process environment as `env`; failure
 /// output must not leak it into logs.
 fn redacted(value: &Value) -> Value {
     match value {

@@ -263,28 +263,40 @@ grpc (05.11): Host — только транспорт байтами (HTTP/2, T
 app/
 ├── extension/          manifest.json, devtools.html/js, services.html/js
 ├── kernel/src/         без UI
-│   ├── lib.rs
+│   ├── lib.rs          `Callback` — чем Kernel отвечает (Shell оборачивает в него свои)
+│   ├── js.rs           обёртки web-sys/js-sys (wasm)
 │   ├── host.rs         связь с Host: connectNative, куски, отмена   ← browser/transport.rs
 │   ├── modules.rs      загрузка wasm, MVU: update(model, msg) -> (model, cmds), protobuf
-│   │                   на границе, исполнение команд  ← browser/module_ui.rs, services.rs
+│   │                   на границе, исполнение команд; wasm.rs — wasm-экземпляр
+│   ├── modules/        registry.rs — модули App и их состояние (← kernel.rs; встроенные
+│   │                   и связанные модули даёт Shell через `link`), loader.rs — wasm с Host,
+│   │                   кеш IndexedDB, список модулей (← browser/kernel_modules.rs),
+│   │                   services.rs — сервисы консоли (← services.rs)
 │   ├── workspace.rs    текущее состояние: снимок и восстановление (раскладка, ширины,
-│   │                   документы, ответы, сессионный kv модулей)  ← sessions.rs (Snapshot),
-│   │                   browser/sessions.rs; библиотека сессий — в панели Sessions
+│   │                   документы, ответы, сессионный kv модулей)  ← sessions.rs;
+│   │                   workspace/store.rs — сохранение, очередь правок, миграция
+│   │                   (← browser/sessions.rs)
 │   ├── document.rs     модель документа консоли: чеки, ответы, регионы, identity,
 │   │                   `check_at`, правки (document/{checks,console,identity}.rs)
-│   │                   ← document.rs, checks.rs, editor/checks.rs, часть editor/session.rs
 │   ├── editor.rs       язык редактора: модуль сервиса + вклады панелей ({{…}} от Variables),
 │   │                   подсветка, свёртки, подсказки (editor/completion.rs), шаблоны
 │   │                   (editor/templates.rs); трейт `Services` — что Shell знает о модулях
-│   ├── requests.rs     конвейер before_request → драйвер → after_response, стрим, Stop,
-│   │                   Repeat  ← из browser/app.rs
-│   ├── storage.rs      kv через db Host  ← storage.rs, browser/session_database.rs
-│   ├── locks.rs        Web Locks (темп Splunk и т. п.)
+│   ├── requests.rs     конвейер: чек → запрос модуля, `Run` (переменные истории, конец
+│   │                   запуска: render → after_response), команды модулей, которые
+│   │                   обслуживает Host, Stop  ← console.rs, kernel_panel.rs;
+│   │                   requests/format.rs — текст ответа  ← format.rs
+│   ├── storage.rs      порядок вкладок, kv модулей (сессия / localStorage), настройки
+│   │                   Agent  ← storage.rs, kernel_panel.rs; storage/database.rs —
+│   │                   IndexedDB  ← browser/session_database.rs
+│   ├── locks.rs        Web Locks (темп Splunk и т. п.)  ← kernel_panel.rs
 │   ├── page.rs         выполнение кода на исследуемой странице (inspectedWindow.eval)
+│   │                   ← browser/app/agent.rs
 │   ├── updates.rs      установка обновления App, reload, проверка второго окна
 │   │                   ← browser/updates.rs
-│   ├── events.rs       события модулям
-│   └── activity.rs     состояния и индикаторы
+│   ├── events.rs       события модулям (Document, Hints, Discover, Workspace)  ← kernel.rs
+│   ├── agent.rs        консоль, с которой работает Agent: id чеков, ревизии, правки
+│   │                   ← agent_workspace.rs
+│   └── activity.rs     состояние модуля и его Debug (детали, последние строки лога)
 ├── widgets/src/        без логики приложения и без Kernel; CSS рядом с виджетом (`CSS`),
 │   │                   цвета — только var(--…) из темы Shell
 │   ├── lib.rs
@@ -307,26 +319,25 @@ app/
 ├── shell/src/          → app.wasm; точка сборки: единственная часть, знающая и Kernel, и
 │   │                   Widgets
 │   ├── lib.rs          старт: Kernel, монтирование, связывание виджетов с Kernel
+│   ├── link.rs         `link()`: модули App в Kernel — Settings, натив — все модули (тесты)
 │   ├── language.rs     `Language`: реализация `Extension` и `Languages` над Kernel
 │   │                   (document + editor), `Modules` — реализация `kernel::editor::Services`
 │   ├── browser/        корневой компонент app.rs (+ app/console_panel, kernel_panel,
-│   │                   agent), transport, updates, sessions, session_database,
-│   │                   kernel_modules, mount (`window.__servicesMountEditor`)
-│   ├── console.rs, format.rs, kernel.rs, services.rs, sessions.rs, storage.rs,
-│   │                   agent_workspace.rs
+│   │                   agent): раскладка, запуски и их таймеры, редакторы, статусы;
+│   │                   sessions.rs — компонент Host (открывает workspace и модули), mount
+│   │                   (`window.__servicesMountEditor`)
 │   ├── layout.css      вся раскладка (верхнее меню, рабочая область, боковая панель,
 │   │                   нижняя строка); раскладка в коде — пока в browser/app
-│   └── theme.css       тема: переменные цветов и шрифтов, body; panel.html подключает её
+│   └── theme.css       тема: переменные цветов и шрифтов, body; services.html подключает её
 │                       ссылкой (`theme.css`), чтобы до загрузки wasm не было белого экрана
 ```
 
-Kernel пока — `modules.rs` и `wasm.rs` (загрузка и MVU модулей), `document` и `editor`;
-host, workspace, requests, storage, locks, page, updates, events и activity из дерева выше
-ещё в Shell (`browser/transport.rs`, `browser/app/kernel_panel.rs`, `browser/sessions.rs`,
-`browser/updates.rs`, …).
+В Shell остаётся то, что живёт в состоянии Yew-компонента App: запуски (`Run`, Repeat,
+ожидание загрузки модуля), их таймеры (`setTimeout` → сообщения компонента), редакторы,
+показ статусов и обработка ответов Host по сообщениям компонента (решено 08.11).
 
 Исключение из правила «CSS рядом с владельцем через `include_str!`» (решено 08.11):
-`shell/src/theme.css` подключается ссылкой из `panel.html` (xtask кладёт его в расширение
+`shell/src/theme.css` подключается ссылкой из `services.html` (xtask кладёт его в расширение
 как `theme.css`), чтобы фон и цвета были до загрузки wasm. Остальной CSS — в wasm.
 
 Ушли из Kernel в панели: подстановка переменных (Variables), History и маскировка
@@ -759,10 +770,35 @@ Settings. Пакеты выпуска — `dist/modules/`, как сейчас.
   несуществующий `host --test modules` — теперь тесты модулей (`--module ID` — один
   модуль), драйверы и history Host.
 
+- Доводка после шага 7 (08.11):
+  - Страница App `panel.html`/`panel.js` → `services.html`/`services.js` (расширение,
+    `devtools.js`, xtask, тесты, документация); старое имя не поддерживается.
+  - Dictionary: «профиль» → «набор» (set) в коде, сообщениях об ошибках, подписях
+    подсказок (`Dictionary set X`, `Search Variables, Dictionary sets and env`; у `{{var:`
+    и `{{env:` — `Variables` и `Environment`), фикстурах тестов; `dictionary.json` пишется
+    с `sets`, старый `profiles` по-прежнему читается (Host и панель Dictionary).
+  - Остаток Kernel перенесён из Shell (см. дерево «App»): `host.rs` (← transport),
+    `modules/{registry,loader,services}.rs` (← kernel.rs, kernel_modules.rs, services.rs),
+    `workspace.rs` + `workspace/store.rs` (← sessions.rs, browser/sessions.rs без
+    компонента: открытие с миграцией `localStorage` и импорт `servicesConsole.state` —
+    `store::open`/`bootstrap`), `storage.rs` + `storage/database.rs` (← storage.rs,
+    session_database.rs; kv модулей, настройки Agent, id окна Agent — из kernel_panel/agent),
+    `requests.rs` + `requests/format.rs` (← console.rs, format.rs; из kernel_panel —
+    `Run` с разрешением переменных истории и концом запуска, `Finish`, `STOPPED`, `strip`,
+    команды модулей, которые обслуживает Host — `hosted`/`After`), `locks.rs`, `page.rs`
+    (← browser/app/agent.rs), `updates.rs` (корень окна App — параметр, Shell передаёт
+    `.console-root`), `events.rs` (Document, Hints, Discover, Workspace, рассылка),
+    `activity.rs` (статус модуля и его Debug), `agent.rs` (← agent_workspace.rs).
+    Kernel не знает Yew: свой `Callback`, Shell оборачивает свои (`browser::on`). Kernel не
+    знает модулей App: Shell передаёт их `services_shell::link()` (Settings; натив — все
+    модули), тесты Shell вызывают его первым. Текст строки статуса (`status_text`) остался
+    в Shell: в нём длительность из `status_bar`. В Shell остались запуски и их таймеры,
+    редакторы и показ статусов (состояние компонента App) и компонент Host. Тест
+    форматирования — `kernel/tests/format.rs`; тесты workspace и Agent остались в Shell:
+    им нужны связанные модули. Из Shell удалены зависимости `base64`,
+    `serde-wasm-bindgen` и IndexedDB-возможности `web-sys`.
+  - CI: `cargo clippy --workspace --all-targets -- -D warnings` перед тестами.
+
 ## Решить
 
-- Остаток Kernel из дерева «App» (host, workspace, requests, storage, locks, page, updates,
-  events, activity) ещё в Shell: переносить ли отдельным шагом.
-- Решённое «Имена и слои» ещё не сделано: `panel.html`/`panel.js` → `services.html`/
-  `services.js`; слово «профиль» в сообщениях Dictionary и в коде (документация уже
-  говорит «наборы»).
+Открытых решений нет.

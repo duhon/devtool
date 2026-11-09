@@ -75,7 +75,7 @@
 
   // A side panel searches its own editor.
   await click(testid('console-variables-toggle'));
-  // The editor appears once the Variables profiles have loaded.
+  // The editor appears once the Variables have loaded.
   await wait(()=>visible(document.querySelector('[data-testid="console-variables-editor"]')),
     'Variables editor is not visible');
   const variables=editorOf('console-variables-editor');

@@ -1,9 +1,12 @@
 # Rust browser application
 
 `services-shell` is the App's Rust 2024 Yew client (`app.wasm`): layout, toolbar, side
-panels, the Console, the native-messaging transport and the wiring between the Kernel,
-the widgets and the Host. The generic widgets, including the text editor, are in
-`services-widgets` (`app/widgets`). Only generated
+panels, the Console and the wiring between the Kernel, the widgets and the Host. The
+Kernel (`services-kernel`, `app/kernel`) owns everything without UI: modules, the request
+pipeline, the workspace and its storage, the Host connection, locks, the inspected page,
+updates and module activity; the Shell links the App's modules into it (`link()`: the
+built-in Settings panel, and natively every module so tests run them). The generic
+widgets, including the text editor, are in `services-widgets` (`app/widgets`). Only generated
 wasm-bindgen glue is a JavaScript runtime dependency.
 
 ## Integration
@@ -12,7 +15,7 @@ Build `cargo build -p services-shell --target wasm32-unknown-unknown --release`,
 then run wasm-bindgen 0.2.108 with `--target web --out-name app`.
 Import and await the generated module's default `init()`; its WASM start
 function mounts Yew at `#app`. No additional application JavaScript is loaded.
-The panel links `src/theme.css` (colours as variables, body, base controls) as
+`services.html` links `src/theme.css` (colours as variables, body, base controls) as
 `theme.css`. The widgets' CSS (next to each widget) and `src/layout.css` are embedded
 by the Rust component. CSP must allow `wasm-unsafe-eval`.
 
@@ -58,7 +61,7 @@ browser tests. `browser/mount.rs` (`window.__servicesMountEditor`, through
 `Handle::mount`) is temporary: only the table-performance scenario uses it until that
 scenario is rewritten.
 
-Chrome uses `runtime.connectNative(services_contracts::HOST_NAME)`, validates
+The Kernel's `host` module uses `runtime.connectNative(services_contracts::HOST_NAME)`, validates
 protocol 1, and reads `runtime.lastError` synchronously on disconnect. Unary
 requests, Variables, discovery and streams share independently correlated IDs.
 Native errors include install/reload guidance; retry establishes a new port.
@@ -154,12 +157,12 @@ browser-managed storage quota; failures never replace the last committed data.
 An unavailable companion leaves temporary work usable while import is pending;
 creating saved sessions waits for a successful import. Sessions saved by 2.x
 with legacy-interface tabs still open; those tabs are dropped. Editor documents retain undo, cursor and folds across
-service/request/profile switches, with caches isolated by Console session.
-Profile labels rename inline; profiles and Console service tabs support drag
+service/request/set switches, with caches isolated by Console session.
+Set labels rename inline; Dictionary sets and Console service tabs support drag
 ordering. Console response ownership persists with documents,
 so literal `#check`/`#responce` lines in Terminal output remain output rather
 than executable request boundaries. Per-service saved/discovered hints use fuzzy
-matching, scoped profile variables, SQL aliases, GraphQL types and nested
+matching, scoped Dictionary set variables, SQL aliases, GraphQL types and nested
 REST/gRPC JSON fields, including missing-comma insertion.
 Console blocks start with `#check`. Saved legacy `#request` headers are migrated
 without rewriting response output; the old marker remains readable for compatibility.
@@ -171,7 +174,7 @@ that check. Execution, status, Debug, Stop, export and Agent context share this
 selection. The right tool rail opens
 Hints, Variables, Dictionary, Sessions or Agent in a fixed half-width panel. The main
 status and Debug belong to the highlighted check in the selected service.
-The right panel has its own status and Debug for the selected tool/profile/chat;
+The right panel has its own status and Debug for the selected tool/set/chat;
 its operations never replace the main check's status or diagnostics.
 Each column owns its Debug height: opening or resizing one does not move or
 shrink the other column. Agent history keeps its reading position when Debug
@@ -179,17 +182,17 @@ changes size, without browser scroll anchoring to reveal the composer or message
 The Console is the only interface; the 2.x per-service forms were removed in 3.0.
 Service tabs and both side rails dock directly against the central workspace
 frame; the service strip has no separate underline or gap above the editor.
-Right-panel profile tabs and the tab-styled Hints title occupy the same top row
-above their editor. Profile tabs use a Yew portal into a persistent header host;
+Right-panel set tabs and the tab-styled Hints title occupy the same top row
+above their editor. Set tabs use a Yew portal into a persistent header host;
 the independent Variables component retains its state and owns their callbacks.
 Hints autosave valid text into the active session; invalid drafts persist there
 without replacing the last valid hints. Variable drafts are session-local.
 Variables exposes only fixed `var` and read-only `env`; Dictionary exposes the
-remaining named profiles and CRUD/order controls. Both Console tools have
+remaining named sets and CRUD/order controls. Both Console tools have
 independent component instances, drafts, queues and selection, and use separate
-native services. Dictionary saves carry the profile the draft started from (`base`); if
-another window saved that profile meanwhile, the save fails with CONFLICT, the draft is
-kept and **Discard draft** loads the saved version. Dictionary re-reads its profiles when
+native services. Dictionary saves carry the set the draft started from (`base`); if
+another window saved that set meanwhile, the save fails with CONFLICT, the draft is
+kept and **Discard draft** loads the saved version. Dictionary re-reads its sets when
 its panel is shown again or the window regains focus. Session `var` is passed with each call, discovery and
 Terminal stream and combined with global Dictionary/env for backend resolution;
 it never replaces the legacy native variable file. Their replies share a merged
@@ -239,20 +242,20 @@ when that is the displayed operation. The Agent S cancels only the selected
 chat and its child requests, not other chats or independent user requests.
 Configuration autosaves can be cancelled before dispatch; already-dispatched
 local storage writes cannot be rolled back.
-Switching checks, services, profiles or chats restores that owner's status
+Switching checks, services, sets or chats restores that owner's status
 and diagnostics rather than combining concurrent operations into one strip.
-Check/service/chat/profile tabs and tool buttons show a centered 12px signal
+Check/service/chat/set tabs and tool buttons show a centered 12px signal
 on their outer edge: left on the check rail, right on the tool rail, top on
 horizontal tabs. The signal is always present, black when ready or viewed,
 blinking green while running, green for success, red for errors, and yellow
-for stopped/warning/approval. Keeping the matching check, profile or chat on
+for stopped/warning/approval. Keeping the matching check, set or chat on
 screen for 0.5 s (`SEEN_AFTER_MS`) acknowledges its non-running signal without
 clearing its status or Debug; switching away sooner leaves it lit.
 Running signals keep blinking even while viewed. A new background outcome
 lights the signal again. Service and tool signals aggregate only unviewed
 outcomes plus running work, prioritizing running, error, yellow, then success;
 opening a service alone does not acknowledge its other checks. Variables and
-Dictionary independently aggregate all their profiles, even with the panel closed.
+Dictionary independently aggregate all their sets, even with the panel closed.
 Different checks support concurrent execution. Re-running an active check cancels
 its current request and rejects the new run with a local error in that check's
 status and Debug; other checks and chats keep running.
@@ -331,7 +334,7 @@ changes (Dictionary variables, templates, hints, skills, with the ones the user
 overrides) and Apply copies it to `<data>/sources/<slug>/`. Configuration is
 layered: later sources override earlier ones, the user's own changes override
 them all, and an update never merges. The Dictionary, Templates and Hints show
-the source of a source's profile, section or hints; Reset drops the user's own
+the source of a source's set, section or hints; Reset drops the user's own
 change. Settings → Modules is a table with a row per module and source: what
 the sources offer (GitHub releases `module-<id>-v<version>`, `modules/*.module.tgz`
 in a folder) and what is installed. The name shows the description, the source

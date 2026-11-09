@@ -1,4 +1,9 @@
-use super::{call, error, get, window};
+//! Installing a new version of the App from a source, then reloading the extension; only
+//! one window may be open meanwhile.
+
+#[cfg(target_arch = "wasm32")]
+use crate::js::{call, error, get, window};
+#[cfg(target_arch = "wasm32")]
 use wasm_bindgen::JsValue;
 
 #[derive(Clone, Copy, PartialEq, serde::Serialize)]
@@ -69,14 +74,19 @@ impl State {
     }
 }
 
-pub fn reload() -> Result<(), String> {
-    ensure_single_window()?;
+/// Reloads the extension unless another of its windows is open; `root` is what marks one
+/// (a selector of the App's root element).
+#[cfg(target_arch = "wasm32")]
+pub fn reload(root: &str) -> Result<(), String> {
+    ensure_single_window(root)?;
     let runtime = get(&get(&js_sys::global(), "chrome"), "runtime");
     call(&runtime, "reload", &[]).map_err(error)?;
     Ok(())
 }
 
-pub fn ensure_single_window() -> Result<(), String> {
+/// Refuses while another window of the extension shows the App (an element matching `root`).
+#[cfg(target_arch = "wasm32")]
+pub fn ensure_single_window(root: &str) -> Result<(), String> {
     let extension = get(&get(&js_sys::global(), "chrome"), "extension");
     let views = call(&extension, "getViews", &[]).map_err(error)?;
     for view in js_sys::Array::from(&views).iter() {
@@ -86,13 +96,9 @@ pub fn ensure_single_window() -> Result<(), String> {
         let document = get(&view, "document");
         if !document.is_null()
             && !document.is_undefined()
-            && !call(
-                &document,
-                "querySelector",
-                &[JsValue::from_str(".console-root")],
-            )
-            .map_err(error)?
-            .is_null()
+            && !call(&document, "querySelector", &[JsValue::from_str(root)])
+                .map_err(error)?
+                .is_null()
         {
             return Err("Close other Services DevTools windows before updating or reloading, to preserve their requests and unsaved work.".into());
         }

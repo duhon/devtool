@@ -61,9 +61,10 @@ jobs:
           cargo fetch --locked
       - name: Install matching WASM bindgen
         run: cargo install wasm-bindgen-cli --version 0.2.108 --locked
-      - name: Check formatting, tests and WASM
+      - name: Check formatting, lints, tests and WASM
         run: |
           cargo fmt --all -- --check
+          cargo clippy --locked --workspace --all-targets -- -D warnings
           cargo test --workspace --locked
           cargo clippy --locked -p services-kernel -p services-widgets -p services-shell --target wasm32-unknown-unknown --lib -- -D warnings
       - name: Build distribution

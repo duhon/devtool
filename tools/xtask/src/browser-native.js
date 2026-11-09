@@ -402,7 +402,7 @@
     'A discovered REST path parameter must be brown, including both braces');
     const variable = editor.getWrapperElement().querySelector('.tok-gw-placeholder');
     assert(variable && getComputedStyle(variable).color === 'rgb(255, 85, 85)',
-      'Path parameter highlighting must not change the red profile-variable color');
+      'Path parameter highlighting must not change the red variable color');
     const text = editor.getLine(line);
     const start = text.indexOf('{categoryId}');
     editor.replaceRange('42', {line, ch: start}, {line, ch: start + '{categoryId}'.length});

@@ -3,9 +3,9 @@
 
 use services_kernel::document::check_at;
 use services_kernel::editor::{Completion, fuzzy_match, insertion, marker_insertion};
-use services_shell::console;
+use services_kernel::modules::services;
+use services_kernel::requests as console;
 use services_shell::language::{Language, Modules};
-use services_shell::services;
 use services_widgets::editor::extension::Extension;
 
 fn suggest(
@@ -21,12 +21,14 @@ fn suggest(
 
 #[test]
 fn fuzzy_matching_accepts_ordered_subsequences_only() {
+    services_shell::link();
     assert!(fuzzy_match("Content-Type", "cty"));
     assert!(!fuzzy_match("Content-Type", "xyz"));
 }
 
 #[test]
 fn empty_console_is_safe_and_offers_request() {
+    services_shell::link();
     assert!(check_at("", 0).is_none());
     for service in services::ids().iter().map(String::as_str) {
         for source in ["", "#"] {
@@ -46,6 +48,7 @@ fn empty_console_is_safe_and_offers_request() {
 
 #[test]
 fn newline_after_request_header_offers_unused_sections() {
+    services_shell::link();
     for service in services::ids().iter().map(String::as_str) {
         for source in ["#check\n", "#check my query\n", "#check my query\n\n"] {
             let hints = suggest(service, "", source, source.split('\n').count() - 1, 0, &[]);
@@ -79,6 +82,7 @@ fn newline_after_request_header_offers_unused_sections() {
 
 #[test]
 fn hints_editor_offers_sections_missing_from_its_text() {
+    services_shell::link();
     for service in services::ids() {
         let markers = console::markers(&service);
         let Some(first) = markers.first() else {
@@ -108,6 +112,7 @@ fn hints_editor_offers_sections_missing_from_its_text() {
 
 #[test]
 fn non_service_editors_never_offer_console_or_service_syntax() {
+    services_shell::link();
     let hints = vec![
         ("#check".into(), String::new()),
         ("Accept: */*".into(), String::new()),
@@ -151,6 +156,7 @@ fn non_service_editors_never_offer_console_or_service_syntax() {
 
 #[test]
 fn marker_hints_offer_only_unused_sections_and_new_checks() {
+    services_shell::link();
     let source = "#check\n#endpoint\nmysql://db\n#";
     let r = suggest("mysql", "", source, 3, 1, &[]);
     assert!(r.candidates.iter().any(|c| c.text == "#query"));
@@ -160,6 +166,7 @@ fn marker_hints_offer_only_unused_sections_and_new_checks() {
 
 #[test]
 fn separator_hints_are_repeatable_and_scoped_to_each_request() {
+    services_shell::link();
     for service in services::ids().iter().map(String::as_str) {
         let filled = console::markers(service)
             .iter()
@@ -217,6 +224,7 @@ fn separator_hints_are_repeatable_and_scoped_to_each_request() {
 
 #[test]
 fn markers_advance_to_their_value_but_request_leaves_room_for_a_title() {
+    services_shell::link();
     assert_eq!(marker_insertion("#check"), "#check ");
     for service in services::ids().iter().map(String::as_str) {
         for marker in console::markers(service) {
@@ -236,6 +244,7 @@ fn markers_advance_to_their_value_but_request_leaves_room_for_a_title() {
 
 #[test]
 fn variable_placeholders_replace_the_existing_closing_braces() {
+    services_shell::link();
     let r = suggest(
         "rest",
         "body",
@@ -250,7 +259,8 @@ fn variable_placeholders_replace_the_existing_closing_braces() {
 }
 
 #[test]
-fn profiles_then_scoped_variables() {
+fn owners_then_scoped_variables() {
+    services_shell::link();
     let hints = vec![
         ("{{prod:TOKEN}}".into(), "secret".into()),
         ("{{other:HOST}}".into(), "host".into()),
@@ -262,10 +272,10 @@ fn profiles_then_scoped_variables() {
         ("vars", "variables"),
     ] {
         for field in [service_field, ""] {
-            let profiles = suggest(service, field, "{{", 0, 2, &hints);
-            assert!(profiles.candidates.iter().any(|c| c.text == "{{prod:"));
-            assert!(profiles.candidates.iter().any(|c| c.text == "{{:"));
-            assert!(!profiles.candidates.iter().any(|c| c.text.ends_with("}}")));
+            let owners = suggest(service, field, "{{", 0, 2, &hints);
+            assert!(owners.candidates.iter().any(|c| c.text == "{{prod:"));
+            assert!(owners.candidates.iter().any(|c| c.text == "{{:"));
+            assert!(!owners.candidates.iter().any(|c| c.text.ends_with("}}")));
             let variables = suggest(service, field, "{{prod:TK", 0, 9, &hints);
             assert_eq!(variables.candidates.len(), 1);
             assert_eq!(variables.candidates[0].text, "{{prod:TOKEN}}");
@@ -275,6 +285,7 @@ fn profiles_then_scoped_variables() {
 
 #[test]
 fn repeat_until_is_offered_under_a_repeat() {
+    services_shell::link();
     let options = |lines: &str| -> Vec<String> {
         let source = format!("#check a\n#endpoint\nGET https://a\n#options\n{lines}");
         let line = source.lines().count();

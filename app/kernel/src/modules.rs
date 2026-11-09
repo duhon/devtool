@@ -1,6 +1,14 @@
 //! Loaded modules and their MVU loop: events in, commands out. The Kernel runs what it can
 //! itself (log, status, watches) and hands the rest to the App as [`Effect`]s; answers come
 //! back through [`Modules::reply`] and [`Modules::end`].
+//!
+//! [`registry`] keeps the App's one [`Modules`] and the modules the Host declares,
+//! [`services`] the console services among them, `loader` fetches and starts their wasm.
+
+#[cfg(target_arch = "wasm32")]
+pub mod loader;
+pub mod registry;
+pub mod services;
 
 use prost::Message;
 use serde_json::{Value, json};
@@ -1103,7 +1111,7 @@ impl Modules {
         })
     }
 
-    /// Some panel still waits for what its hooks read (its kv, profiles, environment);
+    /// Some panel still waits for what its hooks read (its kv, sets, environment);
     /// a run started now could miss it.
     pub fn settling(&self) -> bool {
         self.loaded

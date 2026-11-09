@@ -120,9 +120,9 @@
       'The Agent status debug must list the skills Copilot used');
 
     await openPanel('dictionary');
-    const profile = await wait(() => document.querySelector('[data-testid="dictionary-set-team"]'),
+    const set = await wait(() => document.querySelector('[data-testid="dictionary-set-team"]'),
       () => `The source's Dictionary set must be listed: ${testid('dictionary-tabs').textContent}`);
-    await click(profile);
+    await click(set);
     const dictionary = () => editorAt('console-dictionary');
     await wait(() => document.querySelector('[data-testid="dictionary-origin-label"]')?.textContent === 'From source Team'
       && dictionary()?.getValue().includes('team.fixture.invalid'),

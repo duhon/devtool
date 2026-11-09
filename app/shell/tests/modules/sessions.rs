@@ -2,10 +2,11 @@
 //! concurrent merges. UI-behaviour tests.
 
 use serde_json::json;
-use services_shell::sessions::{Layout, Library, Snapshot, forget_service, merge_snapshot};
+use services_kernel::workspace::{Layout, Library, Snapshot, forget_service, merge_snapshot};
 
 #[test]
 fn forgetting_a_service_drops_only_its_console_order_and_module_data() {
+    services_shell::link();
     let mut snapshot = Snapshot {
         console: json!({"version":1,"service":"rest",
             "documents":{"rest":"#check rest","echo":"#check echo"},
@@ -33,6 +34,7 @@ fn forgetting_a_service_drops_only_its_console_order_and_module_data() {
 
 #[test]
 fn layout_is_session_scoped_copied_persisted_and_backward_compatible() {
+    services_shell::link();
     let mut library = Library::default();
     let a = library.copy(0, "A").unwrap();
     library.select(a).unwrap();
@@ -76,6 +78,7 @@ fn layout_is_session_scoped_copied_persisted_and_backward_compatible() {
 
 #[test]
 fn concurrent_layout_changes_merge_independently_of_documents_and_other_panels() {
+    services_shell::link();
     let base = Snapshot::default();
     let mut local = base.clone();
     local.layout.panel_widths.insert("history".into(), 410);
@@ -90,6 +93,7 @@ fn concurrent_layout_changes_merge_independently_of_documents_and_other_panels()
 
 #[test]
 fn session_copies_do_not_inherit_execution_history_identities() {
+    services_shell::link();
     let mut library = Library::default();
     let original = library.copy(0, "Original").unwrap();
     library.select(original).unwrap();
@@ -113,6 +117,7 @@ fn session_copies_do_not_inherit_execution_history_identities() {
 
 #[test]
 fn concurrent_changes_merge_only_when_their_fields_do_not_conflict() {
+    services_shell::link();
     let base = Snapshot::default();
     let mut local = base.clone();
     let hints = |text: &str| json!({"rest": text}).as_object().unwrap().clone();
@@ -133,6 +138,7 @@ fn concurrent_changes_merge_only_when_their_fields_do_not_conflict() {
 
 #[test]
 fn temporary_starts_empty_and_is_never_a_copy_template() {
+    services_shell::link();
     let mut library = Library::default();
     library.temporary.modules.insert(
         "variables".into(),
@@ -149,6 +155,7 @@ fn temporary_starts_empty_and_is_never_a_copy_template() {
 
 #[test]
 fn copies_are_independent_and_include_checks_and_module_data() {
+    services_shell::link();
     let mut library = Library::default();
     let a = library.copy(0, "A").unwrap();
     library.select(a).unwrap();

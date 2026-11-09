@@ -38,19 +38,15 @@ services-module-sessions = { path = "../../modules/panels/sessions" }
 services-module-agent = { path = "../../modules/panels/agent" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-base64 = "0.22"
 yew = { version = "0.21", features = ["csr"] }
 wasm-bindgen = "=0.2.108"
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
-serde-wasm-bindgen = "0.6"
 web-sys = { version = "0.3", features = [
   "Window", "Document", "Element", "HtmlElement", "HtmlInputElement",
   "HtmlTextAreaElement", "HtmlSelectElement", "Node", "Storage", "Event",
   "InputEvent", "KeyboardEvent", "MouseEvent", "PointerEvent", "DragEvent", "DataTransfer", "CssStyleDeclaration",
   "console", "DomRect", "Navigator",
   "Clipboard", "FocusEvent", "ResizeObserver", "BeforeUnloadEvent", "StorageEvent",
-  "IdbFactory", "IdbOpenDbRequest", "IdbDatabase", "IdbObjectStore",
-  "IdbRequest", "IdbTransaction", "IdbTransactionMode", "DomException",
   "ClipboardEvent", "DomTokenList"
 ] }

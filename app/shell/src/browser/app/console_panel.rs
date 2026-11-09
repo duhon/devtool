@@ -1,6 +1,7 @@
 //! The console panel of [`App`]: check runs and their status, execution and responses,
 //! discovery, completions and the console view.
 use super::*;
+use crate::browser::on;
 
 impl App {
     /// The console editor of `service`, showing its document from the first use.
@@ -371,7 +372,7 @@ impl App {
         params: Value,
         line: usize,
         session: Option<String>,
-        options: console::RunOptions,
+        options: services_kernel::requests::RunOptions,
     ) -> Option<String> {
         if self.hidden {
             return None;
@@ -482,7 +483,7 @@ impl App {
             "workspaceId":self.workspace_id,"checkIdentities":self.checks});
         let result = self.sessions.borrow_mut().update(|s| {
             let mut value = value;
-            crate::storage::keep_unloaded(&s.console, &mut value);
+            services_kernel::storage::keep_unloaded(&s.console, &mut value);
             s.console = value
         });
         if let Err(e) = result {
@@ -496,7 +497,7 @@ impl App {
         key: &str,
         params: Value,
         line: usize,
-        options: &console::RunOptions,
+        options: &services_kernel::requests::RunOptions,
     ) {
         if self.runs.get(key).is_some_and(|r| r.running) {
             self.notice = Some(Notice::new(
@@ -706,8 +707,9 @@ impl App {
             self.transport.request(
                 json!({"service":"history","op":"commit","checkId":check}),
                 false,
-                ctx.link()
-                    .callback(move |reply| Msg::RepeatSaved(owner.clone(), reply)),
+                on(ctx
+                    .link()
+                    .callback(move |reply| Msg::RepeatSaved(owner.clone(), reply))),
             );
         }
     }
@@ -727,8 +729,9 @@ impl App {
         if let Some(error) = error {
             self.notice = Some(Notice::new(format!("History · ERROR · {error}")));
         } else if !check.is_empty() {
-            let effects =
-                crate::kernel::with(|modules| modules.reply("history", check, Ok(json!({}))));
+            let effects = services_kernel::modules::registry::with(|modules| {
+                modules.reply("history", check, Ok(json!({})))
+            });
             self.kernel_effects(ctx, effects);
         }
     }
@@ -803,7 +806,7 @@ impl App {
                             .unwrap_or("Request stopped before dispatch")
                     )
                 } else {
-                    format!("{} · {}", time(), format::status(&result))
+                    format!("{} · {}", time(), status_text(&result))
                 };
                 run.debug = result.clone();
                 run.result = result;
@@ -828,11 +831,15 @@ impl App {
             run.line
         };
         if let Some(line) = response_line {
-            let body = format::check_response(&run.result, &run.stdout, &run.stderr);
+            let body = services_kernel::requests::format::check_response(
+                &run.result,
+                &run.stdout,
+                &run.stderr,
+            );
             let outcome = if run.running {
                 "Running"
             } else {
-                format::outcome(&run.result)
+                services_kernel::requests::format::outcome(&run.result)
             };
             let mut response_status = format!("{} · {outcome}", time());
             if let Some(repeat) = run.repeat.as_mut() {
@@ -883,10 +890,10 @@ impl App {
     /// (with its details) and how many variable resolutions the module got; a change reopens
     /// hints.
     fn editor_discovery(&self, service: &str) -> Value {
-        let resolutions = crate::kernel::with(|modules| {
+        let resolutions = services_kernel::modules::registry::with(|modules| {
             modules.get(service).map_or(0, |module| module.resolutions)
         });
-        let Some(status) = crate::kernel::status(service) else {
+        let Some(status) = services_kernel::modules::registry::status(service) else {
             return if resolutions == 0 {
                 Value::Null
             } else {
@@ -905,11 +912,11 @@ impl App {
     }
     pub(super) fn completions(&self, service: &str) -> Vec<(String, String)> {
         let mut hints = self.vars.clone();
-        if !crate::services::contains(service) {
+        if !services_kernel::modules::services::contains(service) {
             return hints;
         }
         hints.push(("#check".into(), "New check block".into()));
-        for marker in console::markers(service) {
+        for marker in services_kernel::requests::markers(service) {
             hints.push((format!("#{marker}"), String::new()));
         }
         if let Some(text) = self.hints.get(service) {
@@ -923,7 +930,7 @@ impl App {
         html! {for self.console_order.iter().map(|s|{
             let select=s.clone();let drag=s.clone();let drop=s.clone();
             let (state,title)=self.service_indicator(s);
-            html!{<button data-testid={format!("console-service-{s}")} draggable="true" ondragstart={ctx.link().callback(move |_|Msg::Drag(drag.clone()))} ondragover={Callback::from(|e:DragEvent|e.prevent_default())} ondrop={ctx.link().callback(move|e:DragEvent|{e.prevent_default();Msg::Drop(drop.clone())})} class={classes!("tab-button",if &self.console_service==s{"active"}else{""})} onclick={ctx.link().callback(move |_|Msg::ConsoleService(select.clone()))}>{crate::services::label(s)}{indicator(state,title)}</button>}
+            html!{<button data-testid={format!("console-service-{s}")} draggable="true" ondragstart={ctx.link().callback(move |_|Msg::Drag(drag.clone()))} ondragover={Callback::from(|e:DragEvent|e.prevent_default())} ondrop={ctx.link().callback(move|e:DragEvent|{e.prevent_default();Msg::Drop(drop.clone())})} class={classes!("tab-button",if &self.console_service==s{"active"}else{""})} onclick={ctx.link().callback(move |_|Msg::ConsoleService(select.clone()))}>{services_kernel::modules::services::label(s)}{indicator(state,title)}</button>}
         })}
     }
     /// Import and Export stay red while their failure is in the banner.
@@ -950,7 +957,7 @@ impl App {
         let state = self
             .active_console_line(service)
             .map(|line| self.check_state(service, line));
-        let supported = console::transfers(service);
+        let supported = services_kernel::requests::transfers(service);
         let busy = self.busy_reasons();
         let (status, debug, running, started) = if let Some(discovery) = check_discovery {
             (
@@ -1018,7 +1025,7 @@ impl App {
                     <div class="console-editor-host">
                         <editor::View key={format!("console:{service}")} handle={self.console_editor(service)}
                             on={ctx.link().callback(move |msg|Msg::ConsoleEditor(edited_service.clone(),msg))}
-                            testid="console-editor" label={format!("Console · {}",crate::services::label(service))}/>
+                            testid="console-editor" label={format!("Console · {}",services_kernel::modules::services::label(service))}/>
                     </div>
                 </div>
                 <div class="console-status-row">
@@ -1076,4 +1083,17 @@ fn run_debug(service: &str, params: &Value, started: f64) -> Value {
         debug["stream"] = params["stream"].clone();
     }
     debug
+}
+
+/// A run's status line: `123 ms · 200 OK · 3 rows`.
+fn status_text(result: &Value) -> String {
+    let mut parts = Vec::new();
+    if let Some(ms) = result["durationMs"].as_f64() {
+        parts.push(services_widgets::status_bar::duration(ms));
+    }
+    parts.push(services_kernel::requests::format::outcome(result).into());
+    if let Some(summary) = result["summary"].as_str() {
+        parts.push(summary.into());
+    }
+    parts.join(" · ")
 }

@@ -1,12 +1,12 @@
 //! The editors' [`Language`]: what the Kernel's modules and the console document add to an
 //! editor widget — module highlighting, folds and completion, and a console's response
 //! regions, checks and edit history.
-use crate::{console, kernel};
 use serde_json::{Value, json};
 use services_kernel::document::{
     self, ClipboardFragment, EditHistory, ResponseRegion, checks::Previous, identity::Identity,
 };
 use services_kernel::editor::{self as language, Services};
+use services_kernel::modules::registry as kernel;
 use services_sdk::{Check, Completions, Fold as ModuleFold, Line, LineColumns};
 use services_widgets::editor::extension::{
     self, Candidate, Completion, Extension, Languages, Payload, Refresh, Tokens, Viewport,
@@ -27,7 +27,7 @@ impl Services for Modules {
     }
 
     fn markers(&self, service: &str) -> Vec<String> {
-        console::markers(service)
+        services_kernel::requests::markers(service)
     }
 
     fn highlight(

@@ -2,7 +2,9 @@
 //! UI-behaviour tests.
 
 use serde_json::json;
-use services_shell::format::{MAX_RESPONSE_CHARS, check_response, console_response, outcome};
+use services_kernel::requests::format::{
+    MAX_RESPONSE_CHARS, check_response, console_response, outcome,
+};
 
 #[test]
 fn long_responses_are_capped_without_splitting_unicode() {

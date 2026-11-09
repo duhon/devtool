@@ -5,7 +5,7 @@ Console and runs in the Chrome extension over native messaging. The Agent panel
 is the `agent` topic; working with the inspected web page is the `page` topic.
 
 It opens in two ways: inside Chrome DevTools as its Services tab, or standalone
-in a browser tab at `chrome-extension://ckicpgdfkgcmgnclbfbcbkillcpaffnb/panel.html`
+in a browser tab at `chrome-extension://ckicpgdfkgcmgnclbfbcbkillcpaffnb/services.html`
 (paste it into the address bar; the address is the same for every installation).
 Standalone inspects no web page, so the page tools are unavailable there, and
 like any new window it starts in empty session 0. To keep the inspected page in

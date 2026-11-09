@@ -2,11 +2,12 @@
 //! Console the agent works on. UI-behaviour tests.
 
 use serde_json::json;
+use services_kernel::agent::{Workspace, page};
 use services_kernel::document::{self, Position, ResponseRegion};
-use services_shell::agent_workspace::{Workspace, page};
 
 #[test]
 fn ids_follow_unique_moved_checks_and_stale_writes_fail() {
+    services_shell::link();
     let mut workspace = Workspace::default();
     workspace.refresh("mysql", "#check A\nselect 1\n#check B\nselect 2", &[]);
     let id = workspace.context("mysql", 0).unwrap()["checks"][0]["id"]
@@ -21,6 +22,7 @@ fn ids_follow_unique_moved_checks_and_stale_writes_fail() {
 
 #[test]
 fn reloading_a_workspace_invalidates_old_ids_and_revisions() {
+    services_shell::link();
     let mut first = Workspace::new(Ok("instance-a".into()));
     let mut second = Workspace::new(Ok("instance-b".into()));
     for workspace in [&mut first, &mut second] {
@@ -44,6 +46,7 @@ fn reloading_a_workspace_invalidates_old_ids_and_revisions() {
 
 #[test]
 fn edits_preserve_connections_outputs_and_use_utf16_positions() {
+    services_shell::link();
     let mut workspace = Workspace::default();
     let source = "#check A\n#endpoint\nmysql://u:p@host/db\n\nselect 1\n#response\nok\n#check B\nselect '😀'";
     workspace.refresh(
@@ -95,6 +98,7 @@ fn edits_preserve_connections_outputs_and_use_utf16_positions() {
 
 #[test]
 fn titles_are_plain_names_and_prefixed_inputs_are_rejected() {
+    services_shell::link();
     let mut workspace = Workspace::default();
     workspace.refresh(
         "rest",
@@ -163,6 +167,7 @@ fn titles_are_plain_names_and_prefixed_inputs_are_rejected() {
 
 #[test]
 fn renaming_preserves_body_response_ownership_and_check_identity() {
+    services_shell::link();
     let mut workspace = Workspace::default();
     let old_header = "#check #check products 😀";
     let source = format!(
@@ -243,6 +248,7 @@ fn renaming_preserves_body_response_ownership_and_check_identity() {
 
 #[test]
 fn combined_title_and_request_edits_preserve_connection_and_response_boundary() {
+    services_shell::link();
     let mut workspace = Workspace::default();
     let source = "#check Products\n#endpoint\nGET https://example.invalid/products\n#headers\nX-Test: old\n#response\ncaptured";
     workspace.refresh(
@@ -267,6 +273,7 @@ fn combined_title_and_request_edits_preserve_connection_and_response_boundary() 
 
 #[test]
 fn unicode_pages_and_response_ownership_are_bounded() {
+    services_shell::link();
     assert_eq!(
         page("a😀б", 1, 1),
         json!({"text":"😀","offset":1,"total":3,"nextOffset":2})

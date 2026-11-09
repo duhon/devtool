@@ -372,7 +372,7 @@ fn build_extension(root: &Path, output: &Path, prerelease: bool) -> Result<Strin
         ],
     )?;
     let source = root.join("app/extension/src");
-    for file in ["devtools.html", "panel.html"] {
+    for file in ["devtools.html", "services.html"] {
         fs::copy(source.join(file), output.join(file))?;
     }
     let mut devtools = fs::read_to_string(source.join("devtools.js"))?;
@@ -388,7 +388,7 @@ fn build_extension(root: &Path, output: &Path, prerelease: bool) -> Result<Strin
         );
     }
     fs::write(output.join("devtools.js"), devtools)?;
-    fs::copy(source.join("panel.js"), output.join("panel.js"))?;
+    fs::copy(source.join("services.js"), output.join("services.js"))?;
     fs::copy(
         root.join("app/shell/src/theme.css"),
         output.join("theme.css"),

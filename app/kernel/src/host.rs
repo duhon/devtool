@@ -1,4 +1,8 @@
-use super::{call, error, get, js, json, window};
+//! The link to the Host: `chrome.runtime.connectNative`, one request per id, answers
+//! assembled from chunks, Stop, timeouts, and the health check of the protocol version.
+
+use crate::Callback;
+use crate::js::{call, error, get, js, json, window};
 use serde_json::{Value, json};
 use services_contracts::native_messaging::ResponseAssembler;
 use std::{
@@ -7,8 +11,8 @@ use std::{
     rc::Rc,
 };
 use wasm_bindgen::{JsCast, JsValue, closure::Closure};
-use yew::Callback;
 
+/// An answer of the Host: the result, a streamed event, a process exit, or an error.
 #[derive(Clone, Debug)]
 pub enum Reply {
     Result(Value),
@@ -25,7 +29,7 @@ struct Pending {
     started: f64,
 }
 pub struct Transport {
-    session: RefCell<Option<super::sessions::Shared>>,
+    session: RefCell<Option<crate::workspace::store::Shared>>,
     in_flight: Cell<usize>,
     background: Cell<usize>,
     port: RefCell<Option<JsValue>>,
@@ -38,7 +42,7 @@ pub struct Transport {
     generation: Cell<u32>,
 }
 impl Transport {
-    pub fn bind_session(&self, session: super::sessions::Shared) {
+    pub fn bind_session(&self, session: crate::workspace::store::Shared) {
         *self.session.borrow_mut() = Some(session);
     }
     pub fn busy(&self) -> bool {

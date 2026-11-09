@@ -46,8 +46,7 @@
   color: var(--token-path-param);
 }
 
-/* A {{:VAR}}/{{env:VAR}}/{{profile:VAR}} reference (HEADERS_MODE, ENDPOINT_MODE
-   — see shared/editor.js) gets its own token type, not one of the
+/* A {{:VAR}}/{{env:VAR}}/{{set:VAR}} reference gets its own token type, not one of the
    built-in ones, specifically so this color is free to pick without
    colliding with anything the dracula theme already uses elsewhere: yellow
    (strings/JSON), purple (numbers/JSON literals), green (attributes/hosts),
@@ -58,16 +57,15 @@
   color: var(--token-error);
 }
 
-/* The ":" inside {{profile:var}} specifically — a paler red than the rest
-   of the placeholder, so the eye can separate "which profile" (left of the
+/* The ":" inside {{set:var}} specifically — a paler red than the rest
+   of the placeholder, so the eye can separate "which set" (left of the
    colon) from "which variable in it" (right of the colon) at a glance. */
 .theme-dracula span.tok-gw-placeholder-colon {
   color: var(--token-placeholder-colon);
 }
 
-/* Hover tooltip over an already-written {{:VAR}}/{{env:VAR}}/{{profile:VAR}}
-   reference — see registerVariableHoverTooltip in shared/editor.js.
-   position: fixed since it's positioned from event.clientX/clientY
+/* Hover tooltip over an already-written {{:VAR}}/{{env:VAR}}/{{set:VAR}}
+   reference. position: fixed since it's positioned from event.clientX/clientY
    (viewport-relative), not page-scroll-relative. */
 .gw-var-tooltip {
   position: fixed;
@@ -86,8 +84,8 @@
   pointer-events: none;
 }
 
-/* {{:VAR}} autocomplete popup (typing "{{" -> profile names, "{{profile:" -> that
-   profile's variables), coloured to match dracula. */
+/* {{:VAR}} autocomplete popup (typing "{{" -> owners and set names, "{{set:" -> that
+   set's variables), coloured to match dracula. */
 .editor-hints {
   background: var(--bg);
   border: 1px solid var(--border);

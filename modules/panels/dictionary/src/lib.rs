@@ -198,7 +198,7 @@ impl Base {
 
     fn fixed(&self, name: &str) -> String {
         format!(
-            "Profile {name} comes from source {}; it can't be deleted or renamed",
+            "Set {name} comes from source {}; it can't be deleted or renamed",
             self.sources
                 .get(name)
                 .map(String::as_str)
@@ -266,10 +266,10 @@ impl Op {
                 let vars = Value::Object(vars.clone());
                 if current != from && *current != vars {
                     return Err(if from.is_null() {
-                        format!("CONFLICT: profile {name} was created in another window.")
+                        format!("CONFLICT: set {name} was created in another window.")
                     } else {
                         format!(
-                            "CONFLICT: profile {name} changed in another window. Your draft is preserved; discard it to load the saved version."
+                            "CONFLICT: set {name} changed in another window. Your draft is preserved; discard it to load the saved version."
                         )
                     });
                 }
@@ -283,17 +283,17 @@ impl Op {
             }
             Self::Delete(name) => {
                 if state.sets.remove(name).is_none() {
-                    return Err(format!("Unknown profile: {name}"));
+                    return Err(format!("Unknown set: {name}"));
                 }
                 state.order.retain(|set| set != name);
             }
             Self::Rename(name, new) => {
                 valid(new)?;
                 if !state.sets.contains_key(name) {
-                    return Err(format!("Unknown profile: {name}"));
+                    return Err(format!("Unknown set: {name}"));
                 }
                 if new != name && state.sets.contains_key(new) {
-                    return Err(format!("A profile named \"{new}\" already exists"));
+                    return Err(format!("A set named \"{new}\" already exists"));
                 }
                 state.sets = std::mem::take(&mut state.sets)
                     .into_iter()
@@ -312,15 +312,14 @@ impl Op {
                     || order.iter().any(|name| !state.sets.contains_key(name))
                 {
                     return Err(
-                        "Order must contain exactly the current set of profile names, each once"
-                            .into(),
+                        "Order must contain exactly the current set names, each once".into(),
                     );
                 }
                 state.order.clone_from(order);
             }
             Self::Reset(name, variable) => {
                 let Some(source) = base.sets.get(name).and_then(Value::as_object) else {
-                    return Err(format!("Profile {name} doesn't come from a source"));
+                    return Err(format!("Set {name} doesn't come from a source"));
                 };
                 let set = state.sets.entry(name.clone()).or_insert_with(|| json!({}));
                 match variable {
@@ -640,7 +639,7 @@ impl Dictionary {
         }
         if self.state.sets.contains_key(&new) {
             return vec![cmd::status(
-                &format!("Dictionary rename · ERROR · A profile named \"{new}\" already exists"),
+                &format!("Dictionary rename · ERROR · A set named \"{new}\" already exists"),
                 "error",
             )];
         }

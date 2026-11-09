@@ -1,3 +1,10 @@
+//! The current workspace: the snapshot of a session (layout, widths, console documents and
+//! responses, the modules' session kv) and the library of saved sessions; [`store`] keeps
+//! it saved.
+
+#[cfg(target_arch = "wasm32")]
+pub mod store;
+
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -29,7 +36,7 @@ impl Default for Snapshot {
     fn default() -> Self {
         Self {
             layout: Layout::default(),
-            console: json!({"version":1,"service":crate::services::default_service(),"documents":{},"responses":{}}),
+            console: json!({"version":1,"service":crate::modules::services::default_service(),"documents":{},"responses":{}}),
             modules: BTreeMap::new(),
         }
     }
@@ -158,9 +165,9 @@ impl Library {
                         .as_object()
                         .is_some_and(|responses| {
                             responses.values().all(|regions| {
-                                serde_json::from_value::<
-                                    Vec<services_kernel::document::ResponseRegion>,
-                                >(regions.clone())
+                                serde_json::from_value::<Vec<crate::document::ResponseRegion>>(
+                                    regions.clone(),
+                                )
                                 .is_ok()
                             })
                         })

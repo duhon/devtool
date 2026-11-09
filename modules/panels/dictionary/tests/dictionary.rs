@@ -178,7 +178,7 @@ fn own_sets_are_renamed_and_reordered_but_source_sets_are_not() {
     let commands = ui(&mut dictionary, Msg::Rename("ours".into()), "dev");
     assert_eq!(
         status(&commands),
-        "Dictionary rename · ERROR · A profile named \"dev\" already exists"
+        "Dictionary rename · ERROR · A set named \"dev\" already exists"
     );
     let view = format!("{:?}", dictionary.view());
     assert!(
@@ -219,7 +219,7 @@ fn a_draft_started_before_another_window_saved_conflicts_until_discarded() {
     assert!(commands.contains(&cmd::lock("dictionary", "dictionary")));
     let commands = transact(&mut dictionary, other.clone());
     assert!(
-        status(&commands).contains("CONFLICT: profile mine changed in another window"),
+        status(&commands).contains("CONFLICT: set mine changed in another window"),
         "{commands:?}"
     );
     assert!(!commands.iter().any(|command| command.tag == "save"));

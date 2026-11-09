@@ -1,6 +1,9 @@
-use crate::console;
+//! The console as the Agent's `console_*` tools see it: pages of the document, checks by
+//! id, responses, and edits checked against the revision the Agent read.
+
+use crate::document::{self, Position, ResponseRegion};
+use crate::requests;
 use serde_json::{Value, json};
-use services_kernel::document::{self, Position, ResponseRegion};
 use std::collections::BTreeMap;
 
 /// An Agent edit of the console of `service`: `from..to` becomes `text`, applied only while
@@ -90,7 +93,7 @@ impl Workspace {
         if let Some(error) = &self.identity_error {
             return Err(error.clone());
         }
-        if !crate::services::contains(service) {
+        if !crate::modules::services::contains(service) {
             return Err("Unknown Console service".into());
         }
         self.documents
@@ -275,8 +278,8 @@ impl Workspace {
         let request = request.ok_or("Missing request")?;
         let mut body = String::new();
         if let Some(block) = &origin {
-            let old_sections = console::sections(service, &block.text);
-            let new_sections = console::sections(service, request);
+            let old_sections = requests::sections(service, &block.text);
+            let new_sections = requests::sections(service, request);
             for marker in ["endpoint", "headers", "proto", "options", "env"] {
                 if !new_sections.contains_key(marker)
                     && let Some(value) = old_sections.get(marker).filter(|value| !value.is_empty())
@@ -286,7 +289,7 @@ impl Workspace {
             }
         }
         body.push_str(request.trim());
-        console::parse(service, &body)
+        requests::parse(service, &body)
             .map_err(|error| format!("Invalid Console request: {error}"))?;
         let (from, to, text) = if create {
             let title = title.ok_or("Missing title")?;

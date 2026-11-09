@@ -1,14 +1,13 @@
-pub mod agent_workspace;
-pub mod console;
-pub mod format;
-pub mod kernel;
+//! The App Shell: the layout, the toolbar, side panels and the console, wiring the Kernel
+//! to the widgets and the Host.
+
 pub mod language;
-pub mod services;
-pub mod sessions;
-pub mod storage;
+mod link;
+
+pub use link::link;
 
 #[cfg(target_arch = "wasm32")]
-mod browser;
+pub(crate) mod browser;
 
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]

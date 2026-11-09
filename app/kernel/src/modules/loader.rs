@@ -1,21 +1,52 @@
 //! The wasm modules the Kernel runs (the Host's `wasm` list): the panel fetches each one
 //! from the Host once per digest, keeps it in IndexedDB, instantiates it and starts it in the
-//! Kernel.
+//! Kernel. The last module list is cached so a new window opens on the same tabs.
 
-use super::session_database::request;
-use super::transport::{Reply, Transport};
-use super::{error, get, set, window};
+use super::registry;
+use crate::Callback;
+use crate::Effect;
+use crate::host::{Reply, Transport};
+use crate::js::{error, get, set, window};
+use crate::storage::database::request;
 use base64::Engine;
 use js_sys::{Object, Promise, Uint8Array};
 use serde_json::{Value, json};
-use services_kernel::Effect;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 use wasm_bindgen::{JsCast, JsValue, closure::Closure};
 use wasm_bindgen_futures::{JsFuture, spawn_local};
 use web_sys::{IdbDatabase, IdbTransactionMode};
-use yew::Callback;
+
+const MODULES: &str = "servicesConsole.modules";
+
+/// The module list of the last host reply; the built-in one stays without a valid cache.
+pub fn restore() -> bool {
+    let cached: Option<Value> = window()
+        .local_storage()
+        .ok()
+        .flatten()
+        .and_then(|storage| storage.get_item(MODULES).ok().flatten())
+        .and_then(|raw| serde_json::from_str(&raw).ok());
+    let Some(cached) = cached else {
+        return false;
+    };
+    registry::parse(&cached).is_ok_and(|modules| {
+        registry::declare(modules);
+        true
+    })
+}
+
+/// Installs and caches the host's module list and the modules the Kernel runs; `true` when
+/// either changed.
+pub fn accept(value: &Value) -> Result<bool, String> {
+    let modules = registry::parse(value)?;
+    if let Some(storage) = window().local_storage().ok().flatten() {
+        let cached = json!({"wasm": value["wasm"]}).to_string();
+        let _ = storage.set_item(MODULES, &cached);
+    }
+    Ok(registry::declare(modules))
+}
 
 /// Starts the declared modules the Kernel lacks (or runs at another digest) for the drivers
 /// the Host offers, then hands over their first effects and the ids that started. A module
@@ -34,13 +65,13 @@ pub fn prepare(transport: &Rc<Transport>, done: Callback<(Vec<Effect>, Vec<Strin
                         (name.clone(), version.as_str().unwrap_or("").to_owned())
                     })
                     .collect();
-                crate::kernel::configure(drivers);
+                registry::configure(drivers);
             }
             Err(failure) => {
                 web_sys::console::warn_1(&format!("The Host drivers are unknown: {failure}").into())
             }
         }
-        let (mut effects, wanted) = crate::kernel::retain();
+        let (mut effects, wanted) = registry::retain();
         let mut started = Vec::new();
         if !wanted.is_empty() {
             let cache = match open().await {
@@ -61,7 +92,7 @@ pub fn prepare(transport: &Rc<Transport>, done: Callback<(Vec<Effect>, Vec<Strin
                     Err(failure) => {
                         let failure = format!("The {name} module failed to load: {failure}");
                         web_sys::console::error_1(&failure.clone().into());
-                        crate::kernel::fail(&id, failure);
+                        registry::fail(&id, failure);
                     }
                 }
             }
@@ -110,8 +141,8 @@ async fn load(
             (digest, bytes)
         }
     };
-    let instance = services_kernel::wasm::instantiate(&bytes).await?;
-    crate::kernel::install(manifest, &digest, Box::new(instance))
+    let instance = crate::wasm::instantiate(&bytes).await?;
+    registry::install(manifest, &digest, Box::new(instance))
 }
 
 /// One Host request and its result.

@@ -5,8 +5,10 @@ use serde_json::{Value, json};
 use services_kernel::Effect;
 use services_kernel::document::check;
 use services_kernel::editor::Completion;
+use services_kernel::events;
+use services_kernel::modules::{registry as kernel, services};
+use services_kernel::requests as console;
 use services_shell::language::{Language, Modules};
-use services_shell::{console, kernel, services};
 use services_widgets::editor::fold;
 use services_widgets::editor::highlight::{Highlighter, Style};
 use std::rc::Rc;
@@ -58,6 +60,7 @@ fn styled(runs: &[(String, Style)], text: &str) -> Style {
 
 #[test]
 fn the_module_colors_checks_with_utf16_spans_and_the_console_overlays_variables() {
+    services_shell::link();
     let source = lines(
         "#check Привет 😀\n#endpoint\nGET https://пример.рф/{{:host}}/pets/{id}\n#headers\nX-Имя😀: {{:token}}\n#body\n{\"имя\": \"значение\"}\n#responce OK\n{\"ok\": true}",
     );
@@ -93,6 +96,7 @@ fn the_module_colors_checks_with_utf16_spans_and_the_console_overlays_variables(
 
 #[test]
 fn module_completions_merge_with_console_markers_options_and_variables() {
+    services_shell::link();
     let hints = [("{{:token}}".to_owned(), "secret".to_owned())];
     let at = |source: &str, line: usize, ch: usize| suggest("rest", "", source, line, ch, &hints);
     let texts = |source: &str, line: usize, ch: usize| {
@@ -128,6 +132,7 @@ fn module_completions_merge_with_console_markers_options_and_variables() {
 
 #[test]
 fn checks_and_sections_fold_where_the_module_says() {
+    services_shell::link();
     let source = lines("#check\n#endpoint\nGET https://a\n#body\n{\n  \"a\": 1\n}");
     let mut highlighter = highlighter();
     let fold = |highlighter: &mut Highlighter, line| {
@@ -142,6 +147,7 @@ fn checks_and_sections_fold_where_the_module_says() {
 
 #[test]
 fn a_run_is_the_modules_http_call_with_the_console_options() {
+    services_shell::link();
     let (call, options) = console::parse_run(
         "rest",
         "#endpoint\nPOST https://a/x\n#headers\nX: y\n#options\nRepeat: 5s\n#body\n{}",
@@ -169,6 +175,7 @@ fn a_run_is_the_modules_http_call_with_the_console_options() {
 
 #[test]
 fn curl_export_and_import_go_through_the_module() {
+    services_shell::link();
     assert!(console::transfers("rest"));
     assert_eq!(
         console::export(
@@ -186,6 +193,7 @@ fn curl_export_and_import_go_through_the_module() {
 
 #[test]
 fn rest_is_a_kernel_tab_ordered_by_its_manifest() {
+    services_shell::link();
     assert!(services::contains("rest"));
     assert_eq!(services::label("rest"), "REST");
     assert_eq!(services::default_service(), "rest");
@@ -201,6 +209,7 @@ fn rest_is_a_kernel_tab_ordered_by_its_manifest() {
 
 #[test]
 fn host_wasm_lists_declare_kernel_services_and_what_to_load() {
+    services_shell::link();
     let entry = json!({"id":"rest","kind":"service","name":"REST","version":"3.7.0",
         "description":"REST","abi":1,"app":">=3.7","drivers":{"http":"1"},"order":1,
         "digest":"abc"});
@@ -224,18 +233,19 @@ fn host_wasm_lists_declare_kernel_services_and_what_to_load() {
 
 #[test]
 fn discovery_runs_as_module_driver_calls_and_reports_its_status() {
+    services_shell::link();
     let document = check(
         "rest",
         "#endpoint\nGET https://fixture.invalid/api/pets",
         &Value::Null,
     );
-    assert!(kernel::broadcast(kernel::document(document)).is_empty());
+    assert!(events::broadcast(events::document(document)).is_empty());
     let check = check(
         "rest",
         "#endpoint\nGET https://fixture.invalid/api/pets",
         &Value::Null,
     );
-    let effects = kernel::broadcast(kernel::hints(check, 0));
+    let effects = events::broadcast(events::hints(check, 0));
     let drivers = |effects: &[Effect]| -> Vec<(String, Value)> {
         effects
             .iter()
@@ -274,6 +284,7 @@ fn discovery_runs_as_module_driver_calls_and_reports_its_status() {
 
 #[test]
 fn a_field_after_a_value_puts_its_comma_after_the_value() {
+    services_shell::link();
     let source = "#check\n#endpoint\nPOST http://comma.invalid/api/users\n#body\n";
     let check = check("rest", &source[7..], &Value::Null);
     let mut pending: Vec<(String, String)> = Vec::new();
@@ -288,7 +299,7 @@ fn a_field_after_a_value_puts_its_comma_after_the_value() {
             })
             .collect()
     };
-    pending.extend(calls(kernel::broadcast(kernel::hints(check, 0))));
+    pending.extend(calls(events::broadcast(events::hints(check, 0))));
     let spec = json!({"openapi":"3.0.0","paths":{"/api/users":{"post":{"requestBody":{
         "content":{"application/json":{"schema":{"type":"object","properties":{
             "name":{"type":"string"},"age":{"type":"integer"},

@@ -34,17 +34,17 @@ iterating on the UI; both builds use the same ID and installed host.
 Open DevTools → Services, or:
 
 ```text
-chrome-extension://ckicpgdfkgcmgnclbfbcbkillcpaffnb/panel.html
+chrome-extension://ckicpgdfkgcmgnclbfbcbkillcpaffnb/services.html
 ```
 
 ## Runtime boundaries
 
 `app/shell/` owns application state, layout, the Console, side panels hosting and
 the browser transport bindings; services and panels are wasm modules its Kernel
-(`app/kernel/`) runs. `src/panel.js` only loads the generated WASM module;
+(`app/kernel/`) runs. `src/services.js` only loads the generated WASM module;
 `devtools.js` registers the Chrome panel. The text editor and the other widgets are
 part of the WASM module (`app/widgets/`), with their CSS next to them. The one
-stylesheet linked from `panel.html` is the Shell's theme (`theme.css`); no legacy web
+stylesheet linked from `services.html` is the Shell's theme (`theme.css`); no legacy web
 application or Node build script is used.
 
 `host/` runs the drivers the modules call. Native Messaging carries the

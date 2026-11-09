@@ -1,5 +1,7 @@
+//! What the console shows of an answer: the response text, capped, and the verdict.
+
 use serde_json::Value;
-use services_widgets::status_bar::duration;
+
 pub const MAX_RESPONSE_CHARS: usize = 300_000;
 /// A finished run's text: what its module rendered, cut to what the editor can show.
 pub fn console_response(result: &Value) -> String {
@@ -72,15 +74,4 @@ pub fn outcome(result: &Value) -> &str {
         Some(500..) => "ERROR",
         _ => "NOTICE",
     }
-}
-pub fn status(result: &Value) -> String {
-    let mut parts = Vec::new();
-    if let Some(ms) = result["durationMs"].as_f64() {
-        parts.push(duration(ms));
-    }
-    parts.push(outcome(result).into());
-    if let Some(summary) = result["summary"].as_str() {
-        parts.push(summary.into());
-    }
-    parts.join(" · ")
 }

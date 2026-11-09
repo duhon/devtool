@@ -543,7 +543,7 @@ async fn installed_reload(
         json!({"version":1,"sources":[{"name":"Updates","kind":"folder","path":updates}]})
             .to_string(),
     )?;
-    let url = format!("chrome-extension://{EXTENSION_ID}/panel.html");
+    let url = format!("chrome-extension://{EXTENSION_ID}/services.html");
     let page = cdp
         .page(&url, INIT)
         .await
@@ -881,7 +881,7 @@ fn scenarios() -> Vec<Scenario> {
             "agent-settings",
             Agent,
             60,
-            "Agent model and reasoning settings; a folder source: its skill reaches the Agent, its Dictionary profile is overridden and reset, removal",
+            "Agent model and reasoning settings; a folder source: its skill reaches the Agent, its Dictionary set is overridden and reset, removal",
             script(include_str!("browser-agent-settings.js")),
         ),
         scenario(
@@ -1551,7 +1551,7 @@ impl Harness {
         .await?;
         let setup = cdp
             .page(
-                &format!("chrome-extension://{EXTENSION_ID}/panel.html"),
+                &format!("chrome-extension://{EXTENSION_ID}/services.html"),
                 INIT,
             )
             .await?;
@@ -1631,7 +1631,7 @@ impl Harness {
     }
 
     fn panel_url(&self) -> String {
-        format!("chrome-extension://{EXTENSION_ID}/panel.html")
+        format!("chrome-extension://{EXTENSION_ID}/services.html")
     }
 
     /// Restores the seeded data files and clears the panel page storage so no scenario sees another's state.
@@ -1653,9 +1653,6 @@ impl Harness {
         }
         for entry in fs::read_dir(&self.data)? {
             let entry = entry?;
-            if entry.file_name() == ".profile-stores.lock" {
-                continue;
-            }
             // A still-exiting native host may remove its pending file meanwhile.
             let removed = entry.file_type().and_then(|kind| {
                 if kind.is_file() {
@@ -1718,7 +1715,7 @@ impl Harness {
         let init = format!("{}\n{INIT}", seed_storage(self.fixture_port));
         let page = self.cdp.page(&url, &init).await?;
         self.pages.push(page.clone());
-        // A team's folder source: a skill and a Dictionary profile.
+        // A team's folder source: a skill and a Dictionary set.
         let source = self.temporary.path().join("team source");
         if !source.exists() {
             fs::create_dir_all(source.join("skills/shop-deploy"))?;
@@ -1728,7 +1725,7 @@ impl Harness {
             )?;
             fs::write(
                 source.join("dictionary.json"),
-                r#"{"profiles":{"team":{"HOST":"team.fixture.invalid","PORT":"8080"}}}"#,
+                r#"{"sets":{"team":{"HOST":"team.fixture.invalid","PORT":"8080"}}}"#,
             )?;
         }
         // Folder sources of modules and of a newer Services DevTools.

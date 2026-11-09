@@ -2,11 +2,12 @@
 //! export and response replacement. UI-behaviour tests.
 
 use serde_json::json;
+use services_kernel::requests::{RunOptions, export, import, parse, parse_run};
 use services_sdk::lang::curl::shell_words;
-use services_shell::console::{RunOptions, export, import, parse, parse_run};
 
 #[test]
 fn every_service_console_parses_into_its_request_shape() {
+    services_shell::link();
     assert_eq!(
         parse(
             "rest",
@@ -27,6 +28,7 @@ fn every_service_console_parses_into_its_request_shape() {
 
 #[test]
 fn console_options_run_the_check_and_never_reach_the_module() {
+    services_shell::link();
     let (params, options) = parse_run(
         "rest",
         "#endpoint\nGET https://a\n#options\nrepeat: 2m\nRepeat-Until: Changed",
@@ -77,6 +79,7 @@ fn console_options_run_the_check_and_never_reach_the_module() {
 
 #[test]
 fn import_export_roundtrip() {
+    services_shell::link();
     for (service, command) in [
         (
             "rest",
@@ -99,6 +102,7 @@ fn import_export_roundtrip() {
 
 #[test]
 fn exported_commands_quote_text_so_it_splits_back_unchanged() {
+    services_shell::link();
     let value = "it's \"quoted\"";
     let command = export(
         "rest",

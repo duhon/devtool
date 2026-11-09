@@ -1,14 +1,11 @@
-use super::{
-    error,
-    transport::{Reply, Transport},
-    updates::{self, Phase as UpdatePhase},
-    window,
-};
+use super::{error, on, window};
 use crate::language::Language;
-use crate::{console, format, storage};
 use agent::{Approval, WorkspaceRequest};
 use serde_json::{Value, json};
 use services_kernel::document::DocumentEdit;
+use services_kernel::host::{Reply, Transport};
+use services_kernel::storage;
+use services_kernel::updates::{self, Phase as UpdatePhase};
 use services_widgets::editor::{
     self, Anchor, Handle,
     model::{Context as EditorContext, Event as EditorEvent, Msg as EditorMsg, Setup},
@@ -24,6 +21,9 @@ use wasm_bindgen::{JsCast, closure::Closure};
 use wasm_bindgen_futures::spawn_local;
 use web_sys::DragEvent;
 use yew::prelude::*;
+
+/// What marks a window showing the App.
+const ROOT: &str = ".console-root";
 
 mod agent;
 mod console_panel;
@@ -121,7 +121,7 @@ enum Transfer {
     Export,
 }
 struct AgentEdit {
-    command: crate::agent_workspace::CheckEdit,
+    command: services_kernel::agent::CheckEdit,
     request: WorkspaceRequest,
     identity: Option<(String, usize)>,
 }
@@ -202,7 +202,7 @@ pub enum Msg {
     /// A module's driver stream sent an event or ended.
     KernelStreamed(String, String, Reply),
     /// The Host answered a module's command: (module, tag, what follows, reply).
-    KernelHosted(String, String, kernel_panel::After, Reply),
+    KernelHosted(String, String, services_kernel::requests::After, Reply),
     KernelTimer(String, String),
     /// Another window changed the kv key of a module: (module, key).
     KernelStorage(String, String),
@@ -220,7 +220,7 @@ pub enum Msg {
     KernelHints(services_sdk::Check, u32),
 }
 pub struct App {
-    sessions: super::sessions::Shared,
+    sessions: services_kernel::workspace::store::Shared,
     session_id: u64,
     session_loading: bool,
     /// The module and tag a workspace operation answers when it ends.
@@ -249,7 +249,7 @@ pub struct App {
     templates: services_contracts::templates::Library,
     /// The panel module shown in the side panel.
     side: Option<String>,
-    agent_workspace: crate::agent_workspace::Workspace,
+    agent_workspace: services_kernel::agent::Workspace,
     agent_edit: Option<AgentEdit>,
     agent_serial: u64,
     agent_run: Option<AgentRun>,
@@ -273,15 +273,18 @@ impl Component for App {
         let sessions = ctx.props().sessions.clone();
         let snapshot = sessions.borrow().library.snapshot().clone();
         let transport = Transport::new(
-            ctx.link().callback(Msg::Connection),
-            ctx.link().callback(|_| Msg::TransportBusy),
+            on(ctx.link().callback(Msg::Connection)),
+            on(ctx.link().callback(|_| Msg::TransportBusy)),
         );
         transport.bind_session(sessions.clone());
         let saved = snapshot.console;
         let console_service = saved["service"]
             .as_str()
-            .filter(|s| crate::services::contains(s))
-            .map_or_else(crate::services::default_service, str::to_owned);
+            .filter(|s| services_kernel::modules::services::contains(s))
+            .map_or_else(
+                services_kernel::modules::services::default_service,
+                str::to_owned,
+            );
         let console_order = storage::console_order(&saved["order"]);
         let mut docs = BTreeMap::new();
         let mut response_regions = BTreeMap::new();
@@ -292,7 +295,7 @@ impl Component for App {
             .map(str::to_owned)
             .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
         let mut migrated_console = false;
-        for service in crate::services::ids() {
+        for service in services_kernel::modules::services::ids() {
             let (document, regions, identities, migrated) = saved_document(&saved, &service);
             migrated_console |= migrated;
             checks.insert(service.clone(), identities);
@@ -324,7 +327,7 @@ impl Component for App {
             hints: BTreeMap::new(),
             templates: Default::default(),
             side: None,
-            agent_workspace: crate::agent_workspace::Workspace::new(Ok(
+            agent_workspace: services_kernel::agent::Workspace::new(Ok(
                 uuid::Uuid::now_v7().to_string()
             )),
             agent_edit: None,
@@ -349,7 +352,7 @@ impl Component for App {
         app.transport.request(
             json!({"service":"modules"}),
             false,
-            ctx.link().callback(Msg::Modules),
+            on(ctx.link().callback(Msg::Modules)),
         );
         for (event, visible) in [
             ("services-console-hidden", false),
@@ -400,12 +403,12 @@ impl Component for App {
                 self.transport.request(
                     json!({"service":"modules"}),
                     false,
-                    ctx.link().callback(Msg::Modules),
+                    on(ctx.link().callback(Msg::Modules)),
                 );
             }
             Msg::SourcesApplied => {
                 // Panels read their sources' files again.
-                let effects = crate::kernel::broadcast(crate::kernel::workspace());
+                let effects = services_kernel::events::broadcast(services_kernel::events::workspace());
                 self.kernel_effects(ctx, effects);
             }
             Msg::ForgetModule(service) => {
@@ -423,7 +426,7 @@ impl Component for App {
                 let sessions = self.sessions.clone();
                 let link = ctx.link().clone();
                 wasm_bindgen_futures::spawn_local(async move {
-                    let result = super::sessions::Store::forget(&sessions, service).await;
+                    let result = services_kernel::workspace::store::Store::forget(&sessions, service).await;
                     link.send_message(Msg::ModuleForgotten(result));
                 });
             }
@@ -441,7 +444,7 @@ impl Component for App {
                 let ready = self
                     .session_guard()
                     .map_err(|error| format!("Cannot update while work is active: {error}"))
-                    .and_then(|()| updates::ensure_single_window());
+                    .and_then(|()| updates::ensure_single_window(ROOT));
                 self.updates.transition(UpdatePhase::Preparing);
                 if let Err(error) = ready {
                     self.update_failed(ctx, error);
@@ -451,7 +454,7 @@ impl Component for App {
                 let sessions = self.sessions.clone();
                 let link = ctx.link().clone();
                 spawn_local(async move {
-                    let result = super::sessions::Store::flush(&sessions)
+                    let result = services_kernel::workspace::store::Store::flush(&sessions)
                         .await
                         .map_err(|error| {
                             format!("Workspace could not be saved before updating: {error}")
@@ -461,7 +464,7 @@ impl Component for App {
             }
             Msg::UpdatePrepared(result) => match result {
                 Ok(()) => {
-                    if let Err(error) = updates::ensure_single_window() {
+                    if let Err(error) = updates::ensure_single_window(ROOT) {
                         self.update_failed(ctx, error);
                         return true;
                     }
@@ -473,7 +476,7 @@ impl Component for App {
                         json!({"service":"updates","op":"install","source":source,"version":version});
                     self.updates.transition(UpdatePhase::Installing);
                     self.transport
-                        .request(request, false, ctx.link().callback(Msg::UpdateInstalled));
+                        .request(request, false, on(ctx.link().callback(Msg::UpdateInstalled)));
                 }
                 Err(error) => self.update_failed(ctx, error),
             },
@@ -508,12 +511,12 @@ impl Component for App {
                 let link = ctx.link().clone();
                 spawn_local(async move {
                     link.send_message(Msg::UpdateReloadReady(
-                        super::sessions::Store::flush(&sessions).await,
+                        services_kernel::workspace::store::Store::flush(&sessions).await,
                     ));
                 });
             }
             Msg::UpdateReloadReady(result) => {
-                match result.and_then(|()| updates::reload()) {
+                match result.and_then(|()| updates::reload(ROOT)) {
                     Ok(()) => self.updates.transition(UpdatePhase::Installed),
                     Err(error) => self.update_failed(ctx, format!("Update is installed, but automatic reload failed: {error}. Reload the extension manually.")),
                 }
@@ -544,7 +547,7 @@ impl Component for App {
                     let link = ctx.link().clone();
                     spawn_local(async move {
                         link.send_message(Msg::SessionFinished(
-                            super::sessions::Store::select(&sessions, id).await,
+                            services_kernel::workspace::store::Store::select(&sessions, id).await,
                         ));
                     });
                 }
@@ -558,7 +561,7 @@ impl Component for App {
                     let link = ctx.link().clone();
                     spawn_local(async move {
                         link.send_message(Msg::SessionFinished(
-                            super::sessions::Store::copy(&sessions, source, name).await,
+                            services_kernel::workspace::store::Store::copy(&sessions, source, name).await,
                         ));
                     });
                 }
@@ -572,7 +575,7 @@ impl Component for App {
                     let link = ctx.link().clone();
                     spawn_local(async move {
                         link.send_message(Msg::SessionFinished(
-                            super::sessions::Store::delete(&sessions, id).await,
+                            services_kernel::workspace::store::Store::delete(&sessions, id).await,
                         ));
                     });
                 }
@@ -680,7 +683,7 @@ impl Component for App {
                         .map(Vec::as_slice)
                         .unwrap_or(&[]),
                 ) {
-                    Some(block) => match console::parse_run(&service, &block.text) {
+                    Some(block) => match services_kernel::requests::parse_run(&service, &block.text) {
                         Ok((params, options)) => {
                             self.execute_console(
                                 ctx,
@@ -765,12 +768,12 @@ impl Component for App {
                 let Reply::Result(value) = reply else {
                     return false;
                 };
-                match super::accept_modules(&value) {
+                match services_kernel::modules::loader::accept(&value) {
                     Ok(changed) => {
                         self.kernel.loading += 1;
-                        super::kernel_modules::prepare(
+                        services_kernel::modules::loader::prepare(
                             &self.transport,
-                            ctx.link().callback(Msg::KernelStarted),
+                            on(ctx.link().callback(Msg::KernelStarted)),
                         );
                         if !changed {
                             return false;
@@ -787,7 +790,7 @@ impl Component for App {
                 self.agent_tool_result(&tag, &call_id, result);
             }
             Msg::PageReplied(module, tag, result) => {
-                let effects = crate::kernel::with(|modules| {
+                let effects = services_kernel::modules::registry::with(|modules| {
                     modules.reply(&module, &tag, result.map_err(services_sdk::Failure::new))
                 });
                 self.kernel_effects(ctx, effects);
@@ -822,7 +825,7 @@ impl Component for App {
                     self.transport.request(
                         json!({"type":"clipboardRead"}),
                         false,
-                        ctx.link().callback(move |reply| {
+                        on(ctx.link().callback(move |reply| {
                             let result = match reply {
                                 Reply::Result(value) => value["text"]
                                     .as_str()
@@ -832,7 +835,7 @@ impl Component for App {
                                 _ => Err("Unexpected clipboard response from companion".into()),
                             };
                             Msg::Imported(service.clone(), result)
-                        }),
+                        })),
                     );
                 } else {
                     let link = ctx.link().clone();
@@ -845,7 +848,7 @@ impl Component for App {
                 }
             }
             Msg::Imported(service, result) => {
-                match result.and_then(|command| console::import(&service, &command)) {
+                match result.and_then(|command| services_kernel::requests::import(&service, &command)) {
                     Ok(block) => {
                         let doc = self.docs.entry(service).or_default();
                         if !doc.trim().is_empty() {
@@ -874,7 +877,7 @@ impl Component for App {
                 let block = services_kernel::document::request_at(&doc, line, regions);
                 match block
                     .ok_or("No #check block to export".to_string())
-                    .and_then(|b| console::export(&self.console_service, &b.text))
+                    .and_then(|b| services_kernel::requests::export(&self.console_service, &b.text))
                 {
                     Ok(command) => {
                         let link = ctx.link().clone();
@@ -994,7 +997,7 @@ impl Component for App {
                 }
                 // A panel opened before its module started is shown once it runs.
                 if let Some(id) = self.side.clone() {
-                    let effects = crate::kernel::with(|modules| modules.show(&id));
+                    let effects = services_kernel::modules::registry::with(|modules| modules.show(&id));
                     self.kernel_effects(ctx, effects);
                 }
             }
@@ -1008,11 +1011,11 @@ impl Component for App {
             Msg::KernelTimer(module, tag) => self.kernel_timer(ctx, &module, &tag),
             Msg::KernelSaved(module, tag, saved) => {
                 let result = saved.map(|()| Value::Null).map_err(services_sdk::Failure::new);
-                let effects = crate::kernel::with(|modules| modules.reply(&module, &tag, result));
+                let effects = services_kernel::modules::registry::with(|modules| modules.reply(&module, &tag, result));
                 self.kernel_effects(ctx, effects);
             }
             Msg::KernelStorage(module, key) => {
-                let effects = crate::kernel::with(|modules| modules.storage(&module, &key));
+                let effects = services_kernel::modules::registry::with(|modules| modules.storage(&module, &key));
                 self.kernel_effects(ctx, effects);
             }
             Msg::TogglePanel(id) => {
@@ -1020,16 +1023,16 @@ impl Component for App {
                 self.close_side(ctx);
                 if open {
                     self.side = Some(id.clone());
-                    let effects = crate::kernel::with(|modules| modules.show(&id));
+                    let effects = services_kernel::modules::registry::with(|modules| modules.show(&id));
                     self.kernel_effects(ctx, effects);
                 }
             }
             Msg::PanelUi(id, (msg, value)) => {
                 let mut effects = Vec::new();
                 for (msg, value) in services_widgets::view::take_pending(&id) {
-                    effects.extend(crate::kernel::with(|modules| modules.ui(&id, msg, value)));
+                    effects.extend(services_kernel::modules::registry::with(|modules| modules.ui(&id, msg, value)));
                 }
-                effects.extend(crate::kernel::with(|modules| modules.ui(&id, msg, value)));
+                effects.extend(services_kernel::modules::registry::with(|modules| modules.ui(&id, msg, value)));
                 self.kernel_effects(ctx, effects);
             }
             Msg::KernelRunReplied(key, reply) => self.kernel_run_replied(ctx, &key, reply),
@@ -1090,7 +1093,7 @@ impl App {
     /// Follows a changed module list: new services get their saved document, the tab order drops missing ones, a missing current service falls back.
     fn sync_services(&mut self) {
         let saved = self.sessions.borrow().library.snapshot().console.clone();
-        for service in crate::services::ids() {
+        for service in services_kernel::modules::services::ids() {
             if self.docs.contains_key(&service) {
                 continue;
             }
@@ -1100,7 +1103,7 @@ impl App {
             self.response_regions.insert(service, regions);
         }
         self.console_order = storage::console_order(&json!(self.console_order));
-        if !crate::services::contains(&self.console_service) {
+        if !services_kernel::modules::services::contains(&self.console_service) {
             self.console_service = self.console_order.first().cloned().unwrap_or_default();
         }
     }
@@ -1115,7 +1118,9 @@ impl App {
             } else {
                 Err(services_sdk::Failure::new(message))
             };
-            let effects = crate::kernel::with(|modules| modules.reply(&module, &tag, result));
+            let effects = services_kernel::modules::registry::with(|modules| {
+                modules.reply(&module, &tag, result)
+            });
             self.kernel_effects(ctx, effects);
         }
     }
@@ -1188,7 +1193,9 @@ impl App {
         let result = result
             .map(|()| json!({}))
             .map_err(services_sdk::Failure::new);
-        let effects = crate::kernel::with(|modules| modules.reply(&module, &tag, result));
+        let effects = services_kernel::modules::registry::with(|modules| {
+            modules.reply(&module, &tag, result)
+        });
         self.kernel_effects(ctx, effects);
     }
     /// The saved workspaces as `workspace.list` answers.
@@ -1255,7 +1262,7 @@ impl App {
         ctx: &Context<Self>,
         request: &WorkspaceRequest,
     ) -> Result<(), String> {
-        use crate::agent_workspace::{page, string};
+        use services_kernel::agent::{page, string};
         if self.hidden {
             return Err(
                 "Console is not active. Return to Console before using workspace tools.".into(),
@@ -1273,7 +1280,7 @@ impl App {
             .as_str()
             .unwrap_or(&self.console_service)
             .to_owned();
-        if !crate::services::contains(&service) {
+        if !services_kernel::modules::services::contains(&service) {
             return Err("Unknown Console service".into());
         }
         self.refresh_agent(&service);
@@ -1285,7 +1292,7 @@ impl App {
                 let mut value = self
                     .agent_workspace
                     .context_page(&service, cursor, offset, limit)?;
-                value["services"] = json!(crate::services::ids());
+                value["services"] = json!(services_kernel::modules::services::ids());
                 value["variables"] = json!(
                     self.vars
                         .iter()
@@ -1413,7 +1420,8 @@ impl App {
                         .unwrap_or(&[]),
                 )
                 .ok_or("Check is unavailable")?;
-                let params = resolve_agent_params(console::parse(&service, &block.text)?)?;
+                let params =
+                    resolve_agent_params(services_kernel::requests::parse(&service, &block.text)?)?;
                 let approval = Approval {
                     service: service.clone(),
                     title: source.split('\n').nth(line).unwrap_or("").into(),
@@ -1492,7 +1500,7 @@ impl App {
                     params,
                     line,
                     Some(pending.request.session.clone()),
-                    console::RunOptions::default(),
+                    services_kernel::requests::RunOptions::default(),
                 ) {
                     pending.operation = key;
                     self.agent_run = Some(pending);
@@ -1580,7 +1588,7 @@ fn agent_debug(debug: &Value, response: bool) -> Value {
 fn resolve_agent_params(value: Value) -> Result<Value, String> {
     match value {
         Value::String(text) if text.contains("{{") => {
-            crate::kernel::with(|modules| modules.resolve(&text, false))
+            services_kernel::modules::registry::with(|modules| modules.resolve(&text, false))
                 .map(|resolution| Value::String(resolution.text))
         }
         Value::Array(values) => values
@@ -1624,14 +1632,14 @@ fn time() -> String {
 }
 /// What the module of `service` reports it discovered: the details of its status.
 fn module_schema(service: &str) -> Option<Value> {
-    crate::kernel::status(service)
+    services_kernel::modules::registry::status(service)
         .map(|status| status.detail)
         .filter(|detail| !detail.is_null())
 }
 
 /// The editor command of an Agent edit.
 fn editor_command(
-    edit: &crate::agent_workspace::CheckEdit,
+    edit: &services_kernel::agent::CheckEdit,
 ) -> services_widgets::editor::model::EditCommand {
     let position = |position: services_kernel::document::Position| editor::Position {
         line: position.line,

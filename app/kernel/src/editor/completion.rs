@@ -98,19 +98,20 @@ pub fn suggest(
             .unwrap_or(ch);
         let fragment = &before[start + 2..];
         let candidates = if !fragment.contains(':') {
-            let mut profiles = BTreeSet::new();
+            let mut owners = BTreeSet::new();
             hints
                 .iter()
                 .filter_map(|(s, _)| s.strip_prefix("{{"))
                 .filter_map(|s| s.split_once(':'))
-                .filter_map(|(profile, _)| {
-                    if profiles.insert(profile.to_string()) {
+                .filter_map(|(owner, _)| {
+                    if owners.insert(owner.to_string()) {
                         Some((
-                            format!("{{{{{profile}:"),
-                            if profile.is_empty() {
-                                "Search all profiles and env".into()
-                            } else {
-                                format!("Profile {profile}")
+                            format!("{{{{{owner}:"),
+                            match owner {
+                                "" => "Search Variables, Dictionary sets and env".into(),
+                                "var" => "Variables".into(),
+                                "env" => "Environment".into(),
+                                set => format!("Dictionary set {set}"),
                             },
                         ))
                     } else {
@@ -119,10 +120,10 @@ pub fn suggest(
                 })
                 .collect()
         } else {
-            let profile = fragment.split(':').next().unwrap_or("");
+            let owner = fragment.split(':').next().unwrap_or("");
             hints
                 .iter()
-                .filter(|(s, _)| s.starts_with(&format!("{{{{{profile}:")))
+                .filter(|(s, _)| s.starts_with(&format!("{{{{{owner}:")))
                 .map(|(s, detail)| {
                     let detail = if detail.starts_with(SAVED) {
                         SAVED.into()

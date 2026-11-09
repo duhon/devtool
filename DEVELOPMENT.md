@@ -72,15 +72,19 @@ cargo run -p xtask -- test <type>   # one kind at a time
   templates and agent contracts shared by the host and the App.
 - `api/sdk` (`services-sdk`) — the module SDK: the wasm ABI, `Module`, `Event`/`Cmd`,
   the UI tree, driver requests and shared languages (`lang/`).
-- `app/kernel` — the Kernel: runs wasm modules in the App, the document model
-  (`document`: checks, responses, identities) and the editor bridge to modules
-  (`editor`: highlighting, folds, completion, templates).
+- `app/kernel` — the Kernel, no UI: runs wasm modules in the App (`modules`: registry,
+  loader, console services), the document model (`document`: checks, responses,
+  identities), the editor bridge to modules (`editor`: highlighting, folds, completion,
+  templates), the request pipeline (`requests`), the workspace and its saving
+  (`workspace`, `storage`), the Host connection (`host`), Web Locks (`locks`), the
+  inspected page (`page`), updates, module events and activity.
 - `app/widgets` — generic UI widgets (Yew/WebAssembly) with no application logic: the
   UI-tree view, the text editor, find bar, check rail, status bar, tree, resizer,
   indicator; each widget's CSS lies next to it.
 - `app/shell` — the App (`app.wasm`): layout, theme, toolbar, side panels, Console,
-  transport, and the wiring of Kernel, widgets and Host (`language.rs` gives the
-  editor its language from the Kernel).
+  and the wiring of Kernel, widgets and Host (`language.rs` gives the editor its
+  language from the Kernel; `link()` links the App's modules into the Kernel — tests
+  call it first).
 - `app/extension/src` — Chrome manifest, HTML, minimal bootstrap.
 - `modules/services/<id>`, `modules/panels/<id>` — the standard modules (services and
   panels), each a wasm crate with its `manifest.json`; services are released on their
@@ -93,7 +97,7 @@ cargo run -p xtask -- test <type>   # one kind at a time
 
 There are no `assets/` folders: CSS and scripts lie next to the code that owns them
 and are embedded with `include_str!`. The one exception is the Shell's
-`app/shell/src/theme.css`, which `panel.html` links as `theme.css`.
+`app/shell/src/theme.css`, which `services.html` links as `theme.css`.
 
 ## Rules
 

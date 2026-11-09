@@ -548,7 +548,7 @@ impl Module for Vars {
         _: bool,
     ) -> Option<Result<services_sdk::Resolution, String>> {
         Some(if text.contains("{{var:nope}}") {
-            Err("Unknown variable \"nope\" in profile \"var\"".into())
+            Err("Unknown variable \"nope\" in var".into())
         } else {
             Ok(services_sdk::Resolution {
                 text: text.replace("{{var:host}}", "x.test"),
@@ -608,7 +608,7 @@ fn the_kernel_resolves_variables_with_the_first_panel_that_keeps_them() {
     modules.broadcast(discover("{{var:nope}}"));
     assert_eq!(
         status(&modules),
-        "url failed: Unknown variable \"nope\" in profile \"var\""
+        "url failed: Unknown variable \"nope\" in var"
     );
     // The reply ended the command: a late end changes nothing.
     assert!(modules.end("one", "url").is_empty());

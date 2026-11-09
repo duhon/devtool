@@ -490,8 +490,8 @@ fn update_and_uninstall_keep_data_and_restore_previous_registration() {
     let original = "{\"path\":\"/previous/dev/host\"}";
     fs::write(&paths.registration, original).unwrap();
     install(&home, &payload).unwrap();
-    let profile = paths.data.join(".variable-profiles.json");
-    fs::write(&profile, "{\"preserve\":true}").unwrap();
+    let user_data = paths.data.join("user-data.json");
+    fs::write(&user_data, "{\"preserve\":true}").unwrap();
     assert_single_copy(&paths);
     let manifest: Value = serde_json::from_slice(&fs::read(&paths.registration).unwrap()).unwrap();
     assert_eq!(
@@ -510,13 +510,19 @@ fn update_and_uninstall_keep_data_and_restore_previous_registration() {
     .unwrap();
     install(&home, &payload).unwrap();
     install(&home, &payload).unwrap();
-    assert_eq!(fs::read_to_string(&profile).unwrap(), "{\"preserve\":true}");
+    assert_eq!(
+        fs::read_to_string(&user_data).unwrap(),
+        "{\"preserve\":true}"
+    );
     assert_single_copy(&paths);
     uninstall(&home).unwrap();
     assert!(!paths.releases.exists());
     assert!(!paths.base.join("extension").exists());
     assert_eq!(fs::read_to_string(&paths.registration).unwrap(), original);
-    assert_eq!(fs::read_to_string(&profile).unwrap(), "{\"preserve\":true}");
+    assert_eq!(
+        fs::read_to_string(&user_data).unwrap(),
+        "{\"preserve\":true}"
+    );
 }
 
 #[test]
@@ -623,8 +629,8 @@ fn migration_works_after_old_releases_have_been_deleted() {
     for linked in [false, true] {
         let (_directory, home, payload, _metadata) = fixture();
         let paths = install(&home, &payload).unwrap();
-        let profile = paths.data.join(".variable-profiles.json");
-        fs::write(&profile, "{\"keep\":true}").unwrap();
+        let user_data = paths.data.join("user-data.json");
+        fs::write(&user_data, "{\"keep\":true}").unwrap();
         legacy_layout(&paths, &payload, linked);
         fs::remove_dir_all(&paths.releases).unwrap();
         install(&home, &payload).unwrap();
@@ -635,7 +641,7 @@ fn migration_works_after_old_releases_have_been_deleted() {
             registration["path"],
             json!(paths.base.join("extension/native/host"))
         );
-        assert_eq!(fs::read_to_string(&profile).unwrap(), "{\"keep\":true}");
+        assert_eq!(fs::read_to_string(&user_data).unwrap(), "{\"keep\":true}");
     }
 }
 
@@ -716,7 +722,7 @@ fn update_repairs_closed_custom_profiles_and_uninstall_cleans_all_registrations(
     let paths = install(&home, &payload).unwrap();
     let custom = remember_custom_profile(&paths);
     fs::remove_file(&custom).unwrap();
-    let data = paths.data.join(".variable-profiles.json");
+    let data = paths.data.join("user-data.json");
     fs::write(&data, "preserved fixture").unwrap();
     install(&home, &payload).unwrap();
     let restored: Value = serde_json::from_slice(&fs::read(&custom).unwrap()).unwrap();

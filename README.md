@@ -22,7 +22,7 @@ The application opens in two ways: inside Chrome DevTools → **Services**, or
 standalone in its own tab:
 
 ```text
-chrome-extension://ckicpgdfkgcmgnclbfbcbkillcpaffnb/panel.html
+chrome-extension://ckicpgdfkgcmgnclbfbcbkillcpaffnb/services.html
 ```
 
 The installer installs the application only. Add the services you need in

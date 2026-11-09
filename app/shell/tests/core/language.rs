@@ -19,6 +19,7 @@ fn at(line: usize, ch: usize) -> Position {
 
 #[test]
 fn checks_responses_and_brackets_fold() {
+    services_shell::link();
     let text = "#check a\n{\n  \"x\": \"}\"\n}\n#response 200\n{}\n#check b\nx";
     let doc = lines(text);
     let language = Rc::new(Language::new("console-none", "none", "", ""));
@@ -46,6 +47,7 @@ fn checks_responses_and_brackets_fold() {
 
 #[test]
 fn edits_keep_the_responses_set_directly() {
+    services_shell::link();
     let setup = Setup {
         mode: "console-mysql".into(),
         document: true,

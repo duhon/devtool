@@ -3,10 +3,11 @@
 //! UI-behaviour tests.
 
 use serde_json::json;
-use services_shell::storage::{console_order, keep_unloaded, reorder};
+use services_kernel::storage::{console_order, keep_unloaded, reorder};
 
 #[test]
 fn console_order_restores_deduplicates_and_completes() {
+    services_shell::link();
     let mut order = console_order(&serde_json::json!(["terminal", "rest", "rest", "unknown"]));
     assert_eq!(order.len(), 8);
     assert_eq!(&order[..2], ["terminal", "rest"]);
@@ -18,6 +19,7 @@ fn console_order_restores_deduplicates_and_completes() {
 
 #[test]
 fn a_save_keeps_the_console_of_a_module_that_is_not_loaded() {
+    services_shell::link();
     let saved = json!({"documents":{"rest":"#check\nold","redis":"#check\nPING"},
         "responses":{"redis":[{"start":1}]},"checkIdentities":{"redis":["a"]},
         "order":["redis","rest","terminal"]});

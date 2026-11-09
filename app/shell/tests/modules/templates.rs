@@ -20,6 +20,7 @@ fn suggest(
 
 #[test]
 fn inserts_only_body_and_normalizes_inline_sections() {
+    services_shell::link();
     let templates = BTreeMap::from([(
         "body".into(),
         "@my_create_book comment\n{\n  \"id\": 123\n}\n@my_create_book2 second\n{\"id\":1,}".into(),
@@ -38,6 +39,7 @@ fn inserts_only_body_and_normalizes_inline_sections() {
 
 #[test]
 fn full_checks_and_unicode_are_literal() {
+    services_shell::link();
     let templates = BTreeMap::from([(
         "check".into(),
         "@готово full\n#check new\n#endpoint\nGET /books\n#body\n{}".into(),
@@ -54,6 +56,7 @@ fn full_checks_and_unicode_are_literal() {
 
 #[test]
 fn check_header_uses_description_without_copying_template_definition() {
+    services_shell::link();
     let body = r#"#endpoint
 PUT https://fakerestapi.azurewebsites.net/api/v1/Books/123
 #headers
@@ -80,6 +83,7 @@ Accept: application/json
 
 #[test]
 fn check_names_fall_back_to_template_name_and_keep_explicit_headers() {
+    services_shell::link();
     for (definition, expected) in [
         (
             "@test1\n#endpoint\nGET /books",
@@ -110,6 +114,7 @@ fn check_names_fall_back_to_template_name_and_keep_explicit_headers() {
 
 #[test]
 fn templates_are_only_suggested_after_a_section_marker_on_the_same_line() {
+    services_shell::link();
     let templates = BTreeMap::from([("body".into(), "@example Body\n{}".into())]);
     for source in [
         "@",
@@ -135,6 +140,7 @@ fn templates_are_only_suggested_after_a_section_marker_on_the_same_line() {
 
 #[test]
 fn space_after_section_marker_offers_templates_without_an_at_sign() {
+    services_shell::link();
     let templates = BTreeMap::from([
         ("body".into(), "@example Body\n{}".into()),
         (

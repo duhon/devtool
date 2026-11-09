@@ -1,5 +1,5 @@
 //! Sources: an ordered list of named places that supply module packages and shared
-//! configuration (Dictionary profiles, templates, hints and Agent skills): GitHub
+//! configuration (Dictionary sets, templates, hints and Agent skills): GitHub
 //! repositories and local folders. A source is laid out as
 //!
 //! ```text
@@ -1346,7 +1346,7 @@ async fn fetch(data: &Path, source: &Source, need: impl Fn(&str, &str) -> bool) 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct Change {
     kind: String,
-    /// `profile/VARIABLE`, `module/section`, the module of hints or the skill name.
+    /// `set/VARIABLE`, `module/section`, the module of hints or the skill name.
     key: String,
     /// added, changed or removed.
     change: String,
@@ -2389,7 +2389,7 @@ mod tests {
         write(
             team.path(),
             "dictionary.json",
-            r#"{"profiles":{"stage":{"HOST":"a","PORT":"1"}}}"#,
+            r#"{"sets":{"stage":{"HOST":"a","PORT":"1"}}}"#,
         );
         write(team.path(), "hints/rest.md", "Use staging");
         write(
@@ -2441,7 +2441,7 @@ mod tests {
         write(
             team.path(),
             "dictionary.json",
-            r#"{"profiles":{"stage":{"HOST":"b","PORT":"1"}}}"#,
+            r#"{"sets":{"stage":{"HOST":"b","PORT":"1"}}}"#,
         );
         // A host process checks once; a new one checks again.
         assert_eq!(changes(sources.check(false, &[]).await.unwrap()), before);
@@ -2466,7 +2466,7 @@ mod tests {
             error.message
         );
         assert_eq!(
-            layer_files(data, DICTIONARY).unwrap()[0].1["profiles"]["stage"]["HOST"],
+            layer_files(data, DICTIONARY).unwrap()[0].1["sets"]["stage"]["HOST"],
             "a"
         );
         fs::remove_file(team.path().join("templates.json")).unwrap();

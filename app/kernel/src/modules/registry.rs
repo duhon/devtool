@@ -3,12 +3,12 @@
 //! thread; [`with`] lends it out for one synchronous call, so effects come back to the
 //! caller to run outside the borrow.
 
+use crate::{Effect, Instance, Modules};
 use serde_json::Value;
-use services_kernel::{Effect, Instance, Modules};
-use services_sdk::wire::{self, event};
-use services_sdk::{Check, Manifest};
+use services_sdk::Manifest;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
+use std::sync::OnceLock;
 
 /// The App version modules declare compatibility with.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -77,62 +77,40 @@ pub fn variables() -> Vec<(String, String)> {
         .collect()
 }
 
-/// Natively the SDK modules are linked, so tests run them without a browser.
-#[cfg(not(target_arch = "wasm32"))]
-fn linked() -> Vec<(Manifest, Box<dyn Instance>)> {
-    use services_sdk::Linked;
-    let manifest = |json: &str| Manifest::parse(json).expect("linked module manifest");
-    macro_rules! linked {
-        ($($path:literal => $module:ty),* $(,)?) => {
-            vec![$((
-                manifest(include_str!(concat!("../../../modules/", $path, "/manifest.json"))),
-                Box::new(Linked::<$module>::default()) as Box<dyn Instance>,
-            )),*]
-        };
-    }
-    linked![
-        "services/rest" => services_module_rest::Rest,
-        "services/mysql" => services_module_mysql::Mysql,
-        "services/graphql" => services_module_graphql::Graphql,
-        "services/grpc" => services_module_grpc::Grpc,
-        "services/splunk" => services_module_splunk::Splunk,
-        "services/terminal" => services_module_terminal::Terminal,
-        "services/artemis" => services_module_artemis::Artemis,
-        "services/opensearch" => services_module_opensearch::OpenSearch,
-        "panels/variables" => services_module_variables::Variables,
-        "panels/history" => services_module_history::History,
-        "panels/templates" => services_module_templates::Templates,
-        "panels/hints" => services_module_hints::Hints,
-        "panels/dictionary" => services_module_dictionary::Dictionary,
-        "panels/sessions" => services_module_sessions::Sessions,
-        "panels/agent" => services_module_agent::Agent,
-    ]
+/// The modules that are part of the App rather than declared by the Host: the built-in
+/// Settings panel on every target and, natively, every module linked in (tests run them
+/// without a browser). The Shell links them before the Kernel starts.
+#[derive(Clone, Copy)]
+pub struct Link {
+    pub builtin: fn() -> Module,
+    pub linked: fn() -> Vec<Module>,
 }
 
-/// The built-in Settings panel: part of the App on every target, never declared by the
-/// Host, removed or updated.
-fn builtin() -> (Manifest, Box<dyn Instance>) {
-    (
-        Manifest::parse(include_str!(
-            "../../../modules/panels/settings/manifest.json"
-        ))
-        .expect("Settings manifest"),
-        Box::new(services_sdk::Linked::<services_module_settings::Settings>::default()),
-    )
+/// A module the App links in: its manifest and the instance that runs it.
+pub type Module = (Manifest, Box<dyn Instance>);
+
+static LINK: OnceLock<Link> = OnceLock::new();
+
+/// Sets the modules of the App; the first call wins.
+pub fn link(modules: Link) {
+    let _ = LINK.set(modules);
+}
+
+fn linked() -> &'static Link {
+    LINK.get()
+        .expect("the App links its modules (services_shell::link) before the Kernel starts")
+}
+
+fn builtin() -> Module {
+    (linked().builtin)()
 }
 
 fn seed(kind: services_sdk::Kind) -> Vec<Manifest> {
-    #[cfg(not(target_arch = "wasm32"))]
-    return linked()
+    (linked().linked)()
         .into_iter()
         .map(|(manifest, _)| manifest)
         .filter(|manifest| manifest.kind == kind)
-        .collect();
-    #[cfg(target_arch = "wasm32")]
-    {
-        let _ = kind;
-        Vec::new()
-    }
+        .collect()
 }
 
 fn now() -> f64 {
@@ -158,15 +136,13 @@ fn settings() -> Value {
 }
 
 fn start(drivers: BTreeMap<String, String>) -> Modules {
-    #[allow(unused_mut)]
     let mut modules = Modules::new(VERSION, drivers, Box::new(now));
     let (manifest, instance) = builtin();
     let effects = modules
         .load(manifest, instance, settings())
         .expect("Settings loads");
     BOOT.with(|boot| *boot.borrow_mut() = effects);
-    #[cfg(not(target_arch = "wasm32"))]
-    for (manifest, instance) in linked() {
+    for (manifest, instance) in (linked().linked)() {
         let id = manifest.id.clone();
         modules
             .load(manifest, instance, settings())
@@ -370,7 +346,7 @@ pub fn unavailable(id: &str) -> String {
 }
 
 /// The module's status line and indicator (`Discovery · OK`, …).
-pub fn status(id: &str) -> Option<services_kernel::Status> {
+pub fn status(id: &str) -> Option<crate::Status> {
     with(|modules| modules.get(id).and_then(|loaded| loaded.status.clone()))
 }
 
@@ -384,57 +360,13 @@ pub fn log(id: &str, lines: usize) -> Vec<(String, String)> {
     })
 }
 
-/// A check as the module sees it: the text after the `#check` line.
-pub fn document(check: Check) -> wire::Event {
-    wire::Event {
-        kind: Some(event::Kind::Document(check)),
-        now: 0.0,
-    }
-}
-
-pub fn discover(check: Check) -> wire::Event {
-    wire::Event {
-        kind: Some(event::Kind::Discover(check)),
-        now: 0.0,
-    }
-}
-
-/// The user asked for hints at `pos`, a UTF-8 offset in the check text.
-pub fn hints(check: Check, pos: u32) -> wire::Event {
-    wire::Event {
-        kind: Some(event::Kind::Hints(wire::CompleteRequest {
-            check: Some(check),
-            pos,
-        })),
-        now: 0.0,
-    }
-}
-
-/// A session was restored.
-pub fn workspace() -> wire::Event {
-    wire::Event {
-        kind: Some(event::Kind::Workspace(wire::Empty {})),
-        now: 0.0,
-    }
-}
-
-/// Sends an event to the running modules subscribed to it.
-pub fn broadcast(event: wire::Event) -> Vec<Effect> {
-    with(|modules| modules.broadcast(event))
-}
-
 /// The section markers the module completes in an empty check (`endpoint`, `headers`, …).
 pub fn markers(id: &str) -> Vec<String> {
     if !loaded(id) {
         return Vec::new();
     }
-    let completions = with(|modules| {
-        modules.complete(
-            id,
-            services_kernel::document::check(id, "#", &Value::Null),
-            1,
-        )
-    });
+    let completions =
+        with(|modules| modules.complete(id, crate::document::check(id, "#", &Value::Null), 1));
     completions
         .map(|completions| {
             completions
@@ -452,20 +384,4 @@ pub fn markers(id: &str) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
-}
-
-/// A driver call as the console keeps it in a run's `params`: `{driver, request, stream}`.
-pub fn call_value(call: &services_sdk::DriverCall) -> Value {
-    serde_json::json!({"driver": call.driver, "request": call.request(), "stream": call.stream})
-}
-
-/// The driver call of [`call_value`], with its `request` as given.
-pub fn call_of(value: &Value) -> services_sdk::DriverCall {
-    let call =
-        services_sdk::DriverCall::new(value["driver"].as_str().unwrap_or(""), &value["request"]);
-    if value["stream"] == true {
-        call.streaming()
-    } else {
-        call
-    }
 }

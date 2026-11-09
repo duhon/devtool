@@ -1,45 +1,17 @@
 mod app;
-mod kernel_modules;
 mod mount;
-mod session_database;
 mod sessions;
-mod transport;
-mod updates;
 
-use services_widgets::dom::{call, error, get, js, json, set, window};
+use services_widgets::dom::{call, error, get, window};
 use wasm_bindgen::JsValue;
-const MODULES: &str = "servicesConsole.modules";
-
-/// The module list of the last host reply; the built-in one stays without a valid cache.
-fn restore_modules() -> bool {
-    let cached: Option<serde_json::Value> = window()
-        .local_storage()
-        .ok()
-        .flatten()
-        .and_then(|storage| storage.get_item(MODULES).ok().flatten())
-        .and_then(|raw| serde_json::from_str(&raw).ok());
-    let Some(cached) = cached else {
-        return false;
-    };
-    crate::kernel::parse(&cached).is_ok_and(|modules| {
-        crate::kernel::declare(modules);
-        true
-    })
-}
-
-/// Installs and caches the host's module list and the modules the Kernel runs; `true` when
-/// either changed.
-pub fn accept_modules(value: &serde_json::Value) -> Result<bool, String> {
-    let modules = crate::kernel::parse(value)?;
-    if let Some(storage) = window().local_storage().ok().flatten() {
-        let cached = serde_json::json!({"wasm": value["wasm"]}).to_string();
-        let _ = storage.set_item(MODULES, &cached);
-    }
-    Ok(crate::kernel::declare(modules))
+/// A UI callback as the Kernel calls it.
+pub(crate) fn on<T: 'static>(callback: yew::Callback<T>) -> services_kernel::Callback<T> {
+    (move |value| callback.emit(value)).into()
 }
 
 pub fn start() -> Result<(), JsValue> {
-    let restored = restore_modules();
+    crate::link();
+    let restored = services_kernel::modules::loader::restore();
     crate::language::install();
     mount::install();
     let root = window()

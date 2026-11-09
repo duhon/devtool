@@ -226,7 +226,7 @@
   // The Dictionary is shared by all windows: another window's save reaches this one.
   const activeSet=doc=>doc.querySelector('[data-testid="dictionary-panel"] [role="tab"][aria-selected="true"]').textContent;
   const otherDictionary=async text=>{
-    const profile=activeSet(document);
+    const set=activeSet(document);
     const frame=document.createElement('iframe');
     frame.src=location.href;
     frame.style.cssText='position:fixed;inset:0;width:100vw;height:100vh;z-index:9999';
@@ -235,7 +235,7 @@
       const doc=await wait(()=>frame.contentDocument?.querySelector('[data-testid="console-dictionary-toggle"]')&&frame.contentDocument);
       await click(testid('console-dictionary-toggle',doc));
       await wait(()=>doc.querySelector('[data-testid="console-dictionary"]')&&editorOf('console-dictionary',doc));
-      assert(activeSet(doc)===profile,'Both windows must edit the same Dictionary set');
+      assert(activeSet(doc)===set,'Both windows must edit the same Dictionary set');
       editorOf('console-dictionary',doc).setValue(text);
       await wait(()=>testid('console-dictionary-status',doc).textContent.includes('Dictionary save · OK'));
     } finally { frame.remove(); }
