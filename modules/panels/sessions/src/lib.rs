@@ -195,7 +195,11 @@ impl Module for Sessions {
             )
             .variant("muted"),
         );
-        Some(ui::panel("Sessions", body, Vec::new()).key("console-sessions"))
+        Some(
+            ui::panel("Sessions", body, Vec::new())
+                .indicator("idle")
+                .key("console-sessions"),
+        )
     }
 }
 

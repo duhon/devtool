@@ -302,18 +302,18 @@ impl Module for Templates {
         if self.drafts.contains_key(&self.key()) {
             header.push(ui::button("Discard draft", &Msg::Discard).key("templates-discard"));
         }
-        let mut body = Vec::new();
+        let mut actions = Vec::new();
         if !header.is_empty() {
-            body.push(ui::row(header).variant("muted").key("templates-origin"));
+            actions.push(ui::row(header).variant("muted").key("templates-origin"));
         }
-        body.push(
+        let body = vec![
             ui::editor(
                 format!("{}/{section}", self.service),
                 self.shown(),
                 &Msg::Edit,
             )
             .key("templates-editor"),
-        );
+        ];
         let tabs = self
             .sections
             .iter()
@@ -332,7 +332,7 @@ impl Module for Templates {
             &Msg::Section(String::new()),
         )
         .key("templates-sections");
-        Some(ui::panel("Templates", vec![tabs], Vec::new()))
+        Some(ui::tabbed_panel(tabs, Vec::new(), Vec::new()).actions(actions))
     }
 }
 

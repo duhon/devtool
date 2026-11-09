@@ -221,7 +221,7 @@ impl Module for Variables {
             &Msg::Tab(String::new()),
         )
         .key("variables-tabs");
-        Some(ui::panel("Variables", vec![tabs], Vec::new()))
+        Some(ui::tabbed_panel(tabs, Vec::new(), Vec::new()))
     }
 
     fn resolve(&self, text: &str, json: bool, last: bool) -> Option<Result<Resolution, String>> {

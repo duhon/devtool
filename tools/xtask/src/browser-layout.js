@@ -209,6 +209,13 @@
       ===getComputedStyle(document.querySelector('.console-tab-strip > .tab-button.active')).backgroundColor
     && document.querySelector('.console-top-bar').getBoundingClientRect().height===beforeSettingsHeader,
     'Settings tabs must use the shared active heading without increasing the top bar height');
+  const settingsHeader=testid('settings').querySelector(':scope > .ui-panel-title');
+  const serviceTabs=document.querySelector('.console-top-bar').getBoundingClientRect();
+  assert(settingsHeader.contains(testid('settings-tabs'))
+      &&!settingsHeader.querySelector(':scope > .tab-button')
+      &&Math.abs(settingsHeader.getBoundingClientRect().top-serviceTabs.top)<1
+      &&Math.abs(settingsHeader.getBoundingClientRect().bottom-1-serviceTabs.bottom)<1,
+    ()=>`The Settings tabs must be the panel header, level with the service tabs, without a title: ${JSON.stringify([settingsHeader.getBoundingClientRect(),serviceTabs])}`);
   const settingsGroup=name=>document.querySelector(`[data-testid="settings-tab-${name}-body"]`);
   const settingsTabs=()=>[...testid('settings-tabs').querySelectorAll('[role="tab"]')].map(tab=>tab.dataset.testid.slice('settings-tab-'.length));
   const native=true;

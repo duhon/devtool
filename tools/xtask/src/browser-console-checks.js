@@ -292,20 +292,12 @@
         assert(Math.abs(tab.getBoundingClientRect().left - (rightPane?.right??body.right)) < 1,
           'Tool tabs must touch the right edge of the central frame');
       }
-      const heading = [...document.querySelectorAll('.console-panel-heading')].find(visible);
+      const heading = [...document.querySelectorAll('.console-tool-panel .ui-panel-title')].find(visible);
       if (heading) {
-        const panel = testid('console-tool-panel');
         const headingBounds = heading.getBoundingClientRect();
-        const rightEditor = find('.editor', panel).getBoundingClientRect();
-        const mainEditor = editor.getWrapperElement().getBoundingClientRect();
-        const firstTab = heading.querySelector('.tab-button').getBoundingClientRect();
-        assert(heading.closest('.console-top-bar') && !panel.contains(heading)
-          && Math.abs(headingBounds.top - tabBounds.top) < 1
-          && Math.abs(headingBounds.bottom - body.top) < 1
-          && Math.abs(firstTab.left - rightEditor.left) < 1,
-        'Right-panel headings must dock over their editor in the service-menu row, outside the panel body');
-        assert(Math.abs(mainEditor.top - rightEditor.top) < 1,
-          'Both editors must start at the same height without an internal panel header');
+        assert(Math.abs(headingBounds.top - tabBounds.top) < 1
+          && Math.abs(headingBounds.bottom - 1 - body.top) < 1,
+        'Right-panel headings must sit in the service-menu row, their bottom line on the central frame top');
       }
       assert(Math.abs(body.left - status.left) < 1 && Math.abs(body.right - status.right) < 1,
         'Console status must align with the inner workspace, excluding both side menus');
@@ -553,10 +545,10 @@
     const toolStatus = () => [...document.querySelectorAll('.console-right-status .status-bar')].find(visible);
     const mainStatusText = () => testid('console-main-status').textContent;
     const toolLight = tool => testid(`console-${tool}-toggle`).querySelector('.indicator-light')?.dataset.state;
-    const workspace = find('.console-top-bar');
+    const editorColumn = find('.console-top-bar');
     const hintsPanel = await openPanel('hints');
     await wait(() => Math.abs(hintsPanel.closest('.console-right-pane').getBoundingClientRect().width
-      - workspace.clientWidth / 2) < 1, () => `Side panel width ${hintsPanel.closest('.console-right-pane')?.getBoundingClientRect().width} vs ${workspace.clientWidth / 2}`);
+      - editorColumn.clientWidth) < 1, () => `Side panel width ${hintsPanel.closest('.console-right-pane')?.getBoundingClientRect().width} vs ${editorColumn.clientWidth}`);
     assert(JSON.stringify(assertStatusBounds()) === JSON.stringify(closedStatusBounds),
       'Opening the right panel must not change status boundaries');
     assert(getComputedStyle(find('.console-toolbar')).flexDirection === 'column'

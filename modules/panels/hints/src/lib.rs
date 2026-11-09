@@ -29,6 +29,8 @@ pub struct Hints {
     sources: BTreeMap<String, (String, String)>,
     own: Map<String, Value>,
     drafts: Map<String, Value>,
+    /// The level of the last status, shown as the title's light.
+    light: String,
 }
 
 /// Checks hints the way completion reads them.
@@ -119,7 +121,7 @@ impl Hints {
                 self.drafts.insert(service, json!(text));
                 vec![
                     self.put_drafts(),
-                    cmd::status(&format!("ERROR: Hints validation: {error}"), "error"),
+                    self.status(&format!("ERROR: Hints validation: {error}"), "error"),
                 ]
             }
         }
@@ -196,14 +198,14 @@ impl Module for Hints {
                     }
                     vec![self.contribution()]
                 }
-                ("save", Ok(_)) => vec![cmd::status("Hints save · OK", "ok")],
-                ("reset", Ok(_)) => vec![cmd::status("Hints reset · OK", "ok")],
-                (tag @ ("save" | "reset"), Err(failure)) => vec![cmd::status(
+                ("save", Ok(_)) => vec![self.status("Hints save · OK", "ok")],
+                ("reset", Ok(_)) => vec![self.status("Hints reset · OK", "ok")],
+                (tag @ ("save" | "reset"), Err(failure)) => vec![self.status(
                     &format!("Hints {tag} · ERROR · {}", failure.message),
                     "error",
                 )],
                 (_, Err(failure)) => {
-                    vec![cmd::status(&format!("ERROR: {}", failure.message), "error")]
+                    vec![self.status(&format!("ERROR: {}", failure.message), "error")]
                 }
                 _ => Vec::new(),
             },
@@ -255,19 +257,30 @@ impl Module for Hints {
             }
             (false, None) => {}
         }
-        let mut body = Vec::new();
+        let mut actions = Vec::new();
         if !origin.is_empty() {
-            body.push(ui::row(origin).variant("muted").key("hints-origin"));
+            actions.push(ui::row(origin).variant("muted").key("hints-origin"));
         }
-        body.push(
+        let body = vec![
             ui::editor(format!("hints/{}", self.service), self.shown(), &Msg::Edit)
                 .key("console-hints"),
-        );
-        Some(ui::panel(
-            format!("{name} completion hints"),
-            body,
-            Vec::new(),
-        ))
+        ];
+        Some(
+            ui::panel(format!("{name} completion hints"), body, Vec::new())
+                .indicator(if self.light.is_empty() {
+                    "idle"
+                } else {
+                    &self.light
+                })
+                .actions(actions),
+        )
+    }
+}
+
+impl Hints {
+    fn status(&mut self, text: &str, level: &str) -> Cmd {
+        self.light = level.to_owned();
+        cmd::status(text, level)
     }
 }
 

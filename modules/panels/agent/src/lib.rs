@@ -784,7 +784,11 @@ impl Agent {
         if transcript.is_empty() {
             transcript.push(ui::text(INTRO).key("agent-intro").variant("muted"));
         }
-        body.push(ui::column(transcript).key("agent-transcript"));
+        body.push(
+            ui::column(transcript)
+                .variant("primary")
+                .key("agent-transcript"),
+        );
         if let Some(approval) = self.page.approval(&chat.id) {
             body.push(
                 ui::column(vec![
@@ -1021,7 +1025,7 @@ impl Module for Agent {
     }
 
     fn view(&self) -> Option<ui::Node> {
-        let mut body = vec![
+        let actions = vec![
             ui::row(vec![
                 ui::button("#", &Msg::ToggleList)
                     .key("agent-chat-list-toggle")
@@ -1033,11 +1037,19 @@ impl Module for Agent {
             ])
             .key("agent-chat-actions"),
         ];
-        if self.list_open {
-            body.push(self.view_list());
+        let running = !self.list_open && self.turns.contains_key(&self.active);
+        let footer = vec![
+            ui::button("Stop", &Msg::Stop)
+                .key("agent-stop")
+                .variant("danger")
+                .disabled(!running),
+        ];
+        let panel = if self.list_open {
+            let mut body = vec![self.view_list()];
             if let Some(error) = &self.error {
                 body.push(ui::text(error.clone()).key("agent-error").variant("danger"));
             }
+            ui::panel("Agent", body, footer)
         } else {
             let tabs = self
                 .open()
@@ -1057,19 +1069,11 @@ impl Module for Agent {
                     .indicator(self.chat_light(&chat.id))
                 })
                 .collect();
-            body.push(
-                ui::tabs(tabs, format!("{CHAT_PREFIX}{}", self.active), &Msg::Select)
-                    .key("agent-sessions"),
-            );
-        }
-        let running = !self.list_open && self.turns.contains_key(&self.active);
-        let footer = vec![
-            ui::button("Stop", &Msg::Stop)
-                .key("agent-stop")
-                .variant("danger")
-                .disabled(!running),
-        ];
-        Some(ui::panel("Agent", body, footer).key("console-agent"))
+            let tabs = ui::tabs(tabs, format!("{CHAT_PREFIX}{}", self.active), &Msg::Select)
+                .key("agent-sessions");
+            ui::tabbed_panel(tabs, Vec::new(), footer)
+        };
+        Some(panel.actions(actions).key("console-agent"))
     }
 }
 

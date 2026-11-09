@@ -94,10 +94,10 @@
   min-height: 0;
 }
 
+/* Only above the editor: a side panel takes its own column from row 1, its header level with these tabs. */
 .console-top-bar {
-  display: grid;
-  grid-template-columns: subgrid;
-  grid-column: 2 / -2;
+  display: flex;
+  grid-column: 2;
   grid-row: 1;
   min-width: 0;
 }
@@ -112,8 +112,6 @@
   margin: 0;
   border: none;
   flex: 1 1 0;
-  grid-column: 1;
-  grid-row: 1;
   overflow: hidden;
 }
 
@@ -186,7 +184,7 @@
   position: relative;
   display: flex;
   grid-column: 3;
-  grid-row: 2 / 4;
+  grid-row: 1 / 4;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
@@ -256,6 +254,7 @@
   flex-direction: column;
   padding-left: 2px;
   border: 1px solid var(--border);
+  border-top: none;
   border-left: none;
 }
 

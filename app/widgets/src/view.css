@@ -1,16 +1,16 @@
 /* Widgets of module UI trees (view.rs): panels have no CSS of their own. */
 
-:is(.ui-tab-strip, .ui-panel-title) > .tab-button {
+:is(.ui-tab-strip, .ui-panel-title, .ui-panel-tabs) > .tab-button {
   position: relative;
 }
 
-:is(.ui-tab-strip, .ui-panel-title) > .tab-button.active {
+:is(.ui-tab-strip, .ui-panel-title, .ui-panel-tabs) > .tab-button.active {
   color: var(--fg-bright);
   background: var(--bg-active);
   border-color: var(--accent);
 }
 
-:is(.ui-tab-strip, .ui-panel-title) > .tab-button {
+:is(.ui-tab-strip, .ui-panel-title, .ui-panel-tabs) > .tab-button {
   box-sizing: border-box;
   min-height: 22px;
   border: 1px solid var(--border);
@@ -23,17 +23,17 @@
   cursor: pointer;
 }
 
-:is(.ui-tab-strip, .ui-panel-title) > .tab-button {
+:is(.ui-tab-strip, .ui-panel-title, .ui-panel-tabs) > .tab-button {
   padding: 2px 6px;
 }
 
-:is(.ui-tab-strip, .ui-panel-title) > .tab-button {
+:is(.ui-tab-strip, .ui-panel-title, .ui-panel-tabs) > .tab-button {
   margin: 0;
   border-bottom: none;
   border-radius: 4px 4px 0 0;
 }
 
-:is(.ui-tab-strip, .ui-panel-title) > .tab-button:hover {
+:is(.ui-tab-strip, .ui-panel-title, .ui-panel-tabs) > .tab-button:hover {
   background: var(--bg-hover);
   border-color: var(--accent);
 }
@@ -42,7 +42,27 @@
 
 .ui-panel { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; gap: 4px; }
 
-.ui-panel-title { display: flex; align-items: flex-end; border-bottom: 1px solid var(--border); }
+/* One row of the height of a tab, level with the Console's service tabs: the title or the
+   panel's own tabs, then its actions in the same compact size. */
+.ui-panel-title { display: flex; align-items: flex-end; gap: 2px; min-width: 0; border-bottom: 1px solid var(--border); }
+
+.ui-panel-title > .tab-button { flex: 0 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; cursor: default; }
+
+.ui-panel-tabs { display: flex; flex: 0 1 auto; align-items: stretch; gap: 2px; min-width: 0; overflow: hidden; }
+
+.ui-panel-tabs > .tab-button { display: inline-flex; flex: 0 1 auto; align-items: center; min-width: 0; }
+
+.ui-panel-tabs .tab-label { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+
+.ui-panel-actions { display: flex; flex: 0 1 auto; align-self: center; align-items: center; gap: 2px; min-width: 0; padding-left: 4px; overflow-x: auto; }
+
+.ui-panel-actions > *, .ui-panel-actions > .ui-row > * { flex: none; white-space: nowrap; }
+
+.ui-panel-actions .ui-row { flex-wrap: nowrap; gap: 2px; }
+
+.ui-panel-actions .ui-text { margin: 0 4px; }
+
+.ui-panel-actions .ui-button { box-sizing: border-box; height: 20px; padding: 0 6px; font-size: 12px; line-height: 16px; }
 
 .ui-panel-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; gap: 6px; overflow: auto; padding: 4px 2px; }
 
@@ -51,6 +71,12 @@
 .ui-row { display: flex; flex-direction: row; gap: 6px; align-items: center; min-width: 0; flex-wrap: wrap; }
 
 .ui-column { display: flex; flex-direction: column; gap: 4px; min-width: 0; min-height: 0; }
+
+/* In a vertical flow a column keeps its content's height (the body around it scrolls), so its
+   content never overlaps what follows; the `primary` column fills the rest and scrolls. */
+:is(.ui-panel-body, .ui-tab-body, .ui-column) > .ui-column:not(.is-primary) { flex-shrink: 0; }
+
+.ui-column.is-primary { flex: 1 1 auto; overflow: auto; }
 
 .ui-row > .ui-input { flex: 1 1 120px; }
 

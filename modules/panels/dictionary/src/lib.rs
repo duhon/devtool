@@ -935,7 +935,7 @@ impl Module for Dictionary {
     }
 
     fn view(&self) -> Option<ui::Node> {
-        let mut body = Vec::new();
+        let add = ui::input(None, "New set name", &Msg::Add).key("dictionary-add");
         match self.active() {
             Some(active) => {
                 let tabs = self
@@ -956,16 +956,17 @@ impl Module for Dictionary {
                         }
                     })
                     .collect();
-                body.push(
-                    ui::tabs(tabs, format!("{TAB}{active}"), &Msg::Tab(String::new()))
-                        .on_reorder(&Msg::Reorder)
-                        .key("dictionary-tabs"),
-                );
+                let tabs = ui::tabs(tabs, format!("{TAB}{active}"), &Msg::Tab(String::new()))
+                    .on_reorder(&Msg::Reorder)
+                    .key("dictionary-tabs");
+                Some(ui::tabbed_panel(tabs, Vec::new(), vec![add]))
             }
-            None => body.push(ui::text("No sets yet: add one below.").variant("muted")),
+            None => Some(ui::panel(
+                "Dictionary",
+                vec![ui::text("No sets yet: add one below.").variant("muted")],
+                vec![add],
+            )),
         }
-        let add = ui::input(None, "New set name", &Msg::Add).key("dictionary-add");
-        Some(ui::panel("Dictionary", body, vec![add]))
     }
 
     fn resolve(&self, text: &str, json: bool, _last: bool) -> Option<Result<Resolution, String>> {

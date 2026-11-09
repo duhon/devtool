@@ -636,9 +636,9 @@ impl Module for Settings {
             ui::tab(AGENT, "Agent", self.view_agent()),
         ];
         Some(
-            ui::panel(
-                "Settings",
-                vec![ui::tabs(tabs, self.tab.clone(), &Msg::Tab).key("settings-tabs")],
+            ui::tabbed_panel(
+                ui::tabs(tabs, self.tab.clone(), &Msg::Tab).key("settings-tabs"),
+                Vec::new(),
                 Vec::new(),
             )
             .key("settings"),

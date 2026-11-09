@@ -159,17 +159,30 @@ pub fn render(node: &Node, on: &Callback<Action>) -> Html {
     };
     let data_key = key(node);
     match kind {
-        Kind::PanelFrame(frame) => html! {
-            <section class={classes(node, "ui-panel")} data-key={data_key.clone()} data-testid={data_key}>
-                <header class="ui-panel-title">
-                    <span class="tab-button active">{frame.title.clone()}</span>
-                </header>
-                <div class="ui-panel-body">{children(&frame.body, on)}</div>
-                if !frame.footer.is_empty() {
-                    <footer class="ui-panel-footer">{children(&frame.footer, on)}</footer>
-                }
-            </section>
-        },
+        Kind::PanelFrame(frame) => {
+            let (header, tab) = panel_header(frame, on);
+            html! {
+                <section class={classes(node, "ui-panel")} data-key={data_key.clone()} data-testid={data_key}>
+                    <header class="ui-panel-title">
+                        {header}
+                        if !frame.actions.is_empty() {
+                            <div class="ui-panel-actions">{children(&frame.actions, on)}</div>
+                        }
+                    </header>
+                    <div class="ui-panel-body">
+                        if let Some(tab) = tab {
+                            <div class="ui-tab-body" role="tabpanel" data-key={format!("{}-body", tab.key)} data-testid={format!("{}-body", tab.key)}>
+                                {children(&tab.body, on)}
+                            </div>
+                        }
+                        {children(&frame.body, on)}
+                    </div>
+                    if !frame.footer.is_empty() {
+                        <footer class="ui-panel-footer">{children(&frame.footer, on)}</footer>
+                    }
+                </section>
+            }
+        }
         Kind::Tabs(tabs) => {
             let active = tabs
                 .tabs
@@ -299,6 +312,47 @@ pub fn render(node: &Node, on: &Callback<Action>) -> Html {
             // A new language is a new editor: its setup is fixed at creation.
             <TextEditor key={format!("{}\u{1f}{}", node.key, editor.language)} editor={editor.clone()} data_key={data_key} on={on.clone()}/>
         },
+    }
+}
+
+/// A panel's header row: its title, or its own tabs and the active one (none when no tab has
+/// the active key).
+fn panel_header<'a>(
+    frame: &'a ui::PanelFrame,
+    on: &Callback<Action>,
+) -> (Html, Option<&'a ui::Tab>) {
+    use ui::panel_frame::Header;
+    match &frame.header {
+        Some(Header::Tabs(node)) => {
+            let Some(Kind::Tabs(tabs)) = &node.kind else {
+                return (render(node, on), None);
+            };
+            let active = tabs.tabs.iter().find(|tab| tab.key == tabs.active);
+            let data_key = key(node);
+            let strip = html! {
+                <div class={classes(node, "ui-panel-tabs")} role="tablist" data-key={data_key.clone()} data-testid={data_key}>
+                    {for tabs.tabs.iter().map(|tab| {
+                        let selected = active.is_some_and(|active| active.key == tab.key);
+                        html! {<TabButton key={tab.key.clone()} tab={Rc::new(tab.clone())} {selected}
+                            strip={node.key.clone()} on_select={tabs.on_select.clone()}
+                            on_reorder={tabs.on_reorder.clone()} on={on.clone()}/>}
+                    })}
+                </div>
+            };
+            (strip, active)
+        }
+        Some(Header::Title(title)) => (
+            html! {
+                <span class="tab-button active">
+                    {title.clone()}
+                    if !frame.indicator.is_empty() {
+                        {crate::indicator::indicator(indicator_state(&frame.indicator), format!("{title} · {}", frame.indicator))}
+                    }
+                </span>
+            },
+            None,
+        ),
+        None => (Html::default(), None),
     }
 }
 

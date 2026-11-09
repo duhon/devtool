@@ -115,6 +115,17 @@ service's Options form. It is data, not HTML or CSS: `ui::panel`, `row`, `column
 Kernel sends it back as `Event::Ui`. The App draws the tree with its widgets and
 theme, so a module looks like the rest of the App.
 
+A panel's header row, level with the Console's service tabs, is either its title or its
+own tabs, never both:
+
+- `ui::panel(title, body, footer)` shows the title; `.indicator(state)` adds a light to it
+  (`idle`, `busy`, `ok`, `warning`, `error`).
+- `ui::tabbed_panel(ui::tabs(tabs, active, &Msg::Tab).key("my-tabs"), body, footer)` puts
+  the tab strip in the header; the active tab's body comes before `body`.
+- `.actions(vec![…])` adds compact items after the title or the tabs (origin text, Reset).
+- In the body, a `column` keeps its content's height and the body scrolls; a
+  `.variant("primary")` column fills the rest and scrolls by itself (a chat transcript).
+
 ```rust
 #[derive(Serialize, Deserialize)]
 pub enum Msg { Refresh }

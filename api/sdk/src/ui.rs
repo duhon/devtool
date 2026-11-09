@@ -67,14 +67,36 @@ pub struct Children {
     pub children: Vec<Node>,
 }
 
+/// A side panel: its header row is either a title or the panel's own tabs, level with the
+/// Console's service tabs; `actions` follow them in that row.
 #[derive(Clone, PartialEq, Message)]
 pub struct PanelFrame {
-    #[prost(string, tag = "1")]
-    pub title: String,
+    #[prost(oneof = "panel_frame::Header", tags = "1, 4")]
+    pub header: Option<panel_frame::Header>,
     #[prost(message, repeated, tag = "2")]
     pub body: Vec<Node>,
     #[prost(message, repeated, tag = "3")]
     pub footer: Vec<Node>,
+    /// A light on the title: `idle`, `busy`, `ok`, `warning`, `error` or empty for none.
+    #[prost(string, tag = "5")]
+    pub indicator: String,
+    /// In the header row after the title or the tabs: where the content comes from, Reset, …
+    #[prost(message, repeated, tag = "6")]
+    pub actions: Vec<Node>,
+}
+
+pub mod panel_frame {
+    use super::*;
+
+    #[derive(Clone, PartialEq, prost::Oneof)]
+    pub enum Header {
+        #[prost(string, tag = "1")]
+        Title(String),
+        /// The panel's own tabs (a [`tabs`](super::tabs) node): the active tab's body opens
+        /// the panel body, before `body`.
+        #[prost(message, tag = "4", boxed)]
+        Tabs(Box<Node>),
+    }
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -274,6 +296,20 @@ impl Node {
         }
         self
     }
+    /// A light on a panel's title: `idle`, `busy`, `ok`, `warning`, `error` or empty.
+    pub fn indicator(mut self, state: impl Into<String>) -> Self {
+        if let Some(node::Kind::PanelFrame(frame)) = &mut self.kind {
+            frame.indicator = state.into();
+        }
+        self
+    }
+    /// What a panel shows in its header row after the title or the tabs.
+    pub fn actions(mut self, actions: Vec<Node>) -> Self {
+        if let Some(node::Kind::PanelFrame(frame)) = &mut self.kind {
+            frame.actions = actions;
+        }
+        self
+    }
     /// An input that also reports its text while typing, debounced.
     pub fn on_input(mut self, on_input: &impl Serialize) -> Self {
         if let Some(node::Kind::Input(input)) = &mut self.kind {
@@ -303,11 +339,26 @@ pub fn column(children: Vec<Node>) -> Node {
     node(node::Kind::Column(Children { children }))
 }
 
+/// A side panel headed by its title.
 pub fn panel(title: impl Into<String>, body: Vec<Node>, footer: Vec<Node>) -> Node {
     node(node::Kind::PanelFrame(PanelFrame {
-        title: title.into(),
+        header: Some(panel_frame::Header::Title(title.into())),
         body,
         footer,
+        indicator: String::new(),
+        actions: Vec::new(),
+    }))
+}
+
+/// A side panel headed by its own tabs (a [`tabs`] node) instead of a title; `body` follows
+/// the active tab's body.
+pub fn tabbed_panel(tabs: Node, body: Vec<Node>, footer: Vec<Node>) -> Node {
+    node(node::Kind::PanelFrame(PanelFrame {
+        header: Some(panel_frame::Header::Tabs(Box::new(tabs))),
+        body,
+        footer,
+        indicator: String::new(),
+        actions: Vec::new(),
     }))
 }
 
