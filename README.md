@@ -41,17 +41,18 @@ Uninstall, then remove the extension in Chrome (your data is kept):
 
 ## Extensions
 
-Every service in the panel is a module, and you can write your own. Modules
+Every service and side panel is a module, and you can write your own. Modules
 are installed from sources only: put the package file in `modules/` of a folder
-source and install it in **Settings** → **Modules**. How to write and package a
-module: [examples/echo/README.md](examples/echo/README.md).
+source and install it in **Settings** → **Modules**. How to write, test and package a
+service or a panel module with the SDK:
+[examples/echo/README.md](examples/echo/README.md).
 
 A team can share modules and settings through **Settings** → **Sources**: add a
 GitHub repository or a local folder, then install its modules and apply its
-Dictionary profiles, templates, hints and Agent skills. A source is laid out as
+Dictionary sets, templates, hints and Agent skills. A source is laid out as
 
 ```text
-dictionary.json          {"profiles": {"<profile>": {"<VAR>": "value"}}}
+dictionary.json          {"sets": {"<set>": {"<VAR>": "value"}}}
 templates.json           {"<module>": {"<section>": "<templates text>"}}
 hints/<module>.md        a module's hints
 skills/<name>/SKILL.md   Agent skills

@@ -26,7 +26,7 @@
   await key('Mod+F');
   await wait(bar,'Mod+F did not open the find bar');
   assert(wrapper.contains(bar()),'The Console find bar must be drawn inside the Console editor');
-  assert(wrapper.classList.contains('console-find-target'),'The searched editor must be outlined');
+  assert(wrapper.classList.contains('find-bar-target'),'The searched editor must be outlined');
   assert(/Find in Console · /.test(testid('find-scope').textContent),`Wrong scope: ${testid('find-scope').textContent}`);
   assert(document.activeElement===testid('find-query'),'Mod+F must focus the query');
   await query('needle');
@@ -70,7 +70,7 @@
 
   await key('Escape');
   await wait(()=>!bar(),'Escape in the editor did not close the find bar');
-  assert(!wrapper.querySelector('.editor-find-match')&&!wrapper.classList.contains('console-find-target'),
+  assert(!wrapper.querySelector('.editor-find-match')&&!wrapper.classList.contains('find-bar-target'),
     'Closing must clear the highlights and the outline');
 
   // A side panel searches its own editor.
@@ -86,7 +86,7 @@
   editor.focus();
   await key('Mod+F');
   await wait(()=>bar()&&wrapper.contains(bar()),'Mod+F in the Console must move the bar back');
-  assert(!variables.getWrapperElement().classList.contains('console-find-target'),'Only one editor is searched');
+  assert(!variables.getWrapperElement().classList.contains('find-bar-target'),'Only one editor is searched');
   await key('Escape');
   await wait(()=>!bar(),'Escape did not close the find bar');
 

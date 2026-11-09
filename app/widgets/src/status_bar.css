@@ -16,7 +16,7 @@
   border-radius: 4px;
 }
 
-.console-status {
+.status-bar {
   box-sizing: border-box;
   display: flex;
   align-items: center;
@@ -38,7 +38,7 @@
   cursor: pointer;
 }
 
-.console-status-spinner {
+.status-bar-spinner {
   box-sizing: border-box;
   flex: 0 0 12px;
   width: 12px;
@@ -46,16 +46,16 @@
   border: 2px solid currentColor;
   border-right-color: transparent;
   border-radius: 50%;
-  animation: console-status-spin 0.8s linear infinite;
+  animation: status-bar-spin 0.8s linear infinite;
   margin-left: 6px;
 }
 
-.console-status-elapsed {
+.status-bar-elapsed {
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;
 }
 
-.console-status-text {
+.status-bar-text {
   flex: 1 1 auto;
   min-width: 0;
   padding-left: 6px;
@@ -63,7 +63,7 @@
   text-overflow: ellipsis;
 }
 
-.console-status-stop {
+.status-bar-stop {
   align-self: stretch;
   flex: 0 0 22px;
   min-height: 21px;
@@ -77,27 +77,27 @@
   cursor: pointer;
 }
 
-.console-status-stop:disabled {
+.status-bar-stop:disabled {
   opacity: 0.4;
   cursor: default;
 }
 
-.console-status-stop:not(:disabled):hover {
+.status-bar-stop:not(:disabled):hover {
   background: var(--danger-hover);
 }
 
-@keyframes console-status-spin {
+@keyframes status-bar-spin {
   to { transform: rotate(360deg); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .console-status-spinner {
+  .status-bar-spinner {
     animation: none;
   }
 }
 
 /* Overlap the status border so expanded Debug stays part of the same frame. */
-.console-debug-panel {
+.status-bar-debug {
   flex: 0 0 auto;
   margin-top: -1px;
   border-top-left-radius: 0;
@@ -107,22 +107,22 @@
   overflow: auto;
 }
 
-.console-status:has(+ .console-debug-panel:not([hidden])) {
+.status-bar:has(+ .status-bar-debug:not([hidden])) {
   border-bottom-left-radius: 0;
   border-bottom-right-radius: 0;
 }
 
-.console-status.is-warning {
+.status-bar.is-warning {
   color: var(--warning);
 }
 
-.console-status.is-ok,
-.console-status.is-running {
+.status-bar.is-ok,
+.status-bar.is-running {
   color: var(--running);
 }
 
-.console-status.is-error {
+.status-bar.is-error {
   color: var(--error);
 }
 
-.console-debug-panel { max-height: 35vh; }
+.status-bar-debug { max-height: 35vh; }

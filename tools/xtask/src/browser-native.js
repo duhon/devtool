@@ -57,8 +57,8 @@
       const marker = value.indexOf('\n#responce ');
       return marker < 0 ? '' : value.slice(value.indexOf('\n', marker + 1) + 1);
     };
-    await wait(() => !find('.console-status').classList.contains('is-running') && done(output()),
-      () => `${message}: ${JSON.stringify({status: find('.console-status').textContent, output: output().slice(0, 2000)})}`);
+    await wait(() => !find('.status-bar').classList.contains('is-running') && done(output()),
+      () => `${message}: ${JSON.stringify({status: find('.status-bar').textContent, output: output().slice(0, 2000)})}`);
     return output();
   };
   const envOutput = await runConsole('rest',
@@ -111,7 +111,7 @@
     const before = restDiscoveryCount();
     pasteRest(source);
     await during(150, () => assert(restDiscoveryCount() === before, 'Pasting URL, headers and body must not start REST discovery'));
-    await click(find('.console-status'));
+    await click(find('.status-bar'));
     bookEditor.focus();
     await during(100, () => assert(restDiscoveryCount() === before, 'Focusing an uncached REST body must not start discovery'));
     await key('Control+Space');
@@ -136,7 +136,7 @@
   pasteRest(`${badOrigin}/api/`);
   await during(100, () => assert(restDiscoveryCount() === beforePaste, 'Pasting an unreachable REST URL must not discover it'));
   await commitRestUrl(bookEditor);
-  await wait(() => find('.console-status').textContent.includes('Discovery · ERROR'),
+  await wait(() => find('.status-bar').textContent.includes('Discovery · ERROR'),
     'An explicit URL slash must report a real native discovery failure');
   assert(![...document.querySelectorAll('[role="alert"]')].some(visible),
     `Native automatic discovery failure must not display a dismissible banner: ${JSON.stringify({
@@ -148,7 +148,7 @@
   pasteRest(fixtureUrl);
   await during(100, () => assert(restDiscoveryCount() === failedRestCount, 'Correcting a host by paste must not automatically discover'));
   await commitRestUrl(bookEditor);
-  await wait(() => find('.console-status').textContent.includes('Discovery · OK')
+  await wait(() => find('.status-bar').textContent.includes('Discovery · OK')
     && candidates().includes('/api/v1/Books'),
   'Typing a URL slash after correcting the host must discover and offer real native paths');
   assert(bookEditor.getLine(2) === `GET ${fixtureUrl}/api/`
@@ -221,7 +221,7 @@
     for (const source of [magentoPrefix(magentoUrl).trimEnd(), magentoPrefix(magentoUrl)]) {
       setSource(magentoEditor, source);
       await settle();
-      await wait(() => !find('.console-status').classList.contains('is-running'),
+      await wait(() => !find('.status-bar').classList.contains('is-running'),
         'The focus bootstrap must finish before counting shortcut-triggered discovery');
       const count = restDiscoveryCount();
       const keyNames = [];
@@ -244,7 +244,7 @@
         assert(restDiscoveryCount() === count && magentoEditor.getValue() === source,
           `Repeated Ctrl-Space on #body or its empty content must not discover or modify the request: ${JSON.stringify({
             cursor: magentoEditor.getCursor(), before: count, after: restDiscoveryCount(),
-            status: find('.console-status').textContent, keyNames,
+            status: find('.status-bar').textContent, keyNames,
           })}`);
       } finally {
         input.removeEventListener('keydown', recordKey, true);
@@ -425,8 +425,8 @@
   const discoveryEndpoint = `${fixtureUrl}/graphql-native-discovery`;
   setSource(discoveryEditor, `#check protected-schema\n#endpoint\n${discoveryEndpoint}\n#query\n{\n  `);
   await key('Alt+Space');
-  await wait(() => find('.console-status').textContent.includes('Discovery · ERROR')
-    && find('.console-status').textContent.includes('GraphQL discovery requires X-Token'),
+  await wait(() => find('.status-bar').textContent.includes('Discovery · ERROR')
+    && find('.status-bar').textContent.includes('GraphQL discovery requires X-Token'),
   'The real native registry must report GraphQL errors instead of caching an empty successful schema');
   assert(![...document.querySelectorAll('[role="alert"]')].some(visible),
     'A real native manual discovery error must appear only in status/debug');
@@ -435,7 +435,7 @@
   discoveryEditor.setCursor(discoveryEditor.lastLine(), discoveryEditor.getLine(discoveryEditor.lastLine()).length);
   // Discovery is lazy: asking for hints introspects the new connection.
   await key('Control+Space');
-  await wait(() => find('.console-status').textContent.includes('Discovery · OK'),
+  await wait(() => find('.status-bar').textContent.includes('Discovery · OK'),
     'GraphQL Console discovery must retry with materialized request headers');
   await testDriver.suggest(discoveryEditor, 'products');
   await pick(discoveryEditor, 'products');
@@ -573,7 +573,7 @@
   win.nativeProbe.clipboard = { text: 'not a command' };
   await click(button(/^Import/, doc));
   const notice = () => doc.querySelector('[data-testid="app-notice"]');
-  const importLight = () => testid('console-import', doc).querySelector('.console-state-light').dataset.state;
+  const importLight = () => testid('console-import', doc).querySelector('.indicator-light').dataset.state;
   await wait(() => notice()?.textContent.includes('Import failed:'), 'Invalid clipboard command must show parser error');
   assert(!notice().textContent.includes('Grant clipboard access'), 'Explicit parser error');
   assert(importLight() === 'error', 'A failed Import must light its button');

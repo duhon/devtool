@@ -3,7 +3,7 @@
   // A fresh panel: wait for the restored Console session before using its toolbar.
   await openConsole();
   const status = () => testid('console-settings-status');
-  const text = () => status().querySelector('.console-status-text').textContent;
+  const text = () => status().querySelector('.status-bar-text').textContent;
   const debug = () => document.querySelector('[data-testid="console-settings-status-debug"]');
   const body = () => testid('settings-panel');
   const light = () => testid('console-settings-toggle').querySelector('[data-state]').dataset.state;
@@ -21,7 +21,7 @@
   await click(testid('settings-modules-check'));
   await wait(() => app('') && !testid('settings-modules-check').disabled,
     () => `Settings did not load: ${text()}`);
-  assert(status().classList.contains('console-status')
+  assert(status().classList.contains('status-bar')
     && status().closest('.console-right-status')
     && !status().closest('[data-testid="settings-panel"]'),
     'Settings must reuse the same bottom status region as other panels');
@@ -53,7 +53,7 @@
   nativeHold.match = message => message.service === 'sources' && message.op === 'check';
   try {
     await click(testid('settings-modules-check'));
-    await wait(() => status().classList.contains('is-running') && status().querySelector('.console-status-spinner'),
+    await wait(() => status().classList.contains('is-running') && status().querySelector('.status-bar-spinner'),
       'A check must show the running spinner');
     assert(testid('settings-modules-check').disabled && light() === 'running'
       && debug().textContent.includes('Check sources'),
@@ -61,7 +61,7 @@
   } finally {
     nativeHold.release();
   }
-  await wait(() => text() === 'Check sources · OK' && !status().querySelector('.console-status-spinner'),
+  await wait(() => text() === 'Check sources · OK' && !status().querySelector('.status-bar-spinner'),
     () => `The check must finish: ${text()}`);
   noBodyErrors();
 

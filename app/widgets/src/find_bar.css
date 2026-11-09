@@ -1,11 +1,11 @@
 /* Find bar: drawn inside the editor it searches. */
 
-.console-find-target {
+.find-bar-target {
   outline: 1px solid var(--accent);
   outline-offset: -1px;
 }
 
-.console-find {
+.find-bar {
   position: absolute;
   top: 4px;
   right: 16px;
@@ -26,7 +26,7 @@
   cursor: default;
 }
 
-.console-find-scope {
+.find-bar-scope {
   overflow: hidden;
   color: var(--fg-muted);
   font-size: 11px;
@@ -34,22 +34,22 @@
   text-overflow: ellipsis;
 }
 
-.console-find-scope strong {
+.find-bar-scope strong {
   color: var(--fg-secondary);
   font-weight: 600;
 }
 
-.console-find-row {
+.find-bar-row {
   display: flex;
   align-items: center;
   gap: 3px;
 }
 
-.console-find-replace {
+.find-bar-replace {
   padding-left: 22px;
 }
 
-.console-find-input {
+.find-bar-input {
   flex: 1;
   min-width: 80px;
   height: 22px;
@@ -63,20 +63,20 @@
   outline: none;
 }
 
-.console-find-input:focus {
+.find-bar-input:focus {
   border-color: var(--accent);
 }
 
-.console-find button {
+.find-bar button {
   height: 22px;
   padding: 0 7px;
   font: inherit;
   line-height: 20px;
 }
 
-.console-find .console-find-option,
-.console-find .console-find-icon,
-.console-find .console-find-expand {
+.find-bar .find-bar-option,
+.find-bar .find-bar-icon,
+.find-bar .find-bar-expand {
   min-width: 22px;
   padding: 0 4px;
   color: var(--fg-secondary);
@@ -84,29 +84,29 @@
   border-color: transparent;
 }
 
-.console-find .console-find-option {
+.find-bar .find-bar-option {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
-.console-find .console-find-option:hover,
-.console-find .console-find-icon:hover:not(:disabled),
-.console-find .console-find-expand:hover {
+.find-bar .find-bar-option:hover,
+.find-bar .find-bar-icon:hover:not(:disabled),
+.find-bar .find-bar-expand:hover {
   color: var(--fg);
   background: var(--bg-hover);
 }
 
-.console-find .console-find-option.active {
+.find-bar .find-bar-option.active {
   color: var(--fg-bright);
   background: var(--find-option-active);
   border-color: var(--accent);
 }
 
-.console-find button:disabled {
+.find-bar button:disabled {
   opacity: 0.4;
   cursor: default;
 }
 
-.console-find-count {
+.find-bar-count {
   min-width: 64px;
   padding: 0 4px;
   overflow: hidden;
@@ -116,7 +116,7 @@
   text-align: center;
 }
 
-.console-find-count.is-error {
+.find-bar-count.is-error {
   color: var(--error);
 }
 

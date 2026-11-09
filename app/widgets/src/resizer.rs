@@ -62,26 +62,22 @@ impl PaneResizer {
                 .width()
                 .ceil() as i32)
         };
-        self.maximum = (workspace.client_width()
-            - width(".console-check-menu")?
-            - width(".console-toolbar")?
-            - 160)
-            .clamp(ctx.props().minimum as i32, 16_384) as u32;
+        self.maximum =
+            (workspace.client_width() - width(".check-rail")? - width(".console-toolbar")? - 160)
+                .clamp(ctx.props().minimum as i32, 16_384) as u32;
         self.apply(ctx)
     }
 
     fn apply(&self, ctx: &Context<Self>) -> Result<(), String> {
         let style = self.workspace()?.style();
         style
-            .set_property("--console-pane-min", &format!("{}px", ctx.props().minimum))
+            .set_property("--resizer-min", &format!("{}px", ctx.props().minimum))
             .map_err(error)?;
         let width = self
             .width
             .map(|width| format!("{}px", width.clamp(ctx.props().minimum, self.maximum)))
             .unwrap_or_else(|| "1fr".into());
-        style
-            .set_property("--console-pane-width", &width)
-            .map_err(error)
+        style.set_property("--resizer-width", &width).map_err(error)
     }
 
     fn current_width(&self) -> Result<u32, String> {
@@ -98,7 +94,7 @@ impl PaneResizer {
     fn observe(&mut self, ctx: &Context<Self>) -> Result<(), String> {
         let workspace = self.workspace()?;
         self.bounds(ctx)?;
-        let targets = [".console-check-menu", ".console-toolbar"]
+        let targets = [".check-rail", ".console-toolbar"]
             .into_iter()
             .map(|selector| {
                 workspace
@@ -243,7 +239,7 @@ impl Component for PaneResizer {
 
     fn view(&self, ctx: &Context<Self>) -> Html {
         html! {
-            <div ref={self.handle.clone()} class="console-pane-resizer" data-testid="console-pane-resizer"
+            <div ref={self.handle.clone()} class="resizer" data-testid="console-pane-resizer"
                 data-panel={ctx.props().panel.clone()} role="separator" tabindex="0"
                 aria-label="Resize right panel" aria-orientation="vertical"
                 aria-valuemin={ctx.props().minimum.to_string()} aria-valuemax={self.maximum.to_string()}

@@ -614,15 +614,26 @@ fn test(root: &Path, args: &[String]) -> Result<()> {
             .map(String::from)
             .collect::<Vec<_>>()
     };
-    let mut commands = match args.first().map(String::as_str) {
-        Some("behavior") => vec![words(
-            "test -p services-native --lib --test modules --test core",
-        )],
+    let commands = match args.first().map(String::as_str) {
+        Some("behavior") => vec![match args.get(1..) {
+            Some([flag, module]) if flag == "--module" => {
+                words(&format!("test -p services-module-{module}"))
+            }
+            _ => {
+                let mut command = words("test -p services-native --lib --test core --test drivers");
+                for package in packages(root)? {
+                    command.extend(["-p".into(), package.library]);
+                }
+                command
+            }
+        }],
         Some("contract") => vec![
             words("test -p services-native --test conformance --test host"),
             words("test -p services-contracts"),
         ],
-        Some("ui") => vec![words("test -p services-widgets -p services-shell")],
+        Some("ui") => vec![words(
+            "test -p services-kernel -p services-widgets -p services-shell",
+        )],
         Some("browser") => return browser::run(root, browser::Selection::parse(&args[1..])?),
         Some("install") => vec![words("test -p services-installer")],
         Some("perf") => vec![words(
@@ -633,9 +644,7 @@ fn test(root: &Path, args: &[String]) -> Result<()> {
     };
     match &args[1..] {
         [] => {}
-        [flag, module] if flag == "--module" && args[0] == "behavior" => {
-            commands[0].extend(["--".into(), format!("{module}::")]);
-        }
+        [flag, _] if flag == "--module" && args[0] == "behavior" => {}
         _ => bail!("Usage: {TEST_USAGE}"),
     }
     for command in commands {

@@ -50,18 +50,18 @@
   position: relative;
 }
 
-.console-toolbar > button > .console-state-light {
+.console-toolbar > button > .indicator-light {
   top: -1px;
   bottom: auto;
   width: 2px;
   height: calc(100% + 2px);
 }
 
-.console-toolbar > button > .console-state-light {
+.console-toolbar > button > .indicator-light {
   left: -1px;
 }
 
-.console-toolbar > button > .console-state-light.is-running {
+.console-toolbar > button > .indicator-light.is-running {
   background-image: linear-gradient(180deg, var(--running-dark), var(--running-light), var(--running-dark), var(--running-light), var(--running-dark));
   background-size: 100% 200%;
 }
@@ -70,7 +70,7 @@
   box-sizing: border-box;
 }
 
-.console-root .console-fold-gutter {
+.console-root .editor-fold-gutter {
   width: 20px;
 }
 
@@ -179,7 +179,7 @@
 }
 
 .console-workspace.has-tools {
-  grid-template-columns: minmax(28px, max-content) minmax(160px, 1fr) minmax(var(--console-pane-min, 240px), var(--console-pane-width, 1fr)) max-content;
+  grid-template-columns: minmax(28px, max-content) minmax(160px, 1fr) minmax(var(--resizer-min, 240px), var(--resizer-width, 1fr)) max-content;
 }
 
 .console-right-pane {

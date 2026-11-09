@@ -1,11 +1,11 @@
 //! The editor's DOM for one render of a session: text rows, gutter, selection, cursor and
-//! hints, with the class names the theme, the console and tests style.
-use crate::editor::document::Position;
+//! hints, with the class names the theme, owners and tests style.
+use crate::editor::State;
 use crate::editor::highlight::Span;
 use crate::editor::layout::{self, Piece, Row, WIDGET_COLUMNS};
 use crate::editor::model::{Mark, Metrics, Session};
+use crate::editor::text::Position;
 use crate::editor::text::{TAB_SIZE, Utf16Cursor};
-use crate::editor::{State, checks};
 use std::collections::BTreeMap;
 use yew::prelude::*;
 
@@ -20,7 +20,8 @@ pub(super) struct Frame {
     pub end: usize,
     pub gutter: f64,
     pub numbers: f64,
-    pub console: bool,
+    /// A document: fold gutter and room below the last line.
+    pub document: bool,
     pub height: f64,
 }
 
@@ -38,7 +39,7 @@ pub(super) fn metrics(metrics: Option<Metrics>) -> Metrics {
 
 pub(super) fn frame(session: &Session) -> Frame {
     let state = session.state();
-    let console = session.setup().console;
+    let document = session.setup().document;
     let metrics = metrics(session.metrics());
     let rows = layout::rendered_rows(state, session.metrics());
     let numbers = layout::number_width(state.line_count(), metrics.char_width);
@@ -46,10 +47,10 @@ pub(super) fn frame(session: &Session) -> Frame {
         metrics,
         first: rows.start,
         end: rows.end,
-        gutter: numbers + if console { layout::FOLD_GUTTER } else { 0.0 },
+        gutter: numbers + if document { layout::FOLD_GUTTER } else { 0.0 },
         numbers,
-        console,
-        height: layout::document_height(state, &metrics, console),
+        document,
+        height: layout::document_height(state, &metrics, document),
     }
 }
 
@@ -330,10 +331,7 @@ pub(super) fn rows(session: &mut Session, frame: &Frame) -> Html {
         let props = LineProps {
             pieces,
             blank: layout.columns == 0,
-            band: frame
-                .console
-                .then(|| checks::band(session.check_lines(), line))
-                .flatten(),
+            band: session.extension().line_class(line),
             backgrounds: decorations.lines.remove(&line).unwrap_or_default(),
             widget_width,
         };
@@ -348,14 +346,14 @@ pub(super) fn rows(session: &mut Session, frame: &Frame) -> Html {
     }
 }
 
-/// The line numbers and, in the console, the fold markers of the rendered rows.
+/// The line numbers and, in a document, the fold markers of the rendered rows.
 pub(super) fn gutter(session: &mut Session, frame: &Frame) -> Html {
     let lines: Vec<usize> = (frame.first..frame.end)
         .map(|row| session.state().line_of_row(row))
         .collect();
     let rows = lines.into_iter().map(|line| {
         let key = session.state().anchor(line).map_or(line as u64, |anchor| anchor.key());
-        let marker = if frame.console {
+        let marker = if frame.document {
             session.fold_marker(line)
         } else {
             None
@@ -364,10 +362,10 @@ pub(super) fn gutter(session: &mut Session, frame: &Frame) -> Html {
             <div key={key} class="editor-gutter-wrapper">
                 <div class="editor-linenumber editor-gutter-elt"
                     style={format!("width:{}px", frame.numbers)}>{line + 1}</div>
-                if frame.console {
-                    <div class="editor-gutter-elt console-fold-gutter" data-line={line.to_string()}>
+                if frame.document {
+                    <div class="editor-gutter-elt editor-fold-gutter" data-line={line.to_string()}>
                         if let Some(folded) = marker {
-                            <div class={if folded { "console-fold-folded" } else { "console-fold-open" }}/>
+                            <div class={if folded { "editor-fold-folded" } else { "editor-fold-open" }}/>
                         }
                     </div>
                 }

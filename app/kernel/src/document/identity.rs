@@ -1,4 +1,4 @@
-use crate::editor::document::ResponseRegion;
+use super::ResponseRegion;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
@@ -24,7 +24,7 @@ impl Identity {
     }
 }
 pub fn normalize(source: &str, regions: &[ResponseRegion], checks: &mut Vec<Identity>) {
-    let lines = crate::editor::document::check_lines(source, regions);
+    let lines = super::check_lines(source, regions);
     let mut ids = BTreeSet::new();
     let mut owned = BTreeSet::new();
     checks.retain(|check| {

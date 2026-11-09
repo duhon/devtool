@@ -159,7 +159,7 @@ impl Library {
                         .is_some_and(|responses| {
                             responses.values().all(|regions| {
                                 serde_json::from_value::<
-                                    Vec<services_widgets::editor::document::ResponseRegion>,
+                                    Vec<services_kernel::document::ResponseRegion>,
                                 >(regions.clone())
                                 .is_ok()
                             })

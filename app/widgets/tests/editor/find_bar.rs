@@ -1,7 +1,6 @@
 //! Editor find bar: the RegExp a query compiles to, navigation with wrap,
 //! response output kept out of replacement, and replacement templates.
 
-use services_widgets::editor::document::ResponseRegion;
 use services_widgets::find_bar::{
     Lines, Match, Options, counter, editable, escape, expand, following, pattern, preceding,
 };
@@ -60,12 +59,7 @@ fn navigation_wraps_around_the_document() {
 fn matches_inside_response_output_are_not_replaceable() {
     let text = "#check a\nGET /x\n#response 200\nGET /x\n\n#check b\nGET /x";
     let lines = Lines::new(text);
-    let regions = [ResponseRegion {
-        request: 0,
-        header: 2,
-        end: 4,
-        columns: Vec::new(),
-    }];
+    let regions = [(2, 4)];
     let at = |line, ch, len| {
         let start = lines.offset(line, ch);
         Match {

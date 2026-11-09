@@ -17,15 +17,16 @@ The panel links `src/theme.css` (colours as variables, body, base controls) as
 by the Rust component. CSP must allow `wasm-unsafe-eval`.
 
 The embedded Agent also exposes bounded inspected-page DOM tools in DevTools.
-`browser/page_agent.rs` owns per-turn/site approval and revokes access on Stop,
-completion and application teardown/hide. It evaluates the embedded static
-`assets/page-agent.js` through `chrome.devtools.inspectedWindow.eval`, targeting
-only that DevTools window's main inspected document without adding extension
-permissions. No arbitrary-JavaScript tool is exposed. Standalone Console cannot
-control a page. The script returns bounded untrusted text/control descriptions,
-not field contents or browser storage, and validates origin, document identity,
-unique controls and permitted input types before actions. Native SDK tool
-replies still pass through the existing credential redactor.
+The Agent panel module (`modules/panels/agent`, `src/page.rs`) owns per-turn/site
+approval and revokes access on Stop, completion and application teardown/hide. It
+asks the App (`page.eval`) to evaluate its embedded static `src/page-agent.js` through
+`chrome.devtools.inspectedWindow.eval` (`browser/app/agent.rs`), targeting only that
+DevTools window's main inspected document without adding extension permissions. No
+arbitrary-JavaScript tool is exposed. Standalone Console cannot control a page. The
+script returns bounded untrusted text/control descriptions, not field contents or
+browser storage, and validates origin, document identity, unique controls and
+permitted input types before actions. Native SDK tool replies still pass through the
+existing credential redactor.
 
 The guide uses a separate top-layer popover and shadow DOM, with constructable
 stylesheets and textContent (no HTML injection or target styling). Its pointer-
@@ -41,18 +42,21 @@ Page acceptance uses a separate real HTTP page and the SDK fixture. A test-only
 effects, consent, navigation, cancellation and rejection paths. This checks the
 DevTools API contract; it does not replace a real DevTools-panel lifecycle test.
 
-The editor is pure Yew in the MVU style and implements only what the app uses.
-`src/editor/` is the platform-free model (text, history,
-folds, layout, highlighting, completion); `src/browser/editor/` renders it. An
-owner keeps the editor's `Handle` and passes it to `View`; the editor reports
-`Event`s to the owner. Its DOM uses `editor-*` classes, `tok-*` token classes
-and the `theme-dracula` theme, which the Console CSS and tests style. Rendered rows are components rebuilt only when
-what they show changes. The real scroller stays visible, with no proxy bars;
-native appearance and fading are browser-owned. `browser/editor/facade.rs`
-exposes a JS object on the wrapper's `editor` property
-for find and browser tests. `browser/editor/mount.rs`
-(`window.__servicesMountEditor`) is temporary: only the table-performance
-scenario uses it until that scenario is rewritten.
+The text editor is the widget `services_widgets::editor`: pure Yew in the MVU style,
+implementing only what the app uses. It knows nothing of checks or modules; its
+language comes through the `editor::extension::Extension` trait (tokens, folds,
+completion, hints, output ranges, line bands). The Shell's `language::Language`
+implements it over the Kernel: the document model (`services_kernel::document`:
+checks, responses, identities) and the module bridge (`services_kernel::editor`:
+highlighting, folds, completion, templates). An owner keeps the editor's `Handle` and
+passes it to `View`; the editor reports `Event`s to the owner. Its DOM uses `editor-*`
+classes, `tok-*` token classes and the `theme-dracula` theme. Rendered rows are
+components rebuilt only when what they show changes. The real scroller stays visible,
+with no proxy bars; native appearance and fading are browser-owned. The widget's
+`editor/facade.rs` exposes a JS object on the wrapper's `editor` property for find and
+browser tests. `browser/mount.rs` (`window.__servicesMountEditor`, through
+`Handle::mount`) is temporary: only the table-performance scenario uses it until that
+scenario is rewritten.
 
 Chrome uses `runtime.connectNative(services_contracts::HOST_NAME)`, validates
 protocol 1, and reads `runtime.lastError` synchronously on disconnect. Unary
@@ -78,14 +82,14 @@ Shared parsing/section catalogs live in `services-contracts::templates`. Complet
 offers Splunk's `options` block instead of separate `from`, `to`, `app`, and `count`
 sections. Separate `#from`, `#to`, `#app`, and `#count` sections are rejected;
 their parameters belong only in `#options`, including in templates.
-Every service has `#options`: `Manifest::add_console_options` (`services-contracts`)
-adds the section and its hints to each manifest. Its `Repeat`, `Repeat-Until` and `Format`
+Every service has `#options`: the Shell (`console::markers`) adds the section
+unless the module has its own. Its `Repeat`, `Repeat-Until` and `Format`
 keys belong to the Console (`console::parse_run`) and are removed before the module request.
 `Repeat: 5s` (`s`, `m` or `h`, 1s to 24h) runs again after each response until Stop, an edit
 of the check or a hidden panel, or with `Repeat-Until: changed` until the response changes;
 completion offers Repeat-Until only under a Repeat line;
 History saves the last run once, through a deferred snapshot and a `commit` op. Format
-changes only how table responses are shown: the Console and History (`format::history_document`)
+changes only how table responses are shown: the Console and History
 read it from the check; the saved result stays the same.
 Completion inserts literal bodies with one undo step, normalizing inline `#section @name`
 and replacing `#check @name` with the entire supplied check. Check templates
@@ -378,12 +382,13 @@ The editor test ID is on the editor wrapper; integrations can use its
 
 ## Validation
 
-`cargo test -p services-widgets -p services-shell` runs pure Rust tests and captured reference fixtures
-from the former JavaScript parser/formatter tests. These JSON fixtures do not
-depend on the deleted implementation. Tests live outside the sources: the widgets'
-in `app/widgets/tests/`, the Console, parsing and storage logic in `tests/core/`, one
-file per service or panel in `tests/modules/`. WASM builds validate
-browser code.
+`cargo run -p xtask -- test ui` (`cargo test -p services-widgets -p services-shell`)
+runs pure Rust tests and captured reference fixtures from the former JavaScript
+parser/formatter tests. Tests live outside the sources: the widgets' in
+`app/widgets/tests/`, the Shell's Console, language adapter, parsing and storage logic
+in `tests/core/`, one file per service or panel in `tests/modules/`. The document model
+is tested in the Kernel (`app/kernel/tests/document/`). WASM builds validate browser
+code.
 
 Build the distribution with `cargo run -p xtask -- build`, then run
 `cargo run -p xtask -- test browser` (`--list` shows the scenarios). The Rust

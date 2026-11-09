@@ -1,4 +1,4 @@
-use crate::editor::document::ResponseRegion;
+use crate::editor::extension::{self, Extension};
 use crate::editor::layout;
 use crate::editor::model::{Context, Event, Metrics, Msg, Session, Setup};
 use std::cell::{Cell, RefCell};
@@ -49,8 +49,12 @@ pub(super) fn now() -> f64 {
 
 impl Handle {
     pub fn new(setup: Setup, text: &str) -> Self {
+        Self::with_extension(setup, extension::plain(), text)
+    }
+
+    pub fn with_extension(setup: Setup, extension: Rc<dyn Extension>, text: &str) -> Self {
         Self(Rc::new(Shared {
-            session: RefCell::new(Session::new(setup, text)),
+            session: RefCell::new(Session::new(setup, extension, text)),
             redraw: RefCell::new(None),
             on: RefCell::new(None),
             dom: RefCell::new(None),
@@ -95,14 +99,12 @@ impl Handle {
         self.read(Session::pending)
     }
 
-    /// Shows the owner's `text` and response `regions` unless the editor has them already
-    /// or has edits the owner has not seen; not reported back as [`Event::Changed`].
-    pub fn set_text(&self, text: &str, regions: &[ResponseRegion]) {
-        let same = self.read(|session| {
-            session.pending() || (*session.source() == *text && session.regions() == regions)
-        });
+    /// Shows the owner's `text` unless the editor has it already or has edits the owner
+    /// has not seen; not reported back as [`Event::Changed`].
+    pub fn set_text(&self, text: &str) {
+        let same = self.read(|session| session.pending() || *session.source() == *text);
         if !same {
-            self.with(|session| session.sync(text, regions, &[], None, now()));
+            self.with(|session| session.sync(text, None, now()));
         }
     }
 
@@ -188,6 +190,34 @@ impl Handle {
     }
 
     /// The JS object tests and the find bar use.
+    /// Renders the editor alone into `host` and returns its facade; the facade's
+    /// `destroy()` unmounts it.
+    pub fn mount(&self, host: web_sys::Element, testid: &str, label: &str) -> JsValue {
+        let weak = self.weak();
+        let on = yew::Callback::from(move |msg| {
+            if let Some(shared) = weak.upgrade() {
+                Handle(shared).update(msg);
+            }
+        });
+        let props = super::view::Props {
+            handle: self.clone(),
+            on,
+            testid: testid.to_owned().into(),
+            label: label.to_owned().into(),
+            placeholder: Default::default(),
+            class: Default::default(),
+        };
+        let app = yew::Renderer::<super::View>::with_root_and_props(host, props).render();
+        let facade = self.facade();
+        let handle = self.clone();
+        let destroy = wasm_bindgen::closure::Closure::once_into_js(move || {
+            app.destroy();
+            drop(handle);
+        });
+        crate::dom::set(&facade, "destroy", &destroy);
+        facade
+    }
+
     pub(super) fn facade(&self) -> JsValue {
         if let Some(facade) = self.0.facade.borrow().as_ref() {
             return facade.object.clone();

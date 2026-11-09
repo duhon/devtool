@@ -1,6 +1,6 @@
 /* The state light of a tab, button or check. */
 
-.console-state-light {
+.indicator-light {
   position: absolute;
   bottom: -1px;
   left: -1px;
@@ -11,30 +11,30 @@
   z-index: 2;
 }
 
-.console-state-light.is-ready {
+.indicator-light.is-ready {
   background: transparent;
 }
 
-.console-state-light.is-warning {
+.indicator-light.is-warning {
   background: var(--warning);
 }
 
-.console-state-light.is-error {
+.indicator-light.is-error {
   background: var(--error);
 }
 
-.console-state-light.is-running {
+.indicator-light.is-running {
   background: linear-gradient(90deg, var(--running-dark), var(--running-light), var(--running-dark), var(--running-light), var(--running-dark));
   background-size: 200% 100%;
-  animation: console-state-flow 1.5s linear infinite;
+  animation: indicator-flow 1.5s linear infinite;
 }
 
-@keyframes console-state-flow {
+@keyframes indicator-flow {
   to { background-position: 200% 200%; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .console-state-light {
+  .indicator-light {
     animation: none;
   }
 }

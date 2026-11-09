@@ -200,7 +200,7 @@
   assert(!editable.length,
     `The Modules tab must not contain editable fields: ${editable.map(field=>field.outerHTML)}`);
   assert(document.querySelector('[data-testid="settings-modules-check"]'),'Settings must expose the module update check');
-  await wait(()=>settingsToggle.querySelector('.console-state-light').dataset.state!=='running','Settings check');
+  await wait(()=>settingsToggle.querySelector('.indicator-light').dataset.state!=='running','Settings check');
   assert(settingsToggle.classList.contains('active')
     && [...document.querySelectorAll('.console-toolbar [aria-pressed="true"]')].length===1,
     ()=>`Settings must exclusively activate its right-hand tool: pressed=${[...document.querySelectorAll('.console-toolbar [aria-pressed="true"]')].map(button=>button.dataset.testid)}`);

@@ -131,7 +131,7 @@ pub fn kernel_run(
         }
     }
     let run = console_options(&options.join("\n"), &name)?;
-    let check = crate::kernel::check(service, &text.join("\n"), &serde_json::json!({}));
+    let check = services_kernel::document::check(service, &text.join("\n"), &serde_json::json!({}));
     Ok((check, run))
 }
 
@@ -178,12 +178,4 @@ pub fn import(service: &str, command: &str) -> Result<String, String> {
 pub fn export(service: &str, source: &str) -> Result<String, String> {
     let (check, _) = kernel_run(service, source)?;
     crate::kernel::with(|modules| modules.export(service, check))
-}
-
-pub fn fuzzy_match(candidate: &str, query: &str) -> bool {
-    let mut chars = candidate.chars().flat_map(char::to_lowercase);
-    query
-        .chars()
-        .flat_map(char::to_lowercase)
-        .all(|q| chars.by_ref().any(|c| c == q))
 }

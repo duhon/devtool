@@ -346,8 +346,8 @@ li.editor-hint-active {
 
 .theme-dracula span.tok-error, .tok-invalidchar { color: var(--editor-red); }
 
-.console-fold-open,
-.console-fold-folded {
+.editor-fold-open,
+.editor-fold-folded {
   display: block;
   width: 20px;
   height: 20px;
@@ -362,44 +362,44 @@ li.editor-hint-active {
   cursor: pointer;
 }
 
-.console-fold-open:hover,
-.console-fold-folded:hover {
+.editor-fold-open:hover,
+.editor-fold-folded:hover {
   background: var(--bg-hover);
   color: var(--accent);
 }
 
-.console-fold-open::after {
+.editor-fold-open::after {
   content: '▾';
 }
 
-.console-fold-folded::after {
+.editor-fold-folded::after {
   content: '▸';
 }
 
-.editor pre.editor-line.console-check-band-even {
-  --console-check-background: var(--bg-band);
+.editor pre.editor-line.editor-band-even {
+  --editor-band-background: var(--bg-band);
 }
 
-.editor pre.editor-line.console-check-band-odd {
-  --console-check-background: var(--bg-editor);
+.editor pre.editor-line.editor-band-odd {
+  --editor-band-background: var(--bg-editor);
 }
 
 /* Keep check backgrounds below the editor's selection, and text above it. */
-.editor pre.editor-line:is(.console-check-band-even, .console-check-band-odd) {
+.editor pre.editor-line:is(.editor-band-even, .editor-band-odd) {
   background-color: transparent;
   z-index: auto;
 }
 
-.editor pre.editor-line:is(.console-check-band-even, .console-check-band-odd)::before {
+.editor pre.editor-line:is(.editor-band-even, .editor-band-odd)::before {
   content: "";
   position: absolute;
   inset: 0;
   z-index: 0;
   pointer-events: none;
-  background-color: var(--console-check-background);
+  background-color: var(--editor-band-background);
 }
 
-.editor pre.editor-line:is(.console-check-band-even, .console-check-band-odd) > span {
+.editor pre.editor-line:is(.editor-band-even, .editor-band-odd) > span {
   position: relative;
   z-index: 2;
 }

@@ -106,7 +106,7 @@
 
 .ui-indicator { position: relative; display: inline-flex; align-items: center; gap: 4px; min-width: 10px; min-height: 14px; }
 
-.ui-indicator > .console-state-light { position: static; width: 8px; height: 8px; border-radius: 50%; }
+.ui-indicator > .indicator-light { position: static; width: 8px; height: 8px; border-radius: 50%; }
 
 .ui-tabs { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
 

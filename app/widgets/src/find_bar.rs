@@ -2,7 +2,6 @@
 //! query compiles to, match navigation, which matches may be replaced, and
 //! replacement templates. Offsets are UTF-16 code units, as in the editor.
 
-use crate::editor::document::ResponseRegion;
 use std::collections::BTreeMap;
 
 #[cfg(target_arch = "wasm32")]
@@ -119,14 +118,15 @@ pub fn preceding(matches: &[Match], offset: usize) -> Option<usize> {
     }
 }
 
-/// Whether a match lies outside every response: replacing never edits output.
-pub fn editable(lines: &Lines, found: &Match, regions: &[ResponseRegion]) -> bool {
+/// Whether a match lies outside every output range `(first line, end line)`: replacing
+/// never edits output.
+pub fn editable(lines: &Lines, found: &Match, outputs: &[(usize, usize)]) -> bool {
     let (first, _) = lines.position(found.start);
     // A match ending with a line break stops on its own line, not the next one.
     let (last, _) = lines.position(found.end.saturating_sub(1).max(found.start));
-    !regions
+    !outputs
         .iter()
-        .any(|region| first < region.end && last >= region.header)
+        .any(|&(header, end)| first < end && last >= header)
 }
 
 /// Replacement text for one regex match, as JavaScript's `String.replace` reads

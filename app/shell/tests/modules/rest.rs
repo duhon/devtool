@@ -3,10 +3,31 @@
 
 use serde_json::{Value, json};
 use services_kernel::Effect;
-use services_shell::completion::suggest;
+use services_kernel::document::check;
+use services_kernel::editor::Completion;
+use services_shell::language::{Language, Modules};
 use services_shell::{console, kernel, services};
 use services_widgets::editor::fold;
 use services_widgets::editor::highlight::{Highlighter, Style};
+use std::rc::Rc;
+
+fn suggest(
+    service: &str,
+    field: &str,
+    source: &str,
+    line: usize,
+    ch: usize,
+    hints: &[(String, String)],
+) -> Completion {
+    services_kernel::editor::completion::suggest(&Modules, service, field, source, line, ch, hints)
+}
+
+fn highlighter() -> Highlighter {
+    Highlighter::with_extension(
+        "console-rest",
+        Rc::new(Language::new("console-rest", "rest", "", "")),
+    )
+}
 
 fn lines(text: &str) -> Vec<String> {
     text.split('\n').map(str::to_owned).collect()
@@ -40,8 +61,7 @@ fn the_module_colors_checks_with_utf16_spans_and_the_console_overlays_variables(
     let source = lines(
         "#check Привет 😀\n#endpoint\nGET https://пример.рф/{{:host}}/pets/{id}\n#headers\nX-Имя😀: {{:token}}\n#body\n{\"имя\": \"значение\"}\n#responce OK\n{\"ok\": true}",
     );
-    services_shell::language::install();
-    let mut highlighter = Highlighter::new("console-rest");
+    let mut highlighter = highlighter();
     assert_eq!(
         runs(&mut highlighter, &source, 0),
         [("#check Привет 😀".into(), Some("comment"))]
@@ -109,8 +129,7 @@ fn module_completions_merge_with_console_markers_options_and_variables() {
 #[test]
 fn checks_and_sections_fold_where_the_module_says() {
     let source = lines("#check\n#endpoint\nGET https://a\n#body\n{\n  \"a\": 1\n}");
-    services_shell::language::install();
-    let mut highlighter = Highlighter::new("console-rest");
+    let mut highlighter = highlighter();
     let fold = |highlighter: &mut Highlighter, line| {
         fold::range(highlighter, &source, line)
             .map(|fold| ((fold.from.line, fold.from.ch), (fold.to.line, fold.to.ch)))
@@ -205,13 +224,13 @@ fn host_wasm_lists_declare_kernel_services_and_what_to_load() {
 
 #[test]
 fn discovery_runs_as_module_driver_calls_and_reports_its_status() {
-    let document = kernel::check(
+    let document = check(
         "rest",
         "#endpoint\nGET https://fixture.invalid/api/pets",
         &Value::Null,
     );
     assert!(kernel::broadcast(kernel::document(document)).is_empty());
-    let check = kernel::check(
+    let check = check(
         "rest",
         "#endpoint\nGET https://fixture.invalid/api/pets",
         &Value::Null,
@@ -256,7 +275,7 @@ fn discovery_runs_as_module_driver_calls_and_reports_its_status() {
 #[test]
 fn a_field_after_a_value_puts_its_comma_after_the_value() {
     let source = "#check\n#endpoint\nPOST http://comma.invalid/api/users\n#body\n";
-    let check = kernel::check("rest", &source[7..], &Value::Null);
+    let check = check("rest", &source[7..], &Value::Null);
     let mut pending: Vec<(String, String)> = Vec::new();
     let calls = |effects: Vec<Effect>| -> Vec<(String, String)> {
         effects

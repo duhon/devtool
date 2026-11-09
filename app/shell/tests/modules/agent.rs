@@ -2,8 +2,8 @@
 //! Console the agent works on. UI-behaviour tests.
 
 use serde_json::json;
+use services_kernel::document::{self, Position, ResponseRegion};
 use services_shell::agent_workspace::{Workspace, page};
-use services_widgets::editor::document::{self, Position, ResponseRegion};
 
 #[test]
 fn ids_follow_unique_moved_checks_and_stale_writes_fail() {

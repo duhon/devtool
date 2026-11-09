@@ -2,6 +2,7 @@
 //! `Ui` messages. Modules have no HTML or CSS of their own: only the widgets and their
 //! variants (`primary`, `danger`, `muted`).
 use crate::editor;
+use crate::editor::extension;
 use crate::editor::model::{Event as EditorEvent, Setup};
 use crate::indicator::Indicator;
 use services_sdk::ui::{self, Node, node::Kind};
@@ -16,8 +17,8 @@ pub const CSS: &str = include_str!("view.css");
 pub type Action = (Vec<u8>, Option<String>);
 
 thread_local! {
-    /// The `headers` editors on screen, by id: they complete and explain variables.
-    static VARIABLE_EDITORS: std::cell::RefCell<std::collections::BTreeMap<u64, editor::Handle>> =
+    /// The editors on screen that complete hints, by id, with their language.
+    static HINT_EDITORS: std::cell::RefCell<std::collections::BTreeMap<u64, (editor::Handle, AttrValue)>> =
         const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
     static NEXT_EDITOR: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     /// Typing not yet told to its module (`on_input` waits), by field: module, msg, text and
@@ -55,20 +56,25 @@ pub fn take_pending(module: &str) -> Vec<Action> {
     })
 }
 
-/// The variables the modules contributed changed: the `headers` editors complete them.
-pub fn variables_changed() {
-    let handles: Vec<editor::Handle> =
-        VARIABLE_EDITORS.with(|editors| editors.borrow().values().cloned().collect());
-    for handle in handles {
-        set_variables(&handle);
+/// The hints the editors' languages complete changed: the editors on screen follow.
+pub fn hints_changed() {
+    let editors: Vec<(editor::Handle, AttrValue)> =
+        HINT_EDITORS.with(|editors| editors.borrow().values().cloned().collect());
+    for (handle, language) in editors {
+        set_hints(&handle, &language);
     }
 }
 
-fn set_variables(handle: &editor::Handle) {
+/// Gives `handle` the hints of `language`; false when it has none.
+fn set_hints(handle: &editor::Handle, language: &str) -> bool {
+    let Some(hints) = extension::languages().hints(language) else {
+        return false;
+    };
     handle.set_context(crate::editor::model::Context {
-        hints: crate::editor::language::language().variables(),
+        hints,
         ..Default::default()
     });
+    true
 }
 
 /// The estimated height of a row of a virtual list, in CSS pixels.
@@ -681,53 +687,46 @@ struct EditorProps {
     on: Callback<Action>,
 }
 
-/// An editor highlighted by `language`: a service's checks (`<id>`), one template section of
-/// them (`<id>/<section>`), a saved run of one (`history/<id>`, its response folds), a
-/// service's completion hints (`hints/<id>`), `headers` lines with variable completion, or
-/// another highlighting mode.
+/// An editor of `language`: what the installed [`extension::Languages`] makes of it, a
+/// highlighting mode by default.
 #[function_component(TextEditor)]
 fn text_editor(props: &EditorProps) -> Html {
     let readonly = props.editor.on_change.is_none();
     let handle = {
         let (language, text) = (props.editor.language.clone(), props.editor.text.clone());
         use_state(move || {
-            let (mode, service, field, template_section) = editor_setup(&language);
+            let (mode, extension) = extension::languages().editor(&language);
             let setup = Setup {
                 mode,
-                service,
-                field,
-                template_section,
                 readonly,
                 ..Setup::default()
             };
-            editor::Handle::new(setup, &text)
+            editor::Handle::with_extension(setup, extension, &text)
         })
     };
     {
         let handle = (*handle).clone();
-        let variables = props.editor.language == "headers";
+        let language = AttrValue::from(props.editor.language.clone());
         use_effect_with((), move |()| {
             let id = NEXT_EDITOR.with(|next| {
                 next.set(next.get() + 1);
                 next.get()
             });
-            if variables {
-                set_variables(&handle);
-                VARIABLE_EDITORS.with(|editors| editors.borrow_mut().insert(id, handle));
+            if set_hints(&handle, &language) {
+                HINT_EDITORS.with(|editors| editors.borrow_mut().insert(id, (handle, language)));
             }
             move || {
-                VARIABLE_EDITORS.with(|editors| editors.borrow_mut().remove(&id));
+                HINT_EDITORS.with(|editors| editors.borrow_mut().remove(&id));
             }
         });
     }
     {
         let handle = (*handle).clone();
-        let language = props.editor.language.clone();
         use_effect_with(
             (props.editor.text.clone(), readonly),
             move |(text, readonly)| {
                 handle.set_readonly(*readonly);
-                handle.set_text(text, &regions(&language, text));
+                handle.set_text(text);
             },
         );
     }
@@ -751,57 +750,6 @@ fn text_editor(props: &EditorProps) -> Html {
             <editor::View handle={(*handle).clone()} {on} {testid} label={testid_label(&props.editor.language)}/>
         </div>
     }
-}
-
-/// The editor setup of `language`: mode, service, field and template section.
-fn editor_setup(language: &str) -> (String, String, String, String) {
-    let (head, tail) = language.split_once('/').unwrap_or((language, ""));
-    let owned = |mode: &str, service: &str, field: &str, section: &str| {
-        (
-            mode.to_owned(),
-            service.to_owned(),
-            field.to_owned(),
-            section.to_owned(),
-        )
-    };
-    match head {
-        "" => owned("", "", "", ""),
-        service if crate::editor::language::language().is_service(service) && tail.is_empty() => {
-            owned(&format!("console-{service}"), service, "", "")
-        }
-        service if crate::editor::language::language().is_service(service) => owned(
-            &format!("console-{service}"),
-            "templates",
-            "definitions",
-            tail,
-        ),
-        "history" => owned(&format!("console-{tail}"), "history", "snapshot", ""),
-        "hints" => owned("headers", "hints", tail, ""),
-        "headers" => owned("headers", "vars", "variables", ""),
-        mode => owned(mode, "", "", ""),
-    }
-}
-
-/// The response regions of a saved run (`history/<id>`): the `#responce` line heads the
-/// response of the check above it.
-fn regions(language: &str, text: &str) -> Vec<crate::editor::document::ResponseRegion> {
-    if !language.starts_with("history/") {
-        return Vec::new();
-    }
-    let lines: Vec<&str> = text.split('\n').collect();
-    let Some(header) = lines.iter().position(|line| line.starts_with("#responce ")) else {
-        return Vec::new();
-    };
-    let request = lines[..header]
-        .iter()
-        .position(|line| crate::editor::document::is_check(line))
-        .unwrap_or(0);
-    vec![crate::editor::document::ResponseRegion {
-        request,
-        header,
-        end: lines.len(),
-        columns: Vec::new(),
-    }]
 }
 
 fn testid_label(language: &str) -> AttrValue {

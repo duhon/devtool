@@ -144,23 +144,23 @@ impl Component for CheckRail {
     fn view(&self, ctx: &Context<Self>) -> Html {
         let width = self.width.min(maximum());
         html! {
-            <nav class={classes!("console-check-menu",(width>MIN_WIDTH).then_some("is-expanded"))}
+            <nav class={classes!("check-rail",(width>MIN_WIDTH).then_some("is-expanded"))}
                 style={format!("width:{width}px")} aria-label="Checks" data-testid="console-check-menu">
-                <div class="console-check-links">
+                <div class="check-rail-links">
                     {for ctx.props().items.iter().enumerate().map(|(index,item)| {
                         let line=item.line;
                         let title=if item.title.is_empty(){format!("Check {} · line {}",index+1,line+1)}
                             else{format!("{} · line {}",item.title,line+1)};
-                        html!{<button type="button" class={classes!("console-check-link",(ctx.props().active==Some(line)).then_some("active"))}
+                        html!{<button type="button" class={classes!("check-rail-link",(ctx.props().active==Some(line)).then_some("active"))}
                             aria-current={if ctx.props().active==Some(line){"location"}else{"false"}} {title}
                             data-line={(line+1).to_string()} onclick={ctx.props().onselect.reform(move |_|line)}>
-                            <span class="console-check-number">{index+1}</span>
-                            <span class="console-check-comment">{item.title.clone()}</span>
+                            <span class="check-rail-number">{index+1}</span>
+                            <span class="check-rail-comment">{item.title.clone()}</span>
                             {indicator(item.state,format!("Check {} · {}",index+1,item.state.name()))}
                         </button>}
                     })}
                 </div>
-                <div ref={self.handle.clone()} class="console-check-resizer" data-testid="console-check-resizer" role="separator" tabindex="0"
+                <div ref={self.handle.clone()} class="check-rail-resizer" data-testid="console-check-resizer" role="separator" tabindex="0"
                     aria-label="Resize check menu" aria-orientation="vertical" aria-valuemin={MIN_WIDTH.to_string()}
                     aria-valuemax={maximum().to_string()} aria-valuenow={width.to_string()}
                     onpointerdown={ctx.link().callback(Msg::Start)} onpointermove={ctx.link().callback(Msg::Move)}

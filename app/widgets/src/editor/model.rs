@@ -1,16 +1,12 @@
 //! An editor session: the model an owner keeps for one editor (text, highlighting,
-//! hints, console bookkeeping) and its update function. The browser view renders a
+//! hints, its extension) and its update function. The browser view renders a
 //! session and turns DOM input into [`Msg`]; [`Session::update`] returns the [`Event`]s
 //! the owner handles. Pure, so native tests cover the editor's behaviour.
+use super::extension::{self, Extension, Payload, Refresh, Viewport};
 use super::highlight::Highlighter;
 use super::layout;
-use super::text::utf16_len;
+use super::text::{Position, TextChange, utf16_len};
 use super::{Anchor, Change, Indent, Selection, State, Transaction, Unit};
-use crate::editor::document::{
-    CheckViewport, ClipboardFragment, DocumentEdit, EditHistory, Position, ResponseRegion,
-    TextChange,
-};
-use crate::editor::identity::Identity;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -21,19 +17,15 @@ pub const AGENT_EDIT_FLASH_MS: f64 = 1200.0;
 const HINT_LINE_LIMIT: usize = 1000;
 
 thread_local! {
-    /// The console fragment last copied, so pasting it restores its response regions.
-    static CLIPBOARD: RefCell<Option<ClipboardFragment>> = const { RefCell::new(None) };
     /// What the last copy put on the clipboard and whether it was a whole line.
     static LAST_COPIED: RefCell<Option<(String, bool)>> = const { RefCell::new(None) };
 }
 
 /// An Agent edit of one editor, applied only while the text is still what the Agent saw.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct EditCommand {
     pub serial: u64,
-    pub service: String,
     pub expected: String,
-    pub expected_regions: Vec<ResponseRegion>,
     pub from: Position,
     pub to: Position,
     pub text: String,
@@ -42,17 +34,13 @@ pub struct EditCommand {
 /// What an editor edits; fixed for its lifetime except `readonly`.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Setup {
-    /// The highlighting mode (a language or a console service).
+    /// The highlighting mode: a language its extension may refine.
     pub mode: String,
-    pub service: String,
-    /// The request section the editor edits; empty for the console.
-    pub field: String,
-    /// The console: response regions, checks, fold gutter, document edits.
-    pub console: bool,
+    /// What the owner's extension edits; a kept editor of another scope is replaced.
+    pub scope: String,
+    /// A document: a fold gutter, room below the last line and viewport events.
+    pub document: bool,
     pub readonly: bool,
-    pub template_section: String,
-    /// Scopes the ids of console checks.
-    pub check_scope: String,
 }
 
 /// What completion reads; the owner updates it as data arrives.
@@ -163,21 +151,20 @@ pub enum Msg {
 
 #[derive(Clone, Debug)]
 pub enum Event {
-    /// The text a non-console editor now has.
+    /// The text the editor now has.
     Changed(String),
-    /// A console edit with its response regions and checks.
-    Edited(DocumentEdit),
+    /// The extension's record of an edit.
+    Edited(Payload),
     EditError(String),
     Run {
         source: String,
         line: usize,
     },
     Discover,
-    /// The user asked a Kernel service for hints: the check at the cursor and the cursor's
-    /// UTF-8 offset in it.
-    Hints(services_sdk::Check, u32),
+    /// The user asked for hints; what the extension tells the owner.
+    Hints(Payload),
     Cursor(usize),
-    Viewport(CheckViewport),
+    Viewport(Viewport),
 }
 
 /// What the view does after rendering.
@@ -243,7 +230,7 @@ struct Press {
 struct Operation {
     changes: Vec<TextChange>,
     cursor: bool,
-    /// A typed `/` asks a Kernel service for hints.
+    /// A typed `/` asks the extension for hints.
     hints: bool,
     scroll: bool,
     /// Hints were already refreshed, so cursor activity need not.
@@ -255,15 +242,11 @@ pub struct Session {
     highlighter: Highlighter,
     setup: Setup,
     context: Context,
-    regions: Vec<ResponseRegion>,
-    checks: Vec<Identity>,
-    check_lines: Vec<usize>,
-    history: Option<EditHistory>,
     hints: Hints,
     popup: Option<Popup>,
     focused: bool,
     metrics: Option<Metrics>,
-    viewport: Option<CheckViewport>,
+    viewport: Option<Viewport>,
     brackets: Vec<(Position, bool)>,
     marks: BTreeMap<u64, Mark>,
     next_mark: u64,
@@ -284,27 +267,14 @@ pub struct Session {
 }
 
 impl Session {
-    pub fn new(setup: Setup, text: &str) -> Self {
-        let mut highlighter = Highlighter::new(&setup.mode);
-        highlighter.set_template_section(
-            (!setup.template_section.is_empty()).then_some(setup.template_section.as_str()),
-        );
+    pub fn new(setup: Setup, extension: Rc<dyn Extension>, text: &str) -> Self {
         let state = State::new(text);
-        let history = setup.console.then(|| {
-            let mut history = EditHistory::default();
-            history.scope = setup.check_scope.clone();
-            history.synchronize(text, &[], state.generation());
-            history
-        });
+        extension.synchronize(text, state.generation());
         Self {
             state,
-            highlighter,
+            highlighter: Highlighter::with_extension(&setup.mode, extension),
             setup,
             context: Context::default(),
-            regions: Vec::new(),
-            checks: Vec::new(),
-            check_lines: Vec::new(),
-            history,
             hints: Hints::default(),
             popup: None,
             focused: false,
@@ -346,16 +316,8 @@ impl Session {
         &self.context
     }
 
-    pub fn regions(&self) -> &[ResponseRegion] {
-        &self.regions
-    }
-
-    pub fn checks(&self) -> &[Identity] {
-        &self.checks
-    }
-
-    pub fn check_lines(&self) -> &[usize] {
-        &self.check_lines
+    pub fn extension(&self) -> &Rc<dyn Extension> {
+        self.highlighter.extension()
     }
 
     pub fn popup(&self) -> Option<&Popup> {
@@ -570,7 +532,7 @@ impl Session {
     }
 
     /// The text a copy puts on the clipboard: the selection, or the whole line when nothing
-    /// is selected. Remembers the console fragment so pasting it restores its responses.
+    /// is selected. The extension hears what was copied.
     pub fn copy(&self) -> String {
         let selection = self.state.selection();
         let (text, line_wise) = if selection.empty() {
@@ -579,10 +541,7 @@ impl Session {
         } else {
             (self.state.selected_text(), false)
         };
-        if let Some(history) = &self.history {
-            let fragment = history.clipboard(&selection.from(), &selection.to()).ok();
-            CLIPBOARD.with(|clipboard| *clipboard.borrow_mut() = fragment);
-        }
+        self.extension().copy(selection.from(), selection.to());
         LAST_COPIED.with(|copied| *copied.borrow_mut() = Some((text.clone(), line_wise)));
         text
     }
@@ -605,30 +564,14 @@ impl Session {
 
     /// Replaces the text; the owner calls this when its document changed. `preserve_after`
     /// caps the common prefix so a response inserted there keeps the next line's anchor.
-    pub fn sync(
-        &mut self,
-        text: &str,
-        regions: &[ResponseRegion],
-        checks: &[Identity],
-        preserve_after: Option<usize>,
-        now: f64,
-    ) {
+    /// The extension synchronizes with it too.
+    pub fn sync(&mut self, text: &str, preserve_after: Option<usize>, now: f64) {
         self.syncing = true;
         let selection = self.state.selection();
         let changes =
             self.change(|state| state.set_text(text, preserve_after, "+services-response", now));
-        self.set_regions(regions);
         self.changes.extend(changes);
-        if checks != self.checks {
-            self.checks = checks.to_vec();
-            self.check_lines = checks.iter().map(|check| check.line).collect();
-            self.revision += 1;
-        }
-        let generation = self.state.generation();
-        if let Some(history) = &mut self.history {
-            history.synchronize(text, regions, generation);
-            history.synchronize_checks(checks, generation);
-        }
+        self.synchronize();
         if self.state.selection() != selection {
             self.cursor_activity();
             self.events.push(Event::Cursor(self.state.cursor().line));
@@ -642,36 +585,36 @@ impl Session {
         super::fold::range(&mut self.highlighter, self.state.lines(), line)
     }
 
-    /// Highlights everything again from scratch: the service's module has just started.
+    /// Highlights everything again from scratch: what the extension highlights changed.
     pub fn relight(&mut self) {
-        let mut highlighter = Highlighter::new(&self.setup.mode);
-        highlighter.set_template_section(
-            (!self.setup.template_section.is_empty())
-                .then_some(self.setup.template_section.as_str()),
-        );
-        highlighter.set_regions(&self.regions);
-        self.highlighter = highlighter;
+        self.highlighter.reset();
         self.revision += 1;
     }
 
-    /// Replaces the response regions as the owner's document would, so later edits keep them.
-    pub fn set_responses(&mut self, regions: &[ResponseRegion]) {
-        self.set_regions(regions);
+    /// The extension synchronizes with the text as it is, e.g. after one of its options
+    /// changed.
+    pub fn synchronize(&mut self) {
         let text = self.source();
-        let generation = self.state.generation();
-        if let Some(history) = &mut self.history {
-            history.synchronize(&text, regions, generation);
-        }
+        let refresh = self.extension().synchronize(&text, self.state.generation());
+        self.refresh(refresh);
     }
 
-    fn set_regions(&mut self, regions: &[ResponseRegion]) -> bool {
-        if regions == self.regions {
-            return false;
+    /// Sets an option of the extension's; true when it took it.
+    pub fn set_option(&mut self, name: &str, value: serde_json::Value) -> bool {
+        let taken = self.extension().set_option(name, value);
+        if taken {
+            self.synchronize();
         }
-        self.regions = regions.to_vec();
-        self.highlighter.set_regions(regions);
-        self.revision += 1;
-        true
+        taken
+    }
+
+    fn refresh(&mut self, refresh: Refresh) {
+        if refresh.relight {
+            self.highlighter.reset();
+        }
+        if refresh.relight || refresh.redraw {
+            self.revision += 1;
+        }
     }
 
     /// Updates what completion reads; open hints follow it. Returns whether it changed.
@@ -765,14 +708,20 @@ impl Session {
         }
     }
 
-    /// Applies an Agent edit when the document is still what the Agent saw, and flashes it.
-    /// `None` when this command was already applied.
-    pub fn agent_edit(&mut self, command: &EditCommand, now: f64) -> Option<Result<(), String>> {
+    /// Applies an Agent edit when the document is still what the Agent saw (`current`: and
+    /// whatever else the owner expects still holds), and flashes it. `None` when this
+    /// command was already applied.
+    pub fn agent_edit(
+        &mut self,
+        command: &EditCommand,
+        current: bool,
+        now: f64,
+    ) -> Option<Result<(), String>> {
         if command.serial == self.agent_serial {
             return None;
         }
         self.agent_serial = command.serial;
-        if *self.source() != *command.expected || self.regions != command.expected_regions {
+        if *self.source() != *command.expected || !current {
             return Some(Err(
                 "CONFLICT: editor changed before the Agent edit was applied".into(),
             ));
@@ -837,7 +786,7 @@ impl Session {
         self.effects.push(Effect::Expire(id, AGENT_EDIT_FLASH_MS));
     }
 
-    /// The fold marker of `line` in the console gutter: `Some(true)` when folded.
+    /// The fold marker of `line` in a document's gutter: `Some(true)` when folded.
     pub fn fold_marker(&mut self, line: usize) -> Option<bool> {
         if self.state.fold_starting(line).is_some() {
             return Some(true);
@@ -850,8 +799,8 @@ impl Session {
         self.emit_viewport();
     }
 
-    /// The viewport the console reports: the top line and the cursor line when visible.
-    pub fn check_viewport(&self) -> Option<CheckViewport> {
+    /// The viewport a document reports: the top line and the cursor line when visible.
+    pub fn viewport(&self) -> Option<Viewport> {
         let metrics = self.metrics?;
         if metrics.line_height <= 0.0 {
             return None;
@@ -870,17 +819,17 @@ impl Session {
                     && metrics.gutter_width + caret.left - metrics.scroll_left
                         < metrics.client_width
             });
-        Some(CheckViewport {
+        Some(Viewport {
             top,
             visible_cursor: visible.then_some(cursor.line),
         })
     }
 
     fn emit_viewport(&mut self) {
-        if !self.setup.console {
+        if !self.setup.document {
             return;
         }
-        let viewport = self.check_viewport();
+        let viewport = self.viewport();
         if viewport.is_some() && viewport != self.viewport {
             self.viewport = viewport;
             if let Some(viewport) = viewport {
@@ -910,7 +859,7 @@ impl Session {
             Command::Run => self.run(),
             Command::Complete => {
                 self.show_hints(false);
-                self.kernel_hints();
+                self.ask_hints();
             }
             Command::Newline => {
                 self.operation(|session| session.change(|state| state.newline_and_indent(now)));
@@ -919,7 +868,7 @@ impl Session {
             Command::ToggleFold => self.toggle_fold(self.state.cursor().line),
             Command::Backspace | Command::Delete => {
                 let dir = if command == Command::Backspace { -1 } else { 1 };
-                self.operation(|session| match session.remove_folded_response(now) {
+                self.operation(|session| match session.remove_folded(now) {
                     Some(changes) => changes,
                     None => session.change(|state| state.delete(dir, Unit::Char, now)),
                 });
@@ -994,18 +943,16 @@ impl Session {
 
     fn run(&mut self) {
         let source = self.source().to_string();
-        let line = if self.setup.console {
-            let Some(viewport) = self.check_viewport() else {
+        let line = if self.setup.document {
+            let Some(viewport) = self.viewport() else {
                 return;
             };
             if Some(viewport) != self.viewport {
                 self.viewport = Some(viewport);
                 self.events.push(Event::Viewport(viewport));
             }
-            let checks = crate::editor::document::check_lines(&source, &self.regions);
-            viewport
-                .active_check(&checks)
-                .map(|index| checks[index])
+            self.extension()
+                .run_line(&source, viewport)
                 .unwrap_or(viewport.top)
         } else {
             self.state.cursor().line
@@ -1081,11 +1028,7 @@ impl Session {
         let mut tracked = true;
         if !op.changes.is_empty() {
             self.update_brackets();
-            if self.setup.console {
-                tracked = self.track(&op.changes);
-            } else {
-                self.events.push(Event::Changed(self.source().to_string()));
-            }
+            tracked = self.track(&op.changes);
             self.changes.extend(op.changes.iter().cloned());
         }
         if op.scroll && (op.cursor || !op.changes.is_empty()) {
@@ -1098,31 +1041,27 @@ impl Session {
             self.events.push(Event::Cursor(self.state.cursor().line));
         }
         if tracked && op.hints {
-            self.kernel_hints();
+            self.ask_hints();
         }
     }
 
-    /// Records a console edit with its responses and checks for the owner.
+    /// Reports an edit: the extension's record of it, or the text.
     fn track(&mut self, changes: &[TextChange]) -> bool {
-        let text = self.source().to_string();
+        let text = self.source();
         let generation = self.state.generation();
         let generations = self.state.generations();
-        let Some(history) = &mut self.history else {
-            return true;
-        };
-        let result = CLIPBOARD.with(|clipboard| {
-            history.apply(text, changes, generation, &mut clipboard.borrow_mut())
-        });
-        history.retain_generations(&generations);
-        match result {
-            Ok(edit) => {
-                self.set_regions(&edit.regions.clone());
-                self.check_lines = edit.checks.iter().map(|check| check.line).collect();
-                self.checks = edit.checks.clone();
+        let extension = self.extension().clone();
+        match extension.edited(&text, changes, generation, &generations) {
+            None => {
+                self.events.push(Event::Changed(text.to_string()));
+                true
+            }
+            Some(Ok((edit, refresh))) => {
+                self.refresh(refresh);
                 self.events.push(Event::Edited(edit));
                 true
             }
-            Err(error) => {
+            Some(Err(error)) => {
                 self.events.push(Event::EditError(error));
                 false
             }
@@ -1181,9 +1120,7 @@ impl Session {
             };
             to = from;
         }
-        let previous =
-            super::checks::Previous::capture(self.state.lines(), from.line, &self.regions);
-        let checks = self.check_lines.clone();
+        self.extension().inserting(self.state.lines(), from.line);
         self.operation(|session| {
             let mut changes = session
                 .change(|state| state.apply(Transaction::replace(from, to, text, origin), now));
@@ -1191,48 +1128,24 @@ impl Session {
             session
                 .state
                 .set_selection(Selection::cursor(end_of(from, &inserted)));
-            if session.setup.console {
-                changes.extend(session.separate(from, &inserted, origin, &checks, previous, now));
-            }
+            changes.extend(session.inserted(from, &inserted, origin, now));
             session.input_read(origin);
             changes
         });
     }
 
-    /// Puts a blank line before checks the edit typed or pasted right under text.
-    fn separate(
+    /// What the extension adds to an insertion, in the same undo step.
+    fn inserted(
         &mut self,
         from: Position,
         inserted: &[String],
         origin: &str,
-        checks: &[usize],
-        previous: super::checks::Previous,
         now: f64,
     ) -> Vec<TextChange> {
-        let pasted = if origin == "paste" {
-            let text = inserted.join("\n");
-            CLIPBOARD.with(|clipboard| {
-                clipboard
-                    .borrow()
-                    .as_ref()
-                    .and_then(|fragment| fragment.pasted_regions(&text))
-                    .unwrap_or_default()
-                    .to_vec()
-            })
-        } else {
-            Vec::new()
-        };
-        super::checks::separate(
-            self.state.lines(),
-            from,
-            inserted,
-            origin,
-            checks,
-            previous,
-            &pasted,
-        )
-        .map(|transaction| self.change(|state| state.apply(transaction, now)))
-        .unwrap_or_default()
+        self.extension()
+            .inserted(self.state.lines(), from, inserted, origin)
+            .map(|transaction| self.change(|state| state.apply(transaction, now)))
+            .unwrap_or_default()
     }
 
     /// Hints after typing or pasting.
@@ -1404,23 +1317,15 @@ impl Session {
         self.emit_viewport();
     }
 
-    /// Backspace or Delete on a folded `#response` line removes the whole response.
-    fn remove_folded_response(&mut self, now: f64) -> Option<Vec<TextChange>> {
+    /// Backspace or Delete on a folded line the extension removes as a whole.
+    fn remove_folded(&mut self, now: f64) -> Option<Vec<TextChange>> {
         let line = self.state.cursor().line;
-        let text = self.state.line(line);
-        if !text
-            .trim_start()
-            .to_ascii_lowercase()
-            .starts_with("#respon")
-        {
-            return None;
-        }
         let end = Position {
             line,
-            ch: utf16_len(text),
+            ch: utf16_len(self.state.line(line)),
         };
         self.state.fold_at(end)?;
-        let block = crate::editor::document::request_at(&self.source(), line, &self.regions)?;
+        let response_end = self.extension().removal(&self.source(), line)?;
         let from = if line > 0 {
             Position {
                 line: line - 1,
@@ -1429,9 +1334,9 @@ impl Session {
         } else {
             Position::default()
         };
-        let to = if block.response_end < self.state.line_count() {
+        let to = if response_end < self.state.line_count() {
             Position {
-                line: block.response_end,
+                line: response_end,
                 ch: 0,
             }
         } else {
@@ -1475,27 +1380,14 @@ impl Session {
         }
     }
 
-    fn in_output(&self, line: usize) -> bool {
-        self.regions
-            .iter()
-            .any(|region| line >= region.header && line < region.end)
-    }
-
-    /// A Kernel service hears that hints were asked for; its module may fetch what they need.
-    fn kernel_hints(&mut self) {
-        let service = &self.setup.service;
+    /// The owner hears that hints were asked for, so it may fetch what they need.
+    fn ask_hints(&mut self) {
         let cursor = self.state.cursor();
-        if !self.setup.field.is_empty()
-            || !super::language::language().is_service(service)
-            || self.in_output(cursor.line)
+        if let Some(payload) = self
+            .extension()
+            .hints(&self.source(), cursor.line, cursor.ch)
         {
-            return;
-        }
-        let masked = crate::editor::document::mask_output(&self.source(), &self.regions);
-        if let Some((check, pos)) =
-            super::language::language().hints(service, &masked, cursor.line, cursor.ch)
-        {
-            self.events.push(Event::Hints(check, pos));
+            self.events.push(Event::Hints(payload));
         }
     }
 
@@ -1547,21 +1439,13 @@ impl Session {
             op.hinted = true;
         }
         let cursor = self.state.cursor();
-        if self.in_output(cursor.line) {
+        if self.extension().output(cursor.line) {
             self.close_hints();
             return;
         }
-        let service = self.setup.service.clone();
-        let field = self.setup.field.clone();
-        let masked = crate::editor::document::mask_output(&self.source(), &self.regions);
-        let completion = super::language::language().suggest(
-            &service,
-            &field,
-            &masked,
-            cursor.line,
-            cursor.ch,
-            &self.context,
-        );
+        let completion =
+            self.extension()
+                .suggest(&self.source(), cursor.line, cursor.ch, &self.context);
         if completion.candidates.is_empty() || (automatic && !completion.automatic) {
             self.close_hints();
             return;
@@ -1633,31 +1517,18 @@ impl Session {
 
     fn apply_hint(&mut self, popup: &Popup, item: &Item, now: f64) {
         self.hints.enabled = false;
-        let service = self.setup.service.clone();
-        let field = self.setup.field.clone();
-        let console = field.is_empty();
-        let candidate = item.text.clone();
-        let (mut text, target) = if item.literal {
-            (candidate.clone(), None)
-        } else {
-            super::language::prepare_insertion(&candidate, console)
-        };
         let from = popup.from;
-        if !item.literal && console && candidate.starts_with('#') {
-            let current = self.state.line(from.line).trim();
-            if crate::editor::document::is_check(current)
-                || super::language::language()
-                    .markers(&service)
-                    .iter()
-                    .any(|marker| current.eq_ignore_ascii_case(&format!("#{marker}")))
-            {
-                text = candidate.clone();
-            }
-        }
+        let (text, target) = if item.literal {
+            (item.text.clone(), None)
+        } else {
+            let text = self
+                .extension()
+                .insertion(&item.text, self.state.line(from.line))
+                .unwrap_or_else(|| item.text.clone());
+            extension::prepare_insertion(&text)
+        };
         let to = popup.to;
-        let previous =
-            super::checks::Previous::capture(self.state.lines(), from.line, &self.regions);
-        let checks = self.check_lines.clone();
+        self.extension().inserting(self.state.lines(), from.line);
         self.operation(|session| {
             let mut changes = Vec::new();
             if let Some(comma) = item.comma {
@@ -1672,10 +1543,7 @@ impl Session {
             session
                 .state
                 .set_selection(Selection::cursor(end_of(from, &inserted)));
-            if console && session.setup.console {
-                changes
-                    .extend(session.separate(from, &inserted, "complete", &checks, previous, now));
-            }
+            changes.extend(session.inserted(from, &inserted, "complete", now));
             if let Some(target) = target {
                 let lines = super::text::split_lines(&text[..target]);
                 session
@@ -1686,8 +1554,7 @@ impl Session {
         });
         let continuation = item.continue_hint
             || text.ends_with([':', '/', ' '])
-            || (text.contains('\n') && target.is_some())
-            || (candidate.starts_with('#') && candidate != "#check");
+            || (text.contains('\n') && target.is_some());
         if continuation {
             self.hints.enabled = true;
             self.hints.automatic = true;
@@ -1785,6 +1652,7 @@ mod tests {
                 mode: "json".into(),
                 ..Setup::default()
             },
+            extension::plain(),
             text,
         )
     }
@@ -1828,28 +1696,6 @@ mod tests {
         assert_eq!(session.source().as_ref(), "a\nb\nc");
         session.command(Command::Undo, 0.0);
         assert_eq!(session.source().as_ref(), "a\n\n");
-    }
-
-    #[test]
-    fn edits_keep_the_responses_set_directly() {
-        let setup = Setup {
-            mode: "console-mysql".into(),
-            console: true,
-            ..Setup::default()
-        };
-        let mut session = Session::new(setup, "#check A\n#query\nselect 1\n#responce OK\n{\n}");
-        let region = ResponseRegion {
-            request: 0,
-            header: 3,
-            end: 6,
-            columns: Vec::new(),
-        };
-        session.set_responses(std::slice::from_ref(&region));
-        session.apply(
-            Transaction::replace(at(5, 0), at(5, 0), "  ", "+input"),
-            0.0,
-        );
-        assert_eq!(session.regions(), [region]);
     }
 
     fn key(name: &str) -> Key<'_> {
@@ -1970,7 +1816,7 @@ mod tests {
         let mut editor = session("a\nb");
         editor.select(Selection::cursor(at(1, 1)), false);
         editor.take_events();
-        editor.sync("x\na\nb", &[], &[], None, 0.0);
+        editor.sync("x\na\nb", None, 0.0);
         assert_eq!(editor.state().cursor(), at(2, 1));
         assert!(matches!(&editor.take_events()[..], [Event::Cursor(2)]));
         assert!(
@@ -1996,14 +1842,14 @@ mod tests {
         };
         editor.update(Msg::Metrics(metrics), 0.0);
         assert_eq!(
-            editor.check_viewport(),
-            Some(CheckViewport {
+            editor.viewport(),
+            Some(Viewport {
                 top: 2,
                 visible_cursor: Some(3)
             })
         );
         editor.select(Selection::cursor(at(0, 0)), false);
-        assert_eq!(editor.check_viewport().unwrap().visible_cursor, None);
+        assert_eq!(editor.viewport().unwrap().visible_cursor, None);
     }
 
     #[test]
@@ -2011,18 +1857,19 @@ mod tests {
         let mut editor = session("alpha beta");
         let mut command = EditCommand {
             serial: 1,
-            service: String::new(),
             expected: "other".into(),
-            expected_regions: Vec::new(),
             from: at(0, 6),
             to: at(0, 10),
             text: "gamma".into(),
         };
-        assert!(matches!(editor.agent_edit(&command, 0.0), Some(Err(_))));
-        assert!(editor.agent_edit(&command, 0.0).is_none());
+        assert!(matches!(
+            editor.agent_edit(&command, true, 0.0),
+            Some(Err(_))
+        ));
+        assert!(editor.agent_edit(&command, true, 0.0).is_none());
         command.serial = 2;
         command.expected = "alpha beta".into();
-        assert_eq!(editor.agent_edit(&command, 0.0), Some(Ok(())));
+        assert_eq!(editor.agent_edit(&command, true, 0.0), Some(Ok(())));
         assert_eq!(&*editor.source(), "alpha gamma");
         let (_, mark) = editor.marks().next().unwrap();
         assert_eq!(

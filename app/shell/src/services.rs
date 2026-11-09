@@ -36,15 +36,5 @@ pub fn default_service() -> String {
 /// Template library sections of a service: `check` (whole checks), then its `#marker`
 /// sections as its module completes them.
 pub fn template_sections(id: &str) -> Vec<String> {
-    let markers = crate::console::markers(id);
-    if markers.is_empty() {
-        return Vec::new();
-    }
-    std::iter::once("check".to_owned())
-        .chain(markers.into_iter().filter(|marker| marker != "check"))
-        .collect()
-}
-
-pub fn has_template_section(id: &str, section: &str) -> bool {
-    template_sections(id).iter().any(|name| name == section)
+    services_kernel::editor::template_sections(crate::console::markers(id))
 }

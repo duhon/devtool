@@ -28,7 +28,7 @@
     await click(testid('console-service-rest'));
     const editor = editorOf('console-editor');
     setSource(editor, source);
-    const status = find('.console-status');
+    const status = find('.status-bar');
     const started = performance.now();
     await key('Shift+Enter');
     const output = () => {

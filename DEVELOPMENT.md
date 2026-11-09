@@ -53,9 +53,9 @@ cargo run -p xtask -- test <type>   # one kind at a time
 
 | Type | Checks | Where |
 |---|---|---|
-| `behavior [--module NAME]` | What each module does, through the host protocol; the shared core | `host/tests/modules/`, `tests/core/` |
-| `contract` | Rules every module obeys; native messaging, shell environment, TLS | `host/tests/conformance.rs`, `tests/host/` |
-| `ui` | Widgets, UI models, parsing, completion, rendering | `app/widgets/tests/`, `app/shell/tests/` |
+| `behavior [--module ID]` | What each module does (its crate's tests); the host's drivers and history | `modules/*/<id>/tests/`, `host/tests/{drivers,core}/` |
+| `contract` | Rules every module obeys; native messaging, packages, shell environment, TLS | `host/tests/conformance.rs`, `host/tests/host/`, `api/protocol` |
+| `ui` | Kernel document model, widgets, Shell logic: parsing, completion, rendering | `app/kernel/tests/`, `app/widgets/tests/`, `app/shell/tests/` |
 | `browser [--scenario NAME] [--jobs N] [--list]` | User scenarios in the built extension, isolated Chrome profiles | `tools/xtask/src/browser*` |
 | `install` | Install, update, rollback, uninstall in a temporary HOME | `installer/tests` |
 | `perf` | Time budgets; release build, ignored by default | `host/tests/perf.rs` |
@@ -65,29 +65,41 @@ cargo run -p xtask -- test <type>   # one kind at a time
 
 ## Layout
 
-- `host` — the host: variables, history, templates, hints, updates,
-  the agent, the module registry and loader, native-messaging adapter.
-- `api/protocol` — package format, protocol constants.
-- `api/sdk` — the module SDK: the wasm module ABI, Cmd/Msg, driver requests and shared
-  languages (`lang/`).
-- `app/kernel` — the Kernel that runs wasm modules in the App.
-- `modules/services/<id>` — the standard modules, each released on its own with its
-  version, `RELEASE_NOTES.md` and Agent skill (`skill/SKILL.md`).
-- `examples/echo` — an unshipped example module and the module guide.
-- `app/widgets` — generic UI widgets (Yew/WebAssembly) with no application logic,
-  including the text editor; each widget's CSS lies next to it.
+- `host` — the native host: drivers (`http`, `grpc`, `mysql`, `process`, `tcp`),
+  history, the module registry and installer, sources, updates, the Agent companion,
+  the native-messaging adapter. It knows no services.
+- `api/protocol` (`services-contracts`) — native-messaging protocol, package format,
+  templates and agent contracts shared by the host and the App.
+- `api/sdk` (`services-sdk`) — the module SDK: the wasm ABI, `Module`, `Event`/`Cmd`,
+  the UI tree, driver requests and shared languages (`lang/`).
+- `app/kernel` — the Kernel: runs wasm modules in the App, the document model
+  (`document`: checks, responses, identities) and the editor bridge to modules
+  (`editor`: highlighting, folds, completion, templates).
+- `app/widgets` — generic UI widgets (Yew/WebAssembly) with no application logic: the
+  UI-tree view, the text editor, find bar, check rail, status bar, tree, resizer,
+  indicator; each widget's CSS lies next to it.
 - `app/shell` — the App (`app.wasm`): layout, theme, toolbar, side panels, Console,
-  wiring of Kernel, widgets and Host.
+  transport, and the wiring of Kernel, widgets and Host (`language.rs` gives the
+  editor its language from the Kernel).
+- `app/extension/src` — Chrome manifest, HTML, minimal bootstrap.
+- `modules/services/<id>`, `modules/panels/<id>` — the standard modules (services and
+  panels), each a wasm crate with its `manifest.json`; services are released on their
+  own with their version, `RELEASE_NOTES.md` and Agent skill (`skill/SKILL.md`).
+- `examples/echo` — an unshipped example module and the module guide.
 - `installer` — install, update, rollback, uninstall.
 - `tools/testkit` — test host, module catalog, wire fixtures.
 - `tools/xtask` — builds, module packages, test commands.
-- `app/extension/src` — Chrome manifest, HTML, minimal bootstrap.
-- `install.sh`, `prerelease`, `dev` — root entry points.
+- `install.sh`, `prerelease` — root entry points.
+
+There are no `assets/` folders: CSS and scripts lie next to the code that owns them
+and are embedded with `include_str!`. The one exception is the Shell's
+`app/shell/src/theme.css`, which `panel.html` links as `theme.css`.
 
 ## Rules
 
-- Never inspect, overwrite or delete the real `.variable-profiles.json`,
-  `.console-hints.txt` or clipboard contents; use disposable test data.
+- Never inspect, overwrite or delete the user's real application data
+  (`~/Library/Application Support/ServicesDevTools/data`) or clipboard contents; use
+  disposable test data.
 - Installed Chrome launches the host through Native Messaging; do not require
   a manually started server.
 - The host loads the user's login/interactive shell environment in an isolated
@@ -95,7 +107,7 @@ cargo run -p xtask -- test <type>   # one kind at a time
 - Keep the extension public key/ID and the native host name stable.
 - Variables editors complete only placeholders; Console syntax, saved hints
   and discovery are scoped to their own service.
-- Placeholder syntax is `{{env:X}}`, `{{profile:x}}`, `{{:x}}`; shell `${VAR}`
-  remains shell syntax.
+- Placeholder syntax is `{{var:x}}`, `{{env:X}}`, `{{<set>:x}}` (a Dictionary set),
+  `{{:x}}`; shell `${VAR}` remains shell syntax.
 - Preserve existing worktree changes. Commit only on request and increment the
   extension/workspace patch version by default when committing.

@@ -9,15 +9,20 @@ impl App {
         if let Some(editor) = self.editors.borrow().get(&key) {
             return editor.clone();
         }
+        let scope = format!("{}:{service}", self.workspace_id);
         let setup = Setup {
             mode: format!("console-{service}"),
-            service: service.into(),
-            console: true,
-            check_scope: format!("{}:{service}", self.workspace_id),
+            scope: scope.clone(),
+            document: true,
             ..Setup::default()
         };
         let text = self.docs.get(service).map_or("", String::as_str);
-        let editor = editor::kept(&format!("{}:{key}", self.session_id), setup, text);
+        let editor = editor::kept(
+            &format!("{}:{key}", self.session_id),
+            setup,
+            || Rc::new(Language::console(service, &scope)),
+            text,
+        );
         if self.console_editor_stale(service, &editor) {
             editor.with(|session| {
                 self.sync_console_editor(service, session);
@@ -36,7 +41,7 @@ impl App {
                     mode: "shell".into(),
                     ..Setup::default()
                 };
-                Handle::new(setup, text)
+                Handle::with_extension(setup, Rc::new(Language::new("shell", "", "", "")), text)
             })
             .clone()
     }
@@ -55,11 +60,14 @@ impl App {
         editor.read(|session| {
             !session.pending()
                 && (*session.source() != *self.docs.get(service).map_or("", String::as_str)
-                    || session.regions() != self.regions(service)
-                    || session.checks() != self.checks.get(service).map_or(&[][..], Vec::as_slice))
+                    || Language::of(session).is_none_or(|language| {
+                        language.regions() != self.regions(service)
+                            || language.checks()
+                                != self.checks.get(service).map_or(&[][..], Vec::as_slice)
+                    }))
         })
     }
-    fn regions(&self, service: &str) -> &[services_widgets::editor::document::ResponseRegion] {
+    fn regions(&self, service: &str) -> &[services_kernel::document::ResponseRegion] {
         self.response_regions
             .get(service)
             .map_or(&[], Vec::as_slice)
@@ -78,10 +86,14 @@ impl App {
         session: &mut services_widgets::editor::model::Session,
         preserve_after: Option<usize>,
     ) {
+        if let Some(language) = Language::of(session) {
+            language.set_document(
+                self.regions(service),
+                self.checks.get(service).map_or(&[], Vec::as_slice),
+            );
+        }
         session.sync(
             self.docs.get(service).map_or("", String::as_str),
-            self.regions(service),
-            self.checks.get(service).map_or(&[], Vec::as_slice),
             preserve_after,
             js_sys::Date::now(),
         );
@@ -109,7 +121,7 @@ impl App {
             }
         }
         match &self.export_text {
-            Some(text) => self.export_editor(text).set_text(text, &[]),
+            Some(text) => self.export_editor(text).set_text(text),
             None => {
                 self.export_editor.borrow_mut().take();
             }
@@ -126,12 +138,28 @@ impl App {
         for event in events {
             let msg = match event {
                 EditorEvent::Changed(text) => Msg::ConsoleText(text),
-                EditorEvent::Edited(edit) => Msg::ConsoleEdited(service.into(), edit),
+                EditorEvent::Edited(edit) => {
+                    let Some(edit) = edit.get::<DocumentEdit>() else {
+                        continue;
+                    };
+                    Msg::ConsoleEdited(service.into(), edit.clone())
+                }
                 EditorEvent::EditError(error) => Msg::EditorError(error),
                 EditorEvent::Run { source, line } => Msg::ConsoleRun(source, line),
                 EditorEvent::Discover => Msg::Discover,
-                EditorEvent::Hints(check, pos) => Msg::KernelHints(check, pos),
-                EditorEvent::Viewport(viewport) => Msg::Scroll(service.into(), viewport),
+                EditorEvent::Hints(hints) => {
+                    let Some((check, pos)) = hints.get::<(services_sdk::Check, u32)>() else {
+                        continue;
+                    };
+                    Msg::KernelHints(check.clone(), *pos)
+                }
+                EditorEvent::Viewport(viewport) => Msg::Scroll(
+                    service.into(),
+                    services_kernel::document::CheckViewport {
+                        top: viewport.top,
+                        visible_cursor: viewport.visible_cursor,
+                    },
+                ),
                 EditorEvent::Cursor(_) => continue,
             };
             render |= Component::update(self, ctx, msg);
@@ -291,7 +319,7 @@ impl App {
             .map(Vec::as_slice)
             .unwrap_or(&[]);
         services_widgets::indicator::summary(
-            services_widgets::editor::document::check_lines(source, regions)
+            services_kernel::document::check_lines(source, regions)
                 .into_iter()
                 .map(|line| self.check_indicator(service, line)),
         )
@@ -441,7 +469,7 @@ impl App {
     }
     pub(super) fn persist_console(&mut self) {
         for (service, source) in &self.docs {
-            services_widgets::editor::identity::normalize(
+            services_kernel::document::identity::normalize(
                 source,
                 self.response_regions
                     .get(service)
@@ -496,7 +524,7 @@ impl App {
             .get(service)
             .and_then(|checks| checks.iter().find(|check| check.line == line))
             && let Some(source) = self.docs.get(service)
-            && let Some(block) = services_widgets::editor::document::request_at(
+            && let Some(block) = services_kernel::document::request_at(
                 source,
                 line,
                 self.response_regions
@@ -534,7 +562,7 @@ impl App {
     }
     /// The request text of the check at `line`.
     fn check_source(&self, service: &str, line: Option<usize>) -> Option<String> {
-        services_widgets::editor::document::request_at(
+        services_kernel::document::request_at(
             self.docs.get(service)?,
             line?,
             self.response_regions
@@ -816,7 +844,7 @@ impl App {
                 }
             }
             let doc = self.docs.entry(service.into()).or_default();
-            let preserve_after = services_widgets::editor::document::check_lines(
+            let preserve_after = services_kernel::document::check_lines(
                 doc,
                 self.response_regions
                     .get(service)
@@ -833,15 +861,15 @@ impl App {
                     - 1
             });
             let old_doc = doc.clone();
-            *doc = services_widgets::editor::document::replace_response(
+            *doc = services_kernel::document::replace_response(
                 doc,
                 line,
                 &response_status,
                 &body,
-                services_widgets::editor::document::columns_of(&run.result),
+                services_kernel::document::columns_of(&run.result),
                 self.response_regions.entry(service.into()).or_default(),
             );
-            services_widgets::editor::identity::remap_text(
+            services_kernel::document::identity::remap_text(
                 &old_doc,
                 doc,
                 self.checks.entry(service.into()).or_default(),
@@ -885,7 +913,7 @@ impl App {
             hints.push((format!("#{marker}"), String::new()));
         }
         if let Some(text) = self.hints.get(service) {
-            hints.extend(crate::completion::saved_hints(text));
+            hints.extend(services_kernel::editor::saved_hints(text));
         }
         let mut seen = BTreeSet::new();
         hints.retain(|hint| seen.insert(hint.clone()));

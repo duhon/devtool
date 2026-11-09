@@ -14,8 +14,9 @@ cargo install wasm-bindgen-cli --version 0.2.108 --locked
 cargo run -p xtask -- build-extension
 ```
 
-This assembles `app/extension/dist/` from the Rust UI, generated WASM
-glue, Chrome entry points and vendored editor assets. The public key in
+This assembles `app/extension/dist/` from the App (`app/shell`, built to
+`app.wasm`), its generated WASM glue, the Shell's `theme.css` and the Chrome entry
+points in `src/`. The public key in
 `src/manifest.json` preserves the extension ID without a private key.
 
 Build and install the matching Rust native host:
@@ -38,17 +39,17 @@ chrome-extension://ckicpgdfkgcmgnclbfbcbkillcpaffnb/panel.html
 
 ## Runtime boundaries
 
-`app/shell/` owns application state, the Console, its Variables/Dictionary
-panels and the browser transport bindings. `src/panel.js` only loads the generated
-WASM module; `devtools.js` registers the Chrome panel. The text editor is
-part of the WASM module (`app/widgets/`). Styles lie next to their owner widget;
-the Shell's theme is linked as `theme.css`; no legacy web
+`app/shell/` owns application state, layout, the Console, side panels hosting and
+the browser transport bindings; services and panels are wasm modules its Kernel
+(`app/kernel/`) runs. `src/panel.js` only loads the generated WASM module;
+`devtools.js` registers the Chrome panel. The text editor and the other widgets are
+part of the WASM module (`app/widgets/`), with their CSS next to them. The one
+stylesheet linked from `panel.html` is the Shell's theme (`theme.css`); no legacy web
 application or Node build script is used.
 
-`host/` owns request execution. Native Messaging retains the
-length-prefixed JSON protocol and service names so transport and service
-layers stay independent. The installation preserves the registered host name
-`com.chrome_extentions.host` and persistent Variables file.
+`host/` runs the drivers the modules call. Native Messaging carries the
+length-prefixed JSON protocol. The installation preserves the registered host name
+`com.chrome_extentions.host` and the application data.
 
 After a host update, reload the extension and reopen panels. An installed
 host and a source-checkout host registration share the same name, so only

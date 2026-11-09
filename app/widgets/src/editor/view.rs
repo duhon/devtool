@@ -142,10 +142,10 @@ impl View {
         if line_height <= 0.0 {
             return;
         }
-        let (lines, console, current) = handle.read(|session| {
+        let (lines, document, current) = handle.read(|session| {
             (
                 session.state().line_count(),
-                session.setup().console,
+                session.setup().document,
                 session.metrics(),
             )
         });
@@ -156,7 +156,7 @@ impl View {
             client_width: f64::from(scroller.client_width()),
             line_height,
             char_width,
-            gutter_width: layout::gutter_width(lines, char_width, console),
+            gutter_width: layout::gutter_width(lines, char_width, document),
         };
         if current != Some(metrics) {
             handle.notify(Msg::Metrics(metrics));
@@ -226,7 +226,7 @@ impl View {
                         let state = session.state();
                         let caret = layout::caret(state, &metrics, state.selection().head)?;
                         let height =
-                            layout::document_height(state, &metrics, session.setup().console);
+                            layout::document_height(state, &metrics, session.setup().document);
                         Some(layout::scroll_into_view(
                             &metrics,
                             height,
@@ -572,7 +572,7 @@ impl Component for View {
         let state = session.state();
         let empty = state.line_count() == 1 && state.line(0).is_empty();
         let readonly = session.setup().readonly;
-        let console = frame.console;
+        let document = frame.document;
         let metrics = frame.metrics;
         let bounds = self.scroller.cast::<Element>().map(|scroller| {
             let rect = scroller.get_bounding_client_rect();
@@ -730,11 +730,11 @@ impl Component for View {
                 {
                     event.prevent_default();
                     if target
-                        .closest(".console-fold-open, .console-fold-folded")
+                        .closest(".editor-fold-open, .editor-fold-folded")
                         .ok()
                         .flatten()
                         .is_some()
-                        && let Some(line) = line_of(target, ".console-fold-gutter")
+                        && let Some(line) = line_of(target, ".editor-fold-gutter")
                     {
                         handle.notify(Msg::ToggleFold(line));
                     }
@@ -842,7 +842,7 @@ impl Component for View {
             "editor",
             "theme-dracula",
             "editor-text-selection",
-            console.then_some("console-main-editor"),
+            document.then_some("editor-document"),
             props.class.clone(),
         );
         html! {
@@ -905,7 +905,7 @@ impl Component for View {
             let width = layout::gutter_width(
                 session.state().line_count(),
                 metrics.char_width,
-                session.setup().console,
+                session.setup().document,
             );
             (width != metrics.gutter_width).then_some(Metrics {
                 gutter_width: width,

@@ -4,7 +4,7 @@
   const { wait, click, testid, editorOf, openConsole, setSource, key } = testDriver;
   const editor = () => editorOf('console-editor');
   const source = () => editor().getValue();
-  const status = () => document.querySelector('.console-status');
+  const status = () => document.querySelector('.status-bar');
   const checks = () => [...testid('console-check-menu').querySelectorAll('button')];
   const select = async index => {
     await click(checks()[index]);

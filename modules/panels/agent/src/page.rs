@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use services_sdk::{Cmd, Failure, cmd};
 use std::collections::{BTreeMap, BTreeSet};
 
-const SCRIPT: &str = include_str!("../assets/page-agent.js");
+const SCRIPT: &str = include_str!("page-agent.js");
 /// Global keys that cache the injected page agent and its content version on the inspected page.
 const AGENT_KEY: &str = "__servicesDevtoolsPageAgentFn";
 const VERSION_KEY: &str = "__servicesDevtoolsPageAgentVersion";

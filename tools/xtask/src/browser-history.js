@@ -26,7 +26,7 @@
   const initialHeaderHeight=topBar().getBoundingClientRect().height;
   const panel=()=>document.querySelector('[data-testid="history-panel"]');
   const title=()=>panel()?.querySelector('.ui-panel-title .tab-button');
-  const idle=()=>testid('console-history-toggle').querySelector('.console-state-light')?.dataset.state!=='running';
+  const idle=()=>testid('console-history-toggle').querySelector('.indicator-light')?.dataset.state!=='running';
   const list=()=>document.querySelector('[data-testid="history-entries"]');
   const entries=()=>[...(list()?.querySelectorAll('[data-testid^="history-entry-"]')??[])];
   const entryId=entry=>entry.dataset.testid.slice('history-entry-'.length);

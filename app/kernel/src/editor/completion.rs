@@ -1,7 +1,8 @@
-use crate::console;
+//! Console completion: `{{variable}}` references, `#marker` sections, the console's
+//! `#options` and saved hints around what the service's module completes.
+use super::{Candidate, Completion, Services, fuzzy_match};
+use crate::document::check_at;
 use serde_json::Value;
-use services_widgets::editor::document::check_at;
-use services_widgets::editor::language::{Candidate, Completion};
 use std::collections::BTreeSet;
 
 fn utf16_prefix(text: &str, count: usize) -> String {
@@ -21,7 +22,7 @@ fn finish(from: usize, to: usize, query: &str, candidates: Vec<(String, String)>
         candidates: candidates
             .into_iter()
             .filter(|(s, _)| {
-                s.trim() != query.trim() && console::fuzzy_match(s, query) && seen.insert(s.clone())
+                s.trim() != query.trim() && fuzzy_match(s, query) && seen.insert(s.clone())
             })
             .take(100)
             .map(|(text, detail)| Candidate {
@@ -38,7 +39,13 @@ fn finish(from: usize, to: usize, query: &str, candidates: Vec<(String, String)>
 }
 /// The Hints editor completes `#section` headers of the edited service that the
 /// text does not contain yet; `##` lines are rejected by validation instead.
-fn hint_sections(service: &str, lines: &[&str], line: usize, before: &str) -> Completion {
+fn hint_sections(
+    services: &dyn Services,
+    service: &str,
+    lines: &[&str],
+    line: usize,
+    before: &str,
+) -> Completion {
     let full = lines.get(line).copied().unwrap_or("");
     let typed = before.trim_start();
     if !typed.starts_with('#') || typed.starts_with("##") || typed.contains(char::is_whitespace) {
@@ -55,7 +62,8 @@ fn hint_sections(service: &str, lines: &[&str], line: usize, before: &str) -> Co
         .filter_map(|(_, text)| text.trim().strip_prefix('#'))
         .map(str::to_ascii_lowercase)
         .collect();
-    let candidates = console::markers(service)
+    let candidates = services
+        .markers(service)
         .into_iter()
         .filter(|marker| !used.contains(&marker.to_ascii_lowercase()))
         .map(|marker| (format!("#{marker}"), "Section".into()))
@@ -71,6 +79,7 @@ fn hint_sections(service: &str, lines: &[&str], line: usize, before: &str) -> Co
 /// section and `field` names its marker (`headers`, `body`, `variables`, ...).
 /// The Hints editor uses `service` "hints" with the edited service as `field`.
 pub fn suggest(
+    services: &dyn Services,
     service: &str,
     field: &str,
     source: &str,
@@ -132,11 +141,11 @@ pub fn suggest(
         );
     }
     if service == "hints" {
-        return hint_sections(field, &lines, line, &before);
+        return hint_sections(services, field, &lines, line, &before);
     }
-    if crate::kernel::is_service(service) {
+    if services.is_service(service) {
         return if field.is_empty() {
-            kernel_suggest(service, &lines, line, &before, hints)
+            kernel_suggest(services, service, &lines, line, &before, hints)
         } else {
             finish(ch, ch, "", vec![])
         };
@@ -170,7 +179,7 @@ pub fn kernel_check(
     // `check_at` does not count a last empty line, where the cursor may be.
     let end = block.response_end.max(line + 1).min(lines.len());
     let line_start: usize = lines[start..line].iter().map(|text| text.len() + 1).sum();
-    let check = crate::kernel::check(service, &lines[start..end].join("\n"), &Value::Null);
+    let check = crate::document::check(service, &lines[start..end].join("\n"), &Value::Null);
     Some((check, (line_start + before.len()) as u32))
 }
 
@@ -212,6 +221,7 @@ fn separate_comma(
 /// A Kernel service's hints: its module completes the check; the console adds `#check`,
 /// `#options` (and its keys) and the saved lines of the section.
 fn kernel_suggest(
+    services: &dyn Services,
     service: &str,
     lines: &[&str],
     line: usize,
@@ -241,12 +251,12 @@ fn kernel_suggest(
     };
     let section = (block.start + 1..line)
         .rev()
-        .find_map(|at| services_kernel::document::marker(lines[at]))
+        .find_map(|at| crate::document::marker(lines[at]))
         .map(|(name, _)| name)
         .unwrap_or_default();
     let used: BTreeSet<String> = (block.start + 1..block.end)
         .filter(|at| *at != line)
-        .filter_map(|at| services_kernel::document::marker(lines[at]))
+        .filter_map(|at| crate::document::marker(lines[at]))
         .map(|(name, _)| name)
         .collect();
     let console_markers = || {
@@ -284,9 +294,7 @@ fn kernel_suggest(
         .map(|(check, pos)| (check.text.clone(), *pos as usize))
         .unwrap_or_default();
     let mut completed = checked
-        .and_then(|(check, pos)| {
-            crate::kernel::with(|modules| modules.complete(service, check, pos)).ok()
-        })
+        .and_then(|(check, pos)| services.complete(service, check, pos))
         .unwrap_or_default();
     let comma = separate_comma(&mut completed, &text[..pos], line_start, block.start + 1);
     let column = |at: u32| {

@@ -1,6 +1,6 @@
 /* A pane resizer on the edge of a resizable pane. */
 
-.console-pane-resizer {
+.resizer {
   position: absolute;
   top: 0;
   bottom: 0;
@@ -11,7 +11,7 @@
   touch-action: none;
 }
 
-.console-pane-resizer:is(:hover, :focus-visible) {
+.resizer:is(:hover, :focus-visible) {
   background: var(--accent-soft);
   outline: none;
 }

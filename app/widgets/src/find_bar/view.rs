@@ -287,7 +287,7 @@ impl Component for FindBar {
         let keep = Callback::from(|event: MouseEvent| event.prevent_default());
         let option = |toggle: Toggle, on: bool, text: Html, title: String, testid: &'static str| {
             html! {
-                <button type="button" class={classes!("console-find-option",on.then_some("active"))}
+                <button type="button" class={classes!("find-bar-option",on.then_some("active"))}
                     aria-pressed={on.to_string()} {title} data-testid={testid} tabindex="-1"
                     onmousedown={keep.clone()} onclick={ctx.link().callback(move |_| Msg::Toggle(toggle))}>{text}</button>
             }
@@ -323,19 +323,19 @@ impl Component for FindBar {
         });
         let none = self.matches.is_empty();
         let bar = html! {
-            <div class="console-find" role="search" aria-label={format!("Find in {label}")} data-testid="find-bar">
-                <div class="console-find-scope" data-testid="find-scope" title="Find runs in this editor only">
+            <div class="find-bar" role="search" aria-label={format!("Find in {label}")} data-testid="find-bar">
+                <div class="find-bar-scope" data-testid="find-scope" title="Find runs in this editor only">
                     {"Find in "}<strong>{label}</strong>
                 </div>
-                <div class="console-find-row">
+                <div class="find-bar-row">
                     if editable {
-                        <button type="button" class="console-find-expand" data-testid="find-toggle-replace" tabindex="-1"
+                        <button type="button" class="find-bar-expand" data-testid="find-toggle-replace" tabindex="-1"
                             aria-expanded={replace.to_string()} title={format!("Toggle Replace ({primary}{alt}F)")}
                             onmousedown={keep.clone()} onclick={ctx.link().callback(|_| Msg::ToggleReplace)}>
                             {if replace { "▾" } else { "▸" }}
                         </button>
                     }
-                    <input ref={self.find_input.clone()} class="console-find-input" data-testid="find-query"
+                    <input ref={self.find_input.clone()} class="find-bar-input" data-testid="find-query"
                         type="text" placeholder="Find" aria-label="Find" spellcheck="false" autocomplete="off"
                         value={self.query.clone()} title={self.error.clone().unwrap_or_default()}
                         oninput={ctx.link().callback(|event: InputEvent| Msg::Query(input_value(&event)))}
@@ -343,21 +343,21 @@ impl Component for FindBar {
                     {option(Toggle::Case, self.options.case, html! {"Aa"}, format!("Match Case ({alt}C)"), "find-case")}
                     {option(Toggle::Word, self.options.word, html! {<u>{"ab"}</u>}, format!("Match Whole Word ({alt}W)"), "find-word")}
                     {option(Toggle::Regex, self.options.regex, html! {".*"}, format!("Use Regular Expression ({alt}R)"), "find-regex")}
-                    <span class={classes!("console-find-count",failed.then_some("is-error"))} data-testid="find-count"
+                    <span class={classes!("find-bar-count",failed.then_some("is-error"))} data-testid="find-count"
                         role="status" title={self.error.clone().unwrap_or_default()}>{count}</span>
-                    <button type="button" class="console-find-icon" data-testid="find-previous" tabindex="-1" disabled={none}
+                    <button type="button" class="find-bar-icon" data-testid="find-previous" tabindex="-1" disabled={none}
                         title="Previous Match (⇧Enter)" onmousedown={keep.clone()}
                         onclick={ctx.link().callback(|_| Msg::Action(Action::Previous))}>{"↑"}</button>
-                    <button type="button" class="console-find-icon" data-testid="find-next" tabindex="-1" disabled={none}
+                    <button type="button" class="find-bar-icon" data-testid="find-next" tabindex="-1" disabled={none}
                         title="Next Match (Enter)" onmousedown={keep.clone()}
                         onclick={ctx.link().callback(|_| Msg::Action(Action::Next))}>{"↓"}</button>
-                    <button type="button" class="console-find-icon" data-testid="find-close" tabindex="-1"
+                    <button type="button" class="find-bar-icon" data-testid="find-close" tabindex="-1"
                         title="Close (Escape)" onmousedown={keep.clone()}
                         onclick={ctx.link().callback(|_| Msg::Action(Action::Close))}>{"×"}</button>
                 </div>
                 if replace {
-                    <div class="console-find-row console-find-replace">
-                        <input ref={self.replace_input.clone()} class="console-find-input" data-testid="find-replacement"
+                    <div class="find-bar-row find-bar-replace">
+                        <input ref={self.replace_input.clone()} class="find-bar-input" data-testid="find-replacement"
                             type="text" placeholder="Replace" aria-label="Replace" spellcheck="false" autocomplete="off"
                             value={self.replacement.clone()}
                             oninput={ctx.link().callback(|event: InputEvent| Msg::Replacement(input_value(&event)))}
@@ -407,7 +407,7 @@ impl FindBar {
         let Some(wrapper) = wrapper else {
             return false;
         };
-        let from_bar = active().is_some_and(|el| closest(&el, ".console-find").is_some());
+        let from_bar = active().is_some_and(|el| closest(&el, ".find-bar").is_some());
         self.attach(ctx, wrapper);
         let Some(editor) = self.target.as_ref().map(|target| target.editor.clone()) else {
             return false;
@@ -485,7 +485,7 @@ impl FindBar {
         let _ = call(
             &get(&wrapper, "classList"),
             "add",
-            &["console-find-target".into()],
+            &["find-bar-target".into()],
         );
         self.shared.borrow_mut().target = Some(wrapper.clone());
         self.target = Some(Target {
@@ -512,7 +512,7 @@ impl FindBar {
             let _ = call(
                 &get(&target.wrapper, "classList"),
                 "remove",
-                &["console-find-target".into()],
+                &["find-bar-target".into()],
             );
         }
         self.shared.borrow_mut().target = None;
@@ -692,13 +692,12 @@ impl FindBar {
         let _ = call(&target.editor, "endOperation", &[]);
     }
 
-    fn regions(&self) -> Vec<crate::editor::document::ResponseRegion> {
+    fn outputs(&self) -> Vec<(usize, usize)> {
         self.target
             .as_ref()
             .and_then(|target| {
-                let regions =
-                    call(&target.editor, "getOption", &["servicesResponses".into()]).ok()?;
-                serde_json::from_value(crate::dom::json(regions)).ok()
+                let outputs = call(&target.editor, "getOption", &["outputs".into()]).ok()?;
+                serde_json::from_value(crate::dom::json(outputs)).ok()
             })
             .unwrap_or_default()
     }
@@ -736,7 +735,7 @@ impl FindBar {
             self.search();
             self.current = self.selected();
         }
-        let regions = self.regions();
+        let outputs = self.outputs();
         let (Some(regexp), Some(editor)) = (
             self.compile(),
             self.target.as_ref().map(|target| target.editor.clone()),
@@ -756,7 +755,7 @@ impl FindBar {
         let count = self.matches.len();
         let Some(found) = (0..count)
             .map(|step| self.matches[(start + step) % count])
-            .find(|found| find::editable(&snapshot.lines, found, &regions))
+            .find(|found| find::editable(&snapshot.lines, found, &outputs))
         else {
             if count > 0 {
                 self.note = Some("Only responses match".into());
@@ -789,7 +788,7 @@ impl FindBar {
     /// Replaces every match outside responses as one undoable edit.
     fn replace_all(&mut self) {
         self.note = None;
-        let regions = self.regions();
+        let outputs = self.outputs();
         let (Some(regexp), Some(editor)) = (
             self.compile(),
             self.target.as_ref().map(|target| target.editor.clone()),
@@ -806,7 +805,7 @@ impl FindBar {
         let mut edits = Vec::new();
         let mut kept = 0;
         each(&regexp, &snapshot.text, |found, groups| {
-            if find::editable(&snapshot.lines, &found, &regions) {
+            if find::editable(&snapshot.lines, &found, &outputs) {
                 edits.push((found, self.replacement(groups)));
             } else {
                 kept += 1;
@@ -941,9 +940,9 @@ fn editor_in(root: &Element) -> Option<Element> {
         .find(visible)
 }
 
-fn console_editor() -> Option<Element> {
+fn document_editor() -> Option<Element> {
     document()
-        .query_selector(".console-main-editor")
+        .query_selector(".editor-document")
         .ok()
         .flatten()
         .filter(visible)
@@ -963,12 +962,12 @@ fn resolve(shared: &Shared) -> Option<Element> {
             .last_editor
             .clone()
             .filter(visible)
-            .or_else(console_editor)
+            .or_else(document_editor)
     };
     let Some(anchor) = anchor else {
         return fallback();
     };
-    if closest(&anchor, ".console-find").is_some() {
+    if closest(&anchor, ".find-bar").is_some() {
         return shared.target.clone().filter(visible);
     }
     if let Some(editor) = closest(&anchor, ".editor") {
@@ -988,7 +987,7 @@ fn resolve(shared: &Shared) -> Option<Element> {
         return pane.as_ref().and_then(editor_in);
     }
     if closest(&anchor, ".console-workspace").is_some() {
-        return console_editor();
+        return document_editor();
     }
     fallback()
 }

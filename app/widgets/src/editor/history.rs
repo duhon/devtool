@@ -1,7 +1,7 @@
 //! Undo history, including the generation numbers
 //! [`crate::editor::document::EditHistory`] keys its snapshots by.
 use super::Selection;
-use crate::editor::document::Position;
+use crate::editor::text::Position;
 
 /// Typed changes with the same `+origin` merge into one undo step within this delay.
 pub const EVENT_DELAY_MS: f64 = 1250.0;

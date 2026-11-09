@@ -1,9 +1,9 @@
 //! A JS object on the editor's elements, for the find bar and browser tests.
 use super::handle::{Handle, Shared, now};
 use crate::dom::get;
-use crate::editor::document::{Position, TextChange};
 use crate::editor::layout::{self, Rect};
 use crate::editor::model::{Command, Mark, Metrics, Msg};
+use crate::editor::text::{Position, TextChange};
 use crate::editor::text::{split_lines, utf16_len};
 use crate::editor::{Change, Selection, Transaction};
 use js_sys::{Array, Object};
@@ -324,23 +324,18 @@ fn fold_line(id: &str) -> Option<usize> {
 fn options(handle: &Handle, name: &str) -> JsValue {
     handle.read(|session| match name {
         "readOnly" => session.setup().readonly.into(),
-        "servicesResponses" => {
-            crate::dom::js(&serde_json::to_value(session.regions()).unwrap_or_default())
-        }
-        "servicesChecks" => session
-            .check_lines()
-            .iter()
-            .map(|line| JsValue::from(*line))
-            .collect::<Array>()
-            .into(),
+        "outputs" => crate::dom::js(&serde_json::json!(session.extension().outputs())),
         "mode" => object(&[("name", format!("services-{}", session.setup().mode).into())]),
         "lineNumbers" => true.into(),
         "lineWrapping" => false.into(),
         "indentUnit" => 2.into(),
         "selectionStyle" => "text".into(),
         "scrollbarStyle" => "native".into(),
-        "foldGutter" => session.setup().console.into(),
-        _ => JsValue::UNDEFINED,
+        "foldGutter" => session.setup().document.into(),
+        name => session
+            .extension()
+            .option(name)
+            .map_or(JsValue::UNDEFINED, |value| crate::dom::js(&value)),
     })
 }
 
@@ -637,7 +632,7 @@ fn call(handle: &Handle, name: &str, args: &Array) -> Result<JsValue, JsValue> {
             area.bottom += margin;
             let metrics = metrics(handle);
             let height = handle.read(|session| {
-                layout::document_height(session.state(), &metrics, session.setup().console)
+                layout::document_height(session.state(), &metrics, session.setup().document)
             });
             let (top, left) =
                 layout::scroll_into_view(&metrics, height, metrics.gutter_width, area);
@@ -785,12 +780,11 @@ fn call(handle: &Handle, name: &str, args: &Array) -> Result<JsValue, JsValue> {
                     let readonly = arg(1).is_truthy();
                     handle.with(|session| session.set_readonly(readonly));
                 }
-                Some("servicesResponses") => {
-                    let regions: Vec<crate::editor::document::ResponseRegion> =
-                        serde_json::from_value(crate::dom::json(arg(1))).unwrap_or_default();
-                    handle.with(|session| session.set_responses(&regions));
+                Some(name) => {
+                    let value = crate::dom::json(arg(1));
+                    handle.with(|session| session.set_option(name, value));
                 }
-                _ => {}
+                None => {}
             }
             JsValue::UNDEFINED
         }
@@ -850,7 +844,7 @@ fn call(handle: &Handle, name: &str, args: &Array) -> Result<JsValue, JsValue> {
                 let text = session.state().line(line).to_string();
                 let marker = session
                     .setup()
-                    .console
+                    .document
                     .then(|| session.fold_marker(line))
                     .flatten();
                 (Some(text), marker)
@@ -860,18 +854,18 @@ fn call(handle: &Handle, name: &str, args: &Array) -> Result<JsValue, JsValue> {
             };
             let markers = marker.map_or(JsValue::NULL, |folded| {
                 let class = if folded {
-                    "console-fold-folded"
+                    "editor-fold-folded"
                 } else {
-                    "console-fold-open"
+                    "editor-fold-open"
                 };
                 // Callers get the marker element itself; off-screen lines have none drawn.
                 let drawn = handle.dom().and_then(|dom| {
-                    let selector = format!(".console-fold-gutter[data-line=\"{line}\"] > .{class}");
+                    let selector = format!(".editor-fold-gutter[data-line=\"{line}\"] > .{class}");
                     dom.root.query_selector(&selector).ok().flatten()
                 });
                 let marker =
                     drawn.map_or_else(|| object(&[("className", class.into())]), JsValue::from);
-                object(&[("console-fold-gutter", marker)])
+                object(&[("editor-fold-gutter", marker)])
             });
             object(&[
                 ("line", line.into()),
@@ -937,12 +931,12 @@ fn call(handle: &Handle, name: &str, args: &Array) -> Result<JsValue, JsValue> {
         }
         "state" => completion(handle),
         "servicesCompletion" => handle.read(|session| {
-            let setup = session.setup();
-            crate::dom::js(&serde_json::json!({
-                "service": setup.service,
-                "field": setup.field,
-                "discovery": session.context().discovery,
-            }))
+            let mut completion = session
+                .extension()
+                .option("servicesCompletion")
+                .unwrap_or_else(|| serde_json::json!({}));
+            completion["discovery"] = session.context().discovery.clone();
+            crate::dom::js(&completion)
         }),
         _ => {
             return Err(JsValue::from_str(&format!(

@@ -1,5 +1,6 @@
 mod app;
 mod kernel_modules;
+mod mount;
 mod session_database;
 mod sessions;
 mod transport;
@@ -40,7 +41,7 @@ pub fn accept_modules(value: &serde_json::Value) -> Result<bool, String> {
 pub fn start() -> Result<(), JsValue> {
     let restored = restore_modules();
     crate::language::install();
-    services_widgets::editor::mount::install();
+    mount::install();
     let root = window()
         .document()
         .ok_or("No document")?

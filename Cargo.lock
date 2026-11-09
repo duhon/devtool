@@ -2893,7 +2893,9 @@ dependencies = [
  "prost",
  "serde",
  "serde_json",
+ "services-contracts",
  "services-sdk",
+ "uuid",
  "wasm-bindgen",
  "wasm-bindgen-futures",
 ]
@@ -3168,7 +3170,6 @@ dependencies = [
  "serde_json",
  "services-sdk",
  "url",
- "uuid",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",

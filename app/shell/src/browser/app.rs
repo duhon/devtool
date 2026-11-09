@@ -4,9 +4,11 @@ use super::{
     updates::{self, Phase as UpdatePhase},
     window,
 };
+use crate::language::Language;
 use crate::{console, format, storage};
 use agent::{Approval, WorkspaceRequest};
 use serde_json::{Value, json};
+use services_kernel::document::DocumentEdit;
 use services_widgets::editor::{
     self, Anchor, Handle,
     model::{Context as EditorContext, Event as EditorEvent, Msg as EditorMsg, Setup},
@@ -119,7 +121,7 @@ enum Transfer {
     Export,
 }
 struct AgentEdit {
-    command: services_widgets::editor::model::EditCommand,
+    command: crate::agent_workspace::CheckEdit,
     request: WorkspaceRequest,
     identity: Option<(String, usize)>,
 }
@@ -160,7 +162,7 @@ pub enum Msg {
     Drop(String),
     ConsoleService(String),
     ConsoleText(String),
-    ConsoleEdited(String, services_widgets::editor::document::DocumentEdit),
+    ConsoleEdited(String, services_kernel::document::DocumentEdit),
     /// A message of the console editor of a service.
     ConsoleEditor(String, EditorMsg),
     ExportEditor(EditorMsg),
@@ -175,7 +177,7 @@ pub enum Msg {
     TransportBusy,
     Retry,
     Discover,
-    Scroll(String, services_widgets::editor::document::CheckViewport),
+    Scroll(String, services_kernel::document::CheckViewport),
     Check(usize),
     EditorError(String),
     /// An event of an Agent turn a module started: (module, turn tag, reply).
@@ -224,8 +226,8 @@ pub struct App {
     /// The module and tag a workspace operation answers when it ends.
     session_reply: Option<(String, String)>,
     docs: BTreeMap<String, String>,
-    response_regions: BTreeMap<String, Vec<services_widgets::editor::document::ResponseRegion>>,
-    checks: BTreeMap<String, Vec<services_widgets::editor::identity::Identity>>,
+    response_regions: BTreeMap<String, Vec<services_kernel::document::ResponseRegion>>,
+    checks: BTreeMap<String, Vec<services_kernel::document::identity::Identity>>,
     workspace_id: String,
     updates: updates::State,
     /// The module and tag the App update answers when it fails or cannot reload by itself.
@@ -256,7 +258,7 @@ pub struct App {
     agent_turns: BTreeMap<String, agent::AgentTurn>,
     run_serial: u64,
     hidden: bool,
-    viewports: BTreeMap<String, services_widgets::editor::document::CheckViewport>,
+    viewports: BTreeMap<String, services_kernel::document::CheckViewport>,
     /// The console editors by `console:{service}`.
     editors: RefCell<BTreeMap<String, Handle>>,
     export_editor: RefCell<Option<Handle>>,
@@ -608,14 +610,14 @@ impl Component for App {
                     .get(&self.console_service)
                     .cloned()
                     .unwrap_or_default();
-                services_widgets::editor::document::remap(
+                services_kernel::document::remap(
                     &old,
                     &text,
                     self.response_regions
                         .entry(self.console_service.clone())
                         .or_default(),
                 );
-                services_widgets::editor::identity::remap_text(
+                services_kernel::document::identity::remap_text(
                     &old,
                     &text,
                     self.checks.entry(self.console_service.clone()).or_default(),
@@ -657,12 +659,12 @@ impl Component for App {
                     return false;
                 }
                 let old = self.docs.get(&service).cloned().unwrap_or_default();
-                services_widgets::editor::document::remap(
+                services_kernel::document::remap(
                     &old,
                     &text,
                     self.response_regions.entry(service.clone()).or_default(),
                 );
-                services_widgets::editor::identity::remap_text(
+                services_kernel::document::identity::remap_text(
                     &old,
                     &text,
                     self.checks.entry(service.clone()).or_default(),
@@ -670,7 +672,7 @@ impl Component for App {
                 self.docs.insert(service.clone(), text.clone());
                 self.persist_console();
                 self.stop_edited_repeats(ctx, &service);
-                match services_widgets::editor::document::request_at(
+                match services_kernel::document::request_at(
                     &text,
                     line,
                     self.response_regions
@@ -749,7 +751,7 @@ impl Component for App {
                     .with(|session| session.scroll_to_line(line));
                 self.viewports.insert(
                     self.console_service.clone(),
-                    services_widgets::editor::document::CheckViewport {
+                    services_kernel::document::CheckViewport {
                         top: line,
                         visible_cursor: Some(line),
                     },
@@ -869,7 +871,7 @@ impl Component for App {
                     .get(&self.console_service)
                     .map(Vec::as_slice)
                     .unwrap_or(&[]);
-                let block = services_widgets::editor::document::request_at(&doc, line, regions);
+                let block = services_kernel::document::request_at(&doc, line, regions);
                 match block
                     .ok_or("No #check block to export".to_string())
                     .and_then(|b| console::export(&self.console_service, &b.text))
@@ -1372,8 +1374,11 @@ impl App {
                 self.console_service = service.clone();
                 self.persist_console();
                 let editor = self.console_editor(&service);
-                let result =
-                    editor.with(|session| session.agent_edit(&command, js_sys::Date::now()));
+                let result = editor.with(|session| {
+                    let current = Language::of(session)
+                        .is_some_and(|language| language.regions() == command.expected_regions);
+                    session.agent_edit(&editor_command(&command), current, js_sys::Date::now())
+                });
                 let events = editor.update(EditorMsg::Flush);
                 self.console_events(ctx, &service, events);
                 if let Some(result) = result {
@@ -1399,7 +1404,7 @@ impl App {
                     );
                 }
                 let source = &self.docs[&service];
-                let block = services_widgets::editor::document::request_at(
+                let block = services_kernel::document::request_at(
                     source,
                     line,
                     self.response_regions
@@ -1506,18 +1511,18 @@ fn saved_document(
     service: &str,
 ) -> (
     String,
-    Vec<services_widgets::editor::document::ResponseRegion>,
-    Vec<services_widgets::editor::identity::Identity>,
+    Vec<services_kernel::document::ResponseRegion>,
+    Vec<services_kernel::document::identity::Identity>,
     bool,
 ) {
-    let regions: Vec<services_widgets::editor::document::ResponseRegion> =
+    let regions: Vec<services_kernel::document::ResponseRegion> =
         serde_json::from_value(saved["responses"][service].clone()).unwrap_or_default();
     let original = saved["documents"][service].as_str().unwrap_or("");
-    let document = services_widgets::editor::document::migrate_check_markers(original, &regions);
+    let document = services_kernel::document::migrate_check_markers(original, &regions);
     let migrated = document != original;
-    let mut identities: Vec<services_widgets::editor::identity::Identity> =
+    let mut identities: Vec<services_kernel::document::identity::Identity> =
         serde_json::from_value(saved["checkIdentities"][service].clone()).unwrap_or_default();
-    services_widgets::editor::identity::normalize(&document, &regions, &mut identities);
+    services_kernel::document::identity::normalize(&document, &regions, &mut identities);
     (document, regions, identities, migrated)
 }
 
@@ -1622,4 +1627,21 @@ fn module_schema(service: &str) -> Option<Value> {
     crate::kernel::status(service)
         .map(|status| status.detail)
         .filter(|detail| !detail.is_null())
+}
+
+/// The editor command of an Agent edit.
+fn editor_command(
+    edit: &crate::agent_workspace::CheckEdit,
+) -> services_widgets::editor::model::EditCommand {
+    let position = |position: services_kernel::document::Position| editor::Position {
+        line: position.line,
+        ch: position.ch,
+    };
+    services_widgets::editor::model::EditCommand {
+        serial: edit.serial,
+        expected: edit.expected.clone(),
+        from: position(edit.from),
+        to: position(edit.to),
+        text: edit.text.clone(),
+    }
 }

@@ -1,6 +1,12 @@
-//! A check of a service document as modules see it: its text split at `#name` marker lines.
+//! A service document: the console's checks with their response regions and identities,
+//! its edit history, and a check as modules see it — its text split at `#name` marker lines.
 //! The Kernel knows no section; the service module reads the ones it understands.
 
+pub mod checks;
+mod console;
+pub mod identity;
+
+pub use console::*;
 use serde_json::Value;
 use services_sdk::{Check, Section};
 

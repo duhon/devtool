@@ -4,7 +4,7 @@
   // The service modules and the panel modules (Settings is built into the App).
   const shipped = ['agent', 'artemis', 'dictionary', 'graphql', 'grpc', 'hints', 'history', 'mysql', 'opensearch', 'rest',
     'sessions', 'splunk', 'templates', 'terminal', 'variables'];
-  const status = () => document.querySelector('[data-testid="console-settings-status"] .console-status-text')?.textContent ?? '';
+  const status = () => document.querySelector('[data-testid="console-settings-status"] .status-bar-text')?.textContent ?? '';
   // A module row is keyed `settings-module-{source}/{module}`; its parts `settings-module-{part}-{source}/{module}`.
   const rows = () => [...document.querySelectorAll('[data-testid="settings-modules"] tbody > tr')];
   const keyOf = row => row.dataset.testid.slice('settings-module-'.length);

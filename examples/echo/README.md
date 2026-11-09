@@ -1,36 +1,39 @@
 # Writing a module
 
-A module adds a console service — one tab — to Services DevTools. Echo, in this
-folder, is the smallest one: it answers each check with its text. Copy it to
-start your own.
+A module adds a **service** (a Console tab: a request language and how to run it) or
+a **panel** (a right-side tool such as Variables or History) to Services DevTools.
+Echo, in this folder, is the smallest service: it answers each check with its text.
+Copy it to start your own.
 
-The standard services (`modules/services/*`) are modules of the same kind: the
-host and the panel make no difference between them and yours.
+The standard modules (`modules/services/*`, `modules/panels/*`) are modules of the same
+kind: the host and the App make no difference between them and yours.
 
 ## What a module is
 
-A module is a **package**, a folder named by the module id with:
+A module is a Rust crate built for `wasm32-unknown-unknown` with `services-sdk`
+(`api/sdk`). The App runs its `module.wasm` in its **Kernel**, in the DevTools panel. A
+module never does I/O itself: it asks the Kernel for commands, and the Kernel runs
+driver calls (`http`, `grpc`, `mysql`, `process`, `tcp`) on the native host, which
+knows no services.
+
+Installed, a module is a **package**, a folder named by the module id with:
 
 | File | Part |
 | --- | --- |
 | `package.json` | The module manifest (below) with the version, read before any module code runs |
-| `module.wasm` | The module: highlighting, completion, folds, discovery, export/import, runs and response rendering (`services-sdk`) |
+| `module.wasm` | The module |
 | `RELEASE_NOTES.md` | Optional: `## X.Y.Z` sections, newest first, shown in Settings → Modules |
 | `skills/module-<id>/SKILL.md` | Optional: the module's Agent skill, its request syntax and options |
 
-The App runs `module.wasm` in its Kernel, in the DevTools panel. A module never
-does I/O itself: it asks the Kernel for driver calls (`http`, `grpc`, `mysql`,
-`process`, `tcp`), which the native host executes.
-
 Every package is in the modules folder,
-`~/Library/Application Support/ServicesDevTools/data/modules/<id>/`; the panel
-loads each `module.wasm` from the host.
+`~/Library/Application Support/ServicesDevTools/data/modules/<id>/`; the App loads each
+`module.wasm` from the host.
 
 ## The example
 
 ```
 examples/echo/
-  Cargo.toml      cdylib + rlib; services-sdk, serde_json
+  Cargo.toml      crate-type cdylib (the wasm) + rlib (tests); services-sdk, serde_json
   manifest.json   id, kind, name, version, abi, app and the drivers it uses
   src/lib.rs      impl services_sdk::Module + services_sdk::export!
 ```
@@ -40,28 +43,115 @@ examples/echo/
 - `id` — a lowercase letter, then lowercase letters, digits, `-` or `_`. Not one
   the host answers itself: `agent`, `agent_models`, `agent_sessions`, `agent_skills`,
   `dictionary`, `hints`, `history`, `modules`, `sessions`, `templates`, `updates`, `vars`.
-- `kind` — `service` for a console tab.
+- `kind` — `service` for a Console tab, `panel` for a side tool.
 - `name`, `description` — shown in the tab and in Settings → Modules.
-- `abi` — the SDK ABI version (`1`); `app` — the application versions it works with.
-- `drivers` — the drivers it calls and their versions (`{"http": "1"}`).
-- Optional: `order`, the tab position.
+- `abi` — the SDK ABI version (`services_sdk::ABI`, `1`); `app` — the application
+  versions it works with (`">=3.7"`).
+- `drivers` — the drivers it calls and their versions (`{"http": "1"}`); the Kernel
+  refuses a module whose drivers the host lacks.
+- Optional: `order`, the tab or tool position.
 
 The version is the crate version; `package` writes it into `package.json`.
 Versions are `X.Y.Z`.
 
-### The module
+## The module: model, events, commands
 
-Implement `services_sdk::Module`:
+A module is a model (`impl services_sdk::Module`, `Default`) exported with
+`services_sdk::export!(MyModule);`. The Kernel sends it events and gets back commands,
+like Elm's `update`:
 
-- `update(event)` — answers events with commands. `Event::Run { tag, check }`
-  runs a check: issue driver calls (`cmd::driver`), then finish with
-  `cmd::result` or `cmd::fail` for the same tag. `Event::Cancel` stops it.
-- `subscriptions()` — the events it wants (`run`, `hints`, …).
-- Optional: `highlight`, `complete`, `fold`, `export`/`import` (command lines),
-  and for one-call services `build` (the driver call of a check) with `render`
-  (its response text) instead of handling runs.
+- `update(event) -> Vec<Cmd>` — the only place the model changes. `Event` brings
+  `Init { settings }`, `Ui { msg, value }` (the module's own `Msg` from its UI tree),
+  `Reply { tag, result }` and `End { tag }` (answers to its commands), `Run { tag, check }`
+  and `Cancel { tag }`, `Document`, `Discover`, `Hints`, `Request`, `Workspace`,
+  `Storage`, `Shown`/`Hidden`, `Modules`, `ToolCall`.
+- `subscriptions()` — which of the optional events it wants (`run`, `document`,
+  `discover`, `hints`, `requests`, `workspace`, `modules`, `tools`).
+- `type Msg` — the module's own UI messages (`Serialize + Deserialize`).
 
-Then `services_sdk::export!(Echo);`.
+Commands are built with `services_sdk::cmd`. Every command that answers has a `tag`;
+the answer comes back as `Event::Reply` with the same tag (a stream: several replies,
+then `End`). The common ones:
+
+| Command | Does |
+| --- | --- |
+| `cmd::driver(tag, &DriverCall)` / `cmd::cancel(tag)` | Runs (cancels) a driver call on the host |
+| `cmd::resolve(tag, text)`, `run::resolve_value` | Resolves `{{…}}` variables |
+| `cmd::output`, `cmd::run_status`, `cmd::result`, `cmd::fail` | Show and finish a run |
+| `cmd::kv_get/kv_put/kv_delete/kv_watch` | The module's own storage; `session` keys go with the Console session |
+| `cmd::lock`/`unlock`, `cmd::timer` | A lock shared by the App's windows; a one-shot timer |
+| `cmd::status`, `cmd::status_with`, `cmd::notify` | The module's status line, Debug and notices |
+| `cmd::contribute` | Variables, templates or hints the module adds to every editor |
+| `cmd::history_insert`, `cmd::sources_read`, `cmd::env`, `cmd::clipboard_write`, `cmd::document_read/insert` | Shared stores and the Console document |
+
+The Kernel answers a command it does not know with an error; a few (modules,
+sources, updates, Agent, page) are for the built-in panels only.
+
+### Synchronous calls
+
+Some blocks are synchronous calls instead of events. They read the model and must not
+change it, and should stay within a few milliseconds:
+
+- editor (both kinds): `highlight(state, lines, columns)` (tokens per line, with a
+  state carried between lines), `complete(check, pos)`, `fold(check)`;
+- service: `build(check) -> DriverCall` and `render(chunk) -> Rendered` for a service
+  whose check is one driver call (the Kernel runs it), or subscribe `run` and handle
+  `Event::Run`/`Cancel` yourself (several calls, streams, pacing); `export`/`import`
+  turn a check into a command line and back;
+- panel: `before_request(call)` may change or reject any driver call (panels run in
+  `order`), `after_response(call, response)` sees each finished run (History saves it),
+  `resolve(text, json, last)` resolves the `{{…}}` variables the panel owns.
+
+A `Check` is the check's text split into `#section`s (`check.text_of("endpoint")`);
+`services_sdk::lang` has the shared request languages (headers, JSON, SQL, shell, REST
+endpoints) to highlight and complete them.
+
+### UI tree
+
+`view() -> Option<ui::Node>` is the module's UI while it is shown: a panel's body, a
+service's Options form. It is data, not HTML or CSS: `ui::panel`, `row`, `column`,
+`tabs`, `list`, `table`, `text`, `markdown`, `tree`, `button`, `input`, `select`,
+`checkbox`, `slider`, `indicator`, `viewer` and `editor`. A handler holds a `Msg`; the
+Kernel sends it back as `Event::Ui`. The App draws the tree with its widgets and
+theme, so a module looks like the rest of the App.
+
+```rust
+#[derive(Serialize, Deserialize)]
+pub enum Msg { Refresh }
+
+impl Module for Counter {
+    type Msg = Msg;
+    fn update(&mut self, event: Event<Msg>) -> Vec<Cmd> {
+        match event {
+            Event::Ui { msg: Msg::Refresh, .. } => self.count += 1,
+            _ => {}
+        }
+        Vec::new()
+    }
+    fn view(&self) -> Option<ui::Node> {
+        Some(ui::panel("Counter", vec![ui::text(self.count.to_string())],
+            vec![ui::button("Refresh", &Msg::Refresh)]))
+    }
+}
+```
+
+### Drivers
+
+A driver call is `DriverCall::new(driver, &request)` with the request type of its SDK
+module: `http::Request`, `grpc::Request` (raw protobuf; `.proto` and reflection stay in
+the module), `mysql::Request`, `process::Request` (a program in its own process group)
+or `tcp::Request` (the fallback for protocols without a driver). A failed call answers
+with a `Failure` (`driver.rs`): where it failed and why. Drivers are minimal and know no
+services: anything service-specific (pagination, pacing, parsing) is the module's.
+
+## Tests
+
+Test the module in its crate (`tests/<id>.rs`), natively: create the model, send it
+events, check the commands and synchronous answers, and answer its driver calls with
+`Event::Reply` as the host would. `services_sdk::Linked` serves a module through the
+same wire encoding the Kernel uses, without wasm. The standard modules' tests
+(`modules/*/<id>/tests/`) are examples; `cargo run -p xtask -- test behavior --module
+<id>` runs one module's.
 
 ## Build and package
 

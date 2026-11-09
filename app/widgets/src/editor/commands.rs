@@ -4,7 +4,7 @@ use super::text::{
     CharClass, INDENT_UNIT, byte_at, byte_at_column, ch_at, class, column, indentation,
     leading_whitespace, utf16_len,
 };
-use crate::editor::document::{Position, TextChange};
+use crate::editor::text::{Position, TextChange};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Unit {

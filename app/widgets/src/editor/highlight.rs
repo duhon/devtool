@@ -1,9 +1,9 @@
-//! Syntax highlighting: a line-state tokenizer with a per-line cache.
-//! A console is highlighted by its service's module (through the Kernel); single-language
-//! editors use JSON's own tokenizer or `syntax`.
+//! Syntax highlighting: a line-state tokenizer with a per-line cache. The editor's
+//! [`Extension`] tokenizes the lines it knows; the others go to JSON's own tokenizer or
+//! `syntax`.
+use super::extension::{self, Extension};
 use super::json;
 use super::text::{indentation, utf16_len};
-use crate::editor::document::ResponseRegion;
 use crate::editor::syntax::{self, Language};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -12,7 +12,7 @@ use std::rc::Rc;
 pub type Style = Option<&'static str>;
 
 /// Lines past this many UTF-16 units stay unstyled.
-const MAX_HIGHLIGHT: usize = 10_000;
+pub const MAX_HIGHLIGHT: usize = 10_000;
 /// How far back a line looks for a cached state before restarting from a fresh one.
 const RESTART: usize = 100;
 
@@ -23,69 +23,25 @@ pub struct Span {
     pub style: Style,
 }
 
-/// What a mode highlights: a console's service or a single language.
-#[derive(Clone, Debug, Default)]
-pub struct Config {
-    /// The console service; empty for a single-language mode.
-    service: String,
-    /// The language of a single-language mode.
-    base: String,
-}
-
-impl Config {
-    pub fn new(mode: &str) -> Self {
-        match mode.strip_prefix("console-") {
-            Some(id) => Self {
-                service: id.to_owned(),
-                ..Self::default()
-            },
-            None => Self {
-                base: mode.to_owned(),
-                ..Self::default()
-            },
-        }
-    }
-
-    pub fn console(&self) -> bool {
-        !self.service.is_empty()
-    }
-
-    /// The console service whose module highlights it.
-    pub fn kernel(&self) -> Option<&str> {
-        self.console().then_some(self.service.as_str())
-    }
-}
-
 /// The tokenizer state between lines.
 #[derive(Clone, Debug, Default)]
 pub struct LineState {
-    response: bool,
     json: Option<json::State>,
     lex: syntax::State,
-    /// A Kernel module's state; empty at the start of a check.
-    module: Rc<[u8]>,
+    /// The extension's state.
+    extension: Rc<[u8]>,
 }
 
 impl LineState {
-    pub fn response(&self) -> bool {
-        self.response
-    }
     pub fn lex(&self) -> &syntax::State {
         &self.lex
     }
 }
 
-struct Region {
-    header: usize,
-    end: usize,
-    columns: Vec<services_sdk::ColumnType>,
-}
-
 pub struct Highlighter {
-    config: Config,
-    template_section: Option<String>,
-    source: Vec<ResponseRegion>,
-    regions: Vec<Region>,
+    /// The language of the editor's mode.
+    mode: String,
+    extension: Rc<dyn Extension>,
     /// The state before each line, when known.
     states: Vec<Option<Rc<LineState>>>,
     spans: Vec<Option<Rc<[Span]>>>,
@@ -93,74 +49,30 @@ pub struct Highlighter {
     frontier: usize,
     /// Bumps when cached spans are repainted without an edit.
     revision: u64,
-    /// A Kernel module's folds of the check at a line: `(start, end)` document lines.
-    pub(super) module_folds: Option<(usize, ModuleFolds)>,
 }
-
-/// A module's folds of one check: `(start, end)` document lines.
-pub(super) type ModuleFolds = Rc<[(usize, usize)]>;
 
 impl Highlighter {
     pub fn new(mode: &str) -> Self {
-        Self::with_config(Config::new(mode))
+        Self::with_extension(mode, extension::plain())
     }
 
-    pub fn with_config(config: Config) -> Self {
+    pub fn with_extension(mode: &str, extension: Rc<dyn Extension>) -> Self {
         Self {
-            config,
-            template_section: None,
-            source: Vec::new(),
-            regions: Vec::new(),
+            mode: mode.to_owned(),
+            extension,
             states: Vec::new(),
             spans: Vec::new(),
             frontier: 0,
             revision: 0,
-            module_folds: None,
         }
     }
 
-    pub fn config(&self) -> &Config {
-        &self.config
-    }
-
-    pub fn regions(&self) -> &[ResponseRegion] {
-        &self.source
+    pub fn extension(&self) -> &Rc<dyn Extension> {
+        &self.extension
     }
 
     pub fn revision(&self) -> u64 {
         self.revision
-    }
-
-    pub fn set_regions(&mut self, regions: &[ResponseRegion]) {
-        if self.source == regions {
-            return;
-        }
-        self.source = regions.to_vec();
-        let mut sorted: Vec<_> = regions.iter().collect();
-        sorted.sort_by_key(|region| region.header);
-        self.regions = sorted
-            .into_iter()
-            .map(|region| Region {
-                header: region.header,
-                end: region.end,
-                columns: region
-                    .columns
-                    .iter()
-                    .map(|(name, kind)| services_sdk::ColumnType::new(name, kind))
-                    .collect(),
-            })
-            .collect();
-        self.reset();
-    }
-
-    pub fn set_template_section(&mut self, section: Option<&str>) {
-        let section = section
-            .filter(|section| !section.is_empty())
-            .map(str::to_owned);
-        if self.template_section != section {
-            self.template_section = section;
-            self.reset();
-        }
     }
 
     pub fn reset(&mut self) {
@@ -168,7 +80,7 @@ impl Highlighter {
         self.spans.clear();
         self.frontier = 0;
         self.revision += 1;
-        self.module_folds = None;
+        self.extension.invalidate();
     }
 
     /// Forgets everything from `line` on; call after an edit starting there.
@@ -176,31 +88,14 @@ impl Highlighter {
         self.spans.truncate(line);
         self.states.truncate(line + 1);
         self.frontier = self.frontier.min(line);
-        self.module_folds = None;
+        self.extension.invalidate();
     }
 
     fn start(&self) -> LineState {
         LineState {
-            module: self.section_state(),
+            extension: self.extension.start().into(),
             ..LineState::default()
         }
-    }
-
-    /// A Kernel module's state inside the template section: after its `#section` line.
-    fn section_state(&self) -> Rc<[u8]> {
-        let (Some(service), Some(section)) = (self.config.kernel(), &self.template_section) else {
-            return Rc::from([]);
-        };
-        super::language::language()
-            .highlight(service, Vec::new(), vec![format!("#{section}")], Vec::new())
-            .and_then(|mut lines| lines.pop())
-            .map_or_else(|| Rc::from([]), |line| line.state.into())
-    }
-
-    fn region(&self, line: usize) -> Option<&Region> {
-        let index = self.regions.partition_point(|region| region.header <= line);
-        let region = &self.regions[index.checked_sub(1)?];
-        (line < region.end).then_some(region)
     }
 
     /// The spans of `line`, from the nearest cached state.
@@ -295,8 +190,12 @@ impl Highlighter {
 
     fn line(&self, lines: &[String], index: usize, state: &mut LineState) -> Vec<Span> {
         let text = lines[index].as_str();
-        if let Some(service) = self.config.kernel() {
-            let tokens = self.module_line(service, index, text, state);
+        if let Some((tokens, next)) = self.extension.highlight(&state.extension, index, text) {
+            state.extension = next.into();
+            let tokens: Vec<(usize, Style)> = tokens
+                .into_iter()
+                .map(|(end, kind)| (end, kind.as_deref().map(style)))
+                .collect();
             return spans(text, merge(&tokens, &overlay(text)));
         }
         if text.is_empty() {
@@ -323,71 +222,6 @@ impl Highlighter {
         spans(text, merge(&tokens, &overlay(text)))
     }
 
-    /// A line of a Kernel service: `#check` and template `@` lines are the App's, the rest
-    /// the module's, which turns byte tokens into byte ends.
-    fn module_line(
-        &self,
-        service: &str,
-        index: usize,
-        text: &str,
-        state: &mut LineState,
-    ) -> Vec<(usize, Style)> {
-        let region = self.region(index);
-        state.response = region.is_some();
-        // The response's header line carries the column types its module reported.
-        let columns = region
-            .filter(|region| region.header == index && !region.columns.is_empty())
-            .map(|region| {
-                vec![services_sdk::LineColumns {
-                    line: 0,
-                    columns: region.columns.clone(),
-                }]
-            })
-            .unwrap_or_default();
-        let whole = |style| vec![(text.len(), style)];
-        if self.template_section.is_some() && text.starts_with('@') && !text.starts_with("@@") {
-            state.module = self.section_state();
-            return whole(Some("comment"));
-        }
-        if crate::editor::document::is_check(text) {
-            state.module = Rc::from([]);
-            return whole(Some("comment"));
-        }
-        if utf16_len(text) > MAX_HIGHLIGHT {
-            return whole(None);
-        }
-        let highlighted = super::language::language().highlight(
-            service,
-            state.module.to_vec(),
-            vec![text.to_owned()],
-            columns,
-        );
-        let Some(line) = highlighted.and_then(|mut lines| lines.pop()) else {
-            let marker = text.trim_start().starts_with('#');
-            return whole(marker.then_some("comment"));
-        };
-        state.module = line.state.into();
-        let mut tokens = Vec::with_capacity(line.tokens.len() * 2);
-        let mut at = 0;
-        for token in line.tokens {
-            let start = (token.start as usize).max(at);
-            let end = (token.start as usize + token.len as usize).min(text.len());
-            if start >= end || !text.is_char_boundary(start) || !text.is_char_boundary(end) {
-                continue;
-            }
-            if start > at {
-                tokens.push((start, None));
-            }
-            let style = (!token.kind.is_empty()).then(|| style(&token.kind));
-            tokens.push((end, style));
-            at = end;
-        }
-        if at < text.len() {
-            tokens.push((text.len(), None));
-        }
-        tokens
-    }
-
     /// The token at byte `pos`, which is character `chars`: its byte end and style.
     fn token(
         &self,
@@ -395,7 +229,7 @@ impl Highlighter {
         (pos, chars): (usize, usize),
         state: &mut LineState,
     ) -> (usize, Style) {
-        let language = self.config.base.as_str();
+        let language = self.mode.as_str();
         if language == "json" {
             return json::token(text, pos, state.json.get_or_insert_default());
         }
@@ -624,7 +458,7 @@ thread_local! {
 }
 
 /// A token kind as a `&'static` style name, each distinct kind leaked once.
-fn style(kind: &str) -> &'static str {
+pub fn style(kind: &str) -> &'static str {
     STYLES.with(|styles| {
         *styles
             .borrow_mut()

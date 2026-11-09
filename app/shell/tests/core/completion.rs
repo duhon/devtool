@@ -1,11 +1,23 @@
 //! Service-agnostic Console completion: markers, separators, variables,
 //! headers, JSON snippets and UTF-16 offsets. UI-behaviour tests.
 
-use services_shell::completion::suggest;
-use services_shell::console::{self, fuzzy_match};
+use services_kernel::document::check_at;
+use services_kernel::editor::{Completion, fuzzy_match, insertion, marker_insertion};
+use services_shell::console;
+use services_shell::language::{Language, Modules};
 use services_shell::services;
-use services_widgets::editor::document::check_at;
-use services_widgets::editor::language::prepare_insertion;
+use services_widgets::editor::extension::Extension;
+
+fn suggest(
+    service: &str,
+    field: &str,
+    source: &str,
+    line: usize,
+    ch: usize,
+    hints: &[(String, String)],
+) -> Completion {
+    services_kernel::editor::completion::suggest(&Modules, service, field, source, line, ch, hints)
+}
 
 #[test]
 fn fuzzy_matching_accepts_ordered_subsequences_only() {
@@ -205,19 +217,20 @@ fn separator_hints_are_repeatable_and_scoped_to_each_request() {
 
 #[test]
 fn markers_advance_to_their_value_but_request_leaves_room_for_a_title() {
-    assert_eq!(prepare_insertion("#check", true), ("#check ".into(), None));
+    assert_eq!(marker_insertion("#check"), "#check ");
     for service in services::ids().iter().map(String::as_str) {
         for marker in console::markers(service) {
             let marker = format!("#{marker}");
             assert_eq!(
-                prepare_insertion(&marker, true),
-                (format!("{marker}\n"), None)
+                insertion(&Modules, service, &marker, ""),
+                format!("{marker}\n")
             );
         }
     }
+    // An editor of one request section inserts the marker as it is.
     assert_eq!(
-        prepare_insertion("#endpoint", false),
-        ("#endpoint".into(), None)
+        Language::new("headers", "rest", "headers", "").insertion("#endpoint", ""),
+        None
     );
 }
 

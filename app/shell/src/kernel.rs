@@ -385,10 +385,6 @@ pub fn log(id: &str, lines: usize) -> Vec<(String, String)> {
 }
 
 /// A check as the module sees it: the text after the `#check` line.
-pub fn check(service: &str, text: &str, options: &Value) -> Check {
-    services_kernel::document::check(service, text, options)
-}
-
 pub fn document(check: Check) -> wire::Event {
     wire::Event {
         kind: Some(event::Kind::Document(check)),
@@ -432,7 +428,13 @@ pub fn markers(id: &str) -> Vec<String> {
     if !loaded(id) {
         return Vec::new();
     }
-    let completions = with(|modules| modules.complete(id, check(id, "#", &Value::Null), 1));
+    let completions = with(|modules| {
+        modules.complete(
+            id,
+            services_kernel::document::check(id, "#", &Value::Null),
+            1,
+        )
+    });
     completions
         .map(|completions| {
             completions

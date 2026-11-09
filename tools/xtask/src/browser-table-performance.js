@@ -44,8 +44,8 @@
       'Distant rows must render');
     assert(host.querySelectorAll('.editor-code>div').length<100,
       '10,000 rows must render only a bounded viewport, not every row');
-    assert(host.querySelectorAll('.console-check-band-even').length>0
-      && host.querySelectorAll('.console-check-band-even').length<100,
+    assert(host.querySelectorAll('.editor-band-even').length>0
+      && host.querySelectorAll('.editor-band-even').length<100,
       'Check backgrounds must decorate only the virtualized viewport, not allocate per result row');
     assert([...host.querySelectorAll('.tok-property')].some(s=>s.textContent==='"enabled"'),
       'Cold scrolling must preserve JSON colors without replaying the whole response');

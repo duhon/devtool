@@ -3,7 +3,7 @@
 use super::model::Metrics;
 use super::state::{Fold, Selection, State};
 use super::text::{TAB_SIZE, before, byte_at, max, min, utf16_len};
-use crate::editor::document::Position;
+use crate::editor::text::Position;
 use std::ops::Range;
 
 /// Space above the first line and below the last one.
@@ -169,8 +169,8 @@ pub fn number_width(line_count: usize, char_width: f64) -> f64 {
     (digits as f64 * char_width).max(NUMBER_MIN_WIDTH) + NUMBER_PADDING
 }
 
-pub fn gutter_width(line_count: usize, char_width: f64, console: bool) -> f64 {
-    number_width(line_count, char_width) + if console { FOLD_GUTTER } else { 0.0 }
+pub fn gutter_width(line_count: usize, char_width: f64, document: bool) -> f64 {
+    number_width(line_count, char_width) + if document { FOLD_GUTTER } else { 0.0 }
 }
 
 /// The rows to render: the visible ones and a margin around them.
@@ -199,8 +199,8 @@ pub fn viewport(state: &State, rows: &Range<usize>) -> (usize, usize) {
     )
 }
 
-pub fn document_height(state: &State, metrics: &Metrics, console: bool) -> f64 {
-    let bottom = if console {
+pub fn document_height(state: &State, metrics: &Metrics, document: bool) -> f64 {
+    let bottom = if document {
         (metrics.client_height - metrics.line_height).max(0.0)
     } else {
         PADDING_BOTTOM

@@ -2,7 +2,7 @@
 //! Pure, so native tests cover it; the browser view only renders it.
 use super::history::{History, Step};
 use super::text::{byte_at, ch_at, max, min, split_lines, utf16_len};
-use crate::editor::document::{Position, TextChange};
+use crate::editor::text::{Position, TextChange};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Selection {

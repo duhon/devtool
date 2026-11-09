@@ -8,7 +8,6 @@ publish.workspace = true
 services-sdk = { path = "../../api/sdk" }
 serde.workspace = true
 serde_json.workspace = true
-uuid = { version = "1.29.0", features = ["v7", "js"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 pulldown-cmark = { version = "0.13", default-features = false }

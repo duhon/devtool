@@ -29,7 +29,7 @@
       editor.setCursor({ line, ch: 0 });
       editor.scrollIntoView({ line, ch: 0 }, 60);
       const gutter = await wait(() => {
-        const marker = editor.lineInfo(line).gutterMarkers?.['console-fold-gutter'];
+        const marker = editor.lineInfo(line).gutterMarkers?.['editor-fold-gutter'];
         return marker?.isConnected && visible(marker) && marker;
       }, `Console fold gutter missing on ${lines[line]}`);
       await click(gutter);
@@ -95,10 +95,10 @@
       await wait(() => checks().find(check => check.classList.contains('active'))?.dataset.line
         === String(line(name) + 1), 'The scoped status must follow the check being executed');
       await key('Shift+Enter');
-      await wait(() => !find('.console-status').classList.contains('is-running')
-        && find('.console-status').textContent.includes('OK')
+      await wait(() => !find('.status-bar').classList.contains('is-running')
+        && find('.status-bar').textContent.includes('OK')
         && editor.getValue().split('\n').includes(output),
-        () => `Moved check must execute its own command: ${JSON.stringify({name, status:find('.console-status').textContent, source:editor.getValue(), regions:regions()})}`);
+        () => `Moved check must execute its own command: ${JSON.stringify({name, status:find('.status-bar').textContent, source:editor.getValue(), regions:regions()})}`);
     };
     const paste = text => {
       const clipboard = new DataTransfer();
@@ -198,12 +198,12 @@
     assert(checks().length === 5, 'Refreshing a split response must preserve all real checks and protect literal output');
   };
   const assertSignalGeometry = () => {
-    const lights = [...document.querySelectorAll('.console-root .console-state-light')].filter(visible);
+    const lights = [...document.querySelectorAll('.console-root .indicator-light')].filter(visible);
     assert(lights.length > 0, 'Navigation signals must exist before an operation');
     for (const light of lights) {
       const bounds = light.getBoundingClientRect();
       const tab = light.parentElement.getBoundingClientRect();
-      const left = light.parentElement.matches('.console-check-link');
+      const left = light.parentElement.matches('.check-rail-link');
       const right = light.parentElement.parentElement.matches('.console-toolbar');
       if (left || right) {
         assert(Math.abs(bounds.height-tab.height)<0.01 && bounds.width===2
@@ -221,7 +221,7 @@
           'Idle and acknowledged signals must be transparent and still');
       } else if(light.dataset.state==='running') {
         assert(style.backgroundImage!=='none'
-          && (style.animationName==='console-state-flow'||matchMedia('(prefers-reduced-motion: reduce)').matches),
+          && (style.animationName==='indicator-flow'||matchMedia('(prefers-reduced-motion: reduce)').matches),
           'Running signals must use a green flowing gradient, respecting reduced motion');
       } else if(light.dataset.state==='error') {
         assert(style.backgroundColor==='rgb(255, 137, 128)' && style.animationName==='none',
@@ -309,7 +309,7 @@
       }
       assert(Math.abs(body.left - status.left) < 1 && Math.abs(body.right - status.right) < 1,
         'Console status must align with the inner workspace, excluding both side menus');
-      const statusStyle = getComputedStyle(find('.console-status'));
+      const statusStyle = getComputedStyle(find('.status-bar'));
       for (const area of document.querySelectorAll('.console-root .editor, .console-root .editor-gutters')) {
         if (visible(area)) {
           assert(getComputedStyle(area).backgroundColor === 'rgb(37, 39, 42)',
@@ -322,7 +322,7 @@
         && statusStyle.borderTopRightRadius === '0px'
         && statusStyle.backgroundColor === 'rgb(43, 45, 48)',
       'Status must dock directly below the central frame with the menu-tab background');
-      const debug = document.querySelector('.console-debug-panel');
+      const debug = document.querySelector('.status-bar-debug');
       if (visible(debug)) {
         const bounds = debug.getBoundingClientRect();
         assert(Math.abs(mainStatus.left - bounds.left) < 1 && Math.abs(mainStatus.right - bounds.right) < 1,
@@ -332,7 +332,7 @@
     };
     const closedStatusBounds = assertStatusBounds();
     const links = () => [...testid('console-check-menu').querySelectorAll('button')];
-    const active = () => testid('console-check-menu').querySelector('.active .console-check-number')?.textContent;
+    const active = () => testid('console-check-menu').querySelector('.active .check-rail-number')?.textContent;
     const top = () => editor.lineAtHeight(editor.getScrollInfo().top, 'local');
     setSource(editor, ['cursor-one', 'cursor-two', 'cursor-three'].map(name =>
       `#check ${name}\n#endpoint\nGET ${endpoint}`).join('\n\n'));
@@ -417,7 +417,7 @@
         width:testid('console-check-menu').getBoundingClientRect().width,
         value:testid('console-check-resizer').getAttribute('aria-valuenow'),
       })}`);
-    const comment=links()[0].querySelector('.console-check-comment');
+    const comment=links()[0].querySelector('.check-rail-comment');
     assert(comment.textContent==='navigation-1' && comment.scrollWidth>comment.clientWidth
       && getComputedStyle(comment).whiteSpace==='nowrap' && editor.getValue()===railSource,
       'Dragging the rail must reveal a clipped check comment without altering the document');
@@ -432,7 +432,7 @@
     handle.focus();
     await key('Home');
     await wait(()=>testid('console-check-menu').getBoundingClientRect().width===28);
-    assert(getComputedStyle(links()[0].querySelector('.console-check-comment')).display==='none',
+    assert(getComputedStyle(links()[0].querySelector('.check-rail-comment')).display==='none',
       'The compact rail must show numbers only');
     await move(1, 1);
     const tabStyle = element => {
@@ -527,7 +527,7 @@
     await wait(() => active() === '2');
     editor.replaceRange('#check inserted\n', {line:50,ch:0});
     await wait(() => links().length === 4);
-    assert(links().map(el => el.querySelector('.console-check-number').textContent).join(',') === '1,2,3,4'
+    assert(links().map(el => el.querySelector('.check-rail-number').textContent).join(',') === '1,2,3,4'
       && links()[2].dataset.line === '101', 'Inserting a check renumbers later links and updates line targets');
     editor.replaceRange('', {line:50,ch:0}, {line:51,ch:0});
     await wait(() => links().length === 3 && links()[1].dataset.line === '100');
@@ -535,7 +535,7 @@
     setSource(editor, Array.from({length: 60}, (_, index) =>
       `#check Scroll ${index + 1}\n#endpoint\nGET ${endpoint}`).join('\n\n'));
     await wait(() => links().length === 60);
-    const checkMenu = testid('console-check-menu').querySelector('.console-check-links');
+    const checkMenu = testid('console-check-menu').querySelector('.check-rail-links');
     checkMenu.scrollTop = checkMenu.scrollHeight;
     assert(checkMenu.scrollTop > 0 && checkMenu.scrollHeight > checkMenu.clientHeight,
       'Check navigation must scroll when its entries overflow');
@@ -550,9 +550,9 @@
     const stored = async (module, key) =>
       (await sessionLibrary()).sessions.find(s => s.id === sessionId()).snapshot.modules?.[module]?.[key];
     const storedHints = async () => (await stored('hints', 'hints'))?.rest;
-    const toolStatus = () => [...document.querySelectorAll('.console-right-status .console-status')].find(visible);
+    const toolStatus = () => [...document.querySelectorAll('.console-right-status .status-bar')].find(visible);
     const mainStatusText = () => testid('console-main-status').textContent;
-    const toolLight = tool => testid(`console-${tool}-toggle`).querySelector('.console-state-light')?.dataset.state;
+    const toolLight = tool => testid(`console-${tool}-toggle`).querySelector('.indicator-light')?.dataset.state;
     const workspace = find('.console-top-bar');
     const hintsPanel = await openPanel('hints');
     await wait(() => Math.abs(hintsPanel.closest('.console-right-pane').getBoundingClientRect().width
@@ -697,8 +697,8 @@
     await closePanel('hints');
     setSource(editor, `#check panel-status\n#endpoint\nGET ${endpoint}\n`);
     await key('Shift+Enter');
-    await wait(() => find('.console-status').textContent.startsWith('Request · ')
-      && find('.console-status').textContent.includes('OK'),
+    await wait(() => find('.status-bar').textContent.startsWith('Request · ')
+      && find('.status-bar').textContent.includes('OK'),
       'An ordinary request must use only its own status, independent of the retained panel error');
     const frame = document.createElement('iframe');
     frame.src = location.href;

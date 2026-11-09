@@ -101,17 +101,17 @@ mod view {
             Indicator::Error => "is-error",
         };
         html! {<>
-            <div data-testid={props.testid.clone()} class={classes!("console-status",outcome)} role="status" title="Click for debug info" onclick={toggle}>
+            <div data-testid={props.testid.clone()} class={classes!("status-bar",outcome)} role="status" title="Click for debug info" onclick={toggle}>
                 if props.running {
-                    <span class="console-status-spinner" aria-hidden="true"/>
+                    <span class="status-bar-spinner" aria-hidden="true"/>
                     if let Some(started)=props.started {
-                        <span class="console-status-elapsed" aria-hidden="true">{format!("{:.0} ms",(*clock-started).max(0.0))}</span>
+                        <span class="status-bar-elapsed" aria-hidden="true">{format!("{:.0} ms",(*clock-started).max(0.0))}</span>
                     }
                 }
-                <span class="console-status-text">
+                <span class="status-bar-text">
                     {if props.text.is_empty(){"Ready"}else{&props.text}}
                 </span>
-                <button type="button" class="console-status-stop" data-testid={props.stop_testid.clone()}
+                <button type="button" class="status-bar-stop" data-testid={props.stop_testid.clone()}
                     title="Stop this operation" aria-label="Stop this operation"
                     disabled={!props.running || props.onstop.is_none()}
                     onclick={{let onstop=props.onstop.clone();Callback::from(move |event:MouseEvent|{
@@ -119,7 +119,7 @@ mod view {
                         if let Some(onstop)=&onstop {onstop.emit(());}
                     })}}>{"S"}</button>
             </div>
-            <div data-testid={format!("{}-debug",props.testid)} class="tab-debug-body console-debug-panel" hidden={!*expanded}>{tree(&props.debug,0)}</div>
+            <div data-testid={format!("{}-debug",props.testid)} class="tab-debug-body status-bar-debug" hidden={!*expanded}>{tree(&props.debug,0)}</div>
         </>}
     }
 }

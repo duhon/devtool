@@ -1,8 +1,20 @@
 use crate::console;
 use serde_json::{Value, json};
-use services_widgets::editor::document::{self, Position, ResponseRegion};
-use services_widgets::editor::model::EditCommand;
+use services_kernel::document::{self, Position, ResponseRegion};
 use std::collections::BTreeMap;
+
+/// An Agent edit of the console of `service`: `from..to` becomes `text`, applied only while
+/// the document is still the `expected` one with its `expected_regions`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CheckEdit {
+    pub serial: u64,
+    pub service: String,
+    pub expected: String,
+    pub expected_regions: Vec<ResponseRegion>,
+    pub from: Position,
+    pub to: Position,
+    pub text: String,
+}
 
 #[derive(Clone)]
 struct Check {
@@ -181,7 +193,7 @@ impl Workspace {
         args: &Value,
         serial: u64,
         create: bool,
-    ) -> Result<EditCommand, String> {
+    ) -> Result<CheckEdit, String> {
         let doc = self.document(service)?;
         self.validate(service, string(args, "revision")?)?;
         let request = args
@@ -244,7 +256,7 @@ impl Workspace {
         .transpose()?;
         if request.is_none() {
             let block = origin.as_ref().ok_or("Missing original check")?;
-            return Ok(EditCommand {
+            return Ok(CheckEdit {
                 serial,
                 service: service.into(),
                 expected: doc.source.clone(),
@@ -313,7 +325,7 @@ impl Workspace {
                 text,
             )
         };
-        Ok(EditCommand {
+        Ok(CheckEdit {
             serial,
             service: service.into(),
             expected: doc.source.clone(),

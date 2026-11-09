@@ -161,7 +161,7 @@ mod view {
 
     pub fn indicator(state: Indicator, title: String) -> Html {
         html! {
-            <span class={classes!("console-state-light",format!("is-{}",state.name()))}
+            <span class={classes!("indicator-light",format!("is-{}",state.name()))}
                 data-state={state.name()} role="img" aria-label={title.clone()} {title}/>
         }
     }

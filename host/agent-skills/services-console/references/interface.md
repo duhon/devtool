@@ -41,12 +41,12 @@ Undock into separate window.
   insertion adds `#check <description>` (or the template name if the description
   is empty). An explicit check header is preserved unchanged. Templates remain
   global when switching Console sessions, including session 0, unlike Hints.
-- Variables contains var and read-only env. Dictionary contains other named
-  profiles. Read the variables topic before explaining their behavior.
+- Variables contains the session's variables and the read-only Environment.
+  Dictionary contains named sets. Read the variables topic before explaining their behavior.
 - The main status strip and Debug belong only to the highlighted check in the
   selected service. Switching checks restores that check's own last operation.
   The right tool panel has an independent status and Debug for its selected
-  tool/profile/chat; Agent activity never replaces the main request status.
+  tool/set/chat; Agent activity never replaces the main request status.
   console_read_debug reads the same status and Debug for any check by ID
   (credentials masked, long values clipped, the response payload left to
   console_read_response). Status and Debug are kept in memory only: after the
@@ -69,17 +69,17 @@ shown for the highlighted check, including discovery if that is what the strip
 shows. The Agent S stops only the selected chat and requests it started in any
 service. Neither S stops independent user requests or other chats.
 Switching a service/check/chat restores its own status and Debug.
-Check, service, chat and profile tabs and tool buttons have centered 12px edge
+Check, service, chat and set tabs and tool buttons have centered 12px edge
 signals: left on the check rail, right on the tool rail, top on horizontal tabs.
 Black means ready or viewed, blinking green means running, green means success,
 red means error, and yellow means stopped, warning or awaiting approval.
-Viewing the matching check/profile/chat for at least 0.5 s acknowledges its
+Viewing the matching check/set/chat for at least 0.5 s acknowledges its
 non-running signal, not its status or Debug; a shorter glance leaves it lit.
 Running signals never go dark while work continues.
 New background outcomes light the signal again. Service and tool signals
 aggregate running work and unviewed outcomes, prioritizing running over error,
 yellow and success. Opening a service does not acknowledge its other checks.
-Variables and Dictionary independently aggregate all their profiles, including
+Variables and Dictionary independently aggregate all their sets, including
 background saves and errors with the panel closed. Configuration autosaves can
 be stopped before dispatch, not rolled back after a local storage write is sent.
 
@@ -122,8 +122,7 @@ companion's SQLite execution History.
 
 ## History
 
-History shows executions for the selected check across native and HTTP Console
-transports, backed by one global SQLite store in the companion's data directory.
+History shows executions for the selected check, backed by one global SQLite store in the companion's data directory.
 Stable check IDs survive rename, parameter edits, moves and undo/redo. Copying
 a check or Console session creates new identities and separate history.
 Each execution captures resolved request sections and its
@@ -171,9 +170,9 @@ Settings → Modules is a table with a row per module and source: installed and
 newest versions with Install, Update and Remove. Its first row is the
 application itself, updated the same way and never removed.
 Settings → Sources lists named sources, GitHub repositories or local folders,
-that supply modules and shared Dictionary profiles, templates, hints and skills.
+that supply modules and shared Dictionary sets, templates, hints and skills.
 The application checks them automatically; the user applies a source's changes
 and installs its modules by button. Later sources override earlier ones and the
 user's own changes override them all: a Dictionary variable, a template section
 or a module's hints changed by the user shows the source it overrides, and
-Reset returns it to the source's. A source's profile can't be renamed or deleted.
+Reset returns it to the source's. A source's set can't be renamed or deleted.

@@ -1,6 +1,23 @@
 //! Line text helpers. Positions count UTF-16 code units, as the browser and the
 //! language code do.
-use crate::editor::document::Position;
+use serde::{Deserialize, Serialize};
+
+/// A place in the text: a line and a UTF-16 column in it.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct Position {
+    pub line: usize,
+    pub ch: usize,
+}
+
+/// One change an edit made: `removed` lines between `from` and `to` became `text`.
+#[derive(Clone, Debug, Deserialize)]
+pub struct TextChange {
+    pub from: Position,
+    pub to: Position,
+    pub text: Vec<String>,
+    pub removed: Vec<String>,
+    pub origin: Option<String>,
+}
 
 pub const TAB_SIZE: usize = 4;
 pub const INDENT_UNIT: usize = 2;

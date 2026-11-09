@@ -112,7 +112,7 @@ impl App {
         let state = self.kernel.runs.get_mut(key).expect("just inserted");
         state.resolved = Some(resolved);
         if let Some(text) = module_runs {
-            let check = crate::kernel::check(service, &text, &json!({}));
+            let check = services_kernel::document::check(service, &text, &json!({}));
             state.started = true;
             let effects = crate::kernel::with(|modules| modules.start_run(service, key, check));
             return self.kernel_effects(ctx, effects);
@@ -600,7 +600,7 @@ impl App {
     /// What the modules add to the editors changed: the console editors complete anew.
     fn contributed(&mut self) {
         self.vars = crate::kernel::variables();
-        services_widgets::view::variables_changed();
+        services_widgets::view::hints_changed();
         self.templates = crate::kernel::contributions("templates")
             .into_iter()
             .filter_map(|library| {
@@ -845,7 +845,7 @@ impl App {
     ) {
         self.kernel.loading = self.kernel.loading.saturating_sub(1);
         for id in &started {
-            services_widgets::editor::relight(id);
+            crate::language::relight(id);
             self.kernel.sent.remove(id);
         }
         self.kernel_effects(ctx, effects);
@@ -908,7 +908,7 @@ impl App {
         };
         let check = self
             .kernel_check(service)
-            .unwrap_or_else(|| crate::kernel::check(service, "", &json!({})));
+            .unwrap_or_else(|| services_kernel::document::check(service, "", &json!({})));
         let effects =
             crate::kernel::with(|modules| modules.send(&id, crate::kernel::document(check)));
         self.kernel_effects(ctx, effects);
@@ -959,7 +959,7 @@ impl App {
     /// The check under the cursor as its module sees it.
     fn kernel_check(&self, service: &str) -> Option<services_sdk::Check> {
         let line = self.active_console_line(service)?;
-        let block = services_widgets::editor::document::request_at(
+        let block = services_kernel::document::request_at(
             self.docs.get(service)?,
             line,
             self.response_regions

@@ -1,9 +1,10 @@
-use crate::console;
-use services_widgets::editor::document::is_check;
-use services_widgets::editor::language::{Candidate, Completion};
+//! Template references: `@name` after a `#section` marker inserts a saved template.
+use super::{Candidate, Completion, Services, fuzzy_match, template_sections};
+use crate::document::is_check;
 use std::collections::BTreeMap;
 
 pub fn suggest(
+    services: &dyn Services,
     service: &str,
     field: &str,
     source: &str,
@@ -37,13 +38,16 @@ pub fn suggest(
         return None;
     }
     let section = prefix.trim().strip_prefix('#')?;
-    if !crate::services::has_template_section(service, section) {
+    if !template_sections(services.markers(service))
+        .iter()
+        .any(|name| name == section)
+    {
         return None;
     }
     let entries = services_contracts::templates::parse(templates.get(section)?).ok()?;
     let candidates: Vec<_> = entries
         .into_iter()
-        .filter(|entry| console::fuzzy_match(&entry.name, query))
+        .filter(|entry| fuzzy_match(&entry.name, query))
         .take(100)
         .map(|entry| {
             let text = if section == "check" && !entry.body.lines().next().is_some_and(is_check) {

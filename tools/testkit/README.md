@@ -1,14 +1,16 @@
 # Tests
 
-Tests talk to modules only through `services_testkit::Host` (the JSON
-protocol: `host.call`, `host.discover`, `host.op`, `host.stream`), the same
-way the panel does. This crate also provides disposable data directories, the
-HTTP and MySQL wire fixtures, and `MODULES`, the catalog conformance iterates
-over. Failure messages print the request and reply, with the process
-environment redacted.
+Host tests talk to the host only through `services_testkit::Host` (the JSON
+protocol: `host.call`, `host.discover`, `host.op`, `host.stream`), the same way the
+App does; `Host` wraps the in-process `Runtime`. This crate also provides disposable
+data directories, the HTTP and MySQL wire fixtures, module packages for install tests
+and `MODULES`, the catalog conformance iterates over. Failure messages print the
+request and reply, with the process environment redacted.
 
-Adding a module: list it in `src/catalog.rs` (conformance then checks it) and
-put its behavior in `host/tests/modules/<name>.rs`.
+Modules are tested in their own crates (`modules/*/<id>/tests/`), calling their
+`Module` directly: events in, commands and editor answers out (see
+[examples/echo/README.md](../../examples/echo/README.md), "Tests"). A module the host
+serves is listed in `src/catalog.rs`, so conformance checks it.
 
 ## Browser scenarios
 

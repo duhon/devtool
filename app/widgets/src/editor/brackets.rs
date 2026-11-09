@@ -2,7 +2,7 @@
 use super::highlight::{Highlighter, Style};
 use super::state::Selection;
 use super::text::utf16_len;
-use crate::editor::document::Position;
+use crate::editor::text::Position;
 
 /// How many lines away from the cursor the partner may be.
 const MAX_LINES: usize = 1000;
@@ -131,7 +131,6 @@ fn pair(bracket: char) -> char {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::editor::highlight::Config;
 
     fn at(line: usize, ch: usize) -> Position {
         Position { line, ch }
@@ -139,7 +138,7 @@ mod tests {
 
     #[test]
     fn matches_unstyled_brackets_across_lines() {
-        let mut highlighter = Highlighter::with_config(Config::new("json"));
+        let mut highlighter = Highlighter::new("json");
         let lines: Vec<String> = ["{\"a\": \"}\",", "  \"b\": [1]}", "(]"]
             .map(String::from)
             .into();

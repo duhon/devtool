@@ -18,13 +18,13 @@ pub struct TextChange {
 pub struct DocumentEdit {
     pub text: String,
     pub regions: Vec<ResponseRegion>,
-    pub checks: Vec<crate::editor::identity::Identity>,
+    pub checks: Vec<super::identity::Identity>,
 }
 #[derive(Clone)]
 pub struct ClipboardFragment {
     text: String,
     regions: Vec<ResponseRegion>,
-    checks: Vec<crate::editor::identity::Identity>,
+    checks: Vec<super::identity::Identity>,
     scope: String,
     moved: bool,
 }
@@ -44,8 +44,8 @@ pub struct EditHistory {
     text: String,
     regions: Vec<ResponseRegion>,
     snapshots: BTreeMap<u64, Vec<ResponseRegion>>,
-    checks: Vec<crate::editor::identity::Identity>,
-    check_snapshots: BTreeMap<u64, Vec<crate::editor::identity::Identity>>,
+    checks: Vec<super::identity::Identity>,
+    check_snapshots: BTreeMap<u64, Vec<super::identity::Identity>>,
     pub scope: String,
 }
 impl EditHistory {
@@ -55,26 +55,22 @@ impl EditHistory {
     pub fn regions(&self) -> &[ResponseRegion] {
         &self.regions
     }
-    pub fn checks(&self) -> &[crate::editor::identity::Identity] {
+    pub fn checks(&self) -> &[super::identity::Identity] {
         &self.checks
     }
     pub fn synchronize(&mut self, text: &str, regions: &[ResponseRegion], generation: u64) {
         if self.text != text {
-            crate::editor::identity::remap_text(&self.text, text, &mut self.checks);
+            super::identity::remap_text(&self.text, text, &mut self.checks);
         }
-        crate::editor::identity::normalize(text, regions, &mut self.checks);
+        super::identity::normalize(text, regions, &mut self.checks);
         self.text = text.into();
         self.regions = regions.into();
         self.snapshots.insert(generation, regions.into());
         self.check_snapshots.insert(generation, self.checks.clone());
     }
-    pub fn synchronize_checks(
-        &mut self,
-        checks: &[crate::editor::identity::Identity],
-        generation: u64,
-    ) {
+    pub fn synchronize_checks(&mut self, checks: &[super::identity::Identity], generation: u64) {
         self.checks = checks.into();
-        crate::editor::identity::normalize(&self.text, &self.regions, &mut self.checks);
+        super::identity::normalize(&self.text, &self.regions, &mut self.checks);
         self.check_snapshots.insert(generation, self.checks.clone());
     }
     pub fn retain_generations(&mut self, generations: &BTreeSet<u64>) {
@@ -120,7 +116,7 @@ impl EditHistory {
             None
         };
         if let Some(next) = inline {
-            crate::editor::identity::normalize(&next, &regions, &mut checks);
+            super::identity::normalize(&next, &regions, &mut checks);
             normalize_regions(&next, &mut regions);
             source = next;
         } else {
@@ -156,14 +152,7 @@ impl EditHistory {
                     regions.clear();
                     checks.clear();
                 } else {
-                    crate::editor::identity::remap(
-                        &source,
-                        &next,
-                        from,
-                        to,
-                        inserted.len(),
-                        &mut checks,
-                    );
+                    super::identity::remap(&source, &next, from, to, inserted.len(), &mut checks);
                     remap_change(&source, &next, change, from, to, &mut regions);
                     if change.origin.as_deref() == Some("paste")
                         && let Some(fragment) = &copied
@@ -182,7 +171,7 @@ impl EditHistory {
                             }));
                         }
                     }
-                    crate::editor::identity::normalize(&next, &regions, &mut checks);
+                    super::identity::normalize(&next, &regions, &mut checks);
                     if change.origin.as_deref() == Some("paste")
                         && let Some(fragment) = &mut copied
                     {

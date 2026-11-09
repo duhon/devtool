@@ -37,7 +37,7 @@ instruction is to retype the existing slash between the host and `api`, or
 request Ctrl+Space in its `#body`. Shift+Enter would run the PUT, not discovery;
 do not suggest executing it just to obtain schema.
 
-The companion looks for OpenAPI 3.x or Swagger 2.0 at known locations beneath
+The REST module looks for OpenAPI 3.x or Swagger 2.0 at known locations beneath
 the current prefix and its parents, including `/openapi.json`, `/v3/api-docs`,
 `/swagger.json`, `/spec.json`, `/swagger/v1/swagger.json`, `/api-docs` and
 `/rest/default/schema?services=all`. It uses the check's resolved headers.

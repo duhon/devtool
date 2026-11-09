@@ -2,12 +2,12 @@
   const { assert, seen, wait, holds, stable, click, testid, editorOf, openConsole, setSource, key, assertSignalGeometry } = testDriver;
   const editor = () => editorOf('console-editor');
   const source = () => editor().getValue();
-  const status = () => document.querySelector('.console-status');
+  const status = () => document.querySelector('.status-bar');
   const agentStatus = () => testid('console-agent-status');
   const selectedChat = () => testid('agent-sessions').querySelector('[role="tab"][aria-selected="true"]').dataset.testid;
   const chatTab = id => testid('agent-sessions').querySelector(`[data-testid="${id}"]`);
   const chatRunning = id => light(chatTab(id)) === 'running';
-  const light = element => element.querySelector('.console-state-light')?.dataset.state;
+  const light = element => element.querySelector('.indicator-light')?.dataset.state;
   const checks = () => [...testid('console-check-menu').querySelectorAll('button')];
   const select = async index => {
     await click(checks()[index]);
@@ -32,7 +32,7 @@
   };
   // Parses the rendered elapsed clock ("350ms", "1.2s", "1min") into milliseconds.
   const elapsedMs = element => {
-    const match = element.querySelector('.console-status-elapsed')?.textContent.match(/(\d+(?:\.\d+)?)\s*(ms|s|min)\b/);
+    const match = element.querySelector('.status-bar-elapsed')?.textContent.match(/(\d+(?:\.\d+)?)\s*(ms|s|min)\b/);
     return match ? Number(match[1]) * {ms: 1, s: 1000, min: 60000}[match[2]] : NaN;
   };
   const ticks = name => (source().match(new RegExp(`${name}-tick`, 'g')) || []).length;
@@ -111,7 +111,7 @@
   await wait(() => ticks('second') >= 2);
   assert(checks().length === 2 && checks().every(check => light(check) === 'running'),
     'Concurrent checks must keep blinking signals, including the viewed check, even when output copies a neighboring check');
-  const runningLight = checks()[1].querySelector('.console-state-light');
+  const runningLight = checks()[1].querySelector('.indicator-light');
   assert(matchMedia('(prefers-reduced-motion: reduce)').matches || runningLight.getAnimations()[0]?.playState === 'running',
     'A running check must have a genuinely animated green signal even while viewed');
   assertSignalGeometry();
@@ -239,7 +239,7 @@
   await run();
   await wait(() => status().classList.contains('is-running'));
   assert(light(testid('console-service-rest')) === 'running'
-    && testid('console-service-rest').querySelector('.console-state-light').title.includes('0 errors'),
+    && testid('console-service-rest').querySelector('.indicator-light').title.includes('0 errors'),
   'The service signal must prioritize running without counting a previously viewed error as unseen');
   await wait(() => elapsedMs(status()) >= 300,
     () => `The manual request clock must advance before the Agent starts: ${status().textContent}`);
@@ -266,8 +266,8 @@
     () => `Main and Agent clocks must both run and differ: ${status().textContent} / ${agentStatus().textContent}`);
   const request = status();
   const agent = agentStatus();
-  const requestTime = Number.parseInt(request.querySelector('.console-status-elapsed').textContent, 10);
-  const agentTime = Number.parseInt(agent.querySelector('.console-status-elapsed').textContent, 10);
+  const requestTime = Number.parseInt(request.querySelector('.status-bar-elapsed').textContent, 10);
+  const agentTime = Number.parseInt(agent.querySelector('.status-bar-elapsed').textContent, 10);
   assert(requestTime > agentTime && request.textContent.includes('#check manual')
     && !request.textContent.includes('Agent') && agent.textContent.includes('Agent'),
     `Main and Agent statuses must retain separate identities and clocks: ${JSON.stringify({request: request.textContent, agent: agent.textContent, requestTime, agentTime})}`);

@@ -1,9 +1,17 @@
 //! Console checks: a check typed or pasted right under text gets a blank line before it,
-//! and checks get alternating band classes.
-use super::state::{Change, Transaction};
-use super::text::{leading_whitespace, utf16_len};
-use crate::editor::document::is_check;
-use crate::editor::document::{Position, ResponseRegion};
+//! and checks alternate between two bands.
+use super::is_check;
+use super::{Position, ResponseRegion};
+
+fn leading_whitespace(text: &str) -> usize {
+    text.char_indices()
+        .find(|(_, c)| !c.is_whitespace())
+        .map_or(text.len(), |(index, _)| index)
+}
+
+fn utf16_len(text: &str) -> usize {
+    text.chars().map(char::len_utf16).sum()
+}
 
 /// The line an edit starts on, as it was before the edit.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -15,8 +23,9 @@ pub struct Previous {
 }
 
 impl Previous {
-    pub fn capture(lines: &[String], line: usize, regions: &[ResponseRegion]) -> Self {
-        let check = lines.get(line).is_some_and(|text| is_check(text));
+    /// `text` is the line before the edit.
+    pub fn capture(text: Option<&str>, line: usize, regions: &[ResponseRegion]) -> Self {
+        let check = text.is_some_and(is_check);
         Self {
             line,
             check,
@@ -39,8 +48,8 @@ fn marker(text: &str) -> &str {
     &text[..(start + word).min(text.len())]
 }
 
-/// Blank lines before the checks an insertion of `inserted` lines at `from` produced, as a
-/// transaction joining the insertion's undo step. `lines` is the text after the insertion,
+/// The lines that get a blank line before them (the last first): checks an insertion of
+/// `inserted` lines at `from` produced. `lines` is the text after the insertion,
 /// `checks` the check lines before it, `pasted` the response regions of pasted text
 /// (line numbers relative to it), which keep their layout.
 pub fn separate(
@@ -51,7 +60,7 @@ pub fn separate(
     checks: &[usize],
     previous: Previous,
     pasted: &[ResponseRegion],
-) -> Option<Transaction> {
+) -> Option<Vec<usize>> {
     if !matches!(origin, "+input" | "paste" | "complete") {
         return None;
     }
@@ -100,28 +109,16 @@ pub fn separate(
     if added.is_empty() {
         return None;
     }
-    Some(Transaction {
-        changes: added
-            .into_iter()
-            .rev()
-            .map(|line| Change {
-                from: Position { line, ch: 0 },
-                to: Position { line, ch: 0 },
-                text: "\n".into(),
-            })
-            .collect(),
-        origin: origin.into(),
-        selection: None,
-        join: true,
-    })
+    added.reverse();
+    Some(added)
 }
 
-/// The band class of `line`; `checks` are the sorted check lines.
-pub fn band(checks: &[usize], line: usize) -> Option<&'static str> {
+/// The band of `line`: `Some(true)` under the 1st, 3rd, … check, `Some(false)` under the
+/// others, `None` above the first; `checks` are the sorted check lines.
+pub fn band(checks: &[usize], line: usize) -> Option<bool> {
     match checks.partition_point(|check| *check <= line) {
         0 => None,
-        count if count % 2 == 1 => Some("console-check-band-even"),
-        _ => Some("console-check-band-odd"),
+        count => Some(count % 2 == 1),
     }
 }
 
@@ -151,13 +148,6 @@ mod tests {
                 Previous::default(),
                 pasted,
             )
-            .map(|transaction| {
-                transaction
-                    .changes
-                    .iter()
-                    .map(|change| change.from.line)
-                    .collect::<Vec<_>>()
-            })
         };
         assert_eq!(separate(&[0], &[]), Some(vec![4, 2]));
         // Without an earlier check the first one stays put.
@@ -174,32 +164,20 @@ mod tests {
     #[test]
     fn typing_a_marker_or_title_does_not_separate() {
         let doc = lines("#check a\nx\n#check");
-        let previous = Previous::capture(&doc, 2, &[]);
-        assert_eq!(
-            separate(&doc, at(2, 5), &["k".into()], "+input", &[0], previous, &[]).map(|t| t.join),
-            None
-        );
+        let previous = Previous::capture(Some(&doc[2]), 2, &[]);
+        assert!(separate(&doc, at(2, 5), &["k".into()], "+input", &[0], previous, &[]).is_none());
         let doc = lines("#check a\nx\n#check b");
-        assert_eq!(
-            separate(&doc, at(2, 7), &["b".into()], "+input", &[0], previous, &[]).map(|t| t.join),
-            None
-        );
-        assert_eq!(
-            separate(&doc, at(2, 6), &[" ".into()], "+input", &[0], previous, &[]).map(|t| t.join),
-            Some(true)
-        );
-        assert_eq!(
-            separate(&doc, at(2, 6), &[" ".into()], "undo", &[0], previous, &[]).map(|t| t.join),
-            None
-        );
+        assert!(separate(&doc, at(2, 7), &["b".into()], "+input", &[0], previous, &[]).is_none());
+        assert!(separate(&doc, at(2, 6), &[" ".into()], "+input", &[0], previous, &[]).is_some());
+        assert!(separate(&doc, at(2, 6), &[" ".into()], "undo", &[0], previous, &[]).is_none());
     }
 
     #[test]
     fn bands_alternate_from_the_first_check() {
         let checks = [2, 5];
         assert_eq!(band(&checks, 0), None);
-        assert_eq!(band(&checks, 2), Some("console-check-band-even"));
-        assert_eq!(band(&checks, 4), Some("console-check-band-even"));
-        assert_eq!(band(&checks, 5), Some("console-check-band-odd"));
+        assert_eq!(band(&checks, 2), Some(true));
+        assert_eq!(band(&checks, 4), Some(true));
+        assert_eq!(band(&checks, 5), Some(false));
     }
 }

@@ -1,7 +1,7 @@
 //! Check identity: titles and ids follow `#check` blocks through edits,
 //! response insertion and copies. UI-behaviour tests.
 
-use services_widgets::editor::identity::{normalize, remap_text};
+use services_kernel::document::identity::{normalize, remap_text};
 
 #[test]
 fn titles_follow_check_comments_without_changing_identity() {

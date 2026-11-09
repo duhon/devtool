@@ -1,7 +1,7 @@
 //! Console document editing: response ownership, check identity, clipboard,
 //! UTF-16 edits, navigation and legacy markers. UI-behaviour tests.
 
-use services_widgets::editor::document::{
+use services_kernel::document::{
     CheckViewport, ClipboardFragment, DocumentEdit, EditHistory, Position, ResponseRegion,
     TextChange, active_check, check_at, check_lines, is_check, mask_output, migrate_check_markers,
     remap, replace_response, request_at,

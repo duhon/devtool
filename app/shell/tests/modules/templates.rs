@@ -1,8 +1,22 @@
 //! Templates panel: inserting template bodies and checks from `@` and section
 //! markers. UI-behaviour tests.
 
-use services_shell::template_completion::suggest;
+use services_kernel::editor::Completion;
+use services_shell::language::Modules;
 use std::collections::BTreeMap;
+
+fn suggest(
+    service: &str,
+    field: &str,
+    source: &str,
+    line: usize,
+    ch: usize,
+    templates: &BTreeMap<String, String>,
+) -> Option<Completion> {
+    services_kernel::editor::templates::suggest(
+        &Modules, service, field, source, line, ch, templates,
+    )
+}
 
 #[test]
 fn inserts_only_body_and_normalizes_inline_sections() {
