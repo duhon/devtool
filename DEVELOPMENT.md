@@ -76,7 +76,8 @@ cargo run -p xtask -- test <type>   # one kind at a time
   loader, console services), the document model (`document`: checks, responses,
   identities), the editor bridge to modules (`editor`: highlighting, folds, completion,
   templates), the request pipeline (`requests`), the runtime the Shell drives (`runtime`:
-  runs with Stop and Repeat, Agent turns, module effects, on a `Platform`), the workspace and its saving
+  runs with Stop and Repeat, Agent turns, module effects, on a `Platform`), the window's startup (`startup`:
+  module list, session database and library, Retry, on a `Boot`), the workspace and its saving
   (`workspace`, `storage`), the Host connection (`host`), Web Locks (`locks`), the
   inspected page (`page`), updates, module events and activity.
 - `app/widgets` — generic UI widgets (Yew/WebAssembly) with no application logic: the

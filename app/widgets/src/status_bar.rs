@@ -1,24 +1,5 @@
 //! The status line of a run or a module: light, text, elapsed time, Stop, and Debug below.
 
-/// A duration as the status line shows it: `850ms`, `1.5s`, `2min`.
-pub fn duration(ms: f64) -> String {
-    if ms < 1000.0 {
-        format!("{ms:.0}ms")
-    } else {
-        let (value, unit) = if ms < 60000.0 {
-            (ms / 1000.0, "s")
-        } else {
-            (ms / 60000.0, "min")
-        };
-        format!(
-            "{}{unit}",
-            format!("{value:.1}")
-                .trim_end_matches('0')
-                .trim_end_matches('.')
-        )
-    }
-}
-
 #[cfg(target_arch = "wasm32")]
 pub use view::{CSS, ConsoleStatus, ConsoleStatusProps};
 

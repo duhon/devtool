@@ -11,7 +11,6 @@ pub(crate) fn on<T: 'static>(callback: yew::Callback<T>) -> services_kernel::Cal
 
 pub fn start() -> Result<(), JsValue> {
     crate::link();
-    let restored = services_kernel::modules::loader::restore();
     crate::language::install();
     mount::install();
     let root = window()
@@ -19,7 +18,6 @@ pub fn start() -> Result<(), JsValue> {
         .ok_or("No document")?
         .get_element_by_id("app")
         .ok_or("Missing #app mount element")?;
-    yew::Renderer::<sessions::Host>::with_root_and_props(root, sessions::HostProps { restored })
-        .render();
+    yew::Renderer::<sessions::Host>::with_root(root).render();
     Ok(())
 }

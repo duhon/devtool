@@ -18,6 +18,7 @@ pub mod modules;
 pub mod page;
 pub mod requests;
 pub mod runtime;
+pub mod startup;
 pub mod storage;
 pub mod updates;
 #[cfg(target_arch = "wasm32")]

@@ -3,7 +3,7 @@
 
 use serde_json::json;
 use services_kernel::requests::format::{
-    MAX_RESPONSE_CHARS, check_response, console_response, outcome,
+    MAX_RESPONSE_CHARS, check_response, console_response, duration, outcome,
 };
 
 #[test]
@@ -15,6 +15,13 @@ fn long_responses_are_capped_without_splitting_unicode() {
         out.chars().take(MAX_RESPONSE_CHARS).collect::<String>(),
         "é".repeat(MAX_RESPONSE_CHARS)
     );
+}
+
+#[test]
+fn durations_use_readable_labels() {
+    assert_eq!(duration(850.0), "850ms");
+    assert_eq!(duration(1500.0), "1.5s");
+    assert_eq!(duration(60000.0), "1min");
 }
 
 #[test]

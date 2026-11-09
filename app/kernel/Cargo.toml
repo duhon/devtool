@@ -20,7 +20,7 @@ js-sys = "0.3"
 base64 = "0.22"
 serde-wasm-bindgen = "0.6"
 web-sys = { version = "0.3", features = [
-  "Window", "Document", "Element", "Storage", "Navigator", "console",
+  "Window", "Document", "BeforeUnloadEvent", "Event", "EventTarget", "Element", "Storage", "Navigator", "console",
   "IdbFactory", "IdbOpenDbRequest", "IdbDatabase", "IdbObjectStore",
   "IdbRequest", "IdbTransaction", "IdbTransactionMode", "DomException"
 ] }

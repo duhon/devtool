@@ -256,7 +256,9 @@ impl App {
                 status.text = format!(
                     "{} · {text} · {}",
                     time(),
-                    services_widgets::status_bar::duration(js_sys::Date::now() - status.started)
+                    services_kernel::requests::format::duration(
+                        js_sys::Date::now() - status.started
+                    )
                 );
             }
             return;

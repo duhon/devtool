@@ -4,7 +4,8 @@
 panels, the Console and the wiring between the Kernel, the widgets and the Host. The
 Kernel (`services-kernel`, `app/kernel`) owns everything without UI: modules, the request
 pipeline and the whole run lifecycle (Stop, Repeat, waiting for modules, Agent turns and
-runs), the workspace and its storage, the Host connection, locks, the inspected page,
+runs), the window's startup (`startup`: module list, session database and library,
+Retry, other windows' saves), the workspace and its storage, the Host connection, locks, the inspected page,
 updates and module activity. The Shell forwards widget events to the Kernel
 (`kernel.run`, `kernel.stop`, …) and renders what it hears (`runtime::Event`: runs,
 responses, statuses, notices); the Shell links the App's modules into it (`link()`: the

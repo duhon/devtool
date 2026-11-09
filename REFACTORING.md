@@ -274,6 +274,11 @@ app/
 │   │                   ответы Host, список и старт модулей; runtime/runs.rs — запуски
 │   │                   (← console_panel, kernel_panel), runtime/turns.rs — ходы Agent
 │   │                   (← agent.rs), runtime/browser.rs — `Platform` браузера
+│   ├── startup.rs      `Startup` окна (живёт дольше `Kernel`): список модулей с Host,
+│   │                   база и библиотека workspace (открытие, импорт старого хранилища),
+│   │                   сохранения других окон, Retry, выбранная сессия, `Event`/`View`
+│   │                   для Shell, трейт `Boot`; startup/browser.rs — `Boot` браузера
+│   │                   (свой `Transport`, IndexedDB, beforeunload)  ← browser/sessions.rs
 │   ├── modules.rs      загрузка wasm, MVU: update(model, msg) -> (model, cmds), protobuf
 │   │                   на границе, исполнение команд; wasm.rs — wasm-экземпляр
 │   ├── modules/        registry.rs — модули App и их состояние (← kernel.rs; встроенные
@@ -333,7 +338,8 @@ app/
 │   ├── browser/        корневой компонент app.rs (+ app/console_panel, kernel_panel,
 │   │                   agent): раскладка, редакторы, показ запусков и статусов по
 │   │                   событиям Kernel, команды, которые обслуживает Shell;
-│   │                   sessions.rs — компонент Host (открывает workspace и модули), mount
+│   │                   sessions.rs — компонент Host (показывает `Startup`: «Preparing
+│   │                   sessions…», ошибку с Retry, App на сессии), mount
 │   │                   (`window.__servicesMountEditor`)
 │   ├── layout.css      вся раскладка (верхнее меню, рабочая область, боковая панель,
 │   │                   нижняя строка); раскладка в коде — пока в browser/app
@@ -370,7 +376,8 @@ Kernel — маршрутизатор между редактором/Agent, м�
   opensearch).
 - `logfmt.rs` → модуль Splunk.
 - `format.rs` делится: вывод ответа (включая код под Splunk) → `render` модулей,
-  `history_document` → панель History, `duration`/`status` → StatusBar.
+  `history_document` → панель History, `status` → StatusBar; `duration` — в Kernel
+  (`requests::format`), StatusBar получает готовый текст.
 
 ### Kernel и панели (05.11)
 
@@ -739,7 +746,7 @@ Settings. Пакеты выпуска — `dist/modules/`, как сейчас.
   `hover` ← profiles.rs, `json`), `view`, `find_bar`, `check_rail`, `status_bar` и `tree`
   (← views.rs), `indicator` (← activity.rs), `resizer`, `markdown`, `dom` (обёртки web-sys
   из browser/mod.rs); `RequestBlock`, `is_check` и `request_at` консоли — в
-  `editor::document` (`check_at`), `duration` — в `status_bar`, `prepare_insertion` и типы
+  `editor::document` (`check_at`), `duration` — в `status_bar` (позже — только в Kernel), `prepare_insertion` и типы
   подсказок — в `editor::language`. CSS разложен по владельцам (`<виджет>.css`,
   `include_str!`), цвета — переменные `:root` из `shell/src/theme.css`; раскладка Shell —
   `shell/src/layout.css` (из styles.css, console.css, ui.css); порядок каскада прежний (тема,
@@ -870,12 +877,36 @@ Settings. Пакеты выпуска — `dist/modules/`, как сейчас.
     исчезнувший якорь повторяемого запуска заканчивает Repeat как «Check edited»;
     установка обновления App и импорт из буфера (натив) идут через
     `Kernel::host_request`; удалена мёртвая проверка `console:{service}` в
-    `console_edit_check`. `duration` есть и в Kernel (`requests::format`), и в
-    `status_bar` виджетов.
+    `console_edit_check`. `duration` был и в Kernel (`requests::format`), и в
+    `status_bar` виджетов (дубль убран в «Старт окна в Kernel»).
   - `Transport` сообщает (`Event::Busy`) о каждом изменении запросов в полёте, пока связь
     занята, а не только о переходе занята/свободна: ответы Host, которые Kernel обрабатывает
     сам, больше не перерисовывают Shell, и без этого `data-busy-reason` устаревал
     (сценарий sessions).
+- Старт окна в Kernel (09.11):
+  - `kernel/src/startup.rs` — `Startup` (← Shell `browser/sessions.rs`): запрос
+    `{"service":"modules"}` и `loader::accept` (ошибка — `console.warn`), ожидание списка
+    модулей, открытие базы и библиотеки, первая библиотека из старого хранилища
+    (`bootstrap`), сохранения других окон (`refresh` + `storage_epoch`), Retry (новое
+    соединение с нативным Host и повторное открытие), выбранная сессия; новая библиотека
+    сохраняет временную сессию 0, неудачная — прежнюю библиотеку с ошибкой. API:
+    `Startup::new(boot, restored, on_event)` (в браузере `Startup::browser`), `view()`,
+    `retry()`, `select(id)`; `Event::{Loading, Modules, Ready, Failed, Storage, Active}`.
+    Браузер — трейт `Boot`, `startup/browser.rs`: свой `Transport`, `store::open`/
+    `bootstrap`, `Store`, флаг несохранённых правок и beforeunload,
+    `loader::restore()` (кеш списка модулей; раньше — в Shell `start()`).
+  - Shell `browser/sessions.rs` только показывает `Startup::view()` (баннеры, App с
+    ключом `"{active}:{epoch}"`) и передаёт Retry и выбор сессии; `HostProps` удалён;
+    в Shell нет `Transport`, `store::open`/`bootstrap` и beforeunload (фича web-sys
+    `BeforeUnloadEvent` перешла в Kernel).
+  - `duration` — только в Kernel (`requests::format`); `status_bar` виджетов его больше
+    не экспортирует, тест длительностей — `kernel/tests/format.rs`.
+  - Отличия: не `Kernel::start`, а отдельный `Startup` — `Kernel` создаётся на каждый App
+    (App пересоздаётся при смене сессии и новой библиотеке), а старт живёт всё окно;
+    импорт библиотеки после открытия базы идёт сразу, а не следующим сообщением Yew.
+  - Тесты: `kernel/tests/startup.rs` (поддельный `Boot`): кеш списка модулей, ожидание
+    списка, плохой список и Host без списка, `bootstrap`, ошибка и Retry (без двойного
+    открытия), временная сессия и ошибка импорта, сохранения других окон, выбор сессии.
 
 ## Решить
 
