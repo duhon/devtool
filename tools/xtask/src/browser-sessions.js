@@ -293,7 +293,7 @@
   await testDriver.sessionsIdle();
   await activateSession(a);
   await open('hints');
-  await wait(()=>editorOf('console-hints').getValue().includes('other-window.invalid'),'Explicitly switching back must load the saved winner');
+  await wait(()=>editorOf('console-hints').getValue().includes('other-window.invalid'),()=>`Explicitly switching back must load the saved winner: session ${testid('console-session-name').textContent} ${testid('console-session-name').dataset.sessionId}, hints ${JSON.stringify(editorOf('console-hints').getValue())}, status ${testid('console-hints-status')?.textContent}`);
   await activateSession(b);
   await click(testid('console-service-terminal'));
   setSource(editorOf('console-editor'),"#check session-busy\n#target\nsh -c\n#payload\nprintf session-running; sleep 30");

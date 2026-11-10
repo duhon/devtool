@@ -102,18 +102,31 @@
   assert(document.querySelector('[data-testid="find-replacement"]'),'Replace must stay expanded after closing');
   testid('find-replacement').select();
   await type('pin');
-  const started=performance.now();
-  await click(testid('find-replace-all'));
-  await wait(()=>count()===`Replaced ${lines}`,()=>`Large Replace All: ${count()}`,30000);
-  const elapsed=performance.now()-started;
-  assert(editor.getLine(lines-1)===`item ${lines-1} pin`,'Large Replace All did not finish');
-  assert(elapsed<testDriver.budget(750),`Replace All of ${lines} matches took ${Math.round(elapsed)} ms, budget ${Math.round(testDriver.budget(750))} ms`);
-  editor.focus();
-  const undoStarted=performance.now();
-  await key('Mod+Z');
-  await wait(()=>editor.getLine(lines-1)===`item ${lines-1} needle`,'Large Replace All was not undone in one step');
-  const undone=performance.now()-undoStarted;
-  assert(undone<testDriver.budget(350),`Undo of ${lines} replacements took ${Math.round(undone)} ms, budget ${Math.round(testDriver.budget(350))} ms`);
+  // Medians of replace-and-undo cycles; polling every millisecond keeps the wait out of the time.
+  const {waitFor,timed,budget}=testDriver;
+  const REPLACE_ALL_MS=255, UNDO_MS=111;
+  const undone=[];
+  const elapsed=await timed(5,async()=>{
+    await query('needle');
+    await wait(()=>count()==='1 of 10000+',()=>`Large count: ${count()}`);
+    const started=performance.now();
+    await click(testid('find-replace-all'));
+    await waitFor(()=>editor.getLine(lines-1)===`item ${lines-1} pin`,
+      {message:'Large Replace All did not finish',timeout:30000,interval:1});
+    const ms=performance.now()-started;
+    await wait(()=>count()===`Replaced ${lines}`,()=>`Large Replace All: ${count()}`);
+    editor.focus();
+    const undoStarted=performance.now();
+    await key('Mod+Z');
+    await waitFor(()=>editor.getLine(lines-1)===`item ${lines-1} needle`,
+      {message:'Large Replace All was not undone in one step',timeout:30000,interval:1});
+    undone.push(performance.now()-undoStarted);
+    return ms;
+  });
+  const undoMs=undone.sort((a,b)=>a-b)[undone.length>>1];
+  const replaceBudget=budget(REPLACE_ALL_MS), undoBudget=budget(UNDO_MS);
+  assert(elapsed<replaceBudget,`Replace All of ${lines} matches took ${Math.round(elapsed)} ms, budget ${Math.round(replaceBudget)} ms`);
+  assert(undoMs<undoBudget,`Undo of ${lines} replacements took ${Math.round(undoMs)} ms, budget ${Math.round(undoBudget)} ms`);
   await key('Escape');
   await wait(()=>!bar());
   return true;

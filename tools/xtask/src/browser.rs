@@ -122,6 +122,7 @@ impl Cdp {
                     if reply["params"]["targetInfo"]["type"] == "iframe" {
                         Box::pin(self.call("Page.enable", json!({}), Some(&target))).await?;
                         Box::pin(self.call("Runtime.enable", json!({}), Some(&target))).await?;
+                        Box::pin(throttle(self, &target)).await?;
                         Box::pin(self.call(
                             "Runtime.addBinding",
                             json!({"name":"__testInput"}),
@@ -261,6 +262,7 @@ impl Cdp {
             Some(&session),
         )
         .await?;
+        throttle(self, &session).await?;
         self.call(
             "Page.addScriptToEvaluateOnNewDocument",
             json!({"source":init}),
@@ -311,6 +313,23 @@ impl Cdp {
         }
         Ok(())
     }
+}
+
+/// `SERVICES_BROWSER_CPU_THROTTLE=4` slows a page's CPU fourfold to reproduce slow runners.
+async fn throttle(cdp: &mut Cdp, session: &str) -> Result<()> {
+    let Some(rate) = std::env::var("SERVICES_BROWSER_CPU_THROTTLE")
+        .ok()
+        .and_then(|rate| rate.parse::<f64>().ok())
+    else {
+        return Ok(());
+    };
+    cdp.call(
+        "Emulation.setCPUThrottlingRate",
+        json!({"rate":rate}),
+        Some(session),
+    )
+    .await?;
+    Ok(())
 }
 
 fn chrome() -> Result<PathBuf> {

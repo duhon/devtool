@@ -33,3 +33,8 @@ also found, and no browser is downloaded (CI installs a pinned Chrome version
 with `browser-actions/setup-chrome`). The clean-install check also verifies
 registration of an already-running custom Chrome without a restart. All test
 installations, environment files and Variables are disposable.
+
+Timing checks have no fixed millisecond limits: each compares a median of
+several runs with its median on the reference machine, scaled by a fixed
+workload timed next to the check, plus 10%. `SERVICES_BROWSER_CPU_THROTTLE=4`
+slows every page's CPU fourfold to reproduce slow runners.

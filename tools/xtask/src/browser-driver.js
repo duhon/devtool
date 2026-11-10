@@ -414,7 +414,8 @@
   // against its median on the reference machine, so a slow runner or a local regression both
   // show up as the same ratio instead of against a fixed number of milliseconds.
   const SPEED_REFERENCE_MS = 8.7;
-  let speedRatio;
+  // A measurement may exceed its reference-machine median by this much.
+  const BUDGET_MARGIN = 1.1;
   const speedWorkload = () => {
     const text = JSON.stringify(Array.from({ length: 16000 }, (_, id) => ({ id, name: `row ${id} 😀`, enabled: id % 2 === 0 })));
     const rows = JSON.parse(text);
@@ -423,21 +424,29 @@
     rows.sort((a, b) => b.name.localeCompare(a.name));
     return tokens + rows[0].id;
   };
-  const speedSample = () => {
-    const started = performance.now();
-    speedWorkload();
-    return performance.now() - started;
-  };
+  const middle = values => values.sort((a, b) => a - b)[values.length >> 1];
+  // Load changes during a run, so every budget recalibrates next to its measurement.
   const speed = () => {
-    if (speedRatio) return speedRatio;
     for (let i = 0; i < 3; i++) speedWorkload();
-    const samples = Array.from({ length: 9 }, speedSample).sort((a, b) => a - b);
-    globalThis.testSpeedSampleMs = samples[4];
-    return speedRatio = samples[4] / SPEED_REFERENCE_MS;
+    return middle(Array.from({ length: 9 }, () => {
+      const started = performance.now();
+      speedWorkload();
+      return performance.now() - started;
+    })) / SPEED_REFERENCE_MS;
   };
-  // A budget measured on the reference machine, scaled to this one.
-  const budget = ms => ms * speed();
-  globalThis.testDriver = { assert, sleep, seen, wait, waitFor, during, holds, settle, stable, frames, visible, find, testid, editorOf, editorAt, key, type, move, input, speed, budget,
+  // A median measured on the reference machine, scaled to this one, plus the margin.
+  const budget = ms => ms * speed() * BUDGET_MARGIN;
+  // The median duration of several runs; a run returns its own duration or is timed whole.
+  const timed = async (runs, run) => {
+    const samples = [];
+    for (let i = 0; i < runs; i++) {
+      const started = performance.now();
+      const own = await run(i);
+      samples.push(typeof own === 'number' ? own : performance.now() - started);
+    }
+    return middle(samples);
+  };
+  globalThis.testDriver = { assert, sleep, seen, wait, waitFor, during, holds, settle, stable, frames, visible, find, testid, editorOf, editorAt, key, type, move, input, speed, budget, timed, BUDGET_MARGIN,
     click, doubleClick, button, openConsole, activateSession, sessionsIdle, createSession, deleteSession, setSource, commitRestUrl, candidates, suggest, pick, pickThenEnter,
     assertNativeScrollbars, nativeTrackPaint, sessionLibrary, nativeHold, settingsTab, addFolderSource, fill, choose, openPanel, closePanel, clearSessions: () => sessionRecord('delete') };
   globalThis.testNativeHealth = () => new Promise(resolve => {
