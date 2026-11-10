@@ -107,13 +107,13 @@
   await wait(()=>count()===`Replaced ${lines}`,()=>`Large Replace All: ${count()}`,30000);
   const elapsed=performance.now()-started;
   assert(editor.getLine(lines-1)===`item ${lines-1} pin`,'Large Replace All did not finish');
-  assert(elapsed<3000,`Replace All of ${lines} matches took ${Math.round(elapsed)} ms`);
+  assert(elapsed<testDriver.budget(750),`Replace All of ${lines} matches took ${Math.round(elapsed)} ms, budget ${Math.round(testDriver.budget(750))} ms`);
   editor.focus();
   const undoStarted=performance.now();
   await key('Mod+Z');
   await wait(()=>editor.getLine(lines-1)===`item ${lines-1} needle`,'Large Replace All was not undone in one step');
   const undone=performance.now()-undoStarted;
-  assert(undone<3000,`Undo of ${lines} replacements took ${Math.round(undone)} ms`);
+  assert(undone<testDriver.budget(350),`Undo of ${lines} replacements took ${Math.round(undone)} ms, budget ${Math.round(testDriver.budget(350))} ms`);
   await key('Escape');
   await wait(()=>!bar());
   return true;

@@ -410,7 +410,34 @@
     await click(testid('source-add-save'));
     if (previous && previous !== 'sources') await settingsTab(previous);
   };
-  globalThis.testDriver = { assert, sleep, seen, wait, waitFor, during, holds, settle, stable, frames, visible, find, testid, editorOf, editorAt, key, type, move, input,
+  // Timing budgets scale with this machine: a fixed JSON, regex and sort workload is timed
+  // against its median on the reference machine, so a slow runner or a local regression both
+  // show up as the same ratio instead of against a fixed number of milliseconds.
+  const SPEED_REFERENCE_MS = 8.7;
+  let speedRatio;
+  const speedWorkload = () => {
+    const text = JSON.stringify(Array.from({ length: 16000 }, (_, id) => ({ id, name: `row ${id} 😀`, enabled: id % 2 === 0 })));
+    const rows = JSON.parse(text);
+    let tokens = 0;
+    for (const match of text.matchAll(/"(?:[^"\\]|\\.)*"|-?\d+|true|false/g)) tokens += match[0].length;
+    rows.sort((a, b) => b.name.localeCompare(a.name));
+    return tokens + rows[0].id;
+  };
+  const speedSample = () => {
+    const started = performance.now();
+    speedWorkload();
+    return performance.now() - started;
+  };
+  const speed = () => {
+    if (speedRatio) return speedRatio;
+    for (let i = 0; i < 3; i++) speedWorkload();
+    const samples = Array.from({ length: 9 }, speedSample).sort((a, b) => a - b);
+    globalThis.testSpeedSampleMs = samples[4];
+    return speedRatio = samples[4] / SPEED_REFERENCE_MS;
+  };
+  // A budget measured on the reference machine, scaled to this one.
+  const budget = ms => ms * speed();
+  globalThis.testDriver = { assert, sleep, seen, wait, waitFor, during, holds, settle, stable, frames, visible, find, testid, editorOf, editorAt, key, type, move, input, speed, budget,
     click, doubleClick, button, openConsole, activateSession, sessionsIdle, createSession, deleteSession, setSource, commitRestUrl, candidates, suggest, pick, pickThenEnter,
     assertNativeScrollbars, nativeTrackPaint, sessionLibrary, nativeHold, settingsTab, addFolderSource, fill, choose, openPanel, closePanel, clearSessions: () => sessionRecord('delete') };
   globalThis.testNativeHealth = () => new Promise(resolve => {
