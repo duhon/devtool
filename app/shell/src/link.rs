@@ -53,6 +53,7 @@ fn linked() -> Vec<Module> {
         "panels/hints" => services_module_hints::Hints,
         "panels/dictionary" => services_module_dictionary::Dictionary,
         "panels/sessions" => services_module_sessions::Sessions,
+        "panels/diff" => services_module_diff::Diff,
         "panels/agent" => services_module_agent::Agent,
     ]
 }

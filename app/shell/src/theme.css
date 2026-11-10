@@ -33,6 +33,11 @@
   --find-current-outline: #ffb84d;
   --find-current: rgba(255, 140, 0, 0.55);
   --find-match: rgba(255, 196, 0, 0.22);
+  --diff-added: rgba(70, 160, 90, 0.2);
+  --diff-added-text: rgba(70, 180, 100, 0.45);
+  --diff-changed: rgba(210, 170, 60, 0.16);
+  --diff-removed: rgba(200, 70, 70, 0.2);
+  --diff-removed-text: rgba(220, 80, 80, 0.45);
   --find-option-active: rgba(53, 116, 240, 0.35);
   --link: #79b8ff;
   --overlay: rgba(30, 31, 34, 0.96);

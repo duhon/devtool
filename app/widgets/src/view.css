@@ -205,6 +205,26 @@
 
 .ui-editor > .editor { flex: 1 1 auto; min-height: 0; }
 
+.ui-editor:has(> .ui-editor-actions) { position: relative; }
+
+.ui-row.is-diff-columns { flex: 1 1 0; min-height: 0; align-items: stretch; flex-wrap: nowrap; }
+
+.ui-column.is-diff-column { flex: 1 1 0; min-width: 0; min-height: 0; gap: 2px; }
+
+.ui-editor-actions { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+
+.ui-editor-action { position: absolute; right: 18px; box-sizing: border-box; padding: 0 6px; font-size: 11px; line-height: 1; pointer-events: auto; z-index: 3; }
+
+.editor-diff-added { background: var(--diff-added); }
+
+.editor-diff-removed { background: var(--diff-removed); }
+
+.editor-diff-changed { background: var(--diff-changed); }
+
+span.editor-diff-added-text { background: var(--diff-added-text); }
+
+span.editor-diff-removed-text { background: var(--diff-removed-text); }
+
 .ui-tab-strip > .tab-button { display: inline-flex; align-items: center; }
 
 .ui-tab-strip .tab-label { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }

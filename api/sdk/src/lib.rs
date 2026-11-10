@@ -8,6 +8,7 @@
 //! Everything crosses the boundary as protobuf the SDK encodes.
 
 pub mod cmd;
+pub mod diff;
 pub mod driver;
 pub mod grpc;
 pub mod http;

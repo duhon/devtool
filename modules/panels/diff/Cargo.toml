@@ -1,0 +1,14 @@
+[package]
+name = "services-module-diff"
+version = "3.7.0"
+edition.workspace = true
+publish.workspace = true
+description = "Diff panel module: compare two texts, take a chunk of either, and answer the module that asked"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+services-sdk = { path = "../../../api/sdk" }
+serde.workspace = true
+serde_json.workspace = true

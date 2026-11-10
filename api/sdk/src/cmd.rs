@@ -34,6 +34,9 @@ pub const NAMES: &[&str] = &[
     "workspace.delete",
     "workspace.rename",
     "workspace.retry",
+    "diff.open",
+    "diff.done",
+    "diff.cancel",
     "page.eval",
     "page.network",
     "agent.turn",
@@ -198,6 +201,36 @@ pub fn workspace_rename(tag: impl Into<String>, id: u64, name: &str) -> Cmd {
 /// and reconnects to the Host; replies when it was asked for.
 pub fn workspace_retry(tag: impl Into<String>) -> Cmd {
     Cmd::new(tag, "workspace.retry", &json!({}))
+}
+
+/// Opens the Diff panel on two texts (`left`, `right`, with their `left_title`, `right_title`
+/// and the `language` the editors highlight). The reply comes when the user is done:
+/// `{text}`, the right text as the user left it; it is an error if they cancel or another
+/// comparison replaces this one.
+pub fn diff_open(
+    tag: impl Into<String>,
+    left: &str,
+    right: &str,
+    left_title: &str,
+    right_title: &str,
+    language: &str,
+) -> Cmd {
+    Cmd::new(
+        tag,
+        "diff.open",
+        &json!({"left": left, "right": right, "left_title": left_title,
+            "right_title": right_title, "language": language}),
+    )
+}
+
+/// The Diff panel's answer to the module that opened it: the text the user settled on.
+pub fn diff_done(text: &str) -> Cmd {
+    Cmd::new("", "diff.done", &json!({"text": text}))
+}
+
+/// The Diff panel's other answer: the user stopped the comparison.
+pub fn diff_cancel() -> Cmd {
+    Cmd::new("", "diff.cancel", &json!({}))
 }
 
 /// What the module adds to the editors: `{"variables": [[reference, value], …]}` (completion

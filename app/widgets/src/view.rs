@@ -3,8 +3,9 @@
 //! variants (`primary`, `danger`, `muted`, `link`, `heading`, `badge`, …; several may be given,
 //! separated by spaces).
 use crate::editor;
+use crate::editor::Position;
 use crate::editor::extension;
-use crate::editor::model::{Event as EditorEvent, Setup};
+use crate::editor::model::{Event as EditorEvent, Mark, Setup};
 use crate::indicator::Indicator;
 use services_sdk::ui::{self, Node, node::Kind};
 use std::rc::Rc;
@@ -27,6 +28,35 @@ thread_local! {
     static PENDING: std::cell::RefCell<std::collections::BTreeMap<u64, Pending>> =
         const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
     static NEXT_INPUT: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// The editors of each scroll group of a module, by slot.
+    static SCROLL_GROUPS: std::cell::RefCell<std::collections::BTreeMap<ScrollGroup, Vec<(u64, editor::Handle)>>> =
+        const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
+}
+
+/// A module's name for a scroll group.
+type ScrollGroup = (AttrValue, String);
+
+/// Scrolls the other editors of `key`'s group to where `handle` is.
+fn sync_scroll(key: &ScrollGroup, slot: u64, handle: &editor::Handle) {
+    let Some(at) = handle.scroll() else {
+        return;
+    };
+    let peers: Vec<editor::Handle> = SCROLL_GROUPS.with(|groups| {
+        groups.borrow().get(key).map_or_else(Vec::new, |members| {
+            members
+                .iter()
+                .filter(|(other, _)| *other != slot)
+                .map(|(_, handle)| handle.clone())
+                .collect()
+        })
+    });
+    for peer in peers {
+        if peer.scroll().is_some_and(|there| {
+            there.scroll_top != at.scroll_top || there.scroll_left != at.scroll_left
+        }) {
+            peer.scroll_to(Some(at.scroll_top), Some(at.scroll_left));
+        }
+    }
 }
 
 /// A field's typing not yet told: its module, msg, text and the timeout that tells it.
@@ -985,11 +1015,13 @@ fn text_editor(props: &EditorProps) -> Html {
     let readonly = props.editor.on_change.is_none();
     let handle = {
         let (language, text) = (props.editor.language.clone(), props.editor.text.clone());
+        let ghosts = props.editor.ghosts;
         use_state(move || {
             let (mode, extension) = extension::languages().editor(&language);
             let setup = Setup {
                 mode,
                 readonly,
+                ghosts,
                 ..Setup::default()
             };
             editor::Handle::with_extension(setup, extension, &text)
@@ -1023,6 +1055,86 @@ fn text_editor(props: &EditorProps) -> Html {
     }
     let module = use_context::<ModuleId>().map(|id| id.0).unwrap_or_default();
     let slot = *use_state(|| NEXT_INPUT.with(|next| next.replace(next.get() + 1)));
+    let group = (module.clone(), props.editor.scroll_group.clone());
+    {
+        let handle = (*handle).clone();
+        use_effect_with(group.clone(), move |group| {
+            let group = group.clone();
+            if !group.1.is_empty() {
+                SCROLL_GROUPS.with(|groups| {
+                    groups
+                        .borrow_mut()
+                        .entry(group.clone())
+                        .or_default()
+                        .push((slot, handle))
+                });
+            }
+            move || {
+                SCROLL_GROUPS.with(|groups| {
+                    if let Some(members) = groups.borrow_mut().get_mut(&group) {
+                        members.retain(|(other, _)| *other != slot);
+                    }
+                });
+            }
+        });
+    }
+    let marked = use_mut_ref(Vec::<u64>::new);
+    {
+        let handle = (*handle).clone();
+        use_effect_with(
+            (props.editor.marks.clone(), props.editor.text.clone()),
+            move |(marks, _)| {
+                if marks.is_empty() && marked.borrow().is_empty() {
+                    return;
+                }
+                handle.with(|session| {
+                    for id in marked.borrow_mut().drain(..) {
+                        session.clear_mark(id);
+                    }
+                    for mark in marks {
+                        let line = mark.line as usize;
+                        let class = format!("editor-diff-{}", mark.class);
+                        let mark = if mark.from == mark.to {
+                            let Some(anchor) = session.state().anchor(line) else {
+                                continue;
+                            };
+                            Mark::Line { anchor, class }
+                        } else {
+                            Mark::Range {
+                                from: Position {
+                                    line,
+                                    ch: mark.from as usize,
+                                },
+                                to: Position {
+                                    line,
+                                    ch: mark.to as usize,
+                                },
+                                class,
+                            }
+                        };
+                        marked.borrow_mut().push(session.mark(mark));
+                    }
+                });
+            },
+        );
+    }
+    {
+        let handle = (*handle).clone();
+        use_effect_with(
+            (props.editor.reveal_line, props.editor.reveal_serial),
+            move |(line, serial)| {
+                if *serial == 0 {
+                    return;
+                }
+                if let Some(at) = handle.scroll().filter(|at| at.line_height > 0.0) {
+                    let top = editor::layout::row_top(*line as usize, at.line_height)
+                        - at.client_height / 3.0;
+                    handle.scroll_to(Some(top.max(0.0)), None);
+                }
+            },
+        );
+    }
+    let scrolled = use_state(|| 0.0_f64);
     let timer = use_mut_ref(|| None::<(i32, Closure<dyn FnMut()>)>);
     {
         let timer = timer.clone();
@@ -1042,8 +1154,20 @@ fn text_editor(props: &EditorProps) -> Html {
             props.editor.on_change.clone(),
             props.editor.debounce_ms,
         );
+        let (scrolled, group) = (scrolled.setter(), group.clone());
+        let follows = !group.1.is_empty() || !props.editor.actions.is_empty();
         Callback::from(move |message| {
-            for event in handle.update(message) {
+            let moved = follows && matches!(message, editor::model::Msg::Metrics(_));
+            let events = handle.update(message);
+            if moved {
+                if !group.1.is_empty() {
+                    sync_scroll(&group, slot, &handle);
+                }
+                if let Some(at) = handle.scroll() {
+                    scrolled.set(at.scroll_top);
+                }
+            }
+            for event in events {
                 let EditorEvent::Changed(text) = event else {
                     continue;
                 };
@@ -1086,11 +1210,26 @@ fn text_editor(props: &EditorProps) -> Html {
         .unwrap_or_else(|| testid_label(&props.editor.language));
     // An editor fills its panel or tab edge to edge; a viewer does so only when asked to.
     let flush = !readonly || props.variant.split_whitespace().any(|name| name == "flush");
+    let actions = (!props.editor.actions.is_empty()).then(|| handle.scroll().filter(|at| at.line_height > 0.0)).flatten().map(|at| {
+        let buttons = props.editor.actions.iter().map(|action| {
+            let top = editor::layout::row_top(action.line as usize, at.line_height) - *scrolled;
+            let (on, msg) = (props.on.clone(), Some(action.on_click.clone()));
+            let onclick = Callback::from(move |_| send(&on, &msg, None));
+            html! {
+                <button type="button" class="ui-editor-action" style={format!("top:{top}px;height:{}px", at.line_height)}
+                    data-testid={action.key.clone()} title={action.title.clone()} {onclick}>
+                    {action.label.clone()}
+                </button>
+            }
+        });
+        html! {<div class="ui-editor-actions">{ for buttons }</div>}
+    });
     html! {
         <div class={classes!("ui-editor", readonly.then_some("is-viewer"), flush.then_some("is-flush"), variants(&props.variant))}
             data-key={props.data_key.clone()}>
             <editor::View handle={(*handle).clone()} {on} {testid} {label}
                 placeholder={props.editor.placeholder.clone()}/>
+            {actions}
         </div>
     }
 }

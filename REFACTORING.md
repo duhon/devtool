@@ -361,7 +361,7 @@ Kernel — маршрутизатор между редактором/Agent, м�
 передаёт события виджетов в Kernel и показывает его состояние: раскладка, редакторы,
 вставка ответа, строка статуса и индикаторы из `RunView`; команды, которым нужен
 документ, редакторы или workspace Shell (`document.read`, `workspace.*`, `app.update`,
-`app.reload`, `editor.relight`, `agent.approve`) и инструменты консоли Agent, Kernel передаёт Shell
+`app.reload`, `editor.relight`, `diff.*`, `agent.approve`) и инструменты консоли Agent, Kernel передаёт Shell
 событиями, Shell отвечает `reply`/`agent_result`.
 
 Исключение из правила «CSS рядом с владельцем через `include_str!`» (решено 08.11):
@@ -454,6 +454,12 @@ Kernel не знает ни одной панели: даёт точки рас�
   `history.insert`, `history.search` (хранилище — Host); `os.env` (окружение из Host),
   `clipboard.read`/`write` (App); `sources.read` (сырые документы источников по порядку);
   `editor.contribute`, `editor.relight` (подсветить редакторы сервиса заново);
+  `diff.open` (`left`, `right`, `left_title`, `right_title`, `language`: Shell открывает панель
+  «Разница» и отдаёт ей сравнение через `ToolCall`; ответ — когда пользователь решил:
+  `{text}` — правая колонка; `Cancelled` — Stop; повторный `diff.open` заменяет ждущее
+  сравнение, прежний автор получает ошибку), `diff.done`/`diff.cancel` (шлёт только сама
+  панель; Shell отвечает тому, кто её открыл; в тестах его роль играет `testDriver` через
+  событие окна `services-test-diff-open`);
   `document.read`/`insert`/`replace`/`select`/`run`;
   `workspace.list` (сессии с `used` — время последнего сохранения)/`restore`/`copy` (копия
   Temporary — его снимок)/`delete`/`rename`; `page.eval`, `page.network`; `agent.turn`
@@ -570,6 +576,12 @@ Kernel вызывает модуль напрямую и сразу получа
   `Button::confirm` (вопрос `window.confirm` перед `on_click`); `Input.size`, вариант поля
   `inline` (выглядит как текст до наведения; Enter сохраняет и выходит из поля, Escape
   возвращает текст); `Editor`: `.placeholder`, `.debounce(мс)`,
+  `.marks` (подсветка строк и диапазонов классами `editor-diff-*`), `.scroll_group` (общая
+  прокрутка редакторов панели), `.reveal(строка, serial)` (прокрутка к строке при смене
+  serial), `.ghosts()` (строки из одного `U+200B` — выравнивающие, без номера),
+  `.line_actions` (кнопки у строк, прокручиваются с текстом);
+  `services_sdk::diff` (крейт `similar`): `compare(left, right, Options{mode, ignore_whitespace})`
+  → `Diff{rows, chunks}`, `aligned(side, text)`, `take(chunk, from, left, right)`, `strip`;
   краевой режим `is-flush` (в теле панели и вкладки); `ui::field(метка, элемент)`,
   `ui::anchor(метка, url)` (только http/https), `ui::combobox` (поиск по списку,
   `Choice.detail`), `Slider` с `.labels`, `.marker`, `.disabled`. Варианты: панель `flush`/
@@ -668,6 +680,11 @@ Settings. Пакеты выпуска — `dist/modules/`, как сейчас.
 7. Обновить документацию.
 
 ## Сделано
+
+- Панель «Разница» (`modules/panels/diff`, пункт 34): две редактируемые колонки с
+  выравниванием, режимы строки/слова/символы, игнор пробелов, переход между отличиями со
+  счётчиком, «принять этот вариант» у каждого куска, `diff.open` с ответом и процессом (свет
+  «работает», Stop, «Готово»; скрытие не отменяет). Тексты в сессии не сохраняются.
 
 - 09.11 (фаза 2a): общие возможности UI для возврата старого вида панелей, ABI 2 — вкладки
   с × и `+`, подсказки и aria, таблицы (ширины, детали строк, варианты), combobox, ползунок с

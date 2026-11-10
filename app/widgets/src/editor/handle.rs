@@ -229,7 +229,7 @@ impl Handle {
     }
 
     /// Scrolls the mounted view now, so the viewport is current before this returns.
-    pub(super) fn scroll_to(&self, top: Option<f64>, left: Option<f64>) {
+    pub fn scroll_to(&self, top: Option<f64>, left: Option<f64>) {
         let Some(dom) = self.dom() else {
             return;
         };
@@ -266,6 +266,11 @@ impl Handle {
                 self.update(msg);
             }
         }
+    }
+
+    /// The scroll position and the row height the view last measured.
+    pub fn scroll(&self) -> Option<Metrics> {
+        self.metrics()
     }
 
     pub(super) fn metrics(&self) -> Option<Metrics> {

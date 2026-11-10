@@ -159,6 +159,8 @@ pub enum Msg {
     Kernel(KernelEvent),
     /// Another window changed the kv key of a module: (module, key).
     KernelStorage(String, String),
+    /// The test driver opens the Diff panel as a module would (`window.__testDiffArgs`).
+    TestDiffOpen,
     /// Opens or closes the side panel of a panel module.
     TogglePanel(String),
     /// An action in a panel module's UI tree.
@@ -181,6 +183,8 @@ pub struct App {
     updates: updates::State,
     /// The module and tag the App update answers when it fails or cannot reload by itself.
     update_reply: Option<(String, String)>,
+    /// The module and tag the Diff panel's decision answers.
+    diff_opener: Option<(String, String)>,
     /// Re-renders once a status on screen has stayed long enough to count as seen.
     seen: SeenTimer,
     /// When each panel's toolbar light was seen, by [`kernel_panel::panel_signal_key`].
@@ -260,6 +264,7 @@ impl Component for App {
             workspace_id,
             updates: updates::State::default(),
             update_reply: None,
+            diff_opener: None,
             seen: SeenTimer::default(),
             panel_signals: BTreeMap::new(),
             console_service,
@@ -313,6 +318,15 @@ impl Component for App {
             }
             callback.forget();
         }
+        let link = ctx.link().clone();
+        let callback = Closure::<dyn FnMut()>::new(move || link.send_message(Msg::TestDiffOpen));
+        if let Err(error) = window().add_event_listener_with_callback(
+            "services-test-diff-open",
+            callback.as_ref().unchecked_ref(),
+        ) {
+            app.notice = Some(Notice::new(super::error(error)));
+        }
+        callback.forget();
         // Another window changed a module's kv key: the module hears of it if it watches it.
         let link = ctx.link().clone();
         let callback = Closure::<dyn FnMut(web_sys::StorageEvent)>::new(
@@ -801,6 +815,7 @@ impl Component for App {
                 }
             }
             Msg::Kernel(event) => return self.kernel_event(ctx, event),
+            Msg::TestDiffOpen => self.test_diff_open(ctx),
             Msg::KernelStorage(module, key) => {
                 self.kernel.modules(|modules| modules.storage(&module, &key));
             }

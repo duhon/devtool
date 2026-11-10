@@ -438,6 +438,90 @@ pub struct Editor {
     /// first when the panel closes. 0 sends every change at once.
     #[prost(uint32, tag = "5")]
     pub debounce_ms: u32,
+    /// Highlights over the text: whole lines or ranges, styled by the App's classes.
+    #[prost(message, repeated, tag = "6")]
+    pub marks: Vec<EditorMark>,
+    /// Editors of one group (within a panel) scroll together.
+    #[prost(string, tag = "7")]
+    pub scroll_group: String,
+    /// Scrolls to `reveal_line` whenever `reveal_serial` changes (not when it is 0).
+    #[prost(uint32, tag = "8")]
+    pub reveal_line: u32,
+    #[prost(uint32, tag = "9")]
+    pub reveal_serial: u32,
+    /// Lines that are only `U+200B` stand for no line: they get no number.
+    #[prost(bool, tag = "10")]
+    pub ghosts: bool,
+    /// Buttons at the end of lines, scrolling with the text.
+    #[prost(message, repeated, tag = "11")]
+    pub actions: Vec<EditorAction>,
+}
+
+/// A highlight on a 0-based `line`; `from..to` are UTF-16 columns, and both 0 marks the
+/// whole line. `class` is `added`, `removed`, `changed` (the line) or `added-text`,
+/// `removed-text` (a range).
+#[derive(Clone, PartialEq, Message)]
+pub struct EditorMark {
+    #[prost(uint32, tag = "1")]
+    pub line: u32,
+    #[prost(uint32, tag = "2")]
+    pub from: u32,
+    #[prost(uint32, tag = "3")]
+    pub to: u32,
+    #[prost(string, tag = "4")]
+    pub class: String,
+}
+
+/// A button on a 0-based `line` of an editor; `key` is its test id.
+#[derive(Clone, PartialEq, Message)]
+pub struct EditorAction {
+    #[prost(uint32, tag = "1")]
+    pub line: u32,
+    #[prost(string, tag = "2")]
+    pub label: String,
+    #[prost(string, tag = "3")]
+    pub title: String,
+    #[prost(string, tag = "4")]
+    pub key: String,
+    #[prost(bytes = "vec", tag = "5")]
+    pub on_click: Vec<u8>,
+}
+
+impl EditorMark {
+    pub fn line(line: usize, class: impl Into<String>) -> Self {
+        Self {
+            line: line as u32,
+            from: 0,
+            to: 0,
+            class: class.into(),
+        }
+    }
+    pub fn range(line: usize, from: usize, to: usize, class: impl Into<String>) -> Self {
+        Self {
+            line: line as u32,
+            from: from as u32,
+            to: to as u32,
+            class: class.into(),
+        }
+    }
+}
+
+impl EditorAction {
+    pub fn new(
+        line: usize,
+        label: impl Into<String>,
+        title: impl Into<String>,
+        key: impl Into<String>,
+        on_click: &impl Serialize,
+    ) -> Self {
+        Self {
+            line: line as u32,
+            label: label.into(),
+            title: title.into(),
+            key: key.into(),
+            on_click: crate::wire::json(on_click),
+        }
+    }
 }
 
 fn msg(msg: &impl Serialize) -> Option<Vec<u8>> {
@@ -541,6 +625,42 @@ impl Node {
     pub fn debounce(mut self, ms: u32) -> Self {
         if let Some(node::Kind::Editor(editor)) = &mut self.kind {
             editor.debounce_ms = ms;
+        }
+        self
+    }
+    /// Editor: highlights over the text.
+    pub fn marks(mut self, marks: Vec<EditorMark>) -> Self {
+        if let Some(node::Kind::Editor(editor)) = &mut self.kind {
+            editor.marks = marks;
+        }
+        self
+    }
+    /// Editor: scrolls together with the other editors of `group`.
+    pub fn scroll_group(mut self, group: impl Into<String>) -> Self {
+        if let Some(node::Kind::Editor(editor)) = &mut self.kind {
+            editor.scroll_group = group.into();
+        }
+        self
+    }
+    /// Editor: scrolls to `line` each time `serial` (not 0) changes.
+    pub fn reveal(mut self, line: usize, serial: u32) -> Self {
+        if let Some(node::Kind::Editor(editor)) = &mut self.kind {
+            editor.reveal_line = line as u32;
+            editor.reveal_serial = serial;
+        }
+        self
+    }
+    /// Editor: lines that are only `U+200B` get no line number.
+    pub fn ghosts(mut self) -> Self {
+        if let Some(node::Kind::Editor(editor)) = &mut self.kind {
+            editor.ghosts = true;
+        }
+        self
+    }
+    /// Editor: buttons at the end of lines.
+    pub fn line_actions(mut self, actions: Vec<EditorAction>) -> Self {
+        if let Some(node::Kind::Editor(editor)) = &mut self.kind {
+            editor.actions = actions;
         }
         self
     }
@@ -813,6 +933,7 @@ pub fn viewer(language: impl Into<String>, text: impl Into<String>) -> Node {
         on_change: None,
         placeholder: String::new(),
         debounce_ms: 0,
+        ..Editor::default()
     }))
 }
 
@@ -827,6 +948,7 @@ pub fn editor(
         on_change: msg(on_change),
         placeholder: String::new(),
         debounce_ms: 0,
+        ..Editor::default()
     }))
 }
 

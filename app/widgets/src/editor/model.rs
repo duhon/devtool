@@ -41,6 +41,8 @@ pub struct Setup {
     /// A document: a fold gutter, room below the last line and viewport events.
     pub document: bool,
     pub readonly: bool,
+    /// Lines that are only `\u{200b}` stand for no line: the gutter skips them.
+    pub ghosts: bool,
 }
 
 /// What completion reads; the owner updates it as data arrives.

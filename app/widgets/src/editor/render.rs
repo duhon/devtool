@@ -351,7 +351,24 @@ pub(super) fn gutter(session: &mut Session, frame: &Frame) -> Html {
     let lines: Vec<usize> = (frame.first..frame.end)
         .map(|row| session.state().line_of_row(row))
         .collect();
+    let ghosts = session.setup().ghosts;
+    let is_ghost = |text: &str| text == "\u{200b}";
+    let mut number = match (ghosts, lines.first()) {
+        (true, Some(&first)) => session.state().lines()[..first]
+            .iter()
+            .filter(|text| !is_ghost(text))
+            .count(),
+        _ => 0,
+    };
     let rows = lines.into_iter().map(|line| {
+        let label = if !ghosts {
+            Some(line + 1)
+        } else if is_ghost(session.state().line(line)) {
+            None
+        } else {
+            number += 1;
+            Some(number)
+        };
         let key = session.state().anchor(line).map_or(line as u64, |anchor| anchor.key());
         let marker = if frame.document {
             session.fold_marker(line)
@@ -361,7 +378,7 @@ pub(super) fn gutter(session: &mut Session, frame: &Frame) -> Html {
         html! {
             <div key={key} class="editor-gutter-wrapper">
                 <div class="editor-linenumber editor-gutter-elt"
-                    style={format!("width:{}px", frame.numbers)}>{line + 1}</div>
+                    style={format!("width:{}px", frame.numbers)}>{label}</div>
                 if frame.document {
                     <div class="editor-gutter-elt editor-fold-gutter" data-line={line.to_string()}>
                         if let Some(folded) = marker {

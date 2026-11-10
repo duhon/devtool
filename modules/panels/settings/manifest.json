@@ -6,6 +6,6 @@
   "description": "Modules and their sources, App updates and the Agent's model. Built into the App.",
   "abi": 2,
   "app": ">=3.7",
-  "order": 7,
-  "toolbar": 8
+  "order": 8,
+  "toolbar": 9
 }

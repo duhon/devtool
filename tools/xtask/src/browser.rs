@@ -789,6 +789,13 @@ fn scenarios() -> Vec<Scenario> {
             script(include_str!("browser-sessions.js")),
         ),
         scenario(
+            "diff",
+            Core,
+            90,
+            "The Diff panel: two columns, aligned differences, modes, ignore whitespace, next/previous, taking a piece; a comparison another module opens runs until Done or Stop and survives hiding",
+            script(include_str!("browser-diff.js")),
+        ),
+        scenario(
             "console",
             Core,
             240,

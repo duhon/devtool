@@ -5,6 +5,9 @@
 use super::*;
 use services_sdk::{Cmd, Failure};
 
+const DIFF_PANEL: &str = "diff";
+const TEST_OPENER: &str = "test-driver";
+
 impl App {
     /// The Kernel told the console something: draw it, or answer what it asks.
     pub(super) fn kernel_event(&mut self, ctx: &Context<Self>, event: KernelEvent) -> bool {
@@ -102,6 +105,41 @@ impl App {
                 ctx.link().send_message(Msg::ReloadUpdate);
                 return;
             }
+            "diff.open" => {
+                let loaded = services_kernel::modules::registry::panels()
+                    .iter()
+                    .any(|panel| panel.id == DIFF_PANEL);
+                if !loaded {
+                    Err(Failure::new("The Diff panel is not installed"))
+                } else {
+                    if let Some((opener, tag)) = self.diff_opener.take() {
+                        let failure = Failure::new("Replaced by another comparison");
+                        self.diff_reply(&opener, &tag, Err(failure));
+                    }
+                    if self.side.as_deref() != Some(DIFF_PANEL) {
+                        self.close_side();
+                        self.side = Some(DIFF_PANEL.to_owned());
+                        remember_side(Some(DIFF_PANEL));
+                        self.kernel.modules(|modules| modules.show(DIFF_PANEL));
+                    }
+                    self.diff_opener = Some((module.to_owned(), cmd.tag.clone()));
+                    self.kernel.modules(|modules| {
+                        modules.tool_call(DIFF_PANEL, "open", "diff.open", &args)
+                    });
+                    return;
+                }
+            }
+            "diff.done" | "diff.cancel" if module == DIFF_PANEL => {
+                if let Some((opener, tag)) = self.diff_opener.take() {
+                    let result = if cmd.name == "diff.done" {
+                        Ok(json!({"text": args["text"]}))
+                    } else {
+                        Err(Failure::new("Cancelled"))
+                    };
+                    self.diff_reply(&opener, &tag, result);
+                }
+                return;
+            }
             "editor.relight" => {
                 crate::language::relight(module);
                 return;
@@ -123,6 +161,42 @@ impl App {
             ))),
         };
         self.kernel.reply(module, &cmd.tag, result);
+    }
+
+    /// The Diff panel's outcome for the module that opened it.
+    fn diff_reply(&mut self, opener: &str, tag: &str, result: Result<Value, Failure>) {
+        if opener != TEST_OPENER {
+            self.kernel.reply(opener, tag, result);
+            return;
+        }
+        let outcome = match result {
+            Ok(value) => json!({"ok": value}),
+            Err(failure) => json!({"error": failure.message}),
+        };
+        let _ = js_sys::Reflect::set(
+            &window(),
+            &"__testDiffReply".into(),
+            &outcome.to_string().into(),
+        );
+    }
+
+    /// The test driver acts as a module that opens the Diff panel; only a page with
+    /// `window.testDriver` can.
+    pub(super) fn test_diff_open(&mut self, ctx: &Context<Self>) {
+        let read = |name: &str| js_sys::Reflect::get(&window(), &name.into()).unwrap_or_default();
+        if read("testDriver").is_undefined() {
+            return;
+        }
+        let args: Value = read("__testDiffArgs")
+            .as_string()
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or_default();
+        let _ = js_sys::Reflect::set(
+            &window(),
+            &"__testDiffReply".into(),
+            &wasm_bindgen::JsValue::UNDEFINED,
+        );
+        self.kernel_command(ctx, TEST_OPENER, Cmd::new("diff", "diff.open", &args));
     }
 
     /// The console's document as `document.read` answers.

@@ -638,7 +638,7 @@ impl Core {
             }
             "document.read" | "workspace.list" | "workspace.restore" | "workspace.copy"
             | "workspace.delete" | "workspace.rename" | "workspace.retry" | "app.update"
-            | "app.reload" | "editor.relight" => {
+            | "app.reload" | "editor.relight" | "diff.open" | "diff.done" | "diff.cancel" => {
                 self.emit(Event::Command {
                     module: module.to_owned(),
                     cmd,
