@@ -369,11 +369,7 @@ impl App {
             })
             .collect();
         let active = self.side.as_deref() == Some(TRANSFER_PANEL);
-        let state = [Transfer::Export, Transfer::Import]
-            .into_iter()
-            .map(|kind| self.transfer_indicator(service, kind))
-            .find(|state| *state == services_widgets::indicator::Indicator::Error)
-            .unwrap_or_default();
+        let state = self.transfer_indicator(service);
         items.push((
             TRANSFER_POSITION,
             html! {
@@ -400,19 +396,19 @@ impl App {
             }
             Some(format) => {
                 let ready = services_kernel::modules::registry::loaded(service);
-                let button = |label: String, testid: &str, kind: Transfer, msg: Msg| {
+                let button = |label: String, testid: &str, msg: Msg| {
                     let msg = std::cell::Cell::new(Some(msg));
                     let onclick = ctx.link().batch_callback(move |_| msg.take());
                     html! {
                         <button type="button" class="ui-button" data-testid={testid.to_owned()} disabled={!ready} {onclick}>
-                            {label.clone()}{indicator(self.transfer_indicator(service, kind), format!("{label} status"))}
+                            {label}
                         </button>
                     }
                 };
                 html! {<>
                     <div class="ui-row">
-                        {button(format!("Export {format}"), "console-export", Transfer::Export, Msg::Export)}
-                        {button(format!("Import {format}"), "console-import", Transfer::Import, Msg::Import)}
+                        {button(format!("Export {format}"), "console-export", Msg::Export)}
+                        {button(format!("Import {format}"), "console-import", Msg::Import)}
                     </div>
                     if !ready {
                         <span class="ui-text is-muted">{format!("The {name} module is still loading.")}</span>

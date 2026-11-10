@@ -87,9 +87,8 @@ enum Transfer {
     Export,
 }
 /// The last Export or Import of a service, in the Transfer panel's status line; a failure also
-/// lights its button and the Transfer toggle.
+/// lights the Transfer toggle.
 struct TransferStatus {
-    transfer: Transfer,
     text: String,
     failed: bool,
 }
@@ -721,7 +720,7 @@ impl Component for App {
                         doc.push_str("#check\n");
                         doc.push_str(&block);
                         self.persist_console();
-                        self.transfer_done(service, Transfer::Import, "Imported".into());
+                        self.transfer_done(service, "Imported".into());
                     }
                     Err(e) => self.transfer_failed(service, Transfer::Import, e),
                 }
@@ -729,7 +728,7 @@ impl Component for App {
             Msg::ClipboardError(service, e) => self.transfer_failed(service, Transfer::Export, e),
             Msg::Copied(service, exported) => {
                 let text = if exported { "Exported and copied" } else { "Copied" };
-                self.transfer_done(service, Transfer::Export, text.into());
+                self.transfer_done(service, text.into());
             }
             Msg::Export => {
                 let doc = self
@@ -976,15 +975,13 @@ impl App {
             Transfer::Export => "Export",
         };
         let status = TransferStatus {
-            transfer,
             text: format!("{action} failed: {error}"),
             failed: true,
         };
         self.transfers.insert(service, status);
     }
-    fn transfer_done(&mut self, service: String, transfer: Transfer, text: String) {
+    fn transfer_done(&mut self, service: String, text: String) {
         let status = TransferStatus {
-            transfer,
             text,
             failed: false,
         };

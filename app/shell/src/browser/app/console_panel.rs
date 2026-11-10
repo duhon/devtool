@@ -573,15 +573,15 @@ impl App {
         })}
     }
     /// Import and Export stay red while their failure is in the banner.
+    /// The Transfer toggle's light: red while the service's last Export or Import failed.
     pub(super) fn transfer_indicator(
         &self,
         service: &str,
-        transfer: Transfer,
     ) -> services_widgets::indicator::Indicator {
         let failed = self
             .transfers
             .get(service)
-            .is_some_and(|status| status.failed && status.transfer == transfer);
+            .is_some_and(|status| status.failed);
         if failed {
             services_widgets::indicator::Indicator::Error
         } else {
