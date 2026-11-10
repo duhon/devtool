@@ -14,6 +14,8 @@ use services_contracts::{
 use services_sdk::{Cmd, Event, Module, cmd, time, ui};
 use std::collections::BTreeSet;
 
+use services_sdk::Failure;
+
 const MODULES: &str = "settings-tab-modules";
 const SOURCES: &str = "settings-tab-sources";
 const AGENT: &str = "settings-tab-agent";
@@ -24,6 +26,9 @@ const CHECK: &str = "check";
 const LIST: &str = "sources";
 const MODELS: &str = "models";
 const CHANGE: &str = "change";
+const SYNC: &str = "sync";
+const DIFF: &str = "diff";
+const RESOLVE: &str = "resolve";
 const OPEN: &str = "open";
 const UPDATE: &str = "update";
 const SAVE_OPTIONS: &str = "options";
@@ -57,6 +62,8 @@ pub enum Msg {
     /// Saves the entered token, or clears the saved one.
     Token(bool),
     Apply(String),
+    /// Syncs a shared source with Local, opening Diff for each conflict.
+    Sync(String),
     Model,
     Reasoning,
 }
@@ -121,11 +128,25 @@ pub struct Settings {
     warning: Option<String>,
     renaming: Option<(usize, String)>,
     removing: Option<usize>,
+    /// The conflicts of a sync still to resolve in Diff.
+    resolving: Option<Resolving>,
     draft: Option<Draft>,
     token: String,
     catalog: Option<Catalog>,
     options: Options,
     loading_models: bool,
+}
+
+/// A sync whose conflicts are settled one by one in Diff.
+struct Resolving {
+    slug: String,
+    name: String,
+    /// The conflicts not opened yet: `{file, left, right}`.
+    queue: Vec<Value>,
+    /// The file being compared.
+    file: String,
+    /// A source changed while its conflict was resolved.
+    stale: Vec<String>,
 }
 
 fn text(value: &Value, key: &str) -> String {
@@ -157,7 +178,11 @@ pub fn summary(check: &Value) -> (Vec<String>, Vec<String>) {
         let changed = source["changes"]
             .as_array()
             .is_some_and(|changes| !changes.is_empty());
-        if source["configs"] == true && (source["applied"] != true || changed) {
+        if source["skills"] == true && (source["applied"] != true || changed) {
+            updates.push(format!("skills of {name}"));
+        }
+        if ["source", "both", "conflict"].contains(&source["sync"]["state"].as_str().unwrap_or(""))
+        {
             updates.push(format!("settings of {name}"));
         }
     }
@@ -508,6 +533,141 @@ impl Settings {
         commands
     }
 
+    /// Checks the sources again without announcing it.
+    fn refresh(&mut self) -> Vec<Cmd> {
+        self.generation += 1;
+        self.checking = true;
+        self.forced = false;
+        vec![cmd::modules_check(
+            format!("{CHECK}:{}", self.generation),
+            true,
+        )]
+    }
+
+    /// The sync applied what it could: the conflicts go to Diff one by one.
+    fn synced(&mut self, result: Result<Value, Failure>) -> Vec<Cmd> {
+        self.busy = None;
+        let value = match result {
+            Ok(value) => value,
+            Err(failure) => {
+                self.resolving = None;
+                let (text, indicator) = outcome("Sync source", &Err(failure));
+                return vec![self.report(SOURCES, text, indicator)];
+            }
+        };
+        let conflicts = value["conflicts"].as_array().cloned().unwrap_or_default();
+        let errors: Vec<&str> = value["errors"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .collect();
+        if let Some(resolving) = &mut self.resolving {
+            resolving.queue = conflicts;
+            resolving.stale = errors.iter().map(|error| (*error).to_owned()).collect();
+        }
+        if self.resolving.as_ref().is_some_and(|r| !r.queue.is_empty()) {
+            return self.next_conflict();
+        }
+        self.sync_done()
+    }
+
+    /// Opens the next conflict in Diff, Local on the left and the source on the right.
+    fn next_conflict(&mut self) -> Vec<Cmd> {
+        let Some(resolving) = &mut self.resolving else {
+            return Vec::new();
+        };
+        let conflict = resolving.queue.remove(0);
+        resolving.file = text(&conflict, "file");
+        let language = if resolving.file.ends_with(".json") {
+            "json"
+        } else {
+            ""
+        };
+        let open = cmd::diff_open(
+            DIFF,
+            conflict["left"].as_str().unwrap_or_default(),
+            conflict["right"].as_str().unwrap_or_default(),
+            "Local",
+            &resolving.name,
+            language,
+        );
+        let status = format!("Sync source · Resolve {} in Diff", resolving.file);
+        vec![open, self.report(SOURCES, status, "busy")]
+    }
+
+    /// Diff answered: Done writes the settled text to both sides; Stop leaves the conflicts.
+    fn compared(&mut self, result: Result<Value, Failure>) -> Vec<Cmd> {
+        let Some(resolving) = &self.resolving else {
+            return Vec::new();
+        };
+        match result {
+            Ok(value) => {
+                let command = cmd::sources_resolve(
+                    RESOLVE,
+                    &resolving.slug,
+                    &resolving.file,
+                    value["text"].as_str().unwrap_or_default(),
+                );
+                self.busy = Some(("Sync source".into(), None));
+                vec![command]
+            }
+            Err(_) => {
+                let name = resolving.name.clone();
+                self.resolving = None;
+                let mut commands = vec![self.report(
+                    SOURCES,
+                    format!("Sync source · Stopped · conflicts with {name} stay"),
+                    "warning",
+                )];
+                commands.extend(self.refresh());
+                commands
+            }
+        }
+    }
+
+    fn resolved(&mut self, result: Result<Value, Failure>) -> Vec<Cmd> {
+        self.busy = None;
+        let Some(resolving) = &mut self.resolving else {
+            return Vec::new();
+        };
+        match result {
+            Ok(value) => {
+                if value["written"] == false {
+                    resolving.stale.push(format!(
+                        "{} changed in {} meanwhile; check and sync again",
+                        resolving.file, resolving.name
+                    ));
+                }
+            }
+            Err(failure) => resolving.stale.push(failure.message),
+        }
+        if resolving.queue.is_empty() {
+            self.sync_done()
+        } else {
+            self.next_conflict()
+        }
+    }
+
+    fn sync_done(&mut self) -> Vec<Cmd> {
+        let problems = self
+            .resolving
+            .take()
+            .map(|resolving| resolving.stale)
+            .unwrap_or_default();
+        let (text, indicator) = if problems.is_empty() {
+            ("Sync source · OK".to_owned(), "ok")
+        } else {
+            (
+                format!("Sync source · WARNING · {}", problems.join("; ")),
+                "warning",
+            )
+        };
+        let mut commands = vec![self.report(SOURCES, text, indicator)];
+        commands.extend(self.refresh());
+        commands
+    }
+
     fn current(&self) -> Option<&Model> {
         let catalog = self.catalog.as_ref()?;
         let id = self
@@ -719,6 +879,9 @@ impl Settings {
                 self.checked(result)
             }
             LIST | CHANGE => self.changed(result),
+            SYNC => self.synced(result),
+            DIFF => self.compared(result),
+            RESOLVE => self.resolved(result),
             OPEN => match result {
                 Ok(_) => Vec::new(),
                 Err(failure) => vec![self.report(
@@ -918,10 +1081,32 @@ impl Settings {
                 )
             }
             Msg::Apply(slug) => self.change(
-                "Apply source settings",
+                "Apply source skills",
                 cmd::sources_apply(CHANGE, &slug),
                 None,
             ),
+            Msg::Sync(slug) => {
+                if self.busy.is_some() {
+                    return Vec::new();
+                }
+                self.resolving = Some(Resolving {
+                    name: self
+                        .sources
+                        .iter()
+                        .find(|source| source["slug"] == slug.as_str())
+                        .map(|source| text(source, "name"))
+                        .unwrap_or_else(|| slug.clone()),
+                    slug: slug.clone(),
+                    queue: Vec::new(),
+                    file: String::new(),
+                    stale: Vec::new(),
+                });
+                self.busy = Some(("Sync source".into(), None));
+                vec![
+                    cmd::sources_sync(SYNC, &slug),
+                    self.running(SOURCES, "Sync source"),
+                ]
+            }
             Msg::Model => self.choose(Options {
                 model: Some(value),
                 reasoning_effort: None,
@@ -1180,7 +1365,7 @@ impl Settings {
     fn view_sources(&self) -> Vec<ui::Node> {
         let busy = self.busy.is_some();
         let mut body = vec![ui::heading("Sources"), ui::text(
-            "Modules and shared settings (dictionary, templates, hints, skills) come from these sources. Later sources override earlier ones; your own changes override them all.",
+            "Modules and skills come from these sources. Dictionary, Templates and Hints are kept in Local, saved as you edit, and synced with each shared source: sync copies changes both ways, and conflicts open in Diff.",
         )
         .variant("muted")];
         if let Some(warning) = &self.warning {
@@ -1190,6 +1375,16 @@ impl Settings {
                     .key("sources-warning"),
             );
         }
+        body.push(
+            ui::column(vec![
+                ui::text("Local").variant("bold").key("source-local-name"),
+                ui::text(
+                    "Your own Dictionary, Templates and Hints; it can't be removed or configured.",
+                )
+                .variant("muted"),
+            ])
+            .key("source-local"),
+        );
         let count = self.sources.len();
         for (index, source) in self.sources.iter().enumerate() {
             body.push(self.view_source(index, source, count, busy));
@@ -1324,7 +1519,7 @@ impl Settings {
         }
         let applied = &source["applied"];
         if applied.is_object() {
-            let mut text = format!("Settings applied {}", self.date(&applied["at"]));
+            let mut text = format!("Skills applied {}", self.date(&applied["at"]));
             if let Some(revision) = applied["revision"]
                 .as_str()
                 .filter(|revision| !revision.is_empty())
@@ -1365,26 +1560,62 @@ impl Settings {
         }
         let changes = checked["changes"].as_array().cloned().unwrap_or_default();
         let applied = checked["applied"] == true;
-        if checked["configs"] == true && (!applied || !changes.is_empty()) {
+        let sync = &checked["sync"];
+        let state = sync["state"].as_str().unwrap_or("same");
+        let name = text(checked, "name");
+        let (note, button) = match state {
+            "local" => (format!("Changes in Local not in {name} yet"), "Sync"),
+            "source" => (format!("Changes in {name} not in Local yet"), "Sync"),
+            "both" => (format!("Changes in Local and in {name}"), "Sync"),
+            "conflict" => (
+                format!("Conflicts between Local and {name}"),
+                "Resolve conflicts…",
+            ),
+            _ => (String::new(), ""),
+        };
+        if button.is_empty() {
+            lines.push(
+                ui::text("Local and this source are in sync")
+                    .variant("muted")
+                    .key(id("in-sync")),
+            );
+        } else {
+            let files: Vec<String> = sync["files"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|file| text(file, "file"))
+                .collect();
+            lines.push(
+                ui::row(vec![
+                    ui::text(format!("{note}: {}", files.join(", ")))
+                        .variant(if state == "conflict" {
+                            "danger"
+                        } else {
+                            "muted"
+                        })
+                        .key(id("sync-state")),
+                    ui::button(button, &Msg::Sync(slug.to_owned()))
+                        .variant("tab")
+                        .key(id("sync"))
+                        .disabled(busy),
+                ])
+                .key(id("sync-row")),
+            );
+        }
+        if checked["skills"] == true && (!applied || !changes.is_empty()) {
             let mut list = vec![ui::text(if applied {
-                "Settings changed:"
+                "Skills changed:"
             } else {
-                "Settings not applied yet:"
+                "Skills not applied yet:"
             })];
             for change in &changes {
-                let mut line = vec![ui::text(format!(
+                let line = vec![ui::text(format!(
                     "{} {} {}",
                     text(change, "kind"),
                     text(change, "key"),
                     text(change, "change")
                 ))];
-                if change["overridden"] == true {
-                    line.push(
-                        ui::text("local override")
-                            .variant("badge")
-                            .title("Your own change stays on top of this one"),
-                    );
-                }
                 list.push(ui::column(vec![ui::row(line)]).variant("indent"));
             }
             list.push(ui::row(vec![
@@ -1394,9 +1625,9 @@ impl Settings {
                     .disabled(busy),
             ]));
             lines.push(ui::column(list).key(id("changes")));
-        } else if checked["configs"] == true {
+        } else if checked["skills"] == true {
             lines.push(
-                ui::text("Settings up to date")
+                ui::text("Skills up to date")
                     .variant("muted")
                     .key(id("up-to-date")),
             );

@@ -746,6 +746,10 @@ impl Modules {
                 if READS.contains(&name) && !cmd.tag.is_empty() {
                     module.reads.insert(cmd.tag.clone());
                 }
+                // Diff hides the panel that opened it, which still gets the answer.
+                if name == "diff.open" && !cmd.tag.is_empty() {
+                    module.boot.insert(cmd.tag.clone());
+                }
                 // A turn streams until it ends; closing the panel cancels it.
                 if name == "agent.turn" {
                     if module.pending.contains_key(&cmd.tag) {

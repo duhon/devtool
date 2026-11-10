@@ -76,3 +76,44 @@ fn installing_the_app_row_updates_the_app() {
     });
     assert_eq!(cmds[0].name, "modules.install");
 }
+
+#[test]
+fn a_sync_opens_each_conflict_in_diff_and_resolves_it_on_done() {
+    let mut settings = Settings::default();
+    settings.update(Event::Init {
+        settings: json!({}),
+    });
+    settings.update(Event::Ui {
+        msg: Msg::Tab,
+        value: Some("settings-tab-sources".into()),
+    });
+    settings.update(Event::Reply {
+        tag: "sources".into(),
+        result: Ok(json!({"sources": [{"slug": "team", "name": "Team"}]})),
+    });
+    let cmds = settings.update(Event::Ui {
+        msg: Msg::Sync("team".into()),
+        value: None,
+    });
+    assert_eq!(cmds[0].name, "sources.sync");
+    let cmds = settings.update(Event::Reply {
+        tag: "sync".into(),
+        result: Ok(
+            json!({"conflicts": [{"file": "dictionary.json", "left": "{}", "right": "{\"a\":1}"}]}),
+        ),
+    });
+    assert_eq!(cmds[0].name, "diff.open");
+    assert_eq!(cmds[0].args()["left_title"], "Local");
+    assert_eq!(cmds[0].args()["right_title"], "Team");
+    let cmds = settings.update(Event::Reply {
+        tag: "diff".into(),
+        result: Ok(json!({"text": "{\"a\":1}"})),
+    });
+    assert_eq!(cmds[0].name, "sources.resolve");
+    assert_eq!(cmds[0].args()["file"], "dictionary.json");
+    let cmds = settings.update(Event::Reply {
+        tag: "resolve".into(),
+        result: Ok(json!({"written": true})),
+    });
+    assert!(names(&cmds).contains(&"modules.check"));
+}
