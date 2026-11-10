@@ -579,10 +579,9 @@ impl App {
         transfer: Transfer,
     ) -> services_widgets::indicator::Indicator {
         let failed = self
-            .notice
-            .as_ref()
-            .and_then(|notice| notice.source.as_ref())
-            == Some(&(service.to_owned(), transfer));
+            .transfers
+            .get(service)
+            .is_some_and(|status| status.failed && status.transfer == transfer);
         if failed {
             services_widgets::indicator::Indicator::Error
         } else {

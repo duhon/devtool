@@ -72,24 +72,26 @@ impl ModuleStatus {
         self.owner.check_line(editor)
     }
 }
-/// A failure with no status of its own. It stays in the top banner, and lights the
-/// toolbar action that caused it, until the user dismisses it.
+/// A failure with no status of its own. It stays in the top banner until the user dismisses it.
 struct Notice {
     text: String,
-    source: Option<(String, Transfer)>,
 }
 impl Notice {
     fn new(text: impl Into<String>) -> Self {
-        Self {
-            text: text.into(),
-            source: None,
-        }
+        Self { text: text.into() }
     }
 }
 #[derive(Clone, Copy, PartialEq)]
 enum Transfer {
     Import,
     Export,
+}
+/// The last Export or Import of a service, in the Transfer panel's status line; a failure also
+/// lights its button and the Transfer toggle.
+struct TransferStatus {
+    transfer: Transfer,
+    text: String,
+    failed: bool,
 }
 struct AgentEdit {
     command: services_kernel::agent::CheckEdit,
@@ -145,6 +147,8 @@ pub enum Msg {
     Import,
     Imported(String, Result<String, String>),
     ClipboardError(String, String),
+    /// The command was copied; `true` right after Export.
+    Copied(String, bool),
     Export,
     Stop,
     Visibility(bool),
@@ -206,6 +210,7 @@ pub struct App {
     editors: RefCell<BTreeMap<String, Handle>>,
     export_editor: RefCell<Option<Handle>>,
     export_text: Option<String>,
+    transfers: BTreeMap<String, TransferStatus>,
     /// Sessions still being cleared of removed modules.
     forgetting: usize,
 }
@@ -278,6 +283,7 @@ impl Component for App {
             editors: RefCell::default(),
             export_editor: RefCell::default(),
             export_text: None,
+            transfers: BTreeMap::new(),
             forgetting: 0,
         };
         if migrated_console
@@ -708,18 +714,23 @@ impl Component for App {
             Msg::Imported(service, result) => {
                 match result.and_then(|command| services_kernel::requests::import(&service, &command)) {
                     Ok(block) => {
-                        let doc = self.docs.entry(service).or_default();
+                        let doc = self.docs.entry(service.clone()).or_default();
                         if !doc.trim().is_empty() {
                             doc.push_str("\n\n");
                         }
                         doc.push_str("#check\n");
                         doc.push_str(&block);
                         self.persist_console();
+                        self.transfer_done(service, Transfer::Import, "Imported".into());
                     }
                     Err(e) => self.transfer_failed(service, Transfer::Import, e),
                 }
             }
             Msg::ClipboardError(service, e) => self.transfer_failed(service, Transfer::Export, e),
+            Msg::Copied(service, exported) => {
+                let text = if exported { "Exported and copied" } else { "Copied" };
+                self.transfer_done(service, Transfer::Export, text.into());
+            }
             Msg::Export => {
                 let doc = self
                     .docs
@@ -739,7 +750,7 @@ impl Component for App {
                 {
                     Ok(command) => {
                         self.export_text = Some(command.clone());
-                        self.copy_export(ctx, command);
+                        self.copy_export(ctx, command, true);
                     }
                     Err(e) => {
                         let service = self.console_service.clone();
@@ -771,7 +782,7 @@ impl Component for App {
             Msg::ClearNotice => self.notice = None,
             Msg::CopyExport => {
                 if let Some(command) = self.export_text.clone() {
-                    self.copy_export(ctx, command);
+                    self.copy_export(ctx, command, false);
                 }
             }
             Msg::Kernel(event) => return self.kernel_event(ctx, event),
@@ -917,7 +928,7 @@ impl App {
         reasons
     }
     /// Copies the exported command; without the clipboard API, through a hidden text field.
-    fn copy_export(&self, ctx: &Context<Self>, command: String) {
+    fn copy_export(&self, ctx: &Context<Self>, command: String, exported: bool) {
         let link = ctx.link().clone();
         let service = self.console_service.clone();
         wasm_bindgen_futures::spawn_local(async move {
@@ -953,8 +964,10 @@ impl App {
                 })();
                 if let Err(e) = fallback {
                     link.send_message(Msg::ClipboardError(service, e));
+                    return;
                 }
             }
+            link.send_message(Msg::Copied(service, exported));
         });
     }
     fn transfer_failed(&mut self, service: String, transfer: Transfer, error: String) {
@@ -962,10 +975,20 @@ impl App {
             Transfer::Import => "Import",
             Transfer::Export => "Export",
         };
-        self.notice = Some(Notice {
+        let status = TransferStatus {
+            transfer,
             text: format!("{action} failed: {error}"),
-            source: Some((service, transfer)),
-        });
+            failed: true,
+        };
+        self.transfers.insert(service, status);
+    }
+    fn transfer_done(&mut self, service: String, transfer: Transfer, text: String) {
+        let status = TransferStatus {
+            transfer,
+            text,
+            failed: false,
+        };
+        self.transfers.insert(service, status);
     }
     pub(super) fn session_error(&mut self, operation: &str, error: String) {
         self.notice = Some(Notice::new(format!("{operation} · ERROR · {error}")));

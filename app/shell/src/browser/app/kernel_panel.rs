@@ -311,9 +311,23 @@ impl App {
 
     /// The status line of the panel module in the side panel (`status.set`).
     pub(super) fn view_side_status(&self, ctx: &Context<Self>) -> Html {
-        let Some(id) = self.side.as_ref().filter(|id| *id != TRANSFER_PANEL) else {
+        let Some(id) = self.side.as_ref() else {
             return Html::default();
         };
+        if id == TRANSFER_PANEL {
+            let status = self.transfers.get(&self.console_service);
+            let state = status.map(|status| {
+                if status.failed {
+                    services_widgets::indicator::Indicator::Error
+                } else {
+                    services_widgets::indicator::Indicator::Ready
+                }
+            });
+            return html! {
+                <ConsoleStatus testid="console-transfer-status" text={status.map(|status| status.text.clone()).unwrap_or_default()}
+                    debug={serde_json::Value::Null} running={false} started={None::<f64>} {state}/>
+            };
+        }
         let (status, debug) = services_kernel::activity::panel(id);
         // A module that can be stopped says what Stop sends it.
         let mut stop_disabled = false;

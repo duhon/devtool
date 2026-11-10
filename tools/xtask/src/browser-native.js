@@ -572,16 +572,17 @@
   await wait(() => editorOf('console-editor', doc).getValue().includes('POST https://fixture.invalid/import'));
   assert(editorOf('console-editor', doc).getValue().includes('X-Fixture: imported'), 'Import headers');
   assert(win.nativeProbe.clipboardReads === 1, 'Import reads synthetic clipboard exactly once');
+  const transferStatus = () => testid('console-transfer-status', doc).textContent;
+  await wait(() => transferStatus().includes('Imported'), 'Import must say so in the Transfer status');
   win.nativeProbe.clipboard = { text: 'not a command' };
   await click(button(/^Import/, doc));
   const notice = () => doc.querySelector('[data-testid="app-notice"]');
-  const importLight = () => testid('console-import', doc).querySelector('.indicator-light').dataset.state;
-  await wait(() => notice()?.textContent.includes('Import failed:'), 'Invalid clipboard command must show parser error');
-  assert(!notice().textContent.includes('Grant clipboard access'), 'Explicit parser error');
-  assert(importLight() === 'error', 'A failed Import must light its button');
-  await holds(() => notice() && importLight() === 'error', 'Only Dismiss may acknowledge a banner error', 100);
-  await click(button('Dismiss', doc));
-  await wait(() => !notice() && importLight() === 'ready', 'Dismiss must clear the banner and the Import light');
+  const light = id => testid(id, doc).querySelector('.indicator-light').dataset.state;
+  const importLight = () => light('console-import');
+  await wait(() => transferStatus().includes('Import failed:'), 'Invalid clipboard command must show parser error in the Transfer status');
+  assert(!transferStatus().includes('Grant clipboard access'), 'Explicit parser error');
+  assert(!notice(), 'Transfer errors stay out of the top banner');
+  assert(importLight() === 'error' && light('console-transfer-toggle') === 'error', 'A failed Import must light its button and Transfer');
   await click(testid('console-service-grpc', doc));
   assert(testid('console-export', doc).textContent.startsWith('Export grpcurl'), 'gRPC exports grpcurl');
   win.nativeProbe.clipboard = { text: "grpcurl -plaintext -d '{\"fixture\":\"ok\"}' grpc.fixture.invalid:9000 fixture.Echo/Call" };
@@ -589,10 +590,14 @@
   await wait(() => editorOf('console-editor', doc).getValue().includes('fixture.Echo/Call'));
   win.nativeProbe.clipboard = { error: 'Fixture clipboard reader failed' };
   await click(button(/^Import/, doc));
-  await wait(() => notice()?.textContent.includes('Fixture clipboard reader failed') && importLight() === 'error',
+  await wait(() => transferStatus().includes('Fixture clipboard reader failed') && importLight() === 'error',
     'Native clipboard reader error must be visible and light Import');
   await click(testid('console-service-rest', doc));
-  assert(importLight() === 'ready', 'Only the service whose Import failed lights its Import button');
+  assert(!transferStatus().includes('Fixture clipboard reader failed'), 'Each service keeps its own Transfer status');
+  win.nativeProbe.clipboard = { text: "curl -X POST https://fixture.invalid/import -H 'X-Fixture: imported'" };
+  await click(button(/^Import/, doc));
+  await wait(() => transferStatus().includes('Imported') && !transferStatus().includes('failed'), 'A successful Import replaces the failure');
+  assert(importLight() === 'ready' && light('console-transfer-toggle') === 'ready', 'A successful Import clears the lights');
   // Export shows the command in the panel, to edit and copy again.
   await click(testid('console-export', doc));
   await wait(() => win.testDriver.editorAt('transfer-export', doc)?.getValue().includes('https://fixture.invalid/import'),
