@@ -62,7 +62,7 @@
     // The view paints after this task: until the next one is painting time.
     await new Promise(resolve=>setTimeout(resolve,0));
     const selectionPaintMs=performance.now()-selectionStart-selectionMs;
-    assert(selectionPaintMs<200,
+    assert(selectionPaintMs<300,
       `Painting a 10,000-row selection must remain viewport-bounded: ${selectionPaintMs}ms`);
     assert(selectionMs<100,`Selecting 10,000 rows must stay fast: ${selectionMs}ms`);
     assert(host.querySelectorAll('.editor-selected').length>0

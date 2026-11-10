@@ -293,7 +293,7 @@
   await testDriver.sessionsIdle();
   await activateSession(a);
   await open('hints');
-  assert(editorOf('console-hints').getValue().includes('other-window.invalid'),'Explicitly switching back must load the saved winner');
+  await wait(()=>editorOf('console-hints').getValue().includes('other-window.invalid'),'Explicitly switching back must load the saved winner');
   await activateSession(b);
   await click(testid('console-service-terminal'));
   setSource(editorOf('console-editor'),"#check session-busy\n#target\nsh -c\n#payload\nprintf session-running; sleep 30");
