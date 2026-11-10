@@ -1,5 +1,5 @@
 (async () => {
-  const { assert, wait, during, holds, settle, visible, find, testid, editorOf, key, type, move, click, button,
+  const { assert, wait, seen, during, holds, settle, visible, find, testid, editorOf, key, type, move, click, button,
     openConsole, setSource, commitRestUrl, candidates, pick } = testDriver;
   await wait(() => document.querySelector('[data-testid="native-status"]')?.hidden,
     'Installed companion must connect');
@@ -582,7 +582,7 @@
   await wait(() => transferStatus().includes('Import failed:'), 'Invalid clipboard command must show parser error in the Transfer status');
   assert(!transferStatus().includes('Grant clipboard access'), 'Explicit parser error');
   assert(!notice(), 'Transfer errors stay out of the top banner');
-  assert(importLight() === 'error', 'A failed Import must light Transfer');
+  assert(importLight() === 'ready', 'An outcome on screen does not light Transfer');
   assert(!doc.querySelector('.transfer-panel .indicator-light'), 'Buttons inside the Transfer panel have no lights');
   await click(testid('console-service-grpc', doc));
   assert(testid('console-export', doc).textContent.startsWith('Export grpcurl'), 'gRPC exports grpcurl');
@@ -591,8 +591,16 @@
   await wait(() => editorOf('console-editor', doc).getValue().includes('fixture.Echo/Call'));
   win.nativeProbe.clipboard = { error: 'Fixture clipboard reader failed' };
   await click(button(/^Import/, doc));
-  await wait(() => transferStatus().includes('Fixture clipboard reader failed') && importLight() === 'error',
-    'Native clipboard reader error must be visible and light Import');
+  await wait(() => transferStatus().includes('Fixture clipboard reader failed') && importLight() === 'ready',
+    'Native clipboard reader error must be visible in the Transfer status');
+  const transferToggle = testid('console-transfer-toggle', doc);
+  await click(transferToggle);
+  assert(importLight() === 'error', 'An error closed before it counts as seen lights Transfer');
+  await click(transferToggle);
+  await seen();
+  await click(transferToggle);
+  assert(importLight() === 'ready', 'An error seen in the open panel stays out');
+  await click(transferToggle);
   await click(testid('console-service-rest', doc));
   assert(!transferStatus().includes('Fixture clipboard reader failed'), 'Each service keeps its own Transfer status');
   win.nativeProbe.clipboard = { text: "curl -X POST https://fixture.invalid/import -H 'X-Fixture: imported'" };

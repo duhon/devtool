@@ -687,7 +687,7 @@ impl App {
                 </div>
             <div class="console-session-name" data-testid="console-session-name" data-session-id={self.sessions.borrow().library.current.to_string()} data-storage-busy={self.sessions.borrow().saving().to_string()} data-busy={(!busy.is_empty()).to_string()} data-busy-reason={busy.join(", ")} title={self.sessions.borrow().library.name().to_owned()}>{self.sessions.borrow().library.name()}</div>
             <nav class="console-toolbar" aria-label="Console tools">
-                {self.view_toolbar(ctx,service)}
+                {self.view_toolbar(ctx)}
             </nav>
             </div>
         </div>}

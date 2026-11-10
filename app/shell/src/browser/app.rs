@@ -181,6 +181,8 @@ pub struct App {
     update_reply: Option<(String, String)>,
     /// Re-renders once a status on screen has stayed long enough to count as seen.
     seen: SeenTimer,
+    /// When each panel's toolbar light was seen, by [`kernel_panel::panel_signal_key`].
+    panel_signals: BTreeMap<String, services_widgets::indicator::Signal>,
     console_service: String,
     console_order: Vec<String>,
     kernel: Kernel,
@@ -257,6 +259,7 @@ impl Component for App {
             updates: updates::State::default(),
             update_reply: None,
             seen: SeenTimer::default(),
+            panel_signals: BTreeMap::new(),
             console_service,
             console_order,
             kernel,
@@ -851,7 +854,8 @@ impl App {
     /// Counts on-screen time of every visible status and returns the wait until the nearest
     /// one counts as seen.
     fn observe_statuses(&mut self) -> Option<f64> {
-        self.observe_console_status()
+        let console = self.observe_console_status();
+        services_widgets::indicator::sooner(console, self.observe_panels())
     }
     /// Follows a changed module list: new services get their saved document, the tab order drops missing ones, a missing current service falls back.
     fn sync_services(&mut self) {
@@ -978,13 +982,21 @@ impl App {
             text: format!("{action} failed: {error}"),
             failed: true,
         };
-        self.transfers.insert(service, status);
+        self.transfer_settled(service, status);
     }
     fn transfer_done(&mut self, service: String, text: String) {
         let status = TransferStatus {
             text,
             failed: false,
         };
+        self.transfer_settled(service, status);
+    }
+    /// A new outcome is unseen, even when it repeats the last one.
+    fn transfer_settled(&mut self, service: String, status: TransferStatus) {
+        self.panel_signals.remove(&kernel_panel::panel_signal_key(
+            kernel_panel::TRANSFER_PANEL,
+            &service,
+        ));
         self.transfers.insert(service, status);
     }
     pub(super) fn session_error(&mut self, operation: &str, error: String) {

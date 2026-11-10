@@ -606,16 +606,17 @@
     const originalVars = variables().getValue();
     assertSignalGeometry();
     variables().setValue(`${originalVars}\nCONSOLE_PANEL_FIXTURE: saved`);
-    await wait(() => toolStatus().textContent.includes('Variables save · OK') && toolLight('variables') === 'success',
-      'A save must report its result on the panel status and toolbar signal');
+    await wait(() => toolStatus().textContent.includes('Variables save · OK') && toolLight('variables') === 'ready',
+      'A visible save result must be acknowledged without clearing its status');
     variables().setValue('missing delimiter');
     await wait(() => toolStatus().textContent.includes('ERROR')
-      && toolStatus().textContent.includes('NAME: value') && toolLight('variables') === 'error');
+      && toolStatus().textContent.includes('NAME: value') && toolLight('variables') === 'ready');
+    await seen();
     const varsError = toolStatus().textContent;
     const varsMainStatus = mainStatusText();
     await closePanel('variables');
     assert(mainStatusText() === varsMainStatus, 'Variables validation must not overwrite the main check status');
-    assert(toolLight('variables') === 'error', 'A closed panel keeps its error signal');
+    assert(toolLight('variables') === 'ready', 'Closing Variables must not relight an already viewed failure');
     await openPanel('variables');
     await wait(() => variables()?.getValue() === 'missing delimiter');
     assert(toolStatus().textContent === varsError, 'Reopening Variables must retain its own validation error');
@@ -631,7 +632,7 @@
     await wait(() => variables()?.getValue().includes('CONSOLE_PANEL_FIXTURE: shared'),
       'Reopening Variables must show the saved variables');
     variables().setValue(originalVars);
-    await wait(() => toolStatus().textContent.includes('Variables save · OK') && toolLight('variables') === 'success');
+    await wait(() => toolStatus().textContent.includes('Variables save · OK') && toolLight('variables') === 'ready');
     await openPanel('dictionary');
     assertStatusBounds();
     assert(panelTabs().every(el => !['var', 'env (read-only)'].includes(el.textContent))
@@ -648,12 +649,13 @@
       'Reopening Dictionary must show the saved set');
     const invalidDictionary = `${originalDictionary}\nmissing delimiter`;
     dictionary().setValue(invalidDictionary);
-    await wait(() => toolStatus().textContent.includes('ERROR') && toolLight('dictionary') === 'error');
+    // Left before it counts as seen, the error stays lit.
+    await wait(() => toolStatus().textContent.includes('ERROR') && toolLight('dictionary') === 'ready');
     await openPanel('variables');
     await click(testid('variables-tab-var'));
     await wait(() => variables()?.getValue() === originalVars, 'Dictionary edits and drafts must not alter var');
-    assert(toolLight('dictionary') === 'error' && toolLight('variables') === 'success',
-      'A hidden Dictionary error must remain visible without contaminating the Variables signal');
+    assert(toolLight('dictionary') === 'error' && toolLight('variables') === 'ready',
+      'An unseen Dictionary error must stay lit without contaminating the Variables signal');
     await openPanel('dictionary');
     await wait(() => dictionary()?.getValue() === invalidDictionary && toolStatus().textContent.includes('ERROR'),
       'Reopening Dictionary must keep its draft and status');

@@ -358,7 +358,7 @@ impl App {
 
     /// The toolbar: a button for each panel module and the App's own Transfer, in one list by
     /// their `toolbar` position (a panel without one by its `order`).
-    pub(super) fn view_toolbar(&self, ctx: &Context<Self>, service: &str) -> Html {
+    pub(super) fn view_toolbar(&self, ctx: &Context<Self>) -> Html {
         let mut items: Vec<(u32, Html)> = services_kernel::modules::registry::panels()
             .into_iter()
             .map(|panel| {
@@ -369,7 +369,7 @@ impl App {
             })
             .collect();
         let active = self.side.as_deref() == Some(TRANSFER_PANEL);
-        let state = self.transfer_indicator(service);
+        let state = self.panel_light(TRANSFER_PANEL);
         items.push((
             TRANSFER_POSITION,
             html! {
@@ -434,20 +434,60 @@ impl App {
         }
     }
 
-    fn view_panel_toggle(&self, ctx: &Context<Self>, panel: &services_sdk::Manifest) -> Html {
-        let active = self.side.as_deref() == Some(panel.id.as_str());
+    /// The state of a panel's toolbar light, before it counts as seen.
+    fn panel_state(&self, id: &str) -> services_widgets::indicator::Indicator {
+        if id == TRANSFER_PANEL {
+            return self.transfer_indicator(&self.console_service);
+        }
         let store = self.sessions.borrow();
         // The App saves the session: the Sessions panel's light shows it even closed.
-        let state = if panel.id == SESSIONS_PANEL && store.saving() {
+        if id == SESSIONS_PANEL && store.saving() {
             services_widgets::indicator::Indicator::Running
-        } else if panel.id == SESSIONS_PANEL && store.save_error().is_some() {
+        } else if id == SESSIONS_PANEL && store.save_error().is_some() {
             services_widgets::indicator::Indicator::Error
         } else {
-            services_kernel::modules::registry::status(&panel.id)
+            services_kernel::modules::registry::status(id)
                 .map(|status| services_widgets::view::indicator_state(&status.indicator))
                 .unwrap_or_default()
-        };
-        drop(store);
+        }
+    }
+
+    /// The light of a panel's toolbar button: an outcome goes out once it has stayed on screen
+    /// with the panel open ([`Signal`](services_widgets::indicator::Signal)).
+    fn panel_light(&self, id: &str) -> services_widgets::indicator::Indicator {
+        let visible = !self.hidden && self.side.as_deref() == Some(id);
+        self.panel_signals
+            .get(&panel_signal_key(id, &self.console_service))
+            .copied()
+            .unwrap_or_default()
+            .indicator(self.panel_state(id), visible)
+    }
+
+    /// Counts the on-screen time of the open panel's outcome; the others start over when shown.
+    pub(super) fn observe_panels(&mut self) -> Option<f64> {
+        let now = js_sys::Date::now();
+        let open = self.side.clone().filter(|_| !self.hidden);
+        let state = open.as_deref().map(|id| self.panel_state(id));
+        let open = open.map(|id| panel_signal_key(&id, &self.console_service));
+        let mut wait = None;
+        for (key, signal) in &mut self.panel_signals {
+            if Some(key) != open.as_ref() {
+                signal.hide();
+            }
+        }
+        if let (Some(key), Some(state)) = (open, state) {
+            wait = self
+                .panel_signals
+                .entry(key)
+                .or_default()
+                .observe(state, now);
+        }
+        wait
+    }
+
+    fn view_panel_toggle(&self, ctx: &Context<Self>, panel: &services_sdk::Manifest) -> Html {
+        let active = self.side.as_deref() == Some(panel.id.as_str());
+        let state = self.panel_light(&panel.id);
         let id = panel.id.clone();
         html! {
             <button key={panel.id.clone()} class={classes!("console-hints-toggle", active.then_some("active"))}
@@ -472,6 +512,15 @@ impl App {
             }));
             self.kernel.apply(effects);
         }
+    }
+}
+
+/// Transfer outcomes are per service, so is their light.
+pub(super) fn panel_signal_key(id: &str, service: &str) -> String {
+    if id == TRANSFER_PANEL {
+        format!("{id}:{service}")
+    } else {
+        id.to_owned()
     }
 }
 
