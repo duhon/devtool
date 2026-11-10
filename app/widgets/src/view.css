@@ -38,7 +38,10 @@
   border-color: var(--accent);
 }
 
-.module-panel { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; min-width: 0; background: var(--bg-editor); }
+.module-panel { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; min-width: 0; }
+
+/* The panel's title row stays on the Shell background, level with the service tabs; only its content takes the editor background. */
+.module-panel > .ui-panel > :is(.ui-panel-body, .ui-panel-footer) { background: var(--bg-editor); }
 
 .ui-panel { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; gap: 4px; }
 
@@ -298,7 +301,7 @@ span.editor-diff-removed-text { background: var(--diff-removed-text); }
 
 .ui-panel.is-padded .ui-tab-body { padding-top: 0; }
 
-.ui-panel.is-editor { background: var(--bg-editor); }
+.ui-panel.is-editor > :is(.ui-panel-body, .ui-panel-footer) { background: var(--bg-editor); }
 
 /* Text areas: a composer that grows by hand. */
 textarea.ui-input { resize: vertical; min-height: 56px; max-height: 30vh; }
