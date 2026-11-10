@@ -213,6 +213,12 @@ impl Module for Graphql {
         highlight::folds(&check.text)
     }
 
+    fn marks(&self, check: &Check) -> Vec<Line> {
+        self.discovery
+            .schema(check)
+            .map_or_else(Vec::new, |schema| highlight::marks(schema, &check.text))
+    }
+
     fn export(&self, check: &Check) -> Result<String, String> {
         let parts = parts(check)?;
         let mut headers = parts.headers;

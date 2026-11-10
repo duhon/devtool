@@ -220,6 +220,8 @@ struct Parser<'a> {
     fragments: Vec<Fragment>,
     fragment: Option<String>,
     operation: bool,
+    /// Byte ranges of the names of fields whose type has fields.
+    objects: Vec<(usize, usize)>,
 }
 fn items(value: &Value) -> &[Value] {
     value.as_array().map(Vec::as_slice).unwrap_or(&[])
@@ -310,6 +312,7 @@ impl<'a> Parser<'a> {
             fragments: vec![],
             fragment: None,
             operation: false,
+            objects: vec![],
         }
     }
     fn end(&self) -> bool {
@@ -650,6 +653,10 @@ impl<'a> Parser<'a> {
             let args = field.map(|f| items(&f["args"])).unwrap_or(&[]);
             let ty = field.and_then(field_type);
             let object = field.is_some_and(|f| is_object(f, ty.as_ref(), self.schema));
+            if object {
+                let token = &self.tokens[self.i - 1];
+                self.objects.push((token.start, token.end));
+            }
             let has_arguments = self.take("(");
             if has_arguments {
                 self.members(args, ")", true, depth)?;
@@ -867,6 +874,17 @@ fn fragment_variables(source: &str, schema: &Value) -> Vec<Variable> {
         });
     }
     common
+}
+
+/// Byte ranges of the field names in `source` whose type, by `schema`, has fields; parsing
+/// stops at the first error.
+pub fn object_fields(source: &str, schema: &Value) -> Vec<(usize, usize)> {
+    let Some(tokens) = lex_prefix(source, true) else {
+        return vec![];
+    };
+    let mut parser = Parser::new(tokens, schema);
+    let _ = parser.document();
+    parser.objects
 }
 
 pub fn operation_complete(source: &str, schema: &Value) -> bool {

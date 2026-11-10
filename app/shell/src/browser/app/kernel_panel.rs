@@ -98,6 +98,10 @@ impl App {
                 ctx.link().send_message(Msg::ReloadUpdate);
                 return;
             }
+            "editor.relight" => {
+                crate::language::relight(module);
+                return;
+            }
             "agent.approve" => {
                 if self
                     .agent_run

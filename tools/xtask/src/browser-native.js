@@ -444,6 +444,11 @@
   await wait(() => candidates().includes('sku') && candidates().includes('images'),
     'Real native introspection must restore nested GraphQL field completion');
   await key('Escape');
+  setSource(discoveryEditor, `#check protected-schema\n#endpoint\n${discoveryEndpoint}\n#headers\nX-Token: {{second:TOKEN}}\n#query\n{\n  products\n  sku\n}`);
+  const kindOf = (line, name) => discoveryEditor.getLineTokens(line).find(token => token.string === name)?.type || '';
+  await wait(() => kindOf(7, 'products').includes('graphql-object-field'),
+    'The discovered schema must mark object fields before their selection set is written');
+  assert(!kindOf(8, 'sku').includes('graphql-object-field'), 'A scalar field must stay a plain field');
   const materializationQuery = 'query ($skus: [String]) { products(skus: $skus) { sku images { url } } }';
   const materializationVariables = '{"skus":["{{var:sku}}"]}';
   await click(testid('console-service-graphql'));

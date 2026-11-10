@@ -2100,9 +2100,128 @@ fn fragment_definitions_spreads_and_type_conditions_have_distinct_styles() {
     for name in ["Price", "SimpleProductView"] {
         assert!(t.contains(&(name.into(), Some("graphql-type-condition"))));
     }
-    for name in ["amount", "products", "price"] {
-        assert!(t.contains(&(name.into(), Some("property"))));
+    assert!(t.contains(&("amount".into(), Some("property"))));
+    for name in ["products", "price"] {
+        assert!(t.contains(&(name.into(), Some("graphql-object-field"))));
     }
+}
+
+#[test]
+fn fields_followed_by_their_selection_set_are_object_fields() {
+    let t = tokens(
+        "query Games($n: Int) { games(first: $n, f: {q: \")\"}) @include(if: true) { id links { id } a: collections @skip(if: false) { name } title } }",
+        &mut State::default(),
+    );
+    for name in ["games", "links", "collections"] {
+        assert!(
+            t.contains(&(name.into(), Some("graphql-object-field"))),
+            "{name}"
+        );
+    }
+    for name in ["id", "name", "title"] {
+        assert!(t.contains(&(name.into(), Some("property"))), "{name}");
+    }
+    assert!(t.contains(&("Games".into(), Some("property"))));
+    assert!(t.contains(&("a".into(), Some("attribute"))));
+    // The selection set on another line is the schema's to tell.
+    let mut state = State::default();
+    tokens("{", &mut state);
+    assert!(tokens("  games", &mut state).contains(&("games".into(), Some("property"))));
+    assert!(
+        tokens("{ games(first: (", &mut State::default())
+            .contains(&("games".into(), Some("property")))
+    );
+}
+
+/// The marked names of each line of a check.
+fn marked(text: &str, schema: &Value) -> Vec<(usize, String)> {
+    let lines: Vec<&str> = text.split('\n').collect();
+    let marks = highlight::marks(schema, text);
+    assert_eq!(marks.len(), lines.len());
+    marks
+        .iter()
+        .enumerate()
+        .flat_map(|(line, marks)| {
+            let lines = &lines;
+            marks.tokens.iter().map(move |token| {
+                assert_eq!(token.kind, "graphql-object-field");
+                let start = token.start as usize;
+                (
+                    line,
+                    lines[line][start..start + token.len as usize].to_owned(),
+                )
+            })
+        })
+        .collect()
+}
+
+fn names(marked: Vec<(usize, String)>) -> Vec<String> {
+    marked.into_iter().map(|(_, name)| name).collect()
+}
+
+#[test]
+fn marks_follow_schema_wrappers_aliases_and_fragments() {
+    let mut schema = fragment_schema();
+    schema["types"]["Query"]["fields"][0]["type"] = required(list(required(named("Product"))));
+    schema["types"]["Product"]["fields"][2]["type"] = list(required(named("Image")));
+    let source = "query ($images: Int) { p: products(skus: [\"images\"]) { sku i: images(limit: $images) { url } thumbnail { url } __typename } }";
+    assert_eq!(
+        names(marked(source, &schema)),
+        ["products", "images", "thumbnail"]
+    );
+    let source = "fragment ProductFields on Product { sku images { url } }\nquery { products { ...ProductFields ... on SimpleProductView { price { amount } } } }";
+    assert_eq!(
+        marked(source, &schema),
+        [
+            (0, "images".into()),
+            (1, "products".into()),
+            (1, "price".into())
+        ]
+    );
+    schema["types"]["Query"]["fields"]
+        .as_array_mut()
+        .unwrap()
+        .extend([
+            json!({"name":"tags","type":list(named("String"))}),
+            json!({"name":"states","type":list(named("State"))}),
+            json!({"name":"quantity","type":"TierCondition"}),
+        ]);
+    schema["types"]["State"] = json!({"kind":"ENUM","enumValues":["OPEN"]});
+    assert_eq!(
+        names(marked("{ tags states quantity { __typename } }", &schema)),
+        ["quantity"]
+    );
+    assert!(names(marked(source, &Value::Null)).is_empty());
+}
+
+#[test]
+fn marks_survive_incomplete_queries_and_need_no_selection_set() {
+    let schema = product_schema();
+    for source in [
+        "{ products(skus: [\"unfinished",
+        "{ products(skus: [\"escape\\",
+        "{ products # comment at EOF",
+        "{ products(skus: [\"\"\"unfinished\nblock",
+        "{\n  products\n",
+    ] {
+        assert_eq!(names(marked(source, &schema)), ["products"], "{source}");
+    }
+    let source = "{ products(skus: [\"🦀\"]) { sku alias: images";
+    assert_eq!(names(marked(source, &schema)), ["products", "images"]);
+}
+
+#[test]
+fn marks_skip_variables_headers_and_responses() {
+    let source = "#variables\n{\"images\":{},\"products\":{}}\n#query\nfragment Fields on Product { images { url } }\nquery { products { sku ...Fields } }\n#headers\nimages: products\n#responce\n{ products { images } }";
+    assert_eq!(
+        marked(source, &product_schema()),
+        [(3, "images".into()), (4, "products".into())]
+    );
+    let prelude = "{ products { # comment\n images\n} }\n#endpoint\nhttp://x";
+    assert_eq!(
+        marked(prelude, &product_schema()),
+        [(0, "products".into()), (1, "images".into())]
+    );
 }
 
 #[test]

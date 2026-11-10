@@ -492,7 +492,7 @@ pub struct AfterResponse {
 pub struct Request {
     #[prost(
         oneof = "request::Kind",
-        tags = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12"
+        tags = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13"
     )]
     pub kind: Option<request::Kind>,
 }
@@ -526,6 +526,8 @@ pub mod request {
         AfterResponse(AfterResponse),
         #[prost(message, tag = "12")]
         Resolve(ResolveRequest),
+        #[prost(message, tag = "13")]
+        Marks(Check),
     }
 }
 

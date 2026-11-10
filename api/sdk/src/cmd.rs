@@ -22,6 +22,7 @@ pub const NAMES: &[&str] = &[
     "clipboard.write",
     "sources.read",
     "editor.contribute",
+    "editor.relight",
     "document.read",
     "document.insert",
     "document.replace",
@@ -340,6 +341,11 @@ pub fn app_update(tag: impl Into<String>, source: &str, version: &str) -> Cmd {
         "app.update",
         &json!({"source": source, "version": version}),
     )
+}
+
+/// Asks the editors of the module's service for its highlighting and marks again.
+pub fn relight() -> Cmd {
+    Cmd::new("", "editor.relight", &json!({}))
 }
 
 /// Reloads the App after an installed update.

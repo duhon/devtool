@@ -858,6 +858,7 @@ impl Modules {
             request::Kind::Highlight(_) => "highlight",
             request::Kind::Complete(_) => "complete",
             request::Kind::Fold(_) => "fold",
+            request::Kind::Marks(_) => "marks",
             request::Kind::Build(_) => "build",
             request::Kind::Render(_) => "render",
             request::Kind::Export(_) => "export",
@@ -967,6 +968,13 @@ impl Modules {
         match self.sync(id, request::Kind::Fold(check))? {
             answer::Kind::Folds(folds) => Ok(folds.folds),
             _ => Err(unexpected("fold")),
+        }
+    }
+
+    pub fn marks(&mut self, id: &str, check: Check) -> Result<Vec<Line>, String> {
+        match self.sync(id, request::Kind::Marks(check))? {
+            answer::Kind::Highlighted(highlighted) => Ok(highlighted.lines),
+            _ => Err(unexpected("marks")),
         }
     }
 

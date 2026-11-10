@@ -159,6 +159,14 @@ pub trait Module: Default + 'static {
         let _ = check;
         Vec::new()
     }
+    /// Tokens of a check's lines (one [`Line`] per line, from its first; its `state` is
+    /// unused) laid over [`Module::highlight`]'s where they cover it: what the line alone
+    /// can't tell, e.g. by a discovered schema. After that knowledge changes,
+    /// [`cmd::relight`] asks for them again.
+    fn marks(&self, check: &Check) -> Vec<Line> {
+        let _ = check;
+        Vec::new()
+    }
 
     /// The driver call a check runs.
     fn build(&self, check: &Check) -> Result<DriverCall, String> {
@@ -277,6 +285,9 @@ fn handle<T: Module>(state: &RefCell<Option<T>>, request: &[u8]) -> Result<answe
         ),
         request::Kind::Fold(check) => answer::Kind::Folds(wire::Folds {
             folds: module.fold(&check),
+        }),
+        request::Kind::Marks(check) => answer::Kind::Highlighted(wire::Highlighted {
+            lines: module.marks(&check),
         }),
         request::Kind::Build(check) => answer::Kind::Call(module.build(&check)?),
         request::Kind::Render(chunk) => answer::Kind::Rendered(module.render(&chunk)?),

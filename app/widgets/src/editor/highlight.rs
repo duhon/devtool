@@ -190,7 +190,7 @@ impl Highlighter {
 
     fn line(&self, lines: &[String], index: usize, state: &mut LineState) -> Vec<Span> {
         let text = lines[index].as_str();
-        if let Some((tokens, next)) = self.extension.highlight(&state.extension, index, text) {
+        if let Some((tokens, next)) = self.extension.highlight(&state.extension, lines, index) {
             state.extension = next.into();
             let tokens: Vec<(usize, Style)> = tokens
                 .into_iter()

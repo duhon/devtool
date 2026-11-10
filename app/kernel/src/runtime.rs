@@ -101,7 +101,7 @@ pub enum Event {
     /// What the modules add to the editors changed.
     Contributed,
     /// A module command the Shell serves: `document.read`, `workspace.*`, `app.update`,
-    /// `app.reload`, `agent.approve`. The Shell answers with [`Kernel::reply`].
+    /// `app.reload`, `editor.relight`, `agent.approve`. The Shell answers with [`Kernel::reply`].
     Command { module: String, cmd: Cmd },
     /// A console tool call of the Agent turn `turn`; the Shell answers with
     /// [`Kernel::agent_result`].
@@ -637,7 +637,8 @@ impl Core {
                 return Vec::new();
             }
             "document.read" | "workspace.list" | "workspace.restore" | "workspace.copy"
-            | "workspace.delete" | "workspace.retry" | "app.update" | "app.reload" => {
+            | "workspace.delete" | "workspace.retry" | "app.update" | "app.reload"
+            | "editor.relight" => {
                 self.emit(Event::Command {
                     module: module.to_owned(),
                     cmd,

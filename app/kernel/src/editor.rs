@@ -10,7 +10,7 @@ pub use completion::{kernel_check, saved_hints};
 
 use crate::document::{self, Position, ResponseRegion, is_check};
 use serde_json::Value;
-use services_sdk::{Check, ColumnType, Completions, Fold, Line, LineColumns};
+use services_sdk::{Check, ColumnType, Completions, Fold, Line, LineColumns, Token};
 use std::collections::BTreeMap;
 
 /// Lines past this many UTF-16 units stay unstyled.
@@ -32,6 +32,8 @@ pub trait Services {
     ) -> Option<Vec<Line>>;
     /// The module's folds of one check.
     fn fold(&self, service: &str, check: Check) -> Vec<Fold>;
+    /// The module's marks of one check: tokens laid over its highlighting, per line.
+    fn marks(&self, service: &str, check: Check) -> Vec<Line>;
     /// The module's completion of one check at UTF-8 offset `pos`.
     fn complete(&self, service: &str, check: Check, pos: u32) -> Option<Completions>;
 }
@@ -69,7 +71,8 @@ pub fn section_state(services: &dyn Services, service: &str, section: Option<&st
 }
 
 /// One line of a service document from `state`: `#check` and template `@` lines are the
-/// console's, the rest the module's. `region` is the response the line is in.
+/// console's, the rest the module's, with the module's `marks` of the line laid over.
+/// `region` is the response the line is in.
 pub fn highlight(
     services: &dyn Services,
     service: &str,
@@ -77,6 +80,7 @@ pub fn highlight(
     region: Option<&ResponseRegion>,
     (index, text): (usize, &str),
     state: &[u8],
+    marks: &[Token],
 ) -> Highlighted {
     // The response's header line carries the column types its module reported.
     let columns = region
@@ -108,7 +112,7 @@ pub fn highlight(
     };
     let mut tokens = Vec::with_capacity(line.tokens.len() * 2);
     let mut at = 0;
-    for token in line.tokens {
+    for token in overlay(line.tokens, marks) {
         let start = (token.start as usize).max(at);
         let end = (token.start as usize + token.len as usize).min(text.len());
         if start >= end || !text.is_char_boundary(start) || !text.is_char_boundary(end) {
@@ -124,6 +128,35 @@ pub fn highlight(
         tokens.push((text.len(), None));
     }
     (tokens, line.state)
+}
+
+/// `tokens` with `marks` laid over them: a token keeps its kind outside the marks.
+fn overlay(tokens: Vec<Token>, marks: &[Token]) -> Vec<Token> {
+    if marks.is_empty() {
+        return tokens;
+    }
+    let mut out = marks.to_vec();
+    for token in tokens {
+        let mut pieces = vec![(token.start, token.start + token.len)];
+        for mark in marks {
+            let (from, to) = (mark.start, mark.start + mark.len);
+            pieces = pieces
+                .into_iter()
+                .flat_map(|(start, end)| {
+                    [(start, end.min(from)), (start.max(to), end)]
+                        .into_iter()
+                        .filter(|(start, end)| start < end)
+                })
+                .collect();
+        }
+        out.extend(pieces.into_iter().map(|(start, end)| Token {
+            start,
+            len: end - start,
+            kind: token.kind.clone(),
+        }));
+    }
+    out.sort_by_key(|token| token.start);
+    out
 }
 
 fn column_types(columns: &[(String, String)]) -> Vec<ColumnType> {
@@ -181,15 +214,14 @@ pub fn fold(
     None
 }
 
-/// The module's folds of the check `line` is in, as `(start, end)` document lines, and that
-/// check's line; `None` above the first check.
-pub fn module_folds(
-    services: &dyn Services,
+/// The check `line` is in: its `#check` line, the line after its last and what its module
+/// reads; `None` above the first check.
+fn module_check(
     service: &str,
     lines: &[String],
     line: usize,
     regions: &[ResponseRegion],
-) -> Option<(usize, Vec<(usize, usize)>)> {
+) -> Option<(usize, usize, Check)> {
     let check = (0..line).rev().find(|&at| is_check(&lines[at]))?;
     let end = (check + 1..lines.len())
         .find(|&at| is_check(&lines[at]))
@@ -202,6 +234,19 @@ pub fn module_folds(
         .collect();
     let mut module_check = document::check(service, &text, &Value::Null);
     module_check.columns = column_types(&columns);
+    Some((check, end, module_check))
+}
+
+/// The module's folds of the check `line` is in, as `(start, end)` document lines, and that
+/// check's line; `None` above the first check.
+pub fn module_folds(
+    services: &dyn Services,
+    service: &str,
+    lines: &[String],
+    line: usize,
+    regions: &[ResponseRegion],
+) -> Option<(usize, Vec<(usize, usize)>)> {
+    let (check, _, module_check) = module_check(service, lines, line, regions)?;
     let folds = services
         .fold(service, module_check)
         .into_iter()
@@ -213,6 +258,20 @@ pub fn module_folds(
         })
         .collect();
     Some((check, folds))
+}
+
+/// The module's marks of the check `line` is in: its `#check` line, the line after its
+/// last, and the marks of its lines from the one after `#check`; `None` above the first
+/// check.
+pub fn module_marks(
+    services: &dyn Services,
+    service: &str,
+    lines: &[String],
+    line: usize,
+    regions: &[ResponseRegion],
+) -> Option<(usize, usize, Vec<Line>)> {
+    let (check, end, module_check) = module_check(service, lines, line, regions)?;
+    Some((check, end, services.marks(service, module_check)))
 }
 
 /// A module fold starting at `line` among `folds`: from after the first bracket of `line`
@@ -334,4 +393,37 @@ pub fn fuzzy_match(candidate: &str, query: &str) -> bool {
         .chars()
         .flat_map(char::to_lowercase)
         .all(|q| chars.by_ref().any(|c| c == q))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn token(start: u32, len: u32, kind: &str) -> Token {
+        Token {
+            start,
+            len,
+            kind: kind.into(),
+        }
+    }
+
+    #[test]
+    fn marks_replace_the_kind_only_where_they_cover() {
+        let tokens = vec![token(0, 5, "keyword"), token(6, 10, "property")];
+        let marks = [token(6, 5, "graphql-object-field"), token(13, 1, "x")];
+        let kinds: Vec<_> = overlay(tokens, &marks)
+            .into_iter()
+            .map(|t| (t.start, t.len, t.kind))
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                (0, 5, "keyword".into()),
+                (6, 5, "graphql-object-field".into()),
+                (11, 2, "property".into()),
+                (13, 1, "x".into()),
+                (14, 2, "property".into()),
+            ]
+        );
+    }
 }

@@ -265,6 +265,7 @@ impl Discovery {
                         "info",
                         &format!("GraphQL schema of {}: {types} types", connection.url),
                     ),
+                    cmd::relight(),
                 ];
                 self.schemas.retain(|(known, _)| *known != connection);
                 self.schemas.push((connection, schema));

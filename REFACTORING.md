@@ -360,8 +360,8 @@ Kernel — маршрутизатор между редактором/Agent, м�
 и `Transport`), тесты — через подделку (`kernel/tests/runs.rs`). Shell только
 передаёт события виджетов в Kernel и показывает его состояние: раскладка, редакторы,
 вставка ответа, строка статуса и индикаторы из `RunView`; команды, которым нужен
-документ или workspace Shell (`document.read`, `workspace.*`, `app.update`,
-`app.reload`, `agent.approve`) и инструменты консоли Agent, Kernel передаёт Shell
+документ, редакторы или workspace Shell (`document.read`, `workspace.*`, `app.update`,
+`app.reload`, `editor.relight`, `agent.approve`) и инструменты консоли Agent, Kernel передаёт Shell
 событиями, Shell отвечает `reply`/`agent_result`.
 
 Исключение из правила «CSS рядом с владельцем через `include_str!`» (решено 08.11):
@@ -453,7 +453,8 @@ Kernel не знает ни одной панели: даёт точки рас�
   `vars.resolve` (`mode: "json"` — значения экранируются как содержимое JSON-строки);
   `history.insert`, `history.search` (хранилище — Host); `os.env` (окружение из Host),
   `clipboard.read`/`write` (App); `sources.read` (сырые документы источников по порядку);
-  `editor.contribute`; `document.read`/`insert`/`replace`/`select`/`run`;
+  `editor.contribute`, `editor.relight` (подсветить редакторы сервиса заново);
+  `document.read`/`insert`/`replace`/`select`/`run`;
   `workspace.list`/`restore`/`copy`/`delete`; `page.eval`, `page.network`; `agent.turn`
   (стрим событий Copilot), `agent.stop`, `agent.reply` (ответ на `ToolCall`; ответы
   остановленному ходу не доставляются), `agent.approve`, `agent.sessions`, `agent.models`,
@@ -519,6 +520,7 @@ Kernel вызывает модуль напрямую и сразу получа
 | Редактор (оба вида) | `highlight(state, lines) -> tokens, state` | ввод, прокрутка |
 | | `complete(check, pos) -> items` | подсказки |
 | | `fold(check) -> ranges` | свёртки |
+| | `marks(check) -> tokens по строкам` | поверх `highlight`: то, что одна строка не знает (GraphQL — поля-объекты по схеме discovery); после новой схемы модуль шлёт `editor.relight` |
 | Сервис | `build(check) -> driver call` | Run |
 | | `render(chunk) -> response text, metadata` | ответ или кусок стрима (`stream: true` — по куску) |
 | | `export(check) -> text`, `import(text) -> check` | Export (чек с подставленными переменными, секреты тоже), Import |

@@ -1,6 +1,7 @@
 //! Highlighting and folds of a GraphQL check: the query (also before the first marker) as
 //! GraphQL, `#variables` and JSON responses as JSON, the endpoint as an address.
 
+use serde_json::Value;
 use services_sdk::lang::{endpoint, headers, json, marker, placeholder};
 use services_sdk::{Fold, Line, Token};
 
@@ -149,6 +150,8 @@ const KEYWORDS: [&str; 16] = [
     "repeatable",
 ];
 
+const OBJECT_FIELD: &str = "graphql-object-field";
+
 fn token(start: usize, end: usize, kind: &str) -> Token {
     Token {
         start: start as u32,
@@ -175,9 +178,45 @@ fn quoted(text: &str, pos: usize) -> usize {
     text.len()
 }
 
+/// Whether a selection set opens at `pos` of `line`, after the field's arguments and
+/// directives.
+fn opens_selection(line: &str, mut pos: usize) -> bool {
+    loop {
+        let rest = line[pos..].trim_start_matches(|c: char| c.is_whitespace() || c == ',');
+        pos = line.len() - rest.len();
+        if rest.starts_with('@') {
+            pos = word(line, pos + 1);
+        } else if rest.starts_with('(') {
+            let mut depth = 0;
+            let mut at = pos;
+            loop {
+                match line[at..].chars().next() {
+                    None | Some('#') => return false,
+                    Some('"') => {
+                        at = quoted(line, at);
+                        continue;
+                    }
+                    Some('(') => depth += 1,
+                    Some(')') => {
+                        depth -= 1;
+                        if depth == 0 {
+                            pos = at + 1;
+                            break;
+                        }
+                    }
+                    Some(_) => {}
+                }
+                at += line[at..].chars().next().map_or(1, char::len_utf8);
+            }
+        } else {
+            return rest.starts_with('{');
+        }
+    }
+}
+
 /// Tokens of a GraphQL line: keywords, names (`property`, arguments and object keys
-/// `attribute`), `$variables`, `@directives`, strings, numbers, fragment names and type
-/// conditions.
+/// `attribute`, fields followed by their selection set `graphql-object-field`),
+/// `$variables`, `@directives`, strings, numbers, fragment names and type conditions.
 pub fn tokens(line: &str, state: &mut State) -> Vec<Token> {
     let mut out = Vec::new();
     let mut pos = 0;
@@ -286,6 +325,8 @@ pub fn tokens(line: &str, state: &mut State) -> Vec<Token> {
                     "atom"
                 } else if line[end..].trim_start().starts_with(':') {
                     "attribute"
+                } else if state.depth > 0 && opens_selection(line, end) {
+                    OBJECT_FIELD
                 } else {
                     "property"
                 }
@@ -350,6 +391,48 @@ pub fn highlight(state: &[u8], lines: &[String]) -> Vec<Line> {
             Line { tokens, state }
         })
         .collect()
+}
+
+/// The fields of a check's queries whose type, by `schema`, has fields — also before their
+/// selection set is written: one line of tokens per line of `text`.
+pub fn marks(schema: &Value, text: &str) -> Vec<Line> {
+    let lines: Vec<&str> = text.split('\n').collect();
+    let mut out: Vec<Line> = lines.iter().map(|_| Line::default()).collect();
+    let mut area = Area::Prelude;
+    let mut region: Vec<usize> = Vec::new();
+    let flush = |region: &mut Vec<usize>, out: &mut Vec<Line>| {
+        let Some(&first) = region.first() else {
+            return;
+        };
+        let source = lines[first..=region[region.len() - 1]].join("\n");
+        let mut starts = vec![0];
+        starts.extend(
+            source
+                .bytes()
+                .enumerate()
+                .filter_map(|(i, c)| (c == b'\n').then_some(i + 1)),
+        );
+        for (start, end) in crate::language::object_fields(&source, schema) {
+            let line = starts.partition_point(|at| *at <= start) - 1;
+            let at = starts[line];
+            out[first + line]
+                .tokens
+                .push(token(start - at, end - at, OBJECT_FIELD));
+        }
+        region.clear();
+    };
+    for (i, line) in lines.iter().enumerate() {
+        let (next, is_marker) = area.next(line);
+        if is_marker || next != area {
+            flush(&mut region, &mut out);
+        }
+        if next.graphql() && !is_marker {
+            region.push(i);
+        }
+        area = next;
+    }
+    flush(&mut region, &mut out);
+    out
 }
 
 /// Folds of a GraphQL region from its first line `first`: each line's first `{` or `[` to

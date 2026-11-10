@@ -139,8 +139,8 @@ pub trait Extension {
         Vec::new()
     }
 
-    /// The tokens of line `line` from `state`; `None` leaves it to the editor's mode.
-    fn highlight(&self, _state: &[u8], _line: usize, _text: &str) -> Option<Tokens> {
+    /// The tokens of `lines[line]` from `state`; `None` leaves it to the editor's mode.
+    fn highlight(&self, _state: &[u8], _lines: &[String], _line: usize) -> Option<Tokens> {
         None
     }
 

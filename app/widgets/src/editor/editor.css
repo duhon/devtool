@@ -42,6 +42,10 @@
   color: var(--token-type-condition);
 }
 
+.theme-dracula span.tok-graphql-object-field {
+  color: var(--editor-field);
+}
+
 .theme-dracula span.tok-rest-path-param {
   color: var(--token-path-param);
 }

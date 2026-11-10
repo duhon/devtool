@@ -7,7 +7,7 @@ use services_kernel::document::{
 };
 use services_kernel::editor::{self as language, Services};
 use services_kernel::modules::registry as kernel;
-use services_sdk::{Check, Completions, Fold as ModuleFold, Line, LineColumns};
+use services_sdk::{Check, Completions, Fold as ModuleFold, Line, LineColumns, Token};
 use services_widgets::editor::extension::{
     self, Candidate, Completion, Extension, Languages, Payload, Refresh, Tokens, Viewport,
 };
@@ -44,6 +44,10 @@ impl Services for Modules {
         kernel::with(|modules| modules.fold(service, check)).unwrap_or_default()
     }
 
+    fn marks(&self, service: &str, check: Check) -> Vec<Line> {
+        kernel::with(|modules| modules.marks(service, check)).unwrap_or_default()
+    }
+
     fn complete(&self, service: &str, check: Check, pos: u32) -> Option<Completions> {
         kernel::with(|modules| modules.complete(service, check, pos)).ok()
     }
@@ -69,6 +73,9 @@ struct State {
     inserting: Option<(Previous, Vec<usize>)>,
     /// The module folds of the check at a line, until the text changes.
     module_folds: Option<(usize, Folds)>,
+    /// The module marks of a check, its `#check` line and the line after its last, until
+    /// the text changes.
+    module_marks: Option<(usize, usize, Rc<[Line]>)>,
 }
 
 /// Folded line ranges, start and end.
@@ -153,6 +160,33 @@ impl Language {
     /// The service whose module highlights the editor.
     pub fn module(&self) -> Option<&str> {
         self.module.as_deref()
+    }
+
+    /// The module's marks of `lines[line]`, asked once per check until the text changes.
+    fn marks(&self, service: &str, lines: &[String], line: usize) -> Vec<Token> {
+        let mut state = self.state.borrow_mut();
+        let cached = |state: &State| {
+            state
+                .module_marks
+                .as_ref()
+                .filter(|(check, end, _)| *check < line && line < *end)
+                .map(|(check, _, marks)| {
+                    marks
+                        .get(line - check - 1)
+                        .map(|marks| marks.tokens.clone())
+                        .unwrap_or_default()
+                })
+        };
+        if let Some(marks) = cached(&state) {
+            return marks;
+        }
+        let Some((check, end, marks)) =
+            language::module_marks(&Modules, service, lines, line, &state.regions)
+        else {
+            return Vec::new();
+        };
+        state.module_marks = Some((check, end, marks.into()));
+        cached(&state).unwrap_or_default()
     }
 
     pub fn regions(&self) -> Vec<ResponseRegion> {
@@ -310,7 +344,9 @@ impl Extension for Language {
     }
 
     fn invalidate(&self) {
-        self.state.borrow_mut().module_folds = None;
+        let mut state = self.state.borrow_mut();
+        state.module_folds = None;
+        state.module_marks = None;
     }
 
     fn copy(&self, from: Position, to: Position) {
@@ -431,8 +467,10 @@ impl Extension for Language {
         })
     }
 
-    fn highlight(&self, state: &[u8], line: usize, text: &str) -> Option<Tokens> {
+    fn highlight(&self, state: &[u8], lines: &[String], line: usize) -> Option<Tokens> {
         let service = self.module.as_deref()?;
+        let text = lines[line].as_str();
+        let marks = self.marks(service, lines, line);
         let document = self.state.borrow();
         let index = document
             .sorted
@@ -448,6 +486,7 @@ impl Extension for Language {
             region,
             (line, text),
             state,
+            &marks,
         ))
     }
 
