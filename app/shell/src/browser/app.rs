@@ -125,6 +125,8 @@ pub enum Msg {
     SessionSelect(u64),
     SessionCopy(u64, String),
     SessionDelete(u64),
+    SessionRename(u64, String),
+    SessionRenamed(Result<(), String>),
     SessionFinished(Result<u64, String>),
     Drag(String),
     Drop(String),
@@ -510,6 +512,16 @@ impl Component for App {
                     });
                 }
             }
+            Msg::SessionRename(id, name) => {
+                let sessions = self.sessions.clone();
+                let link = ctx.link().clone();
+                spawn_local(async move {
+                    link.send_message(Msg::SessionRenamed(
+                        services_kernel::workspace::store::Store::rename(&sessions, id, name).await,
+                    ));
+                });
+            }
+            Msg::SessionRenamed(result) => self.session_result(result),
             Msg::SessionFinished(result) => {
                 self.session_loading = false;
                 self.session_result(result.as_ref().map(|_| ()).map_err(Clone::clone));
@@ -1022,7 +1034,7 @@ impl App {
             .library
             .sessions
             .iter()
-            .map(|session| json!({"id": session.id, "name": session.name}))
+            .map(|session| json!({"id": session.id, "name": session.name, "used": session.used}))
             .collect();
         json!({
             "current": store.library.current,

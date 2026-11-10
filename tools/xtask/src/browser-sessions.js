@@ -13,13 +13,7 @@
     await open('sessions');
     await testDriver.sessionsIdle();
   };
-  const copy=async(id,name)=>{
-    await sessionPanel();
-    testDriver.fill(testid('session-new-name'),name);
-    await click(testid(`session-copy-${id}`));
-    await wait(()=>testid('console-session-name').textContent===name);
-    return current();
-  };
+  const copy=(id,name)=>testDriver.createSession(id,name);
   const vars=async text=>{
     await open('variables');
     editorOf('console-variables').setValue(text);
@@ -95,9 +89,13 @@
   assert(editorOf('console-variables').getValue()==='','Temporary var must not inherit native legacy variables');
   await open('hints');
   assert(editorOf('console-hints').getValue()==='','Temporary hints must start empty');
-  const a=await copy(0,'Session A');
-  assert(editorOf('console-editor').getValue()==='','Creating from 0 must ignore temporary working checks');
   assert(!JSON.stringify(await library()).includes('temp-only'),'Temporary contents must never be saved on disk');
+  const a=await copy(0,'Session A');
+  assert(editorOf('console-editor').getValue().includes('temp-only'),'Creating from 0 must keep the temporary working checks');
+  await sessionPanel();
+  assert(testid('session-used-0').textContent==='Immutable','The temporary session has no last-used date');
+  assert(testid(`session-name-${a}`).tagName==='INPUT'&&testid('session-name-0').tagName!=='INPUT',
+    'Only the current named session is renamed in place');
   for(const service of ['mysql','rest','graphql','grpc','splunk','terminal']) {
     await click(testid(`console-service-${service}`));
     setSource(editorOf('console-editor'),service==='rest'
@@ -153,10 +151,14 @@
   assert((await library()).sessions.find(s=>s.id===largeCopy).snapshot.console.documents.mysql===largeDocument,
     'The copied large session must also persist');
   await sessionPanel();
+  window.confirm=()=>false;
   await click(testid(`session-delete-${largeCopy}`));
+  delete window.confirm;
+  assert(current()===largeCopy&&document.querySelector(`[data-testid="session-${largeCopy}"]`),'Declining the question must keep the session');
+  await testDriver.deleteSession(largeCopy);
   await wait(()=>current()===0);
   await sessionPanel();
-  await click(testid(`session-delete-${large}`));
+  await testDriver.deleteSession(large);
   await wait(()=>!document.querySelector(`[data-testid="session-${large}"]`));
   await activateSession(a);
   await vars('missing delimiter');
@@ -282,7 +284,7 @@
   await key('Shift+Enter');
   await wait(()=>testid('console-main-status').classList.contains('is-running'));
   await open('sessions');
-  await click(testid(`session-switch-${a}`));
+  await click(testid(`session-${a}`));
   await wait(()=>testid('console-sessions-status').textContent.includes('ERROR'));
   assert(current()===b,'Switching must be rejected while any service request is running');
   assert(testid('console-main-status').classList.contains('is-running'),'Rejected switching must not cancel work implicitly');
@@ -290,9 +292,9 @@
   await testDriver.sessionsIdle();
   await activateSession(a);
   await sessionPanel();
-  await click(testid(`session-delete-${b}`));
+  await testDriver.deleteSession(b);
   await wait(()=>!document.querySelector(`[data-testid="session-${b}"]`));
-  await click(testid(`session-delete-${a}`));
+  await testDriver.deleteSession(a);
   await wait(()=>current()===0);
   assert(editorOf('console-editor').getValue().includes('temp-only'),'Returning to 0 must preserve this window’s unsaved temporary work');
   await sessionPanel();

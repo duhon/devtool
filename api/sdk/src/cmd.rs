@@ -32,6 +32,7 @@ pub const NAMES: &[&str] = &[
     "workspace.restore",
     "workspace.copy",
     "workspace.delete",
+    "workspace.rename",
     "workspace.retry",
     "page.eval",
     "page.network",
@@ -186,6 +187,11 @@ pub fn workspace_copy(tag: impl Into<String>, source: u64, name: &str) -> Cmd {
 /// Deletes saved workspace `id`; deleting the current one makes the temporary one current.
 pub fn workspace_delete(tag: impl Into<String>, id: u64) -> Cmd {
     Cmd::new(tag, "workspace.delete", &json!({"id": id}))
+}
+
+/// Renames saved workspace `id`; the temporary one keeps its name.
+pub fn workspace_rename(tag: impl Into<String>, id: u64, name: &str) -> Cmd {
+    Cmd::new(tag, "workspace.rename", &json!({"id": id, "name": name}))
 }
 
 /// Retries what the App could not do at startup, such as importing the original workspace,

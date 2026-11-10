@@ -637,8 +637,8 @@ impl Core {
                 return Vec::new();
             }
             "document.read" | "workspace.list" | "workspace.restore" | "workspace.copy"
-            | "workspace.delete" | "workspace.retry" | "app.update" | "app.reload"
-            | "editor.relight" => {
+            | "workspace.delete" | "workspace.rename" | "workspace.retry" | "app.update"
+            | "app.reload" | "editor.relight" => {
                 self.emit(Event::Command {
                     module: module.to_owned(),
                     cmd,

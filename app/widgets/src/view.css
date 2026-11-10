@@ -312,6 +312,17 @@ textarea.ui-input { resize: vertical; min-height: 56px; max-height: 30vh; }
 
 .ui-table tr.is-current { background: var(--bg-raised); }
 
+.ui-table tr.is-clickable { cursor: pointer; }
+
+.ui-table tr.is-clickable:not(.is-active):hover { background: var(--bg-hover); }
+
+/* A field that reads as text until it is pointed at or edited. */
+.ui-input.is-inline { border-color: transparent; background: transparent; padding: 1px 4px; cursor: text; }
+
+.ui-input.is-inline:hover { border-color: var(--border); }
+
+.ui-input.is-inline:focus { background: var(--bg-sunken); }
+
 .ui-table tr.is-muted td > .ui-text { color: var(--fg-muted); }
 
 .ui-table tr.ui-table-detail > td { padding-bottom: 6px; border-top: 0; color: var(--fg-quote); }

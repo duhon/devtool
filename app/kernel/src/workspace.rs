@@ -46,6 +46,18 @@ pub struct Session {
     pub id: u64,
     pub name: String,
     pub snapshot: Snapshot,
+    /// When the session's changes were last saved, in milliseconds since the epoch.
+    #[serde(default)]
+    pub used: u64,
+}
+/// Milliseconds since the epoch.
+pub fn now() -> u64 {
+    #[cfg(target_arch = "wasm32")]
+    return js_sys::Date::now() as u64;
+    #[cfg(not(target_arch = "wasm32"))]
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_millis() as u64)
 }
 /// Drops everything the snapshot keeps for `service`: its console with checks and
 /// responses, its tab position and its hints. Used when a module is removed with its data.
@@ -222,11 +234,7 @@ impl Library {
         if name.is_empty() {
             return Err("Session name cannot be empty".into());
         }
-        let mut snapshot = if source == 0 {
-            Snapshot::default()
-        } else {
-            self.get(source).ok_or("Session no longer exists")?.clone()
-        };
+        let mut snapshot = self.get(source).ok_or("Session no longer exists")?.clone();
         if let Some(console) = snapshot.console.as_object_mut() {
             console.remove("checkIdentities");
             console.remove("workspaceId");
@@ -237,8 +245,31 @@ impl Library {
             id,
             name: name.into(),
             snapshot,
+            used: now(),
         });
         Ok(id)
+    }
+    pub fn rename(&mut self, id: u64, name: &str) -> Result<(), String> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err("Session name cannot be empty".into());
+        }
+        if id == 0 {
+            return Err("The temporary session cannot be renamed".into());
+        }
+        let session = self
+            .sessions
+            .iter_mut()
+            .find(|s| s.id == id)
+            .ok_or("Session no longer exists")?;
+        session.name = name.into();
+        Ok(())
+    }
+    /// Marks the current named session as just saved.
+    pub fn touch(&mut self, used: u64) {
+        if let Some(session) = self.sessions.iter_mut().find(|s| s.id == self.current) {
+            session.used = used;
+        }
     }
     pub fn select(&mut self, id: u64) -> Result<(), String> {
         self.get(id).ok_or("Session no longer exists")?;
@@ -255,5 +286,34 @@ impl Library {
             self.current = 0;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn copying_the_temporary_session_keeps_its_work_and_named_sessions_are_renamed() {
+        let temporary = Snapshot {
+            layout: Layout::default(),
+            console: json!({"version": 1, "documents": {"rest": "#check draft\n"}}),
+            modules: BTreeMap::new(),
+        };
+        let mut library = Library {
+            version: 1,
+            revision: 0,
+            next_id: 1,
+            sessions: Vec::new(),
+            current: 0,
+            temporary,
+        };
+        let id = library.copy(0, "Temporary-1").unwrap();
+        assert_eq!(library.get(id), Some(&library.temporary));
+        assert!(library.sessions[0].used > 0);
+        library.rename(id, " Work ").unwrap();
+        assert_eq!(library.sessions[0].name, "Work");
+        assert!(library.rename(id, " ").is_err());
+        assert!(library.rename(0, "Other").is_err());
     }
 }

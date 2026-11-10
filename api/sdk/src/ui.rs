@@ -232,6 +232,9 @@ pub struct TableRow {
     /// Shown across the row's width right under it.
     #[prost(message, repeated, tag = "4")]
     pub detail: Vec<Node>,
+    /// Sent when the row is clicked outside its buttons, fields and links.
+    #[prost(bytes = "vec", optional, tag = "5")]
+    pub on_click: Option<Vec<u8>>,
 }
 
 impl TableRow {
@@ -241,7 +244,13 @@ impl TableRow {
             cells,
             variant: String::new(),
             detail: Vec::new(),
+            on_click: None,
         }
+    }
+    /// A row that sends `on_click` when it is clicked outside its buttons and fields.
+    pub fn clickable(mut self, on_click: &impl Serialize) -> Self {
+        self.on_click = msg(on_click);
+        self
     }
     /// Content across the row's width right under it, such as an error or a description.
     pub fn detail(mut self, detail: Vec<Node>) -> Self {
@@ -399,6 +408,9 @@ pub struct Button {
     pub on_click: Option<Vec<u8>>,
     #[prost(bool, tag = "3")]
     pub disabled: bool,
+    /// Asked with `window.confirm` before `on_click` is sent; empty asks nothing.
+    #[prost(string, tag = "4")]
+    pub confirm: String,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -468,6 +480,13 @@ impl Node {
             Some(node::Kind::Slider(slider)) => slider.disabled = disabled,
             Some(node::Kind::Combobox(combobox)) => combobox.disabled = disabled,
             _ => {}
+        }
+        self
+    }
+    /// Button: the question asked with `window.confirm` before `on_click` is sent.
+    pub fn confirm(mut self, question: impl Into<String>) -> Self {
+        if let Some(node::Kind::Button(button)) = &mut self.kind {
+            button.confirm = question.into();
         }
         self
     }
@@ -690,6 +709,7 @@ pub fn button(label: impl Into<String>, on_click: &impl Serialize) -> Node {
         label: label.into(),
         on_click: msg(on_click),
         disabled: false,
+        confirm: String::new(),
     }))
 }
 

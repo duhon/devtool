@@ -106,9 +106,7 @@
   await wait(async()=>(await snapshot()).documents.rest.startsWith('#check History renamed'));
   assert((await snapshot()).checkIdentities.rest[0].id===identity,'Renaming a check must retain all its history');
   await click(testid('console-sessions-toggle'));
-  await wait(()=>document.querySelector('[data-testid="session-new-name"]'));
-  testDriver.fill(testid('session-new-name'),'History copy');
-  await click(testid(`session-copy-${current}`));
+  await click(await wait(()=>document.querySelector(`[data-testid="session-copy-${current}"]`)));
   await wait(()=>Number(testid('console-session-name').dataset.sessionId)!==current);
   await click(testid('console-service-rest'));
   await open();

@@ -455,7 +455,8 @@ Kernel не знает ни одной панели: даёт точки рас�
   `clipboard.read`/`write` (App); `sources.read` (сырые документы источников по порядку);
   `editor.contribute`, `editor.relight` (подсветить редакторы сервиса заново);
   `document.read`/`insert`/`replace`/`select`/`run`;
-  `workspace.list`/`restore`/`copy`/`delete`; `page.eval`, `page.network`; `agent.turn`
+  `workspace.list` (сессии с `used` — время последнего сохранения)/`restore`/`copy` (копия
+  Temporary — его снимок)/`delete`/`rename`; `page.eval`, `page.network`; `agent.turn`
   (стрим событий Copilot), `agent.stop`, `agent.reply` (ответ на `ToolCall`; ответы
   остановленному ходу не доставляются), `agent.approve`, `agent.sessions`, `agent.models`,
   `agent.options`; только встроенные: `modules.check`/`install`/`remove`,
@@ -564,8 +565,10 @@ Kernel вызывает модуль напрямую и сразу получа
 - Общие возможности виджетов (09.11, ABI 2): у любого узла `.title()` (подсказка) и `.label()`
   (aria); `Tab`: `.closable(&msg)` (× со значением-ключом, `.confirm`, `.close_key`),
   `.plain()`, `.title()`; `Tabs`: `.on_add` (кнопка `+`, `.add_prompt`, `.add_button`);
-  `TableRow.detail` (содержимое под строкой), `Table.widths` (проценты), варианты строк
-  `current`/`muted`, таблицы `roomy`; `Input.size`; `Editor`: `.placeholder`, `.debounce(мс)`,
+  `TableRow.detail` (содержимое под строкой), `TableRow::clickable(&msg)` (клик по строке вне
+  кнопок и полей), `Table.widths` (проценты), варианты строк `current`/`muted`, таблицы `roomy`;
+  `Button::confirm` (вопрос `window.confirm` перед `on_click`); `Input.size`, вариант поля
+  `inline` (выглядит как текст до наведения); `Editor`: `.placeholder`, `.debounce(мс)`,
   краевой режим `is-flush` (в теле панели и вкладки); `ui::field(метка, элемент)`,
   `ui::anchor(метка, url)` (только http/https), `ui::combobox` (поиск по списку,
   `Choice.detail`), `Slider` с `.labels`, `.marker`, `.disabled`. Варианты: панель `flush`/

@@ -26,6 +26,7 @@ struct Edit {
     id: u64,
     base: Snapshot,
     next: Snapshot,
+    used: u64,
 }
 struct Persistence {
     database: Database,
@@ -54,6 +55,7 @@ impl Persistence {
                 return Err("Wait for pending session saves before changing sessions".into());
             }
             pending.next = edit.next;
+            pending.used = edit.used;
         } else {
             *pending = Some(edit);
         }
@@ -102,6 +104,7 @@ impl Persistence {
                         &edit.next,
                         latest.snapshot(),
                     )?;
+                    latest.touch(edit.used);
                     Ok(latest)
                 })
                 .await?;
@@ -231,11 +234,14 @@ impl Store {
             return Ok(());
         }
         if self.library.current != 0 {
+            let used = crate::workspace::now();
             self.persistence.enqueue(Edit {
                 id: self.library.current,
                 base,
                 next: next.clone(),
+                used,
             })?;
+            self.library.touch(used);
         }
         *self.library.snapshot_mut() = next;
         Ok(())
@@ -248,9 +254,11 @@ impl Store {
         }
         Self::flush(shared).await?;
         let database = shared.borrow().persistence.database.clone();
+        let temporary = shared.borrow().library.temporary.clone();
         let mut next = database
             .change(move |previous| {
                 let mut next = previous.ok_or("Session library disappeared")?;
+                next.temporary = temporary;
                 let id = next.copy(source, &name)?;
                 next.select(id)?;
                 Ok(next)
@@ -282,6 +290,25 @@ impl Store {
         let active = next.current;
         store.library = next;
         Ok(active)
+    }
+    pub async fn rename(shared: &Shared, id: u64, name: String) -> Result<(), String> {
+        Self::flush(shared).await?;
+        let database = shared.borrow().persistence.database.clone();
+        let active = shared.borrow().library.current;
+        let mut next = database
+            .change(move |previous| {
+                let mut next = previous.ok_or("Session library disappeared")?;
+                next.rename(id, &name)?;
+                Ok(next)
+            })
+            .await?;
+        let mut store = shared.borrow_mut();
+        next.temporary = store.library.temporary.clone();
+        next.select(active)?;
+        *next.snapshot_mut() = store.library.snapshot().clone();
+        store.persistence.latest.borrow_mut().take();
+        store.library = next;
+        Ok(())
     }
     /// Removes what every session keeps for `service`, including this window's temporary
     /// session; the current session keeps its unsaved local state otherwise.

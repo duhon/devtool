@@ -179,13 +179,9 @@
     await wait(()=>Math.abs(width()-value)<1,()=>`Expected panel width ${value}, got ${width()}`);
   };
   const create=async(source,name)=>{
-    await open('sessions');
-    await testDriver.sessionsIdle();
-    testDriver.fill(testid('session-new-name'),name);
-    await click(testid(`session-copy-${source}`));
-    await wait(()=>testid('console-session-name').textContent===name);
+    const id=await testDriver.createSession(source,name);
     editor=editorOf('console-editor');
-    return Number(testid('console-session-name').dataset.sessionId);
+    return id;
   };
   const a=await create(0,'Layout A');
   const beforeSettings=editor.getValue();
@@ -302,7 +298,7 @@
     const doc=frame.contentDocument;
     doc.querySelector('[data-testid="console-sessions-toggle"]').click();
     await testDriver.sessionsIdle(doc);
-    doc.querySelector(`[data-testid="session-switch-${a}"]`).click();
+    doc.querySelector(`[data-testid="session-${a}"]`).click();
     await wait(()=>doc.querySelector('[data-testid="console-session-name"]')?.dataset.sessionId===String(a));
     doc.querySelector('[data-testid="console-history-toggle"]').click();
     await wait(()=>Math.abs(frame.contentDocument.querySelector('.console-right-pane').getBoundingClientRect().width-410)<1
@@ -313,7 +309,7 @@
   await open('sessions');
   for(const id of [b,a]){
     await testDriver.sessionsIdle();
-    await click(testid(`session-delete-${id}`));
+    await testDriver.deleteSession(id);
     await wait(()=>!document.querySelector(`[data-testid="session-delete-${id}"]`));
   }
   await click(testid('console-sessions-toggle'));

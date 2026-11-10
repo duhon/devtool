@@ -62,7 +62,7 @@ impl App {
         let result = match cmd.name.as_str() {
             "document.read" => Ok(self.document_read()),
             "workspace.list" => Ok(self.workspace_list()),
-            "workspace.restore" | "workspace.copy" | "workspace.delete" => {
+            "workspace.restore" | "workspace.copy" | "workspace.delete" | "workspace.rename" => {
                 if self.session_reply.is_some() {
                     Err(Failure::new("Another session change is in progress"))
                 } else {
@@ -71,6 +71,10 @@ impl App {
                     ctx.link().send_message(match cmd.name.as_str() {
                         "workspace.restore" => Msg::SessionSelect(id),
                         "workspace.copy" => Msg::SessionCopy(
+                            id,
+                            args["name"].as_str().unwrap_or_default().to_owned(),
+                        ),
+                        "workspace.rename" => Msg::SessionRename(
                             id,
                             args["name"].as_str().unwrap_or_default().to_owned(),
                         ),

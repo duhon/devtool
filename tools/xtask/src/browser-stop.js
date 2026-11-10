@@ -293,7 +293,7 @@
   assert(!stopped('agentchild') && !testid('agent-stop').disabled && light(checks()[1]) === 'running',
     'The main S must stop only its check, preserving the Agent and its approved child request');
   await click(testid('console-sessions-toggle'));
-  await click(testid('session-switch-0'));
+  await click(testid('session-0'));
   await wait(()=>testid('console-sessions-status').textContent.includes('ERROR'));
   assert(testid('console-session-name').dataset.sessionId==='1',
     'Console sessions must not switch while a global Agent turn or its child is running');

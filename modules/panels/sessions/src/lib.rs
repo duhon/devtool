@@ -12,10 +12,11 @@ pub const TEMPORARY: &str = "Temporary";
 
 #[derive(Serialize, Deserialize)]
 pub enum Msg {
-    Name,
     Switch(u64),
     Copy(u64),
     Delete(u64),
+    /// The new name is the value.
+    Rename(u64),
     Retry,
 }
 
@@ -23,6 +24,9 @@ pub enum Msg {
 pub struct Session {
     pub id: u64,
     pub name: String,
+    /// When its changes were last saved, in milliseconds since the epoch.
+    #[serde(default)]
+    pub used: u64,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -38,10 +42,11 @@ pub struct Library {
 #[derive(Default)]
 pub struct Sessions {
     library: Library,
-    name: String,
     /// The last operation: `(text, indicator)`.
     result: Option<(String, &'static str)>,
     polling: bool,
+    /// The local time zone offset in minutes, as `Date.getTimezoneOffset` gives it.
+    offset: f64,
 }
 
 impl Sessions {
@@ -67,13 +72,34 @@ impl Sessions {
         }
     }
 
-    fn rows(&self) -> impl Iterator<Item = (u64, &str)> {
-        std::iter::once((0, TEMPORARY)).chain(
-            self.library
-                .sessions
-                .iter()
-                .map(|session| (session.id, session.name.as_str())),
-        )
+    fn rows(&self) -> impl Iterator<Item = Session> + '_ {
+        std::iter::once(Session {
+            id: 0,
+            name: TEMPORARY.into(),
+            used: 0,
+        })
+        .chain(self.library.sessions.iter().cloned())
+    }
+
+    fn name(&self, id: u64) -> String {
+        self.rows()
+            .find(|session| session.id == id)
+            .map(|session| session.name)
+            .unwrap_or_else(|| TEMPORARY.into())
+    }
+
+    /// The name of a session created from `parent`: `<parent>-<N>`, one more than the
+    /// largest such number among the sessions.
+    fn child_name(&self, parent: &str) -> String {
+        let prefix = format!("{parent}-");
+        let last = self
+            .library
+            .sessions
+            .iter()
+            .filter_map(|session| session.name.strip_prefix(&prefix)?.parse::<u64>().ok())
+            .max()
+            .unwrap_or(0);
+        format!("{prefix}{}", last + 1)
     }
 }
 
@@ -89,6 +115,10 @@ impl Module for Sessions {
 
     fn update(&mut self, event: Event<Msg>) -> Vec<Cmd> {
         match event {
+            Event::Init { settings } => {
+                self.offset = settings["timezoneOffset"].as_f64().unwrap_or_default();
+                Vec::new()
+            }
             Event::Shown | Event::Workspace => vec![cmd::workspace_list(LIST)],
             Event::Reply { tag, result } if tag == SAVING => {
                 self.polling = false;
@@ -120,20 +150,23 @@ impl Module for Sessions {
                 });
                 vec![cmd::workspace_list(LIST), self.status()]
             }
-            Event::Ui {
-                msg: Msg::Name,
-                value,
-            } => {
-                self.name = value.unwrap_or_default();
-                Vec::new()
-            }
-            Event::Ui { msg, .. } => {
+            Event::Ui { msg, value } => {
                 let command = match msg {
+                    Msg::Switch(id) if id == self.library.current => return Vec::new(),
                     Msg::Switch(id) => cmd::workspace_restore("switch", id),
-                    Msg::Copy(id) => cmd::workspace_copy("copy", id, &self.name),
+                    Msg::Copy(id) => {
+                        let name = self.child_name(&self.name(id));
+                        cmd::workspace_copy("copy", id, &name)
+                    }
                     Msg::Delete(id) => cmd::workspace_delete("delete", id),
+                    Msg::Rename(id) => {
+                        let name = value.unwrap_or_default().trim().to_owned();
+                        if name.is_empty() || name == self.name(id) {
+                            return Vec::new();
+                        }
+                        cmd::workspace_rename("rename", id, &name)
+                    }
                     Msg::Retry => cmd::workspace_retry("retry"),
-                    Msg::Name => return Vec::new(),
                 };
                 vec![command, cmd::status("Sessions · Running…", "busy")]
             }
@@ -142,17 +175,7 @@ impl Module for Sessions {
     }
 
     fn view(&self) -> Option<ui::Node> {
-        let mut body = vec![
-            ui::text(if self.library.saving {
-                "Saving…"
-            } else if self.library.save_error.is_some() {
-                "Not saved"
-            } else {
-                "Saved"
-            })
-            .variant("paragraph")
-            .key("session-storage-status"),
-        ];
+        let mut body = Vec::new();
         if let Some(error) = &self.library.import_error {
             body.push(ui::row(vec![
                 ui::text(format!("Original workspace import is pending: {error}"))
@@ -160,34 +183,49 @@ impl Module for Sessions {
                 ui::button("Retry import", &Msg::Retry).key("session-import-retry"),
             ]));
         }
-        body.push(ui::field(
-            "New session name",
-            ui::input(None, "", &Msg::Name)
-                .key("session-new-name")
-                .size(20)
-                .on_input(&Msg::Name),
-        ));
         let current = self.library.current;
         let rows = self
             .rows()
-            .map(|(id, name)| {
+            .map(|Session { id, name, used }| {
+                let label = if id == current && id != 0 {
+                    ui::input(Some(name.clone()), "", &Msg::Rename(id))
+                        .variant("inline")
+                        .label("Session name")
+                        .title("Rename this session")
+                } else {
+                    ui::text(name.clone()).title(name.clone())
+                };
+                let date = if id == 0 {
+                    "Immutable".to_owned()
+                } else if used == 0 {
+                    "—".to_owned()
+                } else {
+                    services_sdk::time::date(used as f64, self.offset)
+                };
                 let row = ui::TableRow::new(
                     format!("session-{id}"),
                     vec![
                         ui::text(id.to_string()),
-                        ui::text(name),
+                        label.key(format!("session-name-{id}")),
+                        ui::text(date).key(format!("session-used-{id}")),
                         ui::row(vec![
-                            ui::button("Switch", &Msg::Switch(id))
-                                .key(format!("session-switch-{id}"))
-                                .disabled(id == current),
-                            ui::button("Delete", &Msg::Delete(id))
+                            ui::button("+", &Msg::Copy(id))
+                                .key(format!("session-copy-{id}"))
+                                .title(format!("Create a session from {name}")),
+                            ui::button("×", &Msg::Delete(id))
                                 .key(format!("session-delete-{id}"))
+                                .title(if id == 0 {
+                                    "The temporary session cannot be deleted".to_owned()
+                                } else {
+                                    format!("Delete {name}")
+                                })
+                                .confirm(format!("Delete session \"{name}\"?"))
                                 .disabled(id == 0),
-                            ui::button("Create from", &Msg::Copy(id))
-                                .key(format!("session-copy-{id}")),
-                        ]),
+                        ])
+                        .variant("end nowrap"),
                     ],
-                );
+                )
+                .clickable(&Msg::Switch(id));
                 if id == current {
                     row.variant("active")
                 } else {
@@ -197,19 +235,14 @@ impl Module for Sessions {
             .collect();
         body.push(
             ui::table(
-                ["#", "Session", "Actions"].map(str::to_owned).to_vec(),
+                ["#", "Session", "Last used", ""]
+                    .map(str::to_owned)
+                    .to_vec(),
                 rows,
             )
+            .widths(vec![0, 55, 45, 0])
             .variant("roomy")
             .key("session-list"),
-        );
-        body.push(
-            ui::text(
-                "0 is temporary. Creating from 0 starts empty. Named sessions save \
-             automatically. Dictionary and environment variables are shared. Agent chats \
-             belong to their session; deleting a session closes them.",
-            )
-            .variant("paragraph"),
         );
         Some(
             ui::panel("Sessions", body, Vec::new())

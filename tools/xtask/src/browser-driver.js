@@ -274,11 +274,41 @@
       return toggle.getAttribute('aria-pressed')==='true';
     }, 'The Sessions panel must open');
     await sessionsIdle(root);
-    const switcher = await wait(() => [...root.querySelectorAll(`[data-testid="session-switch-${id}"]`)].find(visible),
+    const switcher = await wait(() => [...root.querySelectorAll(`[data-testid="session-${id}"]`)].find(visible),
       () => `Session ${id} must be listed: ${root.querySelector(`[data-testid="sessions-panel"]`)?.innerText.slice(0,300)}`);
     await click(switcher);
     await wait(()=>testid('console-session-name',root).dataset.sessionId===String(id),
       ()=>`Session ${id} must become current: ${root.querySelector(`[data-testid="sessions-panel"]`)?.innerText.slice(0,300)}`);
+  };
+  // Creates a session from `source` with the panel's "+", then renames it to `name`.
+  const createSession = async (source, name, root = document) => {
+    const panel=async()=>{
+      await wait(async()=>{
+        const toggle=testid('console-sessions-toggle',root);
+        if(toggle.getAttribute('aria-pressed')==='true') return true;
+        await click(toggle);
+      });
+      await sessionsIdle(root);
+    };
+    await panel();
+    const before=testid('console-session-name',root).dataset.sessionId;
+    await click(await wait(() => root.querySelector(`[data-testid="session-copy-${source}"]`)));
+    await wait(()=>testid('console-session-name',root).dataset.sessionId!==before,
+      ()=>`A session must be created from ${source}: ${root.querySelector('[data-testid="sessions-panel"]')?.innerText.slice(0,300)}`);
+    const id=testid('console-session-name',root).dataset.sessionId;
+    // The new session brings its own layout, which may have the panel closed.
+    await panel();
+    fill(await wait(()=>root.querySelector(`[data-testid="session-name-${id}"]`),
+      ()=>`Session ${id} must be renamed in place: ${root.querySelector('[data-testid="sessions-panel"]')?.innerHTML.slice(0,600)}`),name);
+    await wait(()=>testid('console-session-name',root).textContent===name,
+      ()=>`Session ${id} must be renamed to ${name}: ${testid('console-session-name',root).textContent}`);
+    return Number(id);
+  };
+  // Deletes a session with the panel's "×", accepting its question.
+  const deleteSession = async (id, root = document) => {
+    const view=root.defaultView ?? window, ask=view.confirm;
+    view.confirm=()=>true;
+    try { await click(testid(`session-delete-${id}`,root)); } finally { view.confirm=ask; }
   };
   let sessionInitialized=false;
   const openConsole = async () => {
@@ -376,7 +406,7 @@
     if (previous && previous !== 'sources') await settingsTab(previous);
   };
   globalThis.testDriver = { assert, sleep, seen, wait, waitFor, during, holds, settle, stable, frames, visible, find, testid, editorOf, editorAt, key, type, move, input,
-    click, doubleClick, button, openConsole, activateSession, sessionsIdle, setSource, commitRestUrl, candidates, suggest, pick, pickThenEnter,
+    click, doubleClick, button, openConsole, activateSession, sessionsIdle, createSession, deleteSession, setSource, commitRestUrl, candidates, suggest, pick, pickThenEnter,
     assertNativeScrollbars, nativeTrackPaint, sessionLibrary, nativeHold, settingsTab, addFolderSource, fill, choose, openPanel, closePanel, clearSessions: () => sessionRecord('delete') };
   globalThis.testNativeHealth = () => new Promise(resolve => {
     const port = chrome.runtime.connectNative('com.chrome_extentions.host');

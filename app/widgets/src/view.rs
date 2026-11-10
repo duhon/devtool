@@ -371,11 +371,20 @@ pub fn render(node: &Node, on: &Callback<Action>) -> Html {
                 title={tip} label={aria} on={on.clone()}/>
         },
         Kind::Button(button) => {
-            let (on, msg) = (on.clone(), button.on_click.clone());
+            let (on, msg, confirm) = (on.clone(), button.on_click.clone(), button.confirm.clone());
+            let onclick = Callback::from(move |_| {
+                if confirm.is_empty()
+                    || crate::dom::window()
+                        .confirm_with_message(&confirm)
+                        .unwrap_or(false)
+                {
+                    send(&on, &msg, None);
+                }
+            });
             html! {
                 <button type="button" class={classes(node, "ui-button")} data-key={data_key.clone()} data-testid={data_key}
                     title={tip} aria-label={aria} disabled={button.disabled}
-                    onclick={Callback::from(move |_| send(&on, &msg, None))}>
+                    {onclick}>
                     {button.label.clone()}</button>
             }
         }
@@ -415,8 +424,29 @@ pub fn render(node: &Node, on: &Callback<Action>) -> Html {
 
 /// A row of a table, then its detail across the width of the table.
 fn table_row(row: &ui::TableRow, span: usize, clipped: &[u32], on: &Callback<Action>) -> Html {
+    let onclick = row.on_click.clone().map(|msg| {
+        let on = on.clone();
+        Callback::from(move |event: MouseEvent| {
+            // Buttons, fields and links in the row do their own thing.
+            let inner = event
+                .target_dyn_into::<web_sys::Element>()
+                .and_then(|target| {
+                    target
+                        .closest("button, input, select, textarea, a, label")
+                        .ok()
+                        .flatten()
+                });
+            if inner.is_none() {
+                send(&on, &Some(msg.clone()), None);
+            }
+        })
+    });
+    let class = classes!(
+        variants(&row.variant),
+        onclick.is_some().then_some("is-clickable")
+    );
     let mut rows = vec![html! {
-        <tr key={row.key.clone()} class={variants(&row.variant)} data-key={row.key.clone()} data-testid={row.key.clone()}>
+        <tr key={row.key.clone()} {class} {onclick} data-key={row.key.clone()} data-testid={row.key.clone()}>
             {for row.cells.iter().enumerate().map(|(index, cell)| html! {
                 <td class={clipped.get(index).is_some_and(|width| *width > 0).then_some("is-clipped")}>{render(cell, on)}</td>
             })}
