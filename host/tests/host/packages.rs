@@ -304,9 +304,12 @@ async fn the_host_lists_and_serves_wasm_modules_it_can_run_and_reports_the_rest(
         json!({"id":id,"kind":"service","name":id.to_uppercase(),"version":"1.0.0",
             "abi":abi,"drivers":{driver:"1"},"order":7})
     };
-    place("wasm-ok", manifest("wasm-ok", 1, "http"));
+    place("wasm-ok", manifest("wasm-ok", services_sdk::ABI, "http"));
     place("wasm-old", manifest("wasm-old", 99, "http"));
-    place("wasm-kafka", manifest("wasm-kafka", 1, "kafka"));
+    place(
+        "wasm-kafka",
+        manifest("wasm-kafka", services_sdk::ABI, "kafka"),
+    );
     let host = Host::on(data);
 
     let reply = host.send(json!({"service":"modules"})).await;

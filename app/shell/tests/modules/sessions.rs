@@ -136,15 +136,15 @@ fn concurrent_changes_merge_only_when_their_fields_do_not_conflict() {
 }
 
 #[test]
-fn temporary_starts_empty_and_is_never_a_copy_template() {
+fn temporary_starts_empty_and_its_copy_keeps_its_data() {
     services_shell::link();
     let mut library = Library::default();
     library.temporary.modules.insert(
         "variables".into(),
         json!({"secret":"temporary"}).as_object().unwrap().clone(),
     );
-    let id = library.copy(0, "Empty").unwrap();
-    assert_eq!(library.get(id), Some(&Snapshot::default()));
+    let id = library.copy(0, "Copy").unwrap();
+    assert_eq!(library.get(id), Some(&library.temporary));
     library.select(id).unwrap();
     let restored = Library::restore(&serde_json::to_string(&library).unwrap()).unwrap();
     assert_eq!(restored.current, 0);
