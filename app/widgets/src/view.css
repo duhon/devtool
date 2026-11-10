@@ -317,7 +317,10 @@ textarea.ui-input { resize: vertical; min-height: 56px; max-height: 30vh; }
 .ui-table tr.is-clickable:not(.is-active):hover { background: var(--bg-hover); }
 
 /* A field that reads as text until it is pointed at or edited. */
-.ui-input.is-inline { border-color: transparent; background: transparent; padding: 1px 4px; cursor: text; }
+/* Its border and padding hang outside, so its text lines up with plain text around it. */
+.ui-input.is-inline { border-color: transparent; background: transparent; padding: 1px 4px; margin: -2px -5px; cursor: text; line-height: inherit; }
+
+.ui-table td > .ui-input.is-inline { width: calc(100% + 10px); }
 
 .ui-input.is-inline:hover { border-color: var(--border); }
 

@@ -97,6 +97,14 @@
   assert(testid(`session-name-${a}`).tagName==='INPUT'&&testid('session-name-0').tagName!=='INPUT',
     'Only the current named session is renamed in place');
   const nameField=testid(`session-name-${a}`);
+  {
+    const textOf=element=>{const range=document.createRange();range.selectNodeContents(element);return range.getBoundingClientRect();};
+    const style=getComputedStyle(nameField), field=nameField.getBoundingClientRect(), plain=textOf(testid('session-name-0'));
+    const left=field.left+parseFloat(style.borderLeftWidth)+parseFloat(style.paddingLeft);
+    const row=id=>testid(`session-${id}`).getBoundingClientRect().height;
+    assert(Math.abs(left-plain.left)<1&&Math.abs(row(a)-row(0))<1,
+      `The name being edited must stay where plain names are: text ${left} vs ${plain.left}, rows ${row(a)} vs ${row(0)}`);
+  }
   nameField.focus();
   nameField.value='Session A renamed';
   await key('Escape');
