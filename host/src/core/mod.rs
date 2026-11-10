@@ -1,3 +1,4 @@
+pub mod config_sync;
 pub mod error;
 pub mod history;
 pub mod install;

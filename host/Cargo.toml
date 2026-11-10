@@ -18,6 +18,7 @@ tempfile = "3"
 sha2 = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
+similar.workspace = true
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 futures-util = "0.3"

@@ -3102,6 +3102,7 @@ dependencies = [
  "services-sdk",
  "services-testkit",
  "sha2",
+ "similar",
  "tempfile",
  "tokio",
  "tokio-rustls",

@@ -24,6 +24,7 @@
 //! application keeps apart, override them all. An update replaces the applied copy and
 //! never merges.
 
+use super::config_sync::{Kind, State, merge, state};
 use super::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -37,6 +38,7 @@ use std::{
     fs,
     io::Write,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -54,6 +56,8 @@ pub const HINTS: &str = "hints";
 /// The field of dictionary.json with its sets.
 const DICTIONARY_SETS: &str = "sets";
 pub const SKILLS: &str = "skills";
+const LOCAL: &str = "local";
+pub const LOCAL_NAME: &str = "Local";
 const MODULES: &str = "modules";
 const DISTRIBUTION: &str = "distribution";
 const RELEASE_FILE: &str = "version.json";
@@ -375,27 +379,8 @@ pub fn layers(data: &Path) -> Vec<Layer> {
         .collect()
 }
 
-/// The parsed `name` file of every layer that has one, lowest priority first.
-pub fn layer_files(data: &Path, name: &str) -> Result<Vec<(Layer, Value)>> {
-    let mut out = Vec::new();
-    for layer in layers(data) {
-        let path = layer.dir.join(name);
-        match fs::read(&path) {
-            Ok(bytes) => {
-                let value = serde_json::from_slice(&bytes)
-                    .map_err(|e| Error::new(format!("{}: {e}", path.display())))?;
-                out.push((layer, value));
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(e.into()),
-        }
-    }
-    Ok(out)
-}
-
-/// The raw file `name` (a relative path like `dictionary.json` or `hints/rest.md`) of every
-/// applied source that has it, lowest priority first: `[{source, text}]`.
-pub fn read(data: &Path, name: &str) -> Result<Value> {
+/// The relative path of a source file `name`, if it is one.
+fn file_path(name: &str) -> Result<PathBuf> {
     let path = Path::new(name);
     if name.is_empty()
         || path.is_absolute()
@@ -405,24 +390,38 @@ pub fn read(data: &Path, name: &str) -> Result<Value> {
     {
         return Err(Error::new(format!("Invalid source file name: {name}")));
     }
-    let mut out = Vec::new();
-    for layer in layers(data) {
-        match fs::read_to_string(layer.dir.join(path)) {
-            Ok(text) => out.push(json!({"source": layer.name, "text": text})),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(e.into()),
-        }
-    }
-    Ok(Value::Array(out))
+    Ok(path.to_path_buf())
 }
 
-/// The hints of `module` from the highest-priority layer that has them.
-pub fn hint(data: &Path, module: &str) -> Option<(String, String)> {
-    layers(data).into_iter().rev().find_map(|layer| {
-        fs::read_to_string(layer.dir.join(HINTS).join(format!("{module}.md")))
-            .ok()
-            .map(|text| (layer.name, text))
-    })
+/// Where the Local source keeps the application's own configuration.
+pub fn local_dir(data: &Path) -> PathBuf {
+    data.join(LOCAL)
+}
+
+/// The raw configuration file `name` (a relative path like `dictionary.json` or
+/// `hints/rest.md`) of the Local source: `[{source, text}]`, empty if there is none yet.
+pub fn read(data: &Path, name: &str) -> Result<Value> {
+    let path = file_path(name)?;
+    match fs::read_to_string(local_dir(data).join(path)) {
+        Ok(text) => Ok(json!([{"source": LOCAL_NAME, "text": text}])),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(json!([])),
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// Saves the configuration file `name` of the Local source.
+pub fn write(data: &Path, name: &str, text: &str) -> Result<()> {
+    let path = file_path(name)?;
+    match config_file(name) {
+        Ok(true) if !is_skill(name) => {}
+        _ => {
+            return Err(Error::new(format!(
+                "{name} is not a Dictionary, Templates or Hints file"
+            )));
+        }
+    }
+    validate_config(name, text.as_bytes()).map_err(Error::new)?;
+    write_atomic(&local_dir(data).join(path), text.as_bytes(), false)
 }
 
 /// The skills folders of the applied sources.
@@ -1030,6 +1029,35 @@ impl GitHub {
             .map_err(|e| Error::new(format!("GitHub {}: {}", self.repository, e.without_url())))
     }
 
+    /// Replaces the file `path` (blob `sha`) with `bytes` in one commit; `false` if the file
+    /// changed since.
+    async fn put(
+        &self,
+        path: &str,
+        bytes: &[u8],
+        sha: &str,
+        branch: Option<&str>,
+        message: &str,
+    ) -> Result<bool> {
+        let mut request = self
+            .client
+            .put(format!("{API}/repos/{}/contents/{path}", self.repository))
+            .header(reqwest::header::ACCEPT, "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .json(&put_body(bytes, sha, branch, message));
+        if let Some(token) = &self.token {
+            request = request.bearer_auth(token);
+        }
+        let response = request
+            .send()
+            .await
+            .map_err(|e| Error::new(format!("GitHub {}: {}", self.repository, e.without_url())))?;
+        if matches!(response.status().as_u16(), 409 | 422) {
+            return Ok(false);
+        }
+        self.success(response).map(|_| true)
+    }
+
     fn success(&self, response: reqwest::Response) -> Result<reqwest::Response> {
         let status = response.status();
         if status.is_success() {
@@ -1366,60 +1394,14 @@ fn change(kind: &str, key: String, old: Option<&Value>, new: Option<&Value>) -> 
     })
 }
 
-/// Records of a two-level JSON object (`{"<a>": {"<b>": value}}`) at `field`.
-fn records(value: Option<&Value>, field: Option<&str>) -> BTreeMap<String, Value> {
-    let mut out = BTreeMap::new();
-    let value = match (value, field) {
-        // A dictionary written before sets were named so keeps its sets in "profiles".
-        (Some(value), Some(DICTIONARY_SETS)) => {
-            value.get(DICTIONARY_SETS).or_else(|| value.get("profiles"))
-        }
-        (Some(value), Some(field)) => value.get(field),
-        (value, _) => value,
-    };
-    if let Some(outer) = value.and_then(Value::as_object) {
-        for (a, inner) in outer {
-            if let Some(inner) = inner.as_object() {
-                for (b, value) in inner {
-                    out.insert(format!("{a}/{b}"), value.clone());
-                }
-            }
-        }
-    }
-    out
-}
-
-/// The record changes from the applied copy in `dir` (with `applied` file hashes) to the
+/// The skills that differ between the applied copy (with `applied` file hashes) and the
 /// fetched source.
-fn changes(slug: &str, dir: &Path, applied: &Files, fetched: &Fetched) -> Result<Vec<Change>> {
+fn changes(slug: &str, applied: &Files, fetched: &Fetched) -> Vec<Change> {
     let mut out = Vec::new();
-    for (name, kind, field) in [
-        (DICTIONARY, "dictionary", Some(DICTIONARY_SETS)),
-        (TEMPLATES, "template", None),
-    ] {
-        if applied.get(name) == fetched.files.get(name) {
-            continue;
-        }
-        let old: Option<Value> = fs::read(dir.join(name))
-            .ok()
-            .and_then(|bytes| serde_json::from_slice(&bytes).ok());
-        let new: Option<Value> = match fetched.contents.get(name) {
-            Some(bytes) => Some(
-                serde_json::from_slice(bytes)
-                    .map_err(|e| Error::new(format!("{name} of the source: {e}")))?,
-            ),
-            None => None,
-        };
-        let (old, new) = (records(old.as_ref(), field), records(new.as_ref(), field));
-        for key in old.keys().chain(new.keys()).collect::<BTreeSet<_>>() {
-            out.extend(change(kind, key.clone(), old.get(key), new.get(key)));
-        }
-    }
     let group = |files: &Files| -> BTreeMap<String, Vec<String>> {
         let mut groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for (path, hash) in files {
             let key = match path.split('/').collect::<Vec<_>>().as_slice() {
-                [HINTS, file] => format!("hint:{}", file.trim_end_matches(".md")),
                 [SKILLS, name, ..] => format!("skill:{slug}-{name}"),
                 _ => continue,
             };
@@ -1441,45 +1423,55 @@ fn changes(slug: &str, dir: &Path, applied: &Files, fetched: &Fetched) -> Result
             as_value(new.get(key)).as_ref(),
         ));
     }
-    Ok(out)
+    out
 }
 
 // ---------------------------------------------------------------------------------------
 // Applying a source.
 
-/// Checks an applied copy before it replaces the current one.
-fn check_snapshot(dir: &Path) -> Result<()> {
-    if let Ok(bytes) = fs::read(dir.join(DICTIONARY)) {
-        let value: Value =
-            serde_json::from_slice(&bytes).map_err(|e| Error::new(format!("{DICTIONARY}: {e}")))?;
-        let sets = value
-            .get(DICTIONARY_SETS)
-            .or_else(|| value.get("profiles"))
-            .and_then(Value::as_object)
-            .ok_or_else(|| {
-                Error::new(format!(
-                    "{DICTIONARY} must hold {{\"sets\": {{\"<set>\": {{\"<VARIABLE>\": value}}}}}}"
-                ))
-            })?;
-        for (name, variables) in sets {
-            if name.trim().is_empty() || name == "var" || name == "env" {
-                return Err(Error::new(format!(
-                    "{DICTIONARY}: \"{name}\" can't be a Dictionary set"
-                )));
-            }
-            if !variables.is_object() {
-                return Err(Error::new(format!(
-                    "{DICTIONARY}: set \"{name}\" must be an object of variables"
-                )));
+fn is_skill(path: &str) -> bool {
+    path.starts_with("skills/")
+}
+
+/// Whether `bytes` is a valid configuration file `path` (a skill is checked on its own).
+fn validate_config(path: &str, bytes: &[u8]) -> std::result::Result<(), String> {
+    let text = std::str::from_utf8(bytes).map_err(|_| format!("{path} is not UTF-8 text"))?;
+    match path {
+        DICTIONARY => {
+            let value: Value = serde_json::from_str(text).map_err(|e| format!("{path}: {e}"))?;
+            let sets = value
+                .get(DICTIONARY_SETS)
+                .or_else(|| value.get("profiles"))
+                .and_then(Value::as_object)
+                .ok_or_else(|| {
+                    format!(
+                        "{path} must hold {{\"sets\": {{\"<set>\": {{\"<VARIABLE>\": value}}}}}}"
+                    )
+                })?;
+            for (name, variables) in sets {
+                if name.trim().is_empty() || name == "var" || name == "env" {
+                    return Err(format!("{path}: \"{name}\" can't be a Dictionary set"));
+                }
+                if !variables.is_object() {
+                    return Err(format!(
+                        "{path}: set \"{name}\" must be an object of variables"
+                    ));
+                }
             }
         }
+        TEMPLATES => {
+            let library: services_contracts::templates::Library =
+                serde_json::from_str(text).map_err(|e| format!("{path}: {e}"))?;
+            services_contracts::templates::validate(&library)
+                .map_err(|e| format!("{path}: {e}"))?;
+        }
+        _ => {}
     }
-    if let Ok(bytes) = fs::read(dir.join(TEMPLATES)) {
-        let library: services_contracts::templates::Library =
-            serde_json::from_slice(&bytes).map_err(|e| Error::new(format!("{TEMPLATES}: {e}")))?;
-        services_contracts::templates::validate(&library)
-            .map_err(|e| Error::new(format!("{TEMPLATES}: {e}")))?;
-    }
+    Ok(())
+}
+
+/// Checks an applied copy's skills before it replaces the current one.
+fn check_snapshot(dir: &Path) -> Result<()> {
     if let Ok(entries) = fs::read_dir(dir.join(SKILLS)) {
         for entry in entries {
             let folder = entry?.path();
@@ -1501,8 +1493,20 @@ fn check_snapshot(dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Replaces the applied copy of `source` with the fetched files: unchanged files are kept
-/// from the current copy, skills renamed with the source's prefix.
+fn copy_dir(from: &Path, to: &Path) -> Result<()> {
+    fs::create_dir_all(to)?;
+    for entry in fs::read_dir(from)? {
+        let entry = entry?;
+        if entry.file_type()?.is_file() {
+            fs::copy(entry.path(), to.join(entry.file_name()))?;
+        }
+    }
+    Ok(())
+}
+
+/// Replaces the applied skills of `source` with the fetched ones: unchanged files are kept
+/// from the current copy, skills renamed with the source's prefix. The copy's other
+/// configuration files are the cache of the last sync and stay as they are.
 fn apply_snapshot(data: &Path, source: &Source, fetched: &Fetched) -> Result<()> {
     let slug = source.slug();
     let _lock = lock(data)?;
@@ -1518,7 +1522,21 @@ fn apply_snapshot(data: &Path, source: &Source, fetched: &Fetched) -> Result<()>
     }
     let _stage = Remove(stage.clone());
     fs::create_dir_all(&stage)?;
-    for (path, hash) in &fetched.files {
+    for name in [DICTIONARY, TEMPLATES] {
+        if let Ok(bytes) = fs::read(current.join(name)) {
+            fs::write(stage.join(name), bytes)?;
+        }
+    }
+    if current.join(HINTS).is_dir() {
+        copy_dir(&current.join(HINTS), &stage.join(HINTS))?;
+    }
+    let skills: Files = fetched
+        .files
+        .iter()
+        .filter(|(path, _)| is_skill(path))
+        .map(|(path, hash)| (path.clone(), hash.clone()))
+        .collect();
+    for (path, hash) in &skills {
         let placed = snapshot_path(&slug, path);
         let bytes = match fetched.contents.get(path) {
             Some(bytes) => bytes.clone(),
@@ -1555,7 +1573,7 @@ fn apply_snapshot(data: &Path, source: &Source, fetched: &Fetched) -> Result<()>
         serde_json::to_vec_pretty(&Meta {
             revision: fetched.revision.clone(),
             applied_at: now(),
-            files: fetched.files.clone(),
+            files: skills,
         })?,
     )?;
     let previous = unique(&root, "previous");
@@ -1652,6 +1670,178 @@ fn application_source(
 }
 
 // ---------------------------------------------------------------------------------------
+// Syncing with Local.
+
+/// What syncing a source with Local would do: the overall state and the files that differ.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+struct SyncState {
+    state: State,
+    files: Vec<SyncFile>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct SyncFile {
+    file: String,
+    state: State,
+}
+
+/// A configuration file of a source with its local and cached versions.
+struct Entry {
+    file: String,
+    kind: Kind,
+    local: Option<String>,
+    /// The source's file at the last sync.
+    base: Option<String>,
+    source: String,
+    /// The source's hash of the file as fetched.
+    hash: String,
+}
+
+/// What syncing one file does.
+enum Plan {
+    Same,
+    /// Local lacks the file.
+    Copy,
+    Pull,
+    Push,
+    Merge(String),
+    Conflict {
+        left: String,
+        right: String,
+    },
+}
+
+impl Entry {
+    fn plan(&self) -> std::result::Result<Plan, String> {
+        let Some(local) = &self.local else {
+            return Ok(Plan::Copy);
+        };
+        let base = self.base.as_deref();
+        Ok(match state(self.kind, base, local, &self.source)? {
+            State::Same => Plan::Same,
+            State::Source => Plan::Pull,
+            State::Local => Plan::Push,
+            State::Both => Plan::Merge(merge(self.kind, base, local, &self.source)?.left),
+            State::Conflict => {
+                let merged = merge(self.kind, base, local, &self.source)?;
+                Plan::Conflict {
+                    left: merged.left,
+                    right: merged.right,
+                }
+            }
+        })
+    }
+
+    fn state(&self) -> std::result::Result<State, String> {
+        Ok(match self.plan()? {
+            Plan::Same => State::Same,
+            Plan::Copy | Plan::Pull => State::Source,
+            Plan::Push => State::Local,
+            Plan::Merge(_) => State::Both,
+            Plan::Conflict { .. } => State::Conflict,
+        })
+    }
+}
+
+fn cache_path(data: &Path, slug: &str, file: &str) -> PathBuf {
+    data.join(DIR).join(slug).join(file)
+}
+
+/// Whether a configuration file of the source needs downloading: the cache lacks it or
+/// holds another version.
+fn need_config(dir: &Path, path: &str, hash: &str) -> bool {
+    if is_skill(path) {
+        return false;
+    }
+    match fs::read(dir.join(path)) {
+        Ok(bytes) => blob_sha(&bytes) != hash && sha256(&bytes) != hash,
+        Err(_) => true,
+    }
+}
+
+/// The files the source has, with the local and cached versions of each.
+fn entries(data: &Path, slug: &str, fetched: &Fetched) -> (Vec<Entry>, Vec<String>) {
+    let (mut out, mut problems) = (Vec::new(), Vec::new());
+    for (file, hash) in &fetched.files {
+        let Some(kind) = Kind::of(file) else {
+            continue;
+        };
+        let cached = fs::read(cache_path(data, slug, file)).ok();
+        let Some(bytes) = fetched
+            .contents
+            .get(file)
+            .cloned()
+            .or_else(|| cached.clone())
+        else {
+            problems.push(format!("{file} was not downloaded"));
+            continue;
+        };
+        let Ok(source) = String::from_utf8(bytes) else {
+            problems.push(format!("{file} is not UTF-8 text"));
+            continue;
+        };
+        out.push(Entry {
+            file: file.clone(),
+            kind,
+            local: fs::read_to_string(local_dir(data).join(file)).ok(),
+            base: cached.and_then(|bytes| String::from_utf8(bytes).ok()),
+            source,
+            hash: hash.clone(),
+        });
+    }
+    (out, problems)
+}
+
+/// What syncing the fetched source with Local would do, and what looks wrong.
+fn sync_state(data: &Path, slug: &str, fetched: &Fetched) -> (SyncState, Vec<String>) {
+    let (entries, mut problems) = entries(data, slug, fetched);
+    let mut files = Vec::new();
+    for entry in &entries {
+        match entry.state() {
+            Ok(State::Same) => {}
+            Ok(state) => files.push(SyncFile {
+                file: entry.file.clone(),
+                state,
+            }),
+            Err(problem) => problems.push(format!("{}: {problem}", entry.file)),
+        }
+    }
+    let has = |state| files.iter().any(|file| file.state == state);
+    let state = if has(State::Conflict) {
+        State::Conflict
+    } else if has(State::Both) || (has(State::Local) && has(State::Source)) {
+        State::Both
+    } else if has(State::Local) {
+        State::Local
+    } else if has(State::Source) {
+        State::Source
+    } else {
+        State::Same
+    };
+    (SyncState { state, files }, problems)
+}
+
+/// The source's version of a file a conflict is being resolved against.
+struct Pending {
+    hash: String,
+    bytes: Vec<u8>,
+}
+
+/// The body of the GitHub request that replaces the file with blob `sha`.
+fn put_body(bytes: &[u8], sha: &str, branch: Option<&str>, message: &str) -> Value {
+    use base64::Engine;
+    let mut body = json!({
+        "message": message,
+        "content": base64::engine::general_purpose::STANDARD.encode(bytes),
+        "sha": sha,
+    });
+    if let Some(branch) = branch {
+        body["branch"] = json!(branch);
+    }
+    body
+}
+
+// ---------------------------------------------------------------------------------------
 // Checking.
 
 /// The last check of a source.
@@ -1662,9 +1852,13 @@ struct Checked {
     checked_at: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     error: Option<String>,
-    /// Whether the source has configuration files.
-    configs: bool,
+    /// Whether the source has skills.
+    skills: bool,
+    /// The skills that differ from the applied ones.
     changes: Vec<Change>,
+    /// What syncing with Local would do.
+    #[serde(default)]
+    sync: SyncState,
     problems: Vec<String>,
     modules: Vec<Offer>,
 }
@@ -1700,20 +1894,20 @@ async fn check_source(
         source: source.clone(),
         checked_at: now(),
         error: None,
-        configs: false,
+        skills: false,
         changes: Vec::new(),
+        sync: SyncState::default(),
         problems: Vec::new(),
         modules: Vec::new(),
     };
-    let need = |path: &str, hash: &str| {
-        [DICTIONARY, TEMPLATES].contains(&path)
-            && applied.get(path).map(String::as_str) != Some(hash)
-    };
     let result = async {
-        let fetched = fetch(data, source, need).await?;
-        checked.configs = !fetched.files.is_empty();
-        checked.changes = changes(&slug, &dir, &applied, &fetched)?;
+        let fetched = fetch(data, source, |path, hash| need_config(&dir, path, hash)).await?;
+        checked.skills = fetched.files.keys().any(|path| is_skill(path));
+        checked.changes = changes(&slug, &applied, &fetched);
+        let (sync, problems) = sync_state(data, &slug, &fetched);
+        checked.sync = sync;
         checked.problems = fetched.problems;
+        checked.problems.extend(problems);
         checked.modules = match &source.location {
             Location::Github { repository, .. } => {
                 let github = github(data, repository).await?;
@@ -1760,6 +1954,8 @@ pub struct Sources {
     data: PathBuf,
     /// When this host process started: checks made since then are not repeated unforced.
     started: u64,
+    /// The conflicts handed out by [`Sources::sync`] and not resolved yet, by source and file.
+    pending: Arc<Mutex<BTreeMap<(String, String), Pending>>>,
 }
 
 impl Sources {
@@ -1767,6 +1963,7 @@ impl Sources {
         Self {
             data: data.into(),
             started: now(),
+            pending: Arc::default(),
         }
     }
 
@@ -1894,7 +2091,7 @@ impl Sources {
 
     /// Checks every source not checked since this host process started (`force` checks
     /// anyway), so DevTools checks once each time it opens the application:
-    /// `{sources:[{name, slug, kind, repository?|path, checkedAt, error?, configs, applied,
+    /// `{sources:[{name, slug, kind, repository?|path, checkedAt, error?, skills, sync, applied,
     /// changes:[{kind, key, change}], problems, modules:[offers]}],
     /// installed:{"<module>": {version, source?, notes, error?, name?, description?}}}`, where
     /// `installed` has the
@@ -1950,7 +2147,8 @@ impl Sources {
                 for (key, value) in [
                     ("checkedAt", json!(checked.checked_at)),
                     ("error", json!(checked.error)),
-                    ("configs", json!(checked.configs)),
+                    ("skills", json!(checked.skills)),
+                    ("sync", json!(checked.sync)),
                     ("applied", json!(applied)),
                     ("changes", json!(changes)),
                     ("problems", json!(checked.problems)),
@@ -2013,7 +2211,172 @@ impl Sources {
         json!({"sources": described, "installed": origins})
     }
 
-    /// Applies the configuration of the source `slug`.
+    /// Writes `bytes` as the source's file `file` if the source still has the version with
+    /// hash `expected`; `false` if it changed.
+    async fn put(&self, source: &Source, file: &str, bytes: &[u8], expected: &str) -> Result<bool> {
+        match &source.location {
+            Location::Folder { path } => {
+                let target = path.join(file);
+                let current = fs::read(&target).ok().map(|bytes| sha256(&bytes));
+                if current.as_deref() != Some(expected) {
+                    return Ok(false);
+                }
+                write_atomic(&target, bytes, false)?;
+                Ok(true)
+            }
+            Location::Github {
+                repository,
+                branch,
+                path,
+            } => {
+                let remote = match path {
+                    Some(path) => format!("{}/{file}", path.trim_matches('/')),
+                    None => file.to_owned(),
+                };
+                github(&self.data, repository)
+                    .await?
+                    .put(
+                        &remote,
+                        bytes,
+                        expected,
+                        branch.as_deref(),
+                        &format!("Update {file} from Services DevTools"),
+                    )
+                    .await
+            }
+        }
+    }
+
+    fn forget(&self, slug: &str) {
+        let mut pending = self.pending.lock().unwrap_or_else(|e| e.into_inner());
+        pending.retain(|(from, _), _| from != slug);
+    }
+
+    fn take(&self, slug: &str, file: &str) -> Option<Pending> {
+        let mut pending = self.pending.lock().unwrap_or_else(|e| e.into_inner());
+        pending.remove(&(slug.to_owned(), file.to_owned()))
+    }
+
+    fn hold(&self, slug: &str, file: &str, pending: Pending) {
+        let mut all = self.pending.lock().unwrap_or_else(|e| e.into_inner());
+        all.insert((slug.to_owned(), file.to_owned()), pending);
+    }
+
+    fn cache(&self, slug: &str, file: &str, bytes: &[u8]) -> Result<()> {
+        write_atomic(&cache_path(&self.data, slug, file), bytes, false)
+    }
+
+    /// Syncs the source `slug` with Local: what changed on one side only is applied to the
+    /// other and cached; conflicts are returned for the user to resolve:
+    /// `{applied:[{file, state}], conflicts:[{file, left, right}], errors:[text]}`.
+    pub async fn sync(&self, slug: &str) -> Result<Value> {
+        let source = self.source(slug)?;
+        let dir = self.data.join(DIR).join(slug);
+        let fetched = fetch(&self.data, &source, |path, hash| {
+            need_config(&dir, path, hash)
+        })
+        .await?;
+        let (entries, mut errors) = entries(&self.data, slug, &fetched);
+        let (mut applied, mut conflicts) = (Vec::new(), Vec::new());
+        self.forget(slug);
+        for entry in entries {
+            let file = entry.file.clone();
+            let plan = match entry.plan() {
+                Ok(plan) => plan,
+                Err(problem) => {
+                    errors.push(format!("{file}: {problem}"));
+                    continue;
+                }
+            };
+            let state = entry.state().unwrap_or_default();
+            match self.execute(&source, slug, &entry, plan).await {
+                Ok(Some(conflict)) => conflicts.push(conflict),
+                Ok(None) if state != State::Same => {
+                    applied.push(json!({"file": file, "state": state}))
+                }
+                Ok(None) => {}
+                Err(error) => errors.push(format!("{file}: {}", error.message)),
+            }
+        }
+        Ok(json!({"applied": applied, "conflicts": conflicts, "errors": errors}))
+    }
+
+    async fn execute(
+        &self,
+        source: &Source,
+        slug: &str,
+        entry: &Entry,
+        plan: Plan,
+    ) -> Result<Option<Value>> {
+        let file = entry.file.as_str();
+        let local = local_dir(&self.data).join(file);
+        match plan {
+            Plan::Same => {
+                if entry.base.as_deref() != Some(&entry.source) {
+                    self.cache(slug, file, entry.source.as_bytes())?;
+                }
+            }
+            Plan::Copy | Plan::Pull => {
+                validate_config(file, entry.source.as_bytes()).map_err(Error::new)?;
+                write_atomic(&local, entry.source.as_bytes(), false)?;
+                self.cache(slug, file, entry.source.as_bytes())?;
+            }
+            Plan::Push => {
+                let text = entry.local.as_deref().unwrap_or_default();
+                if !self.put(source, file, text.as_bytes(), &entry.hash).await? {
+                    return Err(Error::new("The source changed meanwhile; check again"));
+                }
+                self.cache(slug, file, text.as_bytes())?;
+            }
+            Plan::Merge(text) => {
+                validate_config(file, text.as_bytes()).map_err(Error::new)?;
+                write_atomic(&local, text.as_bytes(), false)?;
+                if !self.put(source, file, text.as_bytes(), &entry.hash).await? {
+                    self.cache(slug, file, entry.source.as_bytes())?;
+                    return Err(Error::new("The source changed meanwhile; check again"));
+                }
+                self.cache(slug, file, text.as_bytes())?;
+            }
+            Plan::Conflict { left, right } => {
+                self.hold(
+                    slug,
+                    file,
+                    Pending {
+                        hash: entry.hash.clone(),
+                        bytes: entry.source.clone().into_bytes(),
+                    },
+                );
+                return Ok(Some(json!({"file": file, "left": left, "right": right})));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Saves the resolution `text` of a conflict in `file`: always to Local, and to the source
+    /// unless it changed since [`Sources::sync`] read it (then the cache becomes the version
+    /// the resolution was made against): `{written}`.
+    pub async fn resolve(&self, slug: &str, file: &str, text: &str) -> Result<Value> {
+        let source = self.source(slug)?;
+        write(&self.data, file, text)?;
+        let pending = self.take(slug, file).ok_or_else(|| {
+            Error::new("The comparison is gone: Local was saved, check the source again")
+        })?;
+        let written = self
+            .put(&source, file, text.as_bytes(), &pending.hash)
+            .await?;
+        self.cache(
+            slug,
+            file,
+            if written {
+                text.as_bytes()
+            } else {
+                &pending.bytes
+            },
+        )?;
+        Ok(json!({"written": written}))
+    }
+
+    /// Applies the skills of the source `slug`.
     pub async fn apply(&self, slug: &str) -> Result<Value> {
         let source = sources(&self.data)?
             .into_iter()
@@ -2023,7 +2386,7 @@ impl Sources {
             .map(|meta| meta.files)
             .unwrap_or_default();
         let fetched = fetch(&self.data, &source, |path, hash| {
-            applied.get(path).map(String::as_str) != Some(hash)
+            is_skill(path) && applied.get(path).map(String::as_str) != Some(hash)
         })
         .await?;
         let data = self.data.clone();
@@ -2036,7 +2399,7 @@ impl Sources {
         let mut checks = read_checks(&self.data);
         if let Some(checked) = checks.get_mut(slug) {
             checked.changes.clear();
-            checked.configs = !fetched.files.is_empty();
+            checked.skills = fetched.files.keys().any(|path| is_skill(path));
             checked.problems = fetched.problems;
             let _ = write_checks(&self.data, &checks);
         }
@@ -2277,7 +2640,7 @@ pub fn migrate_team_folder(data: &Path) -> Result<()> {
     Ok(())
 }
 
-/// The sources service with `op`: get, save, token, check, apply, open. Install is in the
+/// The sources service with `op`: get, save, token, check, apply, open, write, sync, resolve. Install is in the
 /// runtime.
 pub async fn dispatch(
     sources: &Sources,
@@ -2306,6 +2669,28 @@ pub async fn dispatch(
                 .as_str()
                 .ok_or_else(|| Error::new("Which source?"))?,
         ),
+        "write" => {
+            write(
+                sources.data(),
+                message["name"].as_str().unwrap_or_default(),
+                message["text"].as_str().unwrap_or_default(),
+            )?;
+            Ok(json!({}))
+        }
+        "sync" => {
+            sources
+                .sync(message["source"].as_str().unwrap_or_default())
+                .await
+        }
+        "resolve" => {
+            sources
+                .resolve(
+                    message["source"].as_str().unwrap_or_default(),
+                    message["file"].as_str().unwrap_or_default(),
+                    message["text"].as_str().unwrap_or_default(),
+                )
+                .await
+        }
         op => Err(Error::new(format!("Unknown sources op: {op}"))),
     }
 }
@@ -2416,13 +2801,9 @@ mod tests {
         );
         assert_eq!(
             team_check["changes"],
-            json!([
-                {"kind":"dictionary","key":"stage/HOST","change":"added"},
-                {"kind":"dictionary","key":"stage/PORT","change":"added"},
-                {"kind":"hint","key":"rest","change":"added"},
-                {"kind":"skill","key":"team-deploy","change":"added"},
-            ])
+            json!([{"kind":"skill","key":"team-deploy","change":"added"}])
         );
+        assert_eq!(team_check["sync"]["state"], "source");
         sources.apply("team").await.unwrap();
         let skill = data.join("sources/team/skills/team-deploy");
         assert_eq!(
@@ -2432,16 +2813,12 @@ mod tests {
             "team-deploy"
         );
         assert!(skill.join("refs/a.md").is_file());
-        assert_eq!(
-            hint(data, "rest"),
-            Some(("Team".into(), "Use staging".into()))
-        );
         let changes = |checked: Value| checked["sources"][0]["changes"].clone();
         let before = changes(sources.check(false, &[]).await.unwrap());
         write(
             team.path(),
-            "dictionary.json",
-            r#"{"sets":{"stage":{"HOST":"b","PORT":"1"}}}"#,
+            "skills/deploy/SKILL.md",
+            "---\nname: deploy\ndescription: Deploys it\n---\nSteps\n",
         );
         // A host process checks once; a new one checks again.
         assert_eq!(changes(sources.check(false, &[]).await.unwrap()), before);
@@ -2451,25 +2828,13 @@ mod tests {
         };
         assert_eq!(
             changes(restarted.check(false, &[]).await.unwrap()),
-            json!([{"kind":"dictionary","key":"stage/HOST","change":"changed"}])
+            json!([{"kind":"skill","key":"team-deploy","change":"changed"}])
         );
-        // An invalid source keeps the applied copy.
-        write(
-            team.path(),
-            "templates.json",
-            r#"{"rest":{"request":"@a\n@a\n"}}"#,
-        );
+        // An invalid skill keeps the applied copy.
+        write(team.path(), "skills/deploy/SKILL.md", "no frontmatter");
         let error = sources.apply("team").await.unwrap_err();
-        assert!(
-            error.message.contains("was not applied"),
-            "{}",
-            error.message
-        );
-        assert_eq!(
-            layer_files(data, DICTIONARY).unwrap()[0].1["sets"]["stage"]["HOST"],
-            "a"
-        );
-        fs::remove_file(team.path().join("templates.json")).unwrap();
+        assert!(error.message.contains("frontmatter"), "{}", error.message);
+        assert!(skill.join("refs/a.md").is_file());
         set_module_source(data, "rest", Some("team")).unwrap();
         sources
             .save(
@@ -2847,5 +3212,174 @@ mod tests {
         assert_eq!(sources(other.path()).unwrap().len(), 1);
         let warning = Sources::new(other.path()).get().unwrap()["warning"].clone();
         assert!(warning.as_str().unwrap().contains("skills/"));
+    }
+
+    fn dictionary(host: &str, port: &str) -> String {
+        format!(r#"{{"sets":{{"dev":{{"HOST":"{host}","PORT":"{port}"}}}}}}"#)
+    }
+
+    /// A folder source "Team" with a dictionary, synced once with Local holding the same.
+    async fn synced() -> (tempfile::TempDir, tempfile::TempDir, Sources) {
+        let data = tempfile::tempdir().unwrap();
+        let team = tempfile::tempdir().unwrap();
+        write(team.path(), DICTIONARY, &dictionary("a", "1"));
+        let sources = Sources::new(data.path());
+        sources
+            .save(&json!({"sources": [folder_source("Team", team.path())]}))
+            .unwrap();
+        let result = sources.sync("team").await.unwrap();
+        assert_eq!(result["conflicts"], json!([]), "{result}");
+        (data, team, sources)
+    }
+
+    fn local(data: &tempfile::TempDir, file: &str) -> String {
+        fs::read_to_string(local_dir(data.path()).join(file)).unwrap()
+    }
+
+    async fn state_of(sources: &Sources) -> Value {
+        sources.check(true, &[]).await.unwrap()["sources"][0]["sync"].clone()
+    }
+
+    #[tokio::test]
+    async fn a_new_source_copies_what_local_lacks_and_never_gets_what_it_lacks() {
+        let (data, team, sources) = synced().await;
+        assert_eq!(local(&data, DICTIONARY), dictionary("a", "1"));
+        assert_eq!(
+            fs::read_to_string(data.path().join("sources/team").join(DICTIONARY)).unwrap(),
+            dictionary("a", "1")
+        );
+        super::write(data.path(), "hints/rest.md", "mine\n").unwrap();
+        assert_eq!(state_of(&sources).await["state"], "same");
+        sources.sync("team").await.unwrap();
+        assert!(!team.path().join("hints/rest.md").exists());
+        assert!(!team.path().join(TEMPLATES).exists());
+    }
+
+    #[tokio::test]
+    async fn changes_on_one_side_go_to_the_other() {
+        let (data, team, sources) = synced().await;
+        super::write(data.path(), DICTIONARY, &dictionary("a", "2")).unwrap();
+        assert_eq!(state_of(&sources).await["state"], "local");
+        let result = sources.sync("team").await.unwrap();
+        assert_eq!(result["applied"][0]["state"], "local");
+        assert_eq!(
+            fs::read_to_string(team.path().join(DICTIONARY)).unwrap(),
+            dictionary("a", "2")
+        );
+        write(team.path(), DICTIONARY, &dictionary("b", "2"));
+        assert_eq!(state_of(&sources).await["state"], "source");
+        sources.sync("team").await.unwrap();
+        assert_eq!(local(&data, DICTIONARY), dictionary("b", "2"));
+        assert_eq!(state_of(&sources).await["state"], "same");
+    }
+
+    #[tokio::test]
+    async fn changes_to_different_records_merge_into_both_sides() {
+        let (data, team, sources) = synced().await;
+        super::write(data.path(), DICTIONARY, &dictionary("a", "2")).unwrap();
+        write(team.path(), DICTIONARY, &dictionary("b", "1"));
+        assert_eq!(state_of(&sources).await["state"], "both");
+        let result = sources.sync("team").await.unwrap();
+        assert_eq!(result["conflicts"], json!([]), "{result}");
+        let merged = local(&data, DICTIONARY);
+        assert!(merged.contains(r#""HOST": "b""#) && merged.contains(r#""PORT": "2""#));
+        assert_eq!(
+            fs::read_to_string(team.path().join(DICTIONARY)).unwrap(),
+            merged
+        );
+        assert_eq!(state_of(&sources).await["state"], "same");
+    }
+
+    #[tokio::test]
+    async fn a_conflict_waits_and_resolving_writes_both_sides() {
+        let (data, team, sources) = synced().await;
+        super::write(data.path(), DICTIONARY, &dictionary("l", "1")).unwrap();
+        write(team.path(), DICTIONARY, &dictionary("s", "1"));
+        assert_eq!(state_of(&sources).await["state"], "conflict");
+        let result = sources.sync("team").await.unwrap();
+        let conflict = &result["conflicts"][0];
+        assert_eq!(conflict["file"], DICTIONARY);
+        assert!(
+            conflict["left"]
+                .as_str()
+                .unwrap()
+                .contains(r#""HOST": "l""#)
+        );
+        assert!(
+            conflict["right"]
+                .as_str()
+                .unwrap()
+                .contains(r#""HOST": "s""#)
+        );
+        // Nothing changed until it is resolved.
+        assert_eq!(local(&data, DICTIONARY), dictionary("l", "1"));
+        let resolved = dictionary("m", "1");
+        let reply = sources
+            .resolve("team", DICTIONARY, &resolved)
+            .await
+            .unwrap();
+        assert_eq!(reply["written"], true);
+        assert_eq!(local(&data, DICTIONARY), resolved);
+        assert_eq!(
+            fs::read_to_string(team.path().join(DICTIONARY)).unwrap(),
+            resolved
+        );
+        assert_eq!(state_of(&sources).await["state"], "same");
+    }
+
+    #[tokio::test]
+    async fn a_source_that_changed_while_resolving_is_not_written() {
+        let (data, team, sources) = synced().await;
+        super::write(data.path(), DICTIONARY, &dictionary("l", "1")).unwrap();
+        write(team.path(), DICTIONARY, &dictionary("s", "1"));
+        sources.sync("team").await.unwrap();
+        write(team.path(), DICTIONARY, &dictionary("t", "1"));
+        let resolved = dictionary("m", "1");
+        let reply = sources
+            .resolve("team", DICTIONARY, &resolved)
+            .await
+            .unwrap();
+        assert_eq!(reply["written"], false);
+        assert_eq!(local(&data, DICTIONARY), resolved);
+        assert_eq!(
+            fs::read_to_string(team.path().join(DICTIONARY)).unwrap(),
+            dictionary("t", "1")
+        );
+        // The cache is the version merged against: the next check sees the new conflict.
+        let cached = fs::read_to_string(data.path().join("sources/team").join(DICTIONARY)).unwrap();
+        assert_eq!(cached, dictionary("s", "1"));
+        assert_eq!(state_of(&sources).await["state"], "conflict");
+    }
+
+    #[tokio::test]
+    async fn without_a_cache_every_difference_conflicts() {
+        let data = tempfile::tempdir().unwrap();
+        let team = tempfile::tempdir().unwrap();
+        write(team.path(), DICTIONARY, &dictionary("s", "1"));
+        write(team.path(), "hints/rest.md", "shared\n");
+        super::write(data.path(), DICTIONARY, &dictionary("l", "1")).unwrap();
+        let sources = Sources::new(data.path());
+        sources
+            .save(&json!({"sources": [folder_source("Team", team.path())]}))
+            .unwrap();
+        let result = sources.sync("team").await.unwrap();
+        assert_eq!(result["conflicts"].as_array().unwrap().len(), 1);
+        assert_eq!(local(&data, "hints/rest.md"), "shared\n");
+        assert!(
+            sources
+                .resolve("team", "skills/x/SKILL.md", "x")
+                .await
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn a_github_write_names_the_blob_and_branch() {
+        let body = put_body(b"hi", "abc", Some("main"), "Update");
+        assert_eq!(
+            body,
+            json!({"message":"Update","content":"aGk=","sha":"abc","branch":"main"})
+        );
+        assert!(put_body(b"", "abc", None, "m").get("branch").is_none());
     }
 }
