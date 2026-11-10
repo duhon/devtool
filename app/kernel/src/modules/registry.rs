@@ -21,6 +21,8 @@ thread_local! {
     /// The digest of each declared module's wasm, and of each one running.
     static DIGESTS: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
     static LOADED: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
+    /// The digest of each module being fetched and started now.
+    static STARTING: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
     /// Why a declared module could not start.
     static FAILED: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
     /// The first effects of the modules the Kernel starts with, until the App runs them.
@@ -188,6 +190,16 @@ pub fn configure(drivers: BTreeMap<String, String>) -> bool {
     true
 }
 
+/// The Kernel knows which drivers the Host offers (from the Host or the last start).
+pub fn configured() -> bool {
+    DRIVERS.with(|known| known.borrow().is_some())
+}
+
+/// The module of `id` started or failed to: a later [`retain`] may start it again.
+pub fn settled(id: &str) {
+    STARTING.with(|starting| starting.borrow_mut().remove(id));
+}
+
 /// Starts (or restarts) a module from the wasm of `digest`; its first effects come back.
 pub fn install(
     manifest: Manifest,
@@ -215,8 +227,8 @@ pub fn fail(id: &str, message: String) {
     FAILED.with(|failed| failed.borrow_mut().insert(id.to_owned(), message));
 }
 
-/// Stops the running modules no longer declared; the declared ones not running at their
-/// digest come back to load.
+/// Stops the running modules no longer declared; the declared ones neither running nor
+/// starting at their digest come back to load and count as starting until [`settled`].
 pub fn retain() -> (Vec<Effect>, Vec<(Manifest, String)>) {
     let mut declared = declared();
     declared.extend(panels());
@@ -235,13 +247,21 @@ pub fn retain() -> (Vec<Effect>, Vec<(Manifest, String)>) {
             .borrow_mut()
             .retain(|id, _| declared.iter().any(|manifest| &manifest.id == id))
     });
-    let wanted = declared
-        .into_iter()
-        .filter_map(|manifest| {
-            let digest = digests.get(&manifest.id)?.clone();
-            (running.get(&manifest.id) != Some(&digest)).then_some((manifest, digest))
-        })
-        .collect();
+    let wanted: Vec<(Manifest, String)> = STARTING.with(|starting| {
+        let mut starting = starting.borrow_mut();
+        declared
+            .into_iter()
+            .filter_map(|manifest| {
+                let digest = digests.get(&manifest.id)?.clone();
+                let wanted = running.get(&manifest.id) != Some(&digest)
+                    && starting.get(&manifest.id) != Some(&digest);
+                wanted.then(|| {
+                    starting.insert(manifest.id.clone(), digest.clone());
+                    (manifest, digest)
+                })
+            })
+            .collect()
+    });
     (effects, wanted)
 }
 

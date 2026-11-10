@@ -20,16 +20,24 @@ use wasm_bindgen_futures::{JsFuture, spawn_local};
 use web_sys::{IdbDatabase, IdbTransactionMode};
 
 const MODULES: &str = "servicesConsole.modules";
+const DRIVERS: &str = "servicesConsole.drivers";
 
-/// The module list of the last host reply; the built-in one stays without a valid cache.
-pub fn restore() -> bool {
-    let cached: Option<Value> = window()
+fn cached(key: &str) -> Option<Value> {
+    window()
         .local_storage()
         .ok()
         .flatten()
-        .and_then(|storage| storage.get_item(MODULES).ok().flatten())
-        .and_then(|raw| serde_json::from_str(&raw).ok());
-    let Some(cached) = cached else {
+        .and_then(|storage| storage.get_item(key).ok().flatten())
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+}
+
+/// The module list and the drivers of the last host replies, so the modules start before the
+/// Host answers; the built-in list stays without a valid cache.
+pub fn restore() -> bool {
+    if let Some(drivers) = cached(DRIVERS).and_then(|value| serde_json::from_value(value).ok()) {
+        registry::configure(drivers);
+    }
+    let Some(cached) = cached(MODULES) else {
         return false;
     };
     registry::parse(&cached).is_ok_and(|modules| {
@@ -50,28 +58,33 @@ pub fn accept(value: &Value) -> Result<bool, String> {
 }
 
 /// Starts the declared modules the Kernel lacks (or runs at another digest) for the drivers
-/// the Host offers, all at once, `first` asked for first. `loaded` hears of each module as
-/// it starts, with its first effects, then once more with `done`. A module that fails to
-/// start reports why on use.
-pub fn prepare(transport: &Rc<Transport>, first: &str, loaded: Callback<Started>) {
+/// the Host offers (asked with `health`, else the known ones), all at once, `first` asked
+/// for first. `loaded` hears of each module as it starts, with its first effects, then once
+/// more with `done`. A module that fails to start reports why on use.
+pub fn prepare(transport: &Rc<Transport>, first: &str, health: bool, loaded: Callback<Started>) {
     let transport = transport.clone();
     let first = first.to_owned();
     spawn_local(async move {
-        let health = json!({"type": "health", "capabilities": {"chunkedResponses": true}});
-        match ask(&transport, health).await {
-            Ok(value) => {
-                let drivers: BTreeMap<String, String> = value["drivers"]
-                    .as_object()
-                    .into_iter()
-                    .flatten()
-                    .map(|(name, version)| {
-                        (name.clone(), version.as_str().unwrap_or("").to_owned())
-                    })
-                    .collect();
-                registry::configure(drivers);
-            }
-            Err(failure) => {
-                web_sys::console::warn_1(&format!("The Host drivers are unknown: {failure}").into())
+        if health {
+            let health = json!({"type": "health", "capabilities": {"chunkedResponses": true}});
+            match ask(&transport, health).await {
+                Ok(value) => {
+                    let drivers: BTreeMap<String, String> = value["drivers"]
+                        .as_object()
+                        .into_iter()
+                        .flatten()
+                        .map(|(name, version)| {
+                            (name.clone(), version.as_str().unwrap_or("").to_owned())
+                        })
+                        .collect();
+                    if let Some(storage) = window().local_storage().ok().flatten() {
+                        let _ = storage.set_item(DRIVERS, &json!(drivers).to_string());
+                    }
+                    registry::configure(drivers);
+                }
+                Err(failure) => web_sys::console::warn_1(
+                    &format!("The Host drivers are unknown: {failure}").into(),
+                ),
             }
         }
         let (effects, mut wanted) = registry::retain();
@@ -107,7 +120,9 @@ pub fn prepare(transport: &Rc<Transport>, first: &str, loaded: Callback<Started>
             spawn_local(async move {
                 let id = manifest.id.clone();
                 let name = manifest.name.clone();
-                match load(cache.as_deref(), &transport, manifest, &digest).await {
+                let result = load(cache.as_deref(), &transport, manifest, &digest).await;
+                registry::settled(&id);
+                match result {
                     Ok(effects) => loaded.emit(Started {
                         effects,
                         started: vec![id],

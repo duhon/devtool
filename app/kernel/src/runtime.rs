@@ -54,9 +54,10 @@ pub trait Platform {
     fn unlock(&self, module: &str, name: &str);
     /// Takes the Host's module list; `true` when what the Kernel runs changed.
     fn modules(&self, list: &Value) -> Result<bool, String>;
-    /// Starts the declared modules the Kernel lacks, `first` before the others; `loaded`
-    /// hears of each as it starts, then once more with `done`.
-    fn load(&self, first: &str, loaded: Callback<Started>);
+    /// Starts the declared modules the Kernel lacks, `first` before the others, for the
+    /// drivers the Host offers (asked with `health`, else the known ones); `loaded` hears of
+    /// each as it starts, then once more with `done`.
+    fn load(&self, first: &str, health: bool, loaded: Callback<Started>);
     /// The per-window id the Host checks Agent workspace tool calls against.
     fn agent_workspace_id(&self) -> String;
     /// Reads (`options` null) or saves the options new Agent chats get.
@@ -332,9 +333,15 @@ impl Kernel {
         self.modules(|modules| modules.reply(module, tag, result));
     }
 
-    /// Asks the Host for its module list and starts the modules it declares.
+    /// Starts the modules of the last module list, if the drivers are known too, and asks
+    /// the Host for its list to start what changed.
     pub fn load_modules(&self) {
-        self.enter(Core::list_modules);
+        self.enter(|core| {
+            if registry::configured() {
+                core.start_modules(false);
+            }
+            core.list_modules();
+        });
     }
 
     /// Module loads in progress.
@@ -779,15 +786,19 @@ impl Core {
         };
         match self.platform.modules(&value) {
             Ok(changed) => {
-                self.loading += 1;
-                let loaded = self.callback(Input::Started);
-                self.platform.load(&self.service, loaded);
+                self.start_modules(true);
                 if changed {
                     self.emit(Event::ModulesListed);
                 }
             }
             Err(error) => self.notice(format!("Modules · ERROR · {error}")),
         }
+    }
+
+    fn start_modules(&mut self, health: bool) {
+        self.loading += 1;
+        let loaded = self.callback(Input::Started);
+        self.platform.load(&self.service, health, loaded);
     }
 
     /// Modules started: once the console's service and every panel run, the service hears

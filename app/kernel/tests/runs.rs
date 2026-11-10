@@ -213,7 +213,7 @@ impl Platform for Fake {
     fn modules(&self, list: &Value) -> Result<bool, String> {
         Ok(registry::declare(registry::parse(list)?))
     }
-    fn load(&self, _first: &str, done: Callback<Started>) {
+    fn load(&self, _first: &str, _health: bool, done: Callback<Started>) {
         *self.load.borrow_mut() = Some(done);
     }
     fn agent_workspace_id(&self) -> String {
@@ -514,6 +514,23 @@ fn stop_cancels_a_run_its_module_makes() {
     );
     assert!(!runs.last().unwrap().running);
     assert!(window.kernel.running().is_empty());
+}
+
+#[test]
+fn a_module_starting_from_the_cached_list_is_not_started_again_by_the_host_list() {
+    let late = json!({"id":"late","kind":"panel","name":"late","version":"1.0.0",
+        "abi":services_sdk::ABI,"app":">=3.0","drivers":{"http":"1"},"order":3,"digest":"d1"});
+    registry::declare(registry::parse(&json!({"wasm": [late]})).unwrap());
+    let ids = |wanted: Vec<(Manifest, String)>| {
+        wanted
+            .into_iter()
+            .map(|(manifest, _)| manifest.id)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(ids(registry::retain().1), ["late"]);
+    assert!(ids(registry::retain().1).is_empty());
+    registry::settled("late");
+    assert_eq!(ids(registry::retain().1), ["late"]);
 }
 
 #[test]

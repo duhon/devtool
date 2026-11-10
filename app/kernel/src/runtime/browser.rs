@@ -107,8 +107,8 @@ impl Platform for Browser {
         crate::modules::loader::accept(list)
     }
 
-    fn load(&self, first: &str, loaded: Callback<Started>) {
-        crate::modules::loader::prepare(&self.transport, first, loaded);
+    fn load(&self, first: &str, health: bool, loaded: Callback<Started>) {
+        crate::modules::loader::prepare(&self.transport, first, health, loaded);
     }
 
     fn agent_workspace_id(&self) -> String {
