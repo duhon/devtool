@@ -165,7 +165,7 @@ fn status(text: &str, indicator: &str) -> Cmd {
     cmd::status(text, indicator)
 }
 
-/// The URL a check discovers from: the one of its `#endpoint`. With `pos` on the endpoint,
+/// The URL a check discovers from: the one of its `#target`. With `pos` on the endpoint,
 /// the URL ends there, so a typed `/` commits the URL before it.
 fn url_at(check: &Check, pos: Option<usize>) -> Option<&str> {
     let typed = pos.and_then(|pos| {
@@ -177,7 +177,7 @@ fn url_at(check: &Check, pos: Option<usize>) -> Option<&str> {
             .iter()
             .filter(|section| section.line <= line)
             .max_by_key(|section| section.line)?;
-        if section.name != "endpoint" {
+        if section.name != "target" {
             return None;
         }
         let start = before.rfind('\n').map_or(0, |at| at + 1);
@@ -189,7 +189,7 @@ fn url_at(check: &Check, pos: Option<usize>) -> Option<&str> {
         };
         endpoint_url(prefix).filter(|url| address(url).is_some() || url.contains("{{"))
     });
-    typed.or_else(|| endpoint_url(check.text_of("endpoint")))
+    typed.or_else(|| endpoint_url(check.text_of("target")))
 }
 
 fn target(url: &str, headers: Vec<(String, String)>) -> Option<Target> {

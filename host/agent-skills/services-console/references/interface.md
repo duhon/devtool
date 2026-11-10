@@ -25,14 +25,14 @@ Undock into separate window.
   Lines under a `#section` line of Hints are offered only in that section;
   lines before any section are offered where their shape fits.
 - Templates opens a global, per-service library with section tabs (REST:
-  check, endpoint, headers, body). Each definition starts with `@name description`
+  check, target, headers, payload). Each definition starts with `@name description`
   at the start of a line, followed by literal multiline content until the next
   definition. `@@` escapes a leading literal `@` in a body. Names are unique
   within a service/section. Definitions autosave; invalid drafts stay visible
   with an error and never replace saved definitions. Reload refreshes saved
   content; Discard draft explicitly removes the current draft and reloads it.
 - In a request, press Space immediately after a section marker (for example
-  `#body `) to see its templates, or type `#body @name` to filter by name.
+  `#payload `) to see its templates, or type `#payload @name` to filter by name.
   Choose a template name from the list. Templates are not suggested
   on standalone content lines or in ordinary text. Only the template body is pasted,
   not its name/description; inline markers get the required newline. This is

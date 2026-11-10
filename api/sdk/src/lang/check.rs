@@ -174,17 +174,17 @@ mod tests {
 
     #[test]
     fn positions_know_their_section_and_body() {
-        let text = "#endpoint\nmysql://db\n#query\nSELECT 1\nFROM t\n#responce OK\nx";
+        let text = "#target\nmysql://db\n#payload\nSELECT 1\nFROM t\n#responce OK\nx";
         let at = At::new(text, text.find("FROM").unwrap() + 2);
-        assert_eq!(at.name(), Some("query"));
+        assert_eq!(at.name(), Some("payload"));
         assert_eq!(at.before, "FR");
         assert_eq!(at.body(), "SELECT 1\nFR");
         assert_eq!(at.whole(), "SELECT 1\nFROM t");
         assert!(!at.in_response());
         assert!(At::new(text, text.len()).in_response());
-        let at = At::new("#endpoint\nx\n#", 13);
-        let markers = at.markers(&["endpoint", "query"]).unwrap();
+        let at = At::new("#target\nx\n#", 13);
+        let markers = at.markers(&["target", "payload"]).unwrap();
         assert_eq!(markers.items.len(), 1);
-        assert_eq!(markers.items[0].insert, "#query\n");
+        assert_eq!(markers.items[0].insert, "#payload\n");
     }
 }

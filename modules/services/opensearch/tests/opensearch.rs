@@ -27,7 +27,7 @@ fn check(text: &str) -> Check {
     for (i, line) in text.split('\n').enumerate() {
         if let Some((name, rest)) = marker(line) {
             close(current.take(), &mut body);
-            let head = if name == "endpoint" {
+            let head = if name == "target" {
                 rest.to_owned()
             } else {
                 String::new()
@@ -154,7 +154,7 @@ fn discover(
 
 fn source(path: &str) -> String {
     format!(
-        "#check test\n#endpoint\nGET http://example.test/proxy/{path}\n#headers\nAuthorization: Basic fixture\n#body\n"
+        "#check test\n#target\nGET http://example.test/proxy/{path}\n#headers\nAuthorization: Basic fixture\n#payload\n"
     )
 }
 
@@ -192,7 +192,7 @@ fn inserts(completions: &Completions) -> Vec<String> {
 
 /// Body completion for `body` in a request to `path` under the fixture cluster.
 fn body(module: &OpenSearch, path: &str, body: &str) -> Vec<String> {
-    let text = format!("#endpoint\nGET http://example.test/proxy/{path}\n#body\n{body}");
+    let text = format!("#target\nGET http://example.test/proxy/{path}\n#payload\n{body}");
     inserts(&complete(module, &text))
 }
 
@@ -201,7 +201,7 @@ fn endpoint_is_method_and_url_and_bodies_pass_unchanged() {
     let module = OpenSearch::default();
     let search = request(
         &module,
-        "#endpoint\nget https://example.test:9200/logs-*/_search?size=5\n#headers\nAuthorization: Basic eA==\n#body\n{\"query\":{\"match_all\":{}}}",
+        "#target\nget https://example.test:9200/logs-*/_search?size=5\n#headers\nAuthorization: Basic eA==\n#payload\n{\"query\":{\"match_all\":{}}}",
     )
     .unwrap();
     assert_eq!(search["method"], "GET");
@@ -223,10 +223,10 @@ fn endpoint_is_method_and_url_and_bodies_pass_unchanged() {
         "GET file:///tmp/test",
         "GET http://localhost:9200/#fragment",
     ] {
-        let error = request(&module, &format!("#endpoint\n{endpoint}")).unwrap_err();
+        let error = request(&module, &format!("#target\n{endpoint}")).unwrap_err();
         assert!(error.contains("METHOD URL"), "{endpoint}: {error}");
     }
-    let empty = request(&module, "#endpoint\nGET http://localhost:9200/\n#body\n").unwrap();
+    let empty = request(&module, "#target\nGET http://localhost:9200/\n#payload\n").unwrap();
     assert!(empty["body"].is_null() && empty["headers"] == json!([]));
 }
 
@@ -242,7 +242,7 @@ fn ndjson_apis_get_their_content_type_and_exactly_one_final_newline() {
         for body in ["{}\n{}", "{}\n{}\n"] {
             let request = request(
                 &module,
-                &format!("#endpoint\nPOST http://localhost:9200{path}\n#body\n{body}"),
+                &format!("#target\nPOST http://localhost:9200{path}\n#payload\n{body}"),
             )
             .unwrap();
             assert_eq!(request["body"], "{}\n{}\n", "{path}");
@@ -251,14 +251,14 @@ fn ndjson_apis_get_their_content_type_and_exactly_one_final_newline() {
     }
     let bulk = request(
         &module,
-        "#endpoint\nPOST http://localhost:9200/_bulk\n#headers\ncontent-type: application/json\n#body\n{}",
+        "#target\nPOST http://localhost:9200/_bulk\n#headers\ncontent-type: application/json\n#payload\n{}",
     )
     .unwrap();
     assert_eq!(header(&bulk, "content-type"), ["application/json"]);
     assert_eq!(bulk["body"], "{}\n");
     let custom = request(
         &module,
-        "#endpoint\nPOST http://localhost:9200/custom\n#headers\nContent-Type: application/x-ndjson; charset=utf-8\n#body\n{}",
+        "#target\nPOST http://localhost:9200/custom\n#headers\nContent-Type: application/x-ndjson; charset=utf-8\n#payload\n{}",
     )
     .unwrap();
     assert_eq!(custom["body"], "{}\n");
@@ -288,9 +288,9 @@ fn responses_render_like_rest() {
 fn highlight_styles_options_and_the_ndjson_body() {
     let module = OpenSearch::default();
     let lines: Vec<String> = [
-        "#endpoint",
+        "#target",
         "OPTIONS http://localhost:9200/_bulk",
-        "#body",
+        "#payload",
         "{\"index\":{}}",
         "{\"a\":1}",
     ]
@@ -307,7 +307,7 @@ fn highlight_styles_options_and_the_ndjson_body() {
     );
     assert_eq!(
         module
-            .fold(&check("#body\n{\n  \"a\": 1\n}"))
+            .fold(&check("#payload\n{\n  \"a\": 1\n}"))
             .iter()
             .map(|fold| (fold.start, fold.end))
             .collect::<Vec<_>>(),
@@ -318,7 +318,7 @@ fn highlight_styles_options_and_the_ndjson_body() {
 #[test]
 fn endpoint_completion_offers_the_methods_and_valid_urls() {
     let module = OpenSearch::default();
-    let methods = inserts(&complete(&module, "#check test\n#endpoint\n"));
+    let methods = inserts(&complete(&module, "#check test\n#target\n"));
     assert_eq!(
         methods,
         [
@@ -328,12 +328,12 @@ fn endpoint_completion_offers_the_methods_and_valid_urls() {
     for endpoint in ["GET ", "GET h", "POST ", "POST h"] {
         let candidates = inserts(&complete(
             &module,
-            &format!("#check test\n#endpoint\n{endpoint}"),
+            &format!("#check test\n#target\n{endpoint}"),
         ));
         assert!(!candidates.is_empty(), "{endpoint}");
         for candidate in candidates {
             let method = endpoint.split_whitespace().next().unwrap();
-            let params = request(&module, &format!("#endpoint\n{method} {candidate}x"))
+            let params = request(&module, &format!("#target\n{method} {candidate}x"))
                 .unwrap_or_else(|error| panic!("{candidate}: {error}"));
             assert_eq!(params["method"], method);
         }
@@ -355,7 +355,7 @@ fn discovery_is_cached_at_the_cluster_root_and_service_apis_apart() {
     assert_eq!(statuses(&last), ["Discovery · OK"]);
     let paths = inserts(&complete(
         &module,
-        "#endpoint\nGET http://example.test/proxy/_cluster/he",
+        "#target\nGET http://example.test/proxy/_cluster/he",
     ));
     assert!(
         paths.contains(&"/proxy/_cluster/health".to_owned()),
@@ -377,7 +377,7 @@ fn discovery_reports_refused_metadata_transport_failures_and_other_servers() {
     assert_eq!(
         statuses(&last),
         [
-            "Discovery · ERROR · OpenSearch discovery failed (HTTP 403); check the endpoint and metadata permissions"
+            "Discovery · ERROR · OpenSearch discovery failed (HTTP 403); check the target and metadata permissions"
         ]
     );
     let elasticsearch = json!({"version":{"number":"8.0.0"},"tagline":"You Know, for Search"});
@@ -388,7 +388,7 @@ fn discovery_reports_refused_metadata_transport_failures_and_other_servers() {
     assert_eq!(urls, ["/proxy/logs/", "/proxy/", "/"]);
     assert_eq!(
         statuses(&last),
-        ["Discovery · ERROR · No OpenSearch cluster found at this endpoint"]
+        ["Discovery · ERROR · No OpenSearch cluster found at this target"]
     );
     let mut module = OpenSearch::default();
     let cmds = module.update(Event::Hints {
@@ -412,7 +412,7 @@ fn paths_complete_with_the_indices_and_aliases() {
     let module = discovered();
     let paths = inserts(&complete(
         &module,
-        "#check test\n#endpoint\nGET http://example.test/proxy/re",
+        "#check test\n#target\nGET http://example.test/proxy/re",
     ));
     assert!(
         paths.contains(&"/proxy/recent/_search".to_owned()),
@@ -502,7 +502,7 @@ fn bool_clauses_offer_the_leaf_queries_in_every_item() {
 #[test]
 fn header_hints_lead_with_the_module_ones_and_skip_used_names() {
     let module = discovered();
-    let endpoint = "#check test\n#endpoint\nGET http://example.test/proxy/logs/_search\n#headers\n";
+    let endpoint = "#check test\n#target\nGET http://example.test/proxy/logs/_search\n#headers\n";
     assert_eq!(
         inserts(&complete(&module, endpoint)),
         [

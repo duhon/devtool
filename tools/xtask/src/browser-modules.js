@@ -21,7 +21,7 @@
     if (testid('console-settings-toggle').getAttribute('aria-pressed') === 'true')
       await click(testid('console-settings-toggle'));
   };
-  const kept = '#check kept\n#endpoint\nhttps://kept.fixture.invalid\n';
+  const kept = '#check kept\n#target\nhttps://kept.fixture.invalid\n';
   await click(tab('terminal'));
   setSource(editorOf('console-editor'), kept);
   await settings(true);
@@ -96,7 +96,7 @@
   await click(tab('terminal'));
   const editor = editorOf('console-editor');
   assert(editor.getValue() === kept, `The console of a removed module must come back: ${JSON.stringify(editor.getValue())}`);
-  setSource(editor, '#check installed\n#endpoint\nbash -c\n#command\necho "{{var:sku}}"');
+  setSource(editor, '#check installed\n#target\nbash -c\n#payload\necho "{{var:sku}}"');
   await key('Shift+Enter');
   await wait(() => editor.getValue().includes('#responce') && editor.getValue().includes('fixture-materialized-sku'),
     () => `The installed module must run requests: ${editor.getValue().slice(-500)}`);
@@ -110,7 +110,7 @@
   await settings(false);
   await click(tab('echo'));
   const echo = editorOf('console-editor');
-  setSource(echo, '#check echo\n#endpoint\nlocal\n#text\nsent through a module\n');
+  setSource(echo, '#check echo\n#target\nlocal\n#text\nsent through a module\n');
   await key('Shift+Enter');
   const echoed = () => echo.getValue().split('#responce')[1] ?? '';
   await wait(() => echoed().includes('sent through a module'),

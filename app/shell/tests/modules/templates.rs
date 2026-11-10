@@ -19,22 +19,22 @@ fn suggest(
 }
 
 #[test]
-fn inserts_only_body_and_normalizes_inline_sections() {
+fn inserts_only_payload_and_normalizes_inline_sections() {
     services_shell::link();
     let templates = BTreeMap::from([(
-        "body".into(),
+        "payload".into(),
         "@my_create_book comment\n{\n  \"id\": 123\n}\n@my_create_book2 second\n{\"id\":1,}".into(),
     )]);
-    let completion = suggest("artemis", "", "#check test\n#body @", 1, 7, &templates).unwrap();
-    assert_eq!((completion.from, completion.to), (5, 7));
+    let completion = suggest("artemis", "", "#check test\n#payload @", 1, 10, &templates).unwrap();
+    assert_eq!((completion.from, completion.to), (8, 10));
     assert_eq!(completion.candidates[0].text, "\n{\n  \"id\": 123\n}");
     assert_eq!(
         completion.candidates[0].label.as_deref(),
         Some("@my_create_book")
     );
-    assert!(suggest("artemis", "", "#body\n@m", 1, 2, &templates).is_none());
+    assert!(suggest("artemis", "", "#payload\n@m", 1, 2, &templates).is_none());
     assert!(suggest("artemis", "", "#headers\n@", 1, 1, &templates).is_none());
-    assert!(suggest("artemis", "", "#body\nmail@", 1, 5, &templates).is_none());
+    assert!(suggest("artemis", "", "#payload\nmail@", 1, 5, &templates).is_none());
 }
 
 #[test]
@@ -42,13 +42,13 @@ fn full_checks_and_unicode_are_literal() {
     services_shell::link();
     let templates = BTreeMap::from([(
         "check".into(),
-        "@готово full\n#check new\n#endpoint\nGET /books\n#body\n{}".into(),
+        "@готово full\n#check new\n#target\nGET /books\n#payload\n{}".into(),
     )]);
     let completion = suggest("artemis", "", "#check @гот", 0, 11, &templates).unwrap();
     assert_eq!(completion.from, 0);
     assert_eq!(
         completion.candidates[0].text,
-        "#check new\n#endpoint\nGET /books\n#body\n{}"
+        "#check new\n#target\nGET /books\n#payload\n{}"
     );
     assert!(completion.candidates[0].literal);
     assert!(suggest("artemis", "", "@", 0, 1, &templates).is_none());
@@ -57,12 +57,12 @@ fn full_checks_and_unicode_are_literal() {
 #[test]
 fn check_header_uses_description_without_copying_template_definition() {
     services_shell::link();
-    let body = r#"#endpoint
+    let body = r#"#target
 PUT https://fakerestapi.azurewebsites.net/api/v1/Books/123
 #headers
 Content-Type: application/json
 Accept: application/json
-#body
+#payload
 {
   "id": 123,
   "title": "Example Book Title",
@@ -86,24 +86,24 @@ fn check_names_fall_back_to_template_name_and_keep_explicit_headers() {
     services_shell::link();
     for (definition, expected) in [
         (
-            "@test1\n#endpoint\nGET /books",
-            "#check test1\n#endpoint\nGET /books",
+            "@test1\n#target\nGET /books",
+            "#check test1\n#target\nGET /books",
         ),
         (
-            "@test1 Create a book\n#endpoint\nGET /books",
-            "#check Create a book\n#endpoint\nGET /books",
+            "@test1 Create a book\n#target\nGET /books",
+            "#check Create a book\n#target\nGET /books",
         ),
         (
-            "@test1 mmm\n  #CHECK Existing\n#endpoint\nGET /books",
-            "  #CHECK Existing\n#endpoint\nGET /books",
+            "@test1 mmm\n  #CHECK Existing\n#target\nGET /books",
+            "  #CHECK Existing\n#target\nGET /books",
         ),
         (
-            "@test1 mmm\n#request Existing\n#endpoint\nGET /books",
-            "#request Existing\n#endpoint\nGET /books",
+            "@test1 mmm\n#request Existing\n#target\nGET /books",
+            "#request Existing\n#target\nGET /books",
         ),
         (
-            "@test1 mmm\n#checker\n#endpoint\nGET /books",
-            "#check mmm\n#checker\n#endpoint\nGET /books",
+            "@test1 mmm\n#checker\n#target\nGET /books",
+            "#check mmm\n#checker\n#target\nGET /books",
         ),
     ] {
         let templates = BTreeMap::from([("check".into(), definition.into())]);
@@ -115,14 +115,14 @@ fn check_names_fall_back_to_template_name_and_keep_explicit_headers() {
 #[test]
 fn templates_are_only_suggested_after_a_section_marker_on_the_same_line() {
     services_shell::link();
-    let templates = BTreeMap::from([("body".into(), "@example Body\n{}".into())]);
+    let templates = BTreeMap::from([("payload".into(), "@example Body\n{}".into())]);
     for source in [
         "@",
-        "#body\n@",
-        "#body\n@exa",
-        "#body\nemail@",
-        "#body\ntext @",
-        "#body name @",
+        "#payload\n@",
+        "#payload\n@exa",
+        "#payload\nemail@",
+        "#payload\ntext @",
+        "#payload name @",
         "#unknown @",
     ] {
         let line = source.lines().count() - 1;
@@ -132,25 +132,25 @@ fn templates_are_only_suggested_after_a_section_marker_on_the_same_line() {
             "{source}"
         );
     }
-    assert!(suggest("artemis", "body", "#body @", 0, 7, &templates).is_none());
-    let completion = suggest("artemis", "", "  #body \t@", 0, 10, &templates).unwrap();
+    assert!(suggest("artemis", "payload", "#payload @", 0, 10, &templates).is_none());
+    let completion = suggest("artemis", "", "  #payload \t@", 0, 13, &templates).unwrap();
     assert_eq!(completion.candidates[0].text, "\n{}");
-    assert_eq!((completion.from, completion.to), (7, 10));
+    assert_eq!((completion.from, completion.to), (10, 13));
 }
 
 #[test]
 fn space_after_section_marker_offers_templates_without_an_at_sign() {
     services_shell::link();
     let templates = BTreeMap::from([
-        ("body".into(), "@example Body\n{}".into()),
+        ("payload".into(), "@example Body\n{}".into()),
         (
             "check".into(),
-            "@create Create book\n#endpoint\nPUT /books\n#body\n{}".into(),
+            "@create Create book\n#target\nPUT /books\n#payload\n{}".into(),
         ),
     ]);
-    let completion = suggest("artemis", "", "#body ", 0, 6, &templates).unwrap();
+    let completion = suggest("artemis", "", "#payload ", 0, 9, &templates).unwrap();
     assert!(completion.automatic);
-    assert_eq!((completion.from, completion.to), (5, 6));
+    assert_eq!((completion.from, completion.to), (8, 9));
     assert_eq!(completion.candidates[0].text, "\n{}");
     assert_eq!(completion.candidates[0].label.as_deref(), Some("@example"));
     assert_eq!(
@@ -158,15 +158,15 @@ fn space_after_section_marker_offers_templates_without_an_at_sign() {
             .unwrap()
             .candidates[0]
             .text,
-        "#check Create book\n#endpoint\nPUT /books\n#body\n{}"
+        "#check Create book\n#target\nPUT /books\n#payload\n{}"
     );
-    let existing = suggest("artemis", "", "#body @example", 0, 6, &templates).unwrap();
-    assert_eq!((existing.from, existing.to), (5, 14));
+    let existing = suggest("artemis", "", "#payload @example", 0, 9, &templates).unwrap();
+    assert_eq!((existing.from, existing.to), (8, 17));
     for source in [
-        "#body",
-        "#body\n ",
-        "#body\ntext ",
-        "#body text ",
+        "#payload",
+        "#payload\n ",
+        "#payload\ntext ",
+        "#payload text ",
         "#unknown ",
     ] {
         let line = source.lines().count() - 1;

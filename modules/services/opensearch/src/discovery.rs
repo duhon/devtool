@@ -73,7 +73,7 @@ fn service_scope(base: &Url, url: &Url) -> Option<Url> {
 
 fn http_error(status: u16) -> String {
     format!(
-        "OpenSearch discovery failed (HTTP {status}); check the endpoint and metadata permissions"
+        "OpenSearch discovery failed (HTTP {status}); check the target and metadata permissions"
     )
 }
 
@@ -114,7 +114,7 @@ impl Run {
             let message = self
                 .failure
                 .take()
-                .unwrap_or_else(|| "No OpenSearch cluster found at this endpoint".to_owned());
+                .unwrap_or_else(|| "No OpenSearch cluster found at this target".to_owned());
             return self.failed(message, false);
         }
         Step::Fetch(vec![self.roots.remove(0).to_string()])

@@ -68,7 +68,7 @@ fn newline_after_request_header_offers_unused_sections() {
             );
         }
     }
-    let source = "#check my query\n\n#endpoint\nmysql://db\n";
+    let source = "#check my query\n\n#target\nmysql://db\n";
     let hints = suggest("mysql", "", source, 1, 0, &[]);
     assert_eq!(
         hints
@@ -76,7 +76,7 @@ fn newline_after_request_header_offers_unused_sections() {
             .iter()
             .map(|candidate| candidate.text.as_str())
             .collect::<Vec<_>>(),
-        vec!["#options", "#query", "#check"]
+        vec!["#options", "#payload", "#check"]
     );
 }
 
@@ -157,10 +157,10 @@ fn non_service_editors_never_offer_console_or_service_syntax() {
 #[test]
 fn marker_hints_offer_only_unused_sections_and_new_checks() {
     services_shell::link();
-    let source = "#check\n#endpoint\nmysql://db\n#";
+    let source = "#check\n#target\nmysql://db\n#";
     let r = suggest("mysql", "", source, 3, 1, &[]);
-    assert!(r.candidates.iter().any(|c| c.text == "#query"));
-    assert!(!r.candidates.iter().any(|c| c.text == "#endpoint"));
+    assert!(r.candidates.iter().any(|c| c.text == "#payload"));
+    assert!(!r.candidates.iter().any(|c| c.text == "#target"));
     assert!(r.candidates.iter().any(|c| c.text == "#check"));
 }
 
@@ -203,7 +203,7 @@ fn separator_hints_are_repeatable_and_scoped_to_each_request() {
             expected,
             "{service}"
         );
-        let source = format!("{first}#check second\n#endpoint\nvalue\n#\n#check third\n{filled}");
+        let source = format!("{first}#check second\n#target\nvalue\n#\n#check third\n{filled}");
         let line = first.split('\n').count() + 2;
         let result = suggest(service, "", &source, line, 1, &[]);
         assert!(
@@ -216,7 +216,7 @@ fn separator_hints_are_repeatable_and_scoped_to_each_request() {
             !result
                 .candidates
                 .iter()
-                .any(|candidate| candidate.text == "#endpoint")
+                .any(|candidate| candidate.text == "#target")
         );
         assert_eq!(result.candidates.len(), console::markers(service).len());
     }
@@ -237,7 +237,7 @@ fn markers_advance_to_their_value_but_request_leaves_room_for_a_title() {
     }
     // An editor of one request section inserts the marker as it is.
     assert_eq!(
-        Language::new("headers", "rest", "headers", "").insertion("#endpoint", ""),
+        Language::new("headers", "rest", "headers", "").insertion("#target", ""),
         None
     );
 }
@@ -247,7 +247,7 @@ fn variable_placeholders_replace_the_existing_closing_braces() {
     services_shell::link();
     let r = suggest(
         "rest",
-        "body",
+        "payload",
         "{{:TOK}}",
         0,
         6,
@@ -267,8 +267,8 @@ fn owners_then_scoped_variables() {
         ("{{:TOKEN}}".into(), "global".into()),
     ];
     for (service, service_field) in [
-        ("mysql", "query"),
-        ("rest", "endpoint"),
+        ("mysql", "payload"),
+        ("rest", "target"),
         ("vars", "variables"),
     ] {
         for field in [service_field, ""] {
@@ -287,7 +287,7 @@ fn owners_then_scoped_variables() {
 fn repeat_until_is_offered_under_a_repeat() {
     services_shell::link();
     let options = |lines: &str| -> Vec<String> {
-        let source = format!("#check a\n#endpoint\nGET https://a\n#options\n{lines}");
+        let source = format!("#check a\n#target\nGET https://a\n#options\n{lines}");
         let line = source.lines().count();
         suggest("rest", "", &format!("{source}\n"), line, 0, &[])
             .candidates

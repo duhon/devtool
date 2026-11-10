@@ -280,7 +280,7 @@ impl Workspace {
         if let Some(block) = &origin {
             let old_sections = requests::sections(service, &block.text);
             let new_sections = requests::sections(service, request);
-            for marker in ["endpoint", "headers", "proto", "options", "env"] {
+            for marker in ["target", "headers", "proto", "options", "env"] {
                 if !new_sections.contains_key(marker)
                     && let Some(value) = old_sections.get(marker).filter(|value| !value.is_empty())
                 {

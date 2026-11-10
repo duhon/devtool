@@ -90,7 +90,7 @@ impl Run {
     /// Starts a search with `options` and resolves it: the reply asks for the lock.
     fn resolved(&self, options: &str) -> Cmds {
         let cmds = self.run(&format!(
-            "#endpoint\nhttps://splunk.fixture\n#options\n{options}\n#search\nindex={{{{idx}}}}"
+            "#target\nhttps://splunk.fixture\n#options\n{options}\n#payload\nindex={{{{idx}}}}"
         ));
         assert_eq!(names(&cmds), [("console:splunk:1:resolve", "vars.resolve")]);
         assert_eq!(cmds[0].2["mode"], "json");
@@ -231,7 +231,7 @@ fn a_stopped_search_still_counts_for_the_pacing() {
 #[test]
 fn bad_checks_finish_the_run_with_an_error() {
     let run = Run::new();
-    let cmds = run.run("#endpoint\nhttps://x\n#count\n5\n#search\nindex=main");
+    let cmds = run.run("#target\nhttps://x\n#count\n5\n#payload\nindex=main");
     assert_eq!(
         cmds[0].2["error"],
         "Unsupported Splunk section #count; use #options."

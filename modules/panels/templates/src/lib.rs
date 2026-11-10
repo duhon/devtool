@@ -252,7 +252,7 @@ impl Module for Templates {
             )
             .key("templates-editor")
             .placeholder(if section == "check" {
-                "@example Description\n#endpoint\n...\n"
+                "@example Description\n#target\n...\n"
             } else {
                 "@example Description\nText to insert\n"
             })

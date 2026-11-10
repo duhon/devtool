@@ -1,5 +1,5 @@
-//! The MySQL service: a `#endpoint` connection string (`mysql://…`), an optional `#options`
-//! section and a `#query` sent through the Host `mysql` driver. Results print as the MySQL
+//! The MySQL service: a `#target` connection string (`mysql://…`), an optional `#options`
+//! section and a `#payload` sent through the Host `mysql` driver. Results print as the MySQL
 //! client prints them; a query ending in `\G` prints vertical records. Schema discovery
 //! feeds SQL completion with tables and columns.
 
@@ -16,7 +16,7 @@ use services_sdk::{
 };
 use std::collections::BTreeMap;
 
-pub const SECTIONS: [&str; 3] = ["endpoint", "options", "query"];
+pub const SECTIONS: [&str; 3] = ["target", "options", "payload"];
 
 pub const DISCOVERY_SQL: &str = "SELECT table_name AS tableName, column_name AS columnName, column_type AS columnType, column_key AS columnKey FROM information_schema.columns WHERE table_schema = DATABASE() ORDER BY table_name, ordinal_position";
 
@@ -31,7 +31,7 @@ const DISCOVER: &str = "discover:";
 /// the parts of a check the driver does not take, and ignores.
 pub const CONSOLE: &str = "console";
 
-/// A parsed `#query`: the SQL to send and whether `\G` asked for vertical records.
+/// A parsed `#payload`: the SQL to send and whether `\G` asked for vertical records.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Query {
     pub sql: String,
@@ -70,11 +70,11 @@ fn option(check: &Check, name: &str) -> Option<String> {
 /// The driver request of a check: `{url, sql, console: {vertical, columnsType}}`; `{{…}}`
 /// placeholders stay for the App to resolve.
 pub fn request(check: &Check) -> Result<Value, String> {
-    let url = check.text_of("endpoint").trim();
+    let url = check.text_of("target").trim();
     if !url.to_ascii_lowercase().starts_with("mysql://") {
-        return Err("MySQL request needs a #endpoint block (a mysql:// connection string)".into());
+        return Err("MySQL request needs a #target block (a mysql:// connection string)".into());
     }
-    let query = parse_sql(check.text_of("query"))?;
+    let query = parse_sql(check.text_of("payload"))?;
     let types = option(check, COLUMNS_TYPE);
     Options::parse(types.as_deref(), None)?;
     let format = option(check, "Format");
@@ -300,7 +300,7 @@ fn discoverable(url: &str) -> bool {
 impl Mysql {
     /// The schema of the check's connection; `null` when not discovered.
     pub fn schema(&self, check: &Check) -> Value {
-        let raw = check.text_of("endpoint").trim();
+        let raw = check.text_of("target").trim();
         self.resolver
             .get(raw)
             .and_then(|url| self.schemas.iter().rev().find(|(known, _)| known == url))
@@ -312,7 +312,7 @@ impl Mysql {
     }
 
     fn document(&mut self, check: &Check) -> Vec<Cmd> {
-        let raw = check.text_of("endpoint").trim();
+        let raw = check.text_of("target").trim();
         if raw.contains("{{") && self.resolver.get(raw).is_none() && !self.resolver.pending(raw) {
             return vec![self.resolver.request(raw, Purpose::Remember)];
         }
@@ -320,7 +320,7 @@ impl Mysql {
     }
 
     fn hints(&mut self, check: &Check) -> Vec<Cmd> {
-        let raw = check.text_of("endpoint").trim();
+        let raw = check.text_of("target").trim();
         if raw.contains("{{") {
             return vec![self.resolver.request(raw, Purpose::Hints)];
         }
@@ -342,7 +342,7 @@ impl Mysql {
     }
 
     fn manual(&mut self, check: &Check) -> Vec<Cmd> {
-        let raw = check.text_of("endpoint").trim();
+        let raw = check.text_of("target").trim();
         if raw.contains("{{") {
             return vec![self.resolver.request(raw, Purpose::Manual)];
         }
@@ -407,8 +407,8 @@ impl Mysql {
         if let Err(error) = request(&check) {
             return vec![cmd::fail(&run, &error, &Value::Null)];
         }
-        let sections = json!({"endpoint": check.text_of("endpoint"),
-            "options": check.text_of("options"), "query": check.text_of("query")});
+        let sections = json!({"target": check.text_of("target"),
+            "options": check.text_of("options"), "payload": check.text_of("payload")});
         self.resolving.insert(run.clone(), check);
         vec![run::resolve_value(format!("{run}{RESOLVE}"), &sections)]
     }
@@ -538,9 +538,9 @@ pub fn highlight(state: &[u8], lines: &[String], columns: &[LineColumns]) -> Vec
             });
             let tokens = if is_marker {
                 area = match named.as_deref() {
-                    Some("endpoint") => Area::Endpoint,
+                    Some("target") => Area::Endpoint,
                     Some("options") => Area::Options,
-                    Some("query") => Area::Query,
+                    Some("payload") => Area::Query,
                     Some("responce" | "response") => Area::Response,
                     _ => Area::Other,
                 };
@@ -590,7 +590,7 @@ pub fn complete(check: &Check, pos: usize, schema: &Value) -> Completions {
     }
     let line_start = at.line_start(at.line);
     match at.name() {
-        Some("endpoint") => {
+        Some("target") => {
             if let Some(next) = at.next_section(&SECTIONS) {
                 return next;
             }
@@ -621,7 +621,7 @@ pub fn complete(check: &Check, pos: usize, schema: &Value) -> Completions {
             }
             result
         }
-        Some("query") => {
+        Some("payload") => {
             let (fragment, candidates) = sql::suggest(at.body(), at.whole(), schema);
             let items = candidates
                 .into_iter()

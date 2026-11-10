@@ -3,7 +3,7 @@
   await openConsole();
   await click(testid('console-service-rest'));
   const editor=editorOf('console-editor');
-  setSource(editor,`#check History acceptance\n#endpoint\nPUT ${fixtureUrl}/history-fixture?value={{env:SERVICES_DEVTOOLS_ENV_PROBE}}\n#headers\nContent-Type: application/json\nAuthorization: Bearer history-secret-token\n#body\n{"text":"first","env":"{{env:SERVICES_DEVTOOLS_ENV_PROBE}}"}`);
+  setSource(editor,`#check History acceptance\n#target\nPUT ${fixtureUrl}/history-fixture?value={{env:SERVICES_DEVTOOLS_ENV_PROBE}}\n#headers\nContent-Type: application/json\nAuthorization: Bearer history-secret-token\n#payload\n{"text":"first","env":"{{env:SERVICES_DEVTOOLS_ENV_PROBE}}"}`);
   const current=Number(testid('console-session-name').dataset.sessionId);
   const snapshot=async()=>(await testDriver.sessionLibrary()).sessions.find(s=>s.id===current).snapshot.console;
   await wait(async()=>(await snapshot()).checkIdentities?.rest?.length===1);
@@ -61,7 +61,7 @@
   const detail=async index=>{
     const id=entryId(entries()[index]);
     await click(entries()[index]);
-    await wait(()=>viewer()?.getValue().includes('#endpoint') && idle());
+    await wait(()=>viewer()?.getValue().includes('#target') && idle());
     assert(entryId(entries()[index])===id,'Opening a snapshot must retain its execution identity');
     assert(entries()[index].classList.contains('is-primary')
       && list().querySelectorAll('.is-primary').length===1,
@@ -126,7 +126,7 @@
   await click(testid('console-service-terminal'));
   const terminalEditor=editorOf('console-editor');
   const terminalOutput='+----+-------+\n| ID | Title |\n+----+-------+\n| 1  | Ready |\n+----+-------+\n';
-  setSource(terminalEditor,"#check Terminal history\n#endpoint\nsh -c\n#command\nprintf '+----+-------+\\n| ID | Title |\\n+----+-------+\\n| 1  | Ready |\\n+----+-------+\\n'; printf 'warning\\n' >&2");
+  setSource(terminalEditor,"#check Terminal history\n#target\nsh -c\n#payload\nprintf '+----+-------+\\n| ID | Title |\\n+----+-------+\\n| 1  | Ready |\\n+----+-------+\\n'; printf 'warning\\n' >&2");
   terminalEditor.setCursor(terminalEditor.lastLine(),terminalEditor.getLine(terminalEditor.lastLine()).length);
   await key('Shift+Enter');
   await wait(()=>terminalEditor.getValue().includes(terminalOutput+'warning\n')
@@ -144,7 +144,7 @@
   await click(testid('console-service-rest'));
   await wait(()=>entries().length===10);
   const largeEditor=editorOf('console-editor');
-  setSource(largeEditor,`#check Large History\n#endpoint\nGET ${fixtureUrl}/history-large-fixture`);
+  setSource(largeEditor,`#check Large History\n#target\nGET ${fixtureUrl}/history-large-fixture`);
   largeEditor.closeHint();largeEditor.focus();largeEditor.setCursor(2,0);
   await key('Shift+Enter');
   await wait(()=>largeEditor.getValue().includes('response truncated')

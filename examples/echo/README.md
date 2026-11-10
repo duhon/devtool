@@ -104,7 +104,7 @@ change it, and should stay within a few milliseconds:
   `order`), `after_response(call, response)` sees each finished run (History saves it),
   `resolve(text, json, last)` resolves the `{{…}}` variables the panel owns.
 
-A `Check` is the check's text split into `#section`s (`check.text_of("endpoint")`);
+A `Check` is the check's text split into `#section`s (`check.text_of("target")`);
 `services_sdk::lang` has the shared request languages (headers, JSON, SQL, shell, REST
 endpoints) to highlight and complete them.
 

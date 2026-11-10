@@ -28,7 +28,7 @@ fn check(text: &str) -> Check {
     for (i, line) in text.split('\n').enumerate() {
         if let Some((name, rest)) = marker(line) {
             close(current.take(), &mut body);
-            let head = if name == "endpoint" {
+            let head = if name == "target" {
                 rest.to_owned()
             } else {
                 String::new()
@@ -177,7 +177,7 @@ fn spec() -> Value {
 /// A Rest whose discovery found `spec()` for `http://svc`.
 fn discovered() -> Rest {
     let mut rest = Rest::default();
-    let cmds = hints(&mut rest, "#endpoint\nGET http://svc/api/users\n#body\n");
+    let cmds = hints(&mut rest, "#target\nGET http://svc/api/users\n#payload\n");
     let answer = answer(
         &mut rest,
         &cmds,
@@ -197,11 +197,11 @@ fn discovered() -> Rest {
 fn highlight_styles_each_section_and_carries_state() {
     let rest = Rest::default();
     let lines = [
-        "#endpoint",
+        "#target",
         "POST https://api.test/users/{id}?q=1",
         "#headers",
         "Accept: */*",
-        "#body",
+        "#payload",
         "{",
         "  \"name\": \"{{user}}\",",
         "  # note",
@@ -212,7 +212,7 @@ fn highlight_styles_each_section_and_carries_state() {
     ];
     let s = styles(&rest, &[], &lines);
     let comment = |text: &str| vec![(text.to_owned(), "comment".to_owned())];
-    assert_eq!(s[0], comment("#endpoint"));
+    assert_eq!(s[0], comment("#target"));
     assert_eq!(
         s[1],
         pairs(&[
@@ -226,7 +226,7 @@ fn highlight_styles_each_section_and_carries_state() {
     );
     assert_eq!(s[2], comment("#headers"));
     assert_eq!(s[3], pairs(&[("Accept", "attribute"), ("*/*", "string")]));
-    assert_eq!(s[4], comment("#body"));
+    assert_eq!(s[4], comment("#payload"));
     assert!(s[6].contains(&("\"name\"".into(), "string property".into())));
     assert_eq!(s[7], comment("  # note"));
     assert!(s[8].contains(&("1".into(), "number".into())));
@@ -244,7 +244,9 @@ fn highlight_styles_each_section_and_carries_state() {
 #[test]
 fn highlight_starts_from_a_synthetic_marker_line() {
     let rest = Rest::default();
-    let start = rest.highlight(&[], &["#body".into()], &[])[0].state.clone();
+    let start = rest.highlight(&[], &["#payload".into()], &[])[0]
+        .state
+        .clone();
     let body = &styles(&rest, &start, &["{\"a\": [1]}"])[0];
     assert!(body.contains(&("\"a\"".into(), "string property".into())));
     assert!(body.contains(&("1".into(), "number".into())));
@@ -284,9 +286,9 @@ fn highlight_starts_from_a_synthetic_marker_line() {
 fn highlight_is_fast() {
     let rest = Rest::default();
     let mut lines = vec![
-        "#endpoint".to_owned(),
+        "#target".to_owned(),
         "GET http://x/{id}".into(),
-        "#body".into(),
+        "#payload".into(),
     ];
     lines.extend((0..100).map(|i| format!("  \"field{i}\": [1, \"two\", {{\"three\": null}}],")));
     let started = std::time::Instant::now();
@@ -299,7 +301,7 @@ fn highlight_is_fast() {
 #[test]
 fn folds_cover_the_body_and_a_json_response() {
     let rest = Rest::default();
-    let text = "#endpoint\nPOST http://x\n#body\n{\n  \"a\": [\n    1\n  ]\n}\n#responce OK\n{\n  \"b\": 1\n}";
+    let text = "#target\nPOST http://x\n#payload\n{\n  \"a\": [\n    1\n  ]\n}\n#responce OK\n{\n  \"b\": 1\n}";
     let folds: Vec<_> = rest
         .fold(&check(text))
         .iter()
@@ -311,43 +313,43 @@ fn folds_cover_the_body_and_a_json_response() {
 #[test]
 fn completion_offers_unused_markers_methods_and_urls() {
     let rest = Rest::default();
-    let (_, c) = complete(&rest, "#endpoint\nGET http://x\n#|");
-    assert_eq!(labels(&c), ["#headers", "#body"]);
+    let (_, c) = complete(&rest, "#target\nGET http://x\n#|");
+    assert_eq!(labels(&c), ["#headers", "#payload"]);
     assert_eq!(c.items[0].insert, "#headers\n");
     assert_eq!(c.items[0].detail, "Section");
 
     let (_, c) = complete(&rest, "|");
-    assert_eq!(inserts(&c), ["#endpoint\n", "#headers\n", "#body\n"]);
+    assert_eq!(inserts(&c), ["#target\n", "#headers\n", "#payload\n"]);
 
-    let (_, c) = complete(&rest, "#endpoint\nP|");
+    let (_, c) = complete(&rest, "#target\nP|");
     assert_eq!(inserts(&c), ["POST ", "PUT ", "PATCH "]);
     assert_eq!(c.items[0].detail, "Method");
-    assert_eq!((c.from, c.to), (10, 11));
+    assert_eq!((c.from, c.to), (8, 9));
 
-    let (_, c) = complete(&rest, "#endpoint\nGET ht|");
+    let (_, c) = complete(&rest, "#target\nGET ht|");
     assert_eq!(labels(&c), ["http://", "https://"]);
-    assert_eq!((c.from, c.to), (14, 16));
+    assert_eq!((c.from, c.to), (12, 14));
 
     // `{{…}}` variables belong to the App.
-    let (_, c) = complete(&rest, "#endpoint\nGET {{ba|");
+    let (_, c) = complete(&rest, "#target\nGET {{ba|");
     assert!(c.items.is_empty());
     // Nothing inside a response.
-    let (_, c) = complete(&rest, "#endpoint\nGET http://x\n#responce OK\n|");
+    let (_, c) = complete(&rest, "#target\nGET http://x\n#responce OK\n|");
     assert!(c.items.is_empty());
 }
 
 #[test]
 fn header_completion_skips_used_names() {
     let rest = Rest::default();
-    let (_, c) = complete(&rest, "#endpoint\nGET http://x\n#headers\nAccept: */*\n|");
+    let (_, c) = complete(&rest, "#target\nGET http://x\n#headers\nAccept: */*\n|");
     assert_eq!(
         &labels(&c)[..2],
-        ["#body", "Accept-Encoding: gzip, deflate, br"]
+        ["#payload", "Accept-Encoding: gzip, deflate, br"]
     );
     assert!(!labels(&c).contains(&"Accept: */*"));
     assert!(!labels(&c).contains(&"#headers"));
 
-    let (_, c) = complete(&rest, "#endpoint\nGET http://x\n#headers\nx-api|");
+    let (_, c) = complete(&rest, "#target\nGET http://x\n#headers\nx-api|");
     assert_eq!(labels(&c), ["X-Api-Key:"]);
     assert_eq!(c.items[0].detail, "Header");
 }
@@ -355,7 +357,7 @@ fn header_completion_skips_used_names() {
 #[test]
 fn discovery_feeds_paths_headers_and_body_fields() {
     let mut rest = Rest::default();
-    let cmds = hints(&mut rest, "#endpoint\nGET http://svc/api/users?q=1");
+    let cmds = hints(&mut rest, "#target\nGET http://svc/api/users?q=1");
     assert_eq!(statuses(&cmds), ["Discovery…"]);
     let calls = driver_calls(&cmds);
     assert_eq!(calls.len(), 7);
@@ -365,24 +367,24 @@ fn discovery_feeds_paths_headers_and_body_fields() {
             .any(|(_, url)| url == "http://svc/api/users/openapi.json")
     );
     // The same address is not discovered twice while in flight or after.
-    assert!(hints(&mut rest, "#endpoint\nGET http://svc/api/users\n#body\n").is_empty());
+    assert!(hints(&mut rest, "#target\nGET http://svc/api/users\n#payload\n").is_empty());
 
     let mut rest = discovered();
-    let (_, c) = complete(&rest, "#endpoint\nPOST http://svc/|");
+    let (_, c) = complete(&rest, "#target\nPOST http://svc/|");
     assert_eq!(labels(&c), ["/api/users"]);
     assert_eq!(c.items[0].detail, "OpenAPI path");
-    let (_, c) = complete(&rest, "#endpoint\nDELETE http://svc/|");
+    let (_, c) = complete(&rest, "#target\nDELETE http://svc/|");
     assert_eq!(labels(&c), ["/api/users/{id}"]);
     // The path after the cursor is replaced.
-    let (text, c) = complete(&rest, "#endpoint\nGET http://svc|/api/u");
+    let (text, c) = complete(&rest, "#target\nGET http://svc|/api/u");
     assert_eq!(labels(&c), ["/api/users"]);
     assert_eq!(c.to as usize, text.len());
 
-    let (_, c) = complete(&rest, "#endpoint\nGET http://svc/api/users\n#headers\nX-T|");
+    let (_, c) = complete(&rest, "#target\nGET http://svc/api/users\n#headers\nX-T|");
     let tenant = c.items.iter().find(|i| i.label == "X-Tenant: ").unwrap();
     assert_eq!(tenant.detail, "OpenAPI header");
 
-    let (_, c) = complete(&rest, "#endpoint\nPOST http://svc/api/users\n#body\n|");
+    let (_, c) = complete(&rest, "#target\nPOST http://svc/api/users\n#payload\n|");
     assert_eq!(c.items[0].detail, "Required fields");
     assert_eq!(
         c.items[0].insert,
@@ -390,28 +392,26 @@ fn discovery_feeds_paths_headers_and_body_fields() {
     );
     let (_, c) = complete(
         &rest,
-        "#endpoint\nPOST http://svc/api/users\n#body\n{\n  \"name\": \"x\",\n  |\n}",
+        "#target\nPOST http://svc/api/users\n#payload\n{\n  \"name\": \"x\",\n  |\n}",
     );
     assert_eq!(labels(&c), ["\"role\": \"\"", "\"born\": \"\""]);
     assert_eq!(c.items[1].detail, "date-time (ISO 8601)");
     assert_eq!(c.items[0].detail, "string · enum");
     let (_, c) = complete(
         &rest,
-        "#endpoint\nPOST http://svc/api/users\n#body\n{\"role\": \"|\"}",
+        "#target\nPOST http://svc/api/users\n#payload\n{\"role\": \"|\"}",
     );
     assert_eq!(labels(&c), ["\"admin\"", "\"user\""]);
 
     // A manual Discover runs again despite the cache.
-    let cmds = rest.update(Event::Discover(check(
-        "#endpoint\nGET http://svc/api/users",
-    )));
+    let cmds = rest.update(Event::Discover(check("#target\nGET http://svc/api/users")));
     assert_eq!(statuses(&cmds), ["Discovery…"]);
 }
 
 #[test]
 fn discovery_waits_for_hints() {
     let mut rest = Rest::default();
-    let text = "#endpoint\nGET http://svc/api/users\n#body\n";
+    let text = "#target\nGET http://svc/api/users\n#payload\n";
     assert!(rest.update(Event::Document(check(text))).is_empty());
     assert!(rest.subscriptions().hints);
     assert_eq!(statuses(&hints(&mut rest, text)), ["Discovery…"]);
@@ -420,7 +420,10 @@ fn discovery_waits_for_hints() {
 #[test]
 fn a_typed_slash_discovers_the_url_before_it() {
     let mut rest = Rest::default();
-    let cmds = hints(&mut rest, "#endpoint\nGET http://svc/api/|users/1\n#body\n");
+    let cmds = hints(
+        &mut rest,
+        "#target\nGET http://svc/api/|users/1\n#payload\n",
+    );
     let calls = driver_calls(&cmds);
     assert!(
         calls
@@ -430,7 +433,7 @@ fn a_typed_slash_discovers_the_url_before_it() {
     assert!(!calls.iter().any(|(_, url)| url.contains("users")));
     // Not on the endpoint (or before any address): the check's whole URL.
     let mut rest = Rest::default();
-    let cmds = hints(&mut rest, "#endpoint\nGET |http://svc/api/users\n#body\n");
+    let cmds = hints(&mut rest, "#target\nGET |http://svc/api/users\n#payload\n");
     let calls = driver_calls(&cmds);
     assert!(
         calls
@@ -466,7 +469,7 @@ fn resolve(rest: &mut Rest, cmds: &[Cmd]) -> Vec<Cmd> {
 #[test]
 fn an_address_with_variables_is_resolved_through_the_app() {
     let mut rest = Rest::default();
-    let text = "#endpoint\nPOST {{var:api}}/users\n#headers\nX-Token: {{var:token}}\n#body\n";
+    let text = "#target\nPOST {{var:api}}/users\n#headers\nX-Token: {{var:token}}\n#payload\n";
     let cmds = hints(&mut rest, text);
     assert_eq!(
         resolves(&cmds)
@@ -494,11 +497,11 @@ fn an_address_with_variables_is_resolved_through_the_app() {
     // Completion knows the resolved address of the endpoint.
     let (_, c) = complete(
         &rest,
-        "#endpoint\nPOST {{var:api}}/users\n#body\n{\n  \"name\": \"x\",\n  |\n}",
+        "#target\nPOST {{var:api}}/users\n#payload\n{\n  \"name\": \"x\",\n  |\n}",
     );
     assert_eq!(labels(&c), ["\"role\": \"\"", "\"born\": \"\""]);
     // Another template is resolved when the check changes, without discovery.
-    let other = "#endpoint\nPOST {{var:api}}/users/\n#body\n";
+    let other = "#target\nPOST {{var:api}}/users/\n#payload\n";
     let (_, c) = complete(&rest, &format!("{other}|"));
     assert_ne!(
         c.items.first().map(|i| i.detail.as_str()),
@@ -514,7 +517,7 @@ fn an_address_with_variables_is_resolved_through_the_app() {
     assert!(resolve(&mut rest, &cmds).is_empty());
 
     // A manual Discover reports variables that do not resolve.
-    let cmds = rest.update(Event::Discover(check("#endpoint\nGET {{var:nope}}/a")));
+    let cmds = rest.update(Event::Discover(check("#target\nGET {{var:nope}}/a")));
     let (tag, _) = resolves(&cmds).remove(0);
     let cmds = rest.update(Event::Reply {
         tag,
@@ -533,7 +536,7 @@ fn discovery_caches_each_api_and_tries_a_failed_address_once() {
     let mut rest = Rest::default();
     let site = |name: &str, token: &str| {
         format!(
-            "#endpoint\nPOST http://svc/{name}/rest/v1/product\n#headers\nX-Token: {token}\n#body\n"
+            "#target\nPOST http://svc/{name}/rest/v1/product\n#headers\nX-Token: {token}\n#payload\n"
         )
     };
     for name in ["site1", "site2"] {
@@ -555,16 +558,16 @@ fn discovery_caches_each_api_and_tries_a_failed_address_once() {
         message: "connection refused".into(),
         details: serde_json::to_vec(&json!({"failure": {"stage": "connect"}})).unwrap(),
     };
-    let cmds = hints(&mut rest, "#endpoint\nGET http://down/api/");
+    let cmds = hints(&mut rest, "#target\nGET http://down/api/");
     for (tag, _) in driver_calls(&cmds) {
         rest.update(Event::Reply {
             tag,
             result: Err(refused.clone()),
         });
     }
-    assert!(hints(&mut rest, "#endpoint\nGET http://down/api/").is_empty());
+    assert!(hints(&mut rest, "#target\nGET http://down/api/").is_empty());
     assert_eq!(
-        statuses(&hints(&mut rest, "#endpoint\nGET http://up/api/")),
+        statuses(&hints(&mut rest, "#target\nGET http://up/api/")),
         ["Discovery…"]
     );
 }
@@ -572,8 +575,8 @@ fn discovery_caches_each_api_and_tries_a_failed_address_once() {
 #[test]
 fn hints_for_another_address_during_a_run_discover_it_next() {
     let mut rest = Rest::default();
-    let first = hints(&mut rest, "#endpoint\nGET http://a/x\n#body\n");
-    assert!(hints(&mut rest, "#endpoint\nGET http://b/x\n#body\n").is_empty());
+    let first = hints(&mut rest, "#target\nGET http://a/x\n#payload\n");
+    assert!(hints(&mut rest, "#target\nGET http://b/x\n#payload\n").is_empty());
     let mut next = vec![];
     for (tag, _) in driver_calls(&first) {
         next = rest.update(Event::Reply {
@@ -600,7 +603,7 @@ fn hints_for_another_address_during_a_run_discover_it_next() {
 #[test]
 fn discovery_reports_failures() {
     let mut rest = Rest::default();
-    let cmds = hints(&mut rest, "#endpoint\nGET http://down");
+    let cmds = hints(&mut rest, "#target\nGET http://down");
     let failure = Failure {
         message: "connection refused".into(),
         details: serde_json::to_vec(&json!({"failure": {"stage": "connect"}})).unwrap(),
@@ -616,7 +619,7 @@ fn discovery_reports_failures() {
     assert!(last.iter().any(|cmd| cmd.name == "log"));
 
     let mut rest = Rest::default();
-    let cmds = hints(&mut rest, "#endpoint\nGET https://svc");
+    let cmds = hints(&mut rest, "#target\nGET https://svc");
     let mut last = vec![];
     for (tag, _) in driver_calls(&cmds) {
         last = rest.update(Event::Reply {
@@ -635,15 +638,15 @@ fn discovery_reports_failures() {
             result: Ok(json!("svc/x")),
         })
     };
-    let cmds = hints(&mut rest, "#endpoint\nGET {{base}}/x");
+    let cmds = hints(&mut rest, "#target\nGET {{base}}/x");
     assert!(unresolved(&mut rest, cmds).is_empty());
-    let cmds = rest.update(Event::Discover(check("#endpoint\nGET {{base}}/x")));
+    let cmds = rest.update(Event::Discover(check("#target\nGET {{base}}/x")));
     assert_eq!(
         statuses(&unresolved(&mut rest, cmds)),
         ["Discovery · WARNING · Invalid or incomplete service address for discovery"]
     );
     assert_eq!(
-        statuses(&rest.update(Event::Discover(check("#endpoint\nGET svc/x")))),
+        statuses(&rest.update(Event::Discover(check("#target\nGET svc/x")))),
         ["Discovery · WARNING · Invalid or incomplete service address for discovery"]
     );
 }
@@ -659,7 +662,7 @@ fn build_sends_the_endpoint_headers_and_body() {
     let rest = Rest::default();
     let call = rest
         .build(&check(
-            "#endpoint\npost {{base}}/users\n#headers\nAccept: */*\n# off: 1\n\nX-Id: {{id}}\n#body\n{\"a\": 1}",
+            "#target\npost {{base}}/users\n#headers\nAccept: */*\n# off: 1\n\nX-Id: {{id}}\n#payload\n{\"a\": 1}",
         ))
         .unwrap();
     let request = request(&call);
@@ -673,17 +676,17 @@ fn build_sends_the_endpoint_headers_and_body() {
     assert_eq!(request["text"], true);
 
     let call = rest
-        .build(&check("#endpoint GET http://x\n#body\n"))
+        .build(&check("#target GET http://x\n#payload\n"))
         .unwrap();
     assert_eq!(call.request()["body"], Value::Null);
     for bad in [
-        "#endpoint\nhttp://x",
-        "#endpoint\nFETCH http://x",
+        "#target\nhttp://x",
+        "#target\nFETCH http://x",
         "#headers\nA: 1",
     ] {
         assert_eq!(
             rest.build(&check(bad)).unwrap_err(),
-            "#endpoint must be METHOD URL"
+            "#target must be METHOD URL"
         );
     }
 }
@@ -720,7 +723,7 @@ fn render_pretty_prints_json_and_maps_outcomes() {
 fn export_and_import_round_trip_through_curl() {
     let rest = Rest::default();
     let text =
-        "#endpoint\nPOST https://x/a\n#headers\nAccept: */*\nX: it's\n#body\n{\n  \"a\": 1\n}";
+        "#target\nPOST https://x/a\n#headers\nAccept: */*\nX: it's\n#payload\n{\n  \"a\": 1\n}";
     let curl = rest.export(&check(text)).unwrap();
     assert_eq!(
         curl,
@@ -729,7 +732,7 @@ fn export_and_import_round_trip_through_curl() {
     assert_eq!(rest.import(&curl).unwrap(), text);
     assert_eq!(
         rest.import("curl https://x").unwrap(),
-        "#endpoint\nGET https://x"
+        "#target\nGET https://x"
     );
     assert!(rest.import("wget x").is_err());
 }
@@ -746,7 +749,7 @@ fn linked_module_answers_requests_and_events() {
     };
     let document = wire::Event {
         kind: Some(event::Kind::Hints(wire::CompleteRequest {
-            check: Some(check("#endpoint\nGET http://svc")),
+            check: Some(check("#target\nGET http://svc")),
             pos: 0,
         })),
         now: 0.0,
@@ -758,7 +761,7 @@ fn linked_module_answers_requests_and_events() {
         panic!("an update")
     };
     assert_eq!(statuses(&updated.cmds), ["Discovery…"]);
-    let answer::Kind::Call(call) = call(request::Kind::Build(check("#endpoint\nGET http://svc")))
+    let answer::Kind::Call(call) = call(request::Kind::Build(check("#target\nGET http://svc")))
     else {
         panic!("a call")
     };

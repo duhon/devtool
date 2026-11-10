@@ -287,7 +287,7 @@ impl Peer {
                 .next()
                 .context("Missing host")?;
             self.tool(session,"console_create_check",json!({"service":context["service"],"revision":context["revision"],
-                "title":"Created by agent","request":format!("#endpoint\nGET http://{origin}/agent-created")}),"create",context)
+                "title":"Created by agent","request":format!("#target\nGET http://{origin}/agent-created")}),"create",context)
         } else if message.contains("agent run") || message.contains("agent stop") {
             self.tool(session, "console_run_check", args, "run", context)
         } else if message.contains("agent debug") {
@@ -871,7 +871,7 @@ Raw HTML: <img src="https://images.fixture.invalid/raw" onerror="globalThis.agen
                     result["topic"] == "services"
                         && content.contains("#check Title")
                         && content.contains("module-<id>")
-                        && !content.contains("#endpoint"),
+                        && !content.contains("#target"),
                     "The services guide must leave request syntax to the module skills"
                 );
                 self.tool(

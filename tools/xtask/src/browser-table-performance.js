@@ -3,7 +3,7 @@
   await wait(() => document.querySelector('.console-editor-host .editor'), 'Console editor shown');
   await click(testid('console-service-mysql'));
   const mysqlConsole = editorOf('console-editor'), previous = mysqlConsole.getValue();
-  setSource(mysqlConsole, '#check Module ready\n#query\nselect 1');
+  setSource(mysqlConsole, '#check Module ready\n#payload\nselect 1');
   await wait(() => mysqlConsole.getLineTokens(2, true).some(token => token.type === 'keyword'),
     'The MySQL module must highlight before the standalone editor uses it');
   setSource(mysqlConsole, previous);
@@ -15,7 +15,7 @@
   const border = `+-------+${'-'.repeat(width+2)}+`;
   const header = `| id    | payload${' '.repeat(width-7)} |`;
   const prefix = ['#check Performance','#options','Columns-Type: id=number payload=json',
-    '#query','select fixture','#responce OK',border,header,border];
+    '#payload','select fixture','#responce OK',border,header,border];
   const row = i => `| ${String(i).padEnd(5)} | ${payload} |`;
   const region = {request:0,header:5,end:prefix.length+10001};
   const source = [...prefix,...Array.from({length:10000},(_,i)=>row(i)),border].join('\n');
@@ -73,7 +73,7 @@
       'Selection painting must not allocate document markers or modify large result data');
     const pretty = JSON.stringify({values:Array.from({length:10000},(_,id)=>({id}))},null,2);
     const verticalLines = ['#check Vertical performance','#options','Columns-Type: payload=json',
-      '#query','select fixture\\G',
+      '#payload','select fixture\\G',
       '#responce OK','*************************** 1. row ***************************',
       ...(`payload: ${pretty.replace(/\n/g,'\n         ')}`).split('\n')];
     const root = 7;

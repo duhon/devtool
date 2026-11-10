@@ -1,6 +1,6 @@
 ---
 name: module-opensearch
-description: "OpenSearch checks in the Services DevTools Console: METHOD and URL under #endpoint, #headers and a JSON or NDJSON #body for search, documents, indices, bulk and multi-search. Load before writing, editing or explaining OpenSearch requests."
+description: "OpenSearch checks in the Services DevTools Console: METHOD and URL under #target, #headers and a JSON or NDJSON #payload for search, documents, indices, bulk and multi-search. Load before writing, editing or explaining OpenSearch requests."
 ---
 
 # OpenSearch service
@@ -9,28 +9,27 @@ The OpenSearch HTTP API. Each check is one request.
 
 ```text
 #check Search
-#endpoint
+#target
 GET http://localhost:9200/logs-*/_search?pretty=true
 #headers
 Accept: application/json
-#body
+#payload
 {"size": 10, "query": {"match_all": {}}}
 
 #check Multi-search
-#endpoint
+#target
 POST http://localhost:9200/_msearch
-#body
+#payload
 {"index":"logs-*"}
 {"size":5,"query":{"match_all":{}}}
 ```
 
-- `#endpoint` is `METHOD URL` like REST: GET, POST, PUT, PATCH, DELETE, HEAD
+- `#target` is `METHOD URL` like REST: GET, POST, PUT, PATCH, DELETE, HEAD
   or OPTIONS, then the full URL with the index, API path and query string.
-  There is no `#query` section.
 - `#headers` uses one `Name: value` per line. Log in with an
   `Authorization` header built from application variables; never put real
   credentials in a check. AWS SigV4 signing is not supported.
-- `#body` is JSON, kept on GET searches. `_bulk`, `_msearch` and
+- `#payload` is JSON, kept on GET searches. `_bulk`, `_msearch` and
   `_msearch/template` take NDJSON, one record per line; the module adds the
   final newline. A body without Content-Type is sent as JSON, or NDJSON for
   those APIs.

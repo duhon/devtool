@@ -1,4 +1,4 @@
-//! The REST service: a `#endpoint` (`METHOD URL`), `#headers` and a `#body` sent through the
+//! The REST service: a `#target` (`METHOD URL`), `#headers` and a `#payload` sent through the
 //! Host `http` driver, with OpenAPI discovery for completion when the user asks for hints.
 
 pub mod openapi;
@@ -24,7 +24,7 @@ pub const HEADERS: [&str; 9] = [
 ];
 
 const LANGUAGE: Language = Language {
-    sections: &["endpoint", "headers", "body"],
+    sections: &["target", "headers", "payload"],
     methods: &endpoint::METHODS,
     headers: &HEADERS,
     discovered_header: "OpenAPI header",
@@ -38,9 +38,9 @@ pub struct Rest {
 /// The `http` request of a check; `{{…}}` placeholders stay for the App to resolve.
 pub fn request(check: &Check) -> Result<Request, String> {
     let (method, url) =
-        endpoint::request_line(check.text_of("endpoint")).ok_or("#endpoint must be METHOD URL")?;
+        endpoint::request_line(check.text_of("target")).ok_or("#target must be METHOD URL")?;
     let body: Vec<_> = check
-        .text_of("body")
+        .text_of("payload")
         .lines()
         .filter(|line| !line.trim_start().starts_with('#'))
         .collect();
@@ -111,12 +111,12 @@ impl Module for Rest {
 
     fn import(&self, text: &str) -> Result<String, String> {
         let command = curl::parse(text)?;
-        let mut sections = vec![format!("#endpoint\n{} {}", command.method, command.url)];
+        let mut sections = vec![format!("#target\n{} {}", command.method, command.url)];
         if let Some(headers) = curl::imported_headers(&command) {
             sections.push(format!("#headers\n{headers}"));
         }
         if let Some(body) = curl::imported_body(&command) {
-            sections.push(format!("#body\n{body}"));
+            sections.push(format!("#payload\n{body}"));
         }
         Ok(sections.join("\n"))
     }

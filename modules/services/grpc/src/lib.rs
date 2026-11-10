@@ -1,5 +1,5 @@
-//! The gRPC service: a `#endpoint` (`grpc[s]://target/package.Service/Method`), metadata
-//! `#headers`, an optional `#proto` and a JSON `#message`, called through the Host `grpc`
+//! The gRPC service: a `#target` (`grpc[s]://target/package.Service/Method`), metadata
+//! `#headers`, an optional `#proto` and a JSON `#payload`, called through the Host `grpc`
 //! driver. Without `#proto` the descriptors come from server reflection, asked while the
 //! check is edited; the response prints as JSON. `grpcurl` command lines are imported and
 //! exported.
@@ -20,7 +20,7 @@ use services_sdk::{
 };
 use std::collections::BTreeMap;
 
-pub const SECTIONS: [&str; 4] = ["endpoint", "headers", "proto", "message"];
+pub const SECTIONS: [&str; 4] = ["target", "headers", "proto", "payload"];
 
 pub const HEADERS: [&str; 9] = [
     "Accept: */*",
@@ -92,7 +92,7 @@ fn server(check: &Check, target: &str) -> Server {
 /// The `grpc` request of a check whose variables are resolved, with descriptors from
 /// `pool`.
 pub fn request(check: &Check, pool: &DescriptorPool, message: &str) -> Result<Value, String> {
-    let (target, service, method) = parse_endpoint(check.text_of("endpoint"));
+    let (target, service, method) = parse_endpoint(check.text_of("target"));
     if target.is_empty() {
         return Err("target is required".into());
     }
@@ -169,7 +169,7 @@ pub fn render(
 
 /// A `grpcurl` command line for a check.
 pub fn export(check: &Check) -> Result<String, String> {
-    let endpoint = check.text_of("endpoint").trim();
+    let endpoint = check.text_of("target").trim();
     let secure = endpoint.to_ascii_lowercase().starts_with("grpcs://");
     let bare = endpoint
         .get(..8)
@@ -184,7 +184,7 @@ pub fn export(check: &Check) -> Result<String, String> {
         .unwrap_or(endpoint);
     let (target, symbol) = bare
         .split_once('/')
-        .ok_or("#endpoint must be target/Service/Method")?;
+        .ok_or("#target must be target/Service/Method")?;
     let mut lines = vec!["grpcurl".to_owned()];
     if !secure {
         lines.push("  -plaintext".into());
@@ -193,7 +193,7 @@ pub fn export(check: &Check) -> Result<String, String> {
     for (name, value) in headers::pairs(check.text_of("headers")) {
         lines.push(format!("  -H {}", curl::quote(&format!("{name}: {value}"))));
     }
-    let message = check.text_of("message");
+    let message = check.text_of("payload");
     if !message.trim().is_empty() {
         let value: Value =
             serde_json::from_str(message).map_err(|_| "Request message must be valid JSON")?;
@@ -266,13 +266,13 @@ pub fn import(command: &str) -> Result<String, String> {
         symbol.replace_range(dot..=dot, "/");
     }
     let scheme = if plaintext { "grpc" } else { "grpcs" };
-    let mut sections = vec![format!("#endpoint\n{scheme}://{target}/{symbol}")];
+    let mut sections = vec![format!("#target\n{scheme}://{target}/{symbol}")];
     if !headers.is_empty() {
         let lines: Vec<_> = headers.iter().map(|(k, v)| format!("{k}: {v}")).collect();
         sections.push(format!("#headers\n{}", lines.join("\n")));
     }
     if let Some(data) = data.filter(|data| !data.is_empty() && data != "@") {
-        sections.push(format!("#message\n{}", curl::pretty(&data)));
+        sections.push(format!("#payload\n{}", curl::pretty(&data)));
     }
     Ok(sections.join("\n"))
 }
@@ -326,7 +326,7 @@ impl Grpc {
         if !source.trim().is_empty() {
             return proto::compile(source);
         }
-        let (target, service, _) = parse_endpoint(check.text_of("endpoint"));
+        let (target, service, _) = parse_endpoint(check.text_of("target"));
         if target.is_empty() || service.is_empty() {
             return Err("serviceName and methodName are required".into());
         }
@@ -373,7 +373,7 @@ impl Grpc {
 
     /// The descriptors of a service for a run, unless known or `#proto` has them.
     fn descriptors(&mut self, check: &Check, retry: bool, loud: bool) -> Vec<Cmd> {
-        let (target, service, _) = parse_endpoint(check.text_of("endpoint"));
+        let (target, service, _) = parse_endpoint(check.text_of("target"));
         if !check.text_of("proto").trim().is_empty() || target.is_empty() || service.is_empty() {
             return vec![];
         }
@@ -386,7 +386,7 @@ impl Grpc {
     }
 
     fn document(&mut self, check: &Check) -> Vec<Cmd> {
-        let (_, _, method) = parse_endpoint(check.text_of("endpoint"));
+        let (_, _, method) = parse_endpoint(check.text_of("target"));
         if method.is_empty() {
             return vec![];
         }
@@ -400,8 +400,8 @@ impl Grpc {
             Ok(pool) => pool,
             Err(error) => return vec![cmd::fail(&run, &error, &Value::Null)],
         };
-        let sections = json!({"endpoint": check.text_of("endpoint"),
-            "headers": check.text_of("headers"), "message": check.text_of("message")});
+        let sections = json!({"target": check.text_of("target"),
+            "headers": check.text_of("headers"), "payload": check.text_of("payload")});
         self.resolving.insert(run.clone(), (check, pool));
         vec![run::resolve_value(format!("{run}{RESOLVE}"), &sections)]
     }
@@ -412,7 +412,7 @@ impl Grpc {
         };
         let call = run::resolved_value(result).and_then(|sections| {
             let check = run::with_sections(&check, &sections);
-            request(&check, &pool, sections["message"].as_str().unwrap_or(""))
+            request(&check, &pool, sections["payload"].as_str().unwrap_or(""))
         });
         match call {
             Ok(request) => vec![
@@ -425,10 +425,10 @@ impl Grpc {
 
     fn hints(&mut self, check: &Check, pos: usize) -> Vec<Cmd> {
         let at = At::new(&check.text, pos);
-        let endpoint = if at.name() == Some("endpoint") {
+        let endpoint = if at.name() == Some("target") {
             at.before.trim()
         } else {
-            check.text_of("endpoint").trim()
+            check.text_of("target").trim()
         };
         let (target, path) = target_path(endpoint);
         if !discoverable(target) {
@@ -446,7 +446,7 @@ impl Grpc {
                 self.start(server, Goal::Services, true)
             };
         }
-        let (target, service, _) = parse_endpoint(check.text_of("endpoint"));
+        let (target, service, _) = parse_endpoint(check.text_of("target"));
         let failed = matches!(
             self.known_pool(&server(check, &target), &service),
             Some(Err(_))
@@ -462,7 +462,7 @@ impl Grpc {
                 Err(message) => cmd::status(&format!("Discovery · ERROR · {message}"), "error"),
             }];
         }
-        let (target, service, _) = parse_endpoint(check.text_of("endpoint"));
+        let (target, service, _) = parse_endpoint(check.text_of("target"));
         if !discoverable(&target) {
             return vec![cmd::status(
                 "Discovery · WARNING · Invalid or incomplete service address for discovery",
@@ -689,10 +689,10 @@ pub fn highlight(state: &[u8], lines: &[String]) -> Vec<Line> {
             });
             let tokens = if is_marker {
                 area = match named.as_deref() {
-                    Some("endpoint") => Area::Endpoint,
+                    Some("target") => Area::Endpoint,
                     Some("headers") => Area::Headers,
                     Some("proto") => Area::Proto,
-                    Some("message") => Area::Message,
+                    Some("payload") => Area::Message,
                     Some("responce" | "response") => Area::Response,
                     _ => Area::Other,
                 };
@@ -715,7 +715,7 @@ pub fn highlight(state: &[u8], lines: &[String]) -> Vec<Line> {
         .collect()
 }
 
-/// Folds of the `{`/`[` blocks in `#proto`, `#message` and the response.
+/// Folds of the `{`/`[` blocks in `#proto`, `#payload` and the response.
 pub fn folds(text: &str) -> Vec<Fold> {
     let mut out = vec![];
     let mut region: Vec<&str> = vec![];
@@ -730,7 +730,7 @@ pub fn folds(text: &str) -> Vec<Fold> {
     for (i, line) in text.split('\n').enumerate() {
         if let Some((name, _)) = marker(line) {
             flush(&mut region, start);
-            blocks = matches!(name.as_str(), "proto" | "message" | "responce" | "response");
+            blocks = matches!(name.as_str(), "proto" | "payload" | "responce" | "response");
             start = i + 1;
             continue;
         }
@@ -743,7 +743,7 @@ pub fn folds(text: &str) -> Vec<Fold> {
 }
 
 /// Completion in a gRPC check: markers, schemes, services and methods from reflection,
-/// metadata and `#message` fields of the method's input.
+/// metadata and `#payload` fields of the method's input.
 pub fn complete(module: &Grpc, check: &Check, pos: usize) -> Completions {
     let at = At::new(&check.text, pos);
     if at.in_placeholder() || at.in_response() {
@@ -754,7 +754,7 @@ pub fn complete(module: &Grpc, check: &Check, pos: usize) -> Completions {
     }
     let line_start = at.line_start(at.line);
     match at.name() {
-        Some("endpoint") => {
+        Some("target") => {
             if let Some(next) = at.next_section(&SECTIONS) {
                 return next;
             }
@@ -814,8 +814,8 @@ pub fn complete(module: &Grpc, check: &Check, pos: usize) -> Completions {
             }
             result
         }
-        Some("message") => {
-            let (_, service, method) = parse_endpoint(check.text_of("endpoint"));
+        Some("payload") => {
+            let (_, service, method) = parse_endpoint(check.text_of("target"));
             let fields = module
                 .pool(check)
                 .and_then(|pool| proto::method(&pool, &service, &method))

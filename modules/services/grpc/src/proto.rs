@@ -83,7 +83,7 @@ pub fn method(
         .ok_or_else(|| format!("Method not found: {service}/{name}"))
 }
 
-/// The request messages of a `#message` text: none is `{}`, an array is several.
+/// The request messages of a `#payload` text: none is `{}`, an array is several.
 pub fn messages(text: &str) -> Result<Vec<Value>, String> {
     if text.trim().is_empty() {
         return Ok(vec![json!({})]);

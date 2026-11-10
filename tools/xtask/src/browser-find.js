@@ -11,7 +11,7 @@
   await click(testid('console-service-rest'));
   const editor=editorOf('console-editor');
   const wrapper=editor.getWrapperElement();
-  setSource(editor,`#check Find acceptance\n#endpoint\nGET ${fixtureUrl}/history-fixture?value=needle&other=needle`);
+  setSource(editor,`#check Find acceptance\n#target\nGET ${fixtureUrl}/history-fixture?value=needle&other=needle`);
   editor.focus();editor.setCursor(2,5);
   const before=editor.getValue();
   await key('Shift+Enter');

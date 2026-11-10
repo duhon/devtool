@@ -102,7 +102,7 @@ fn names(cmds: &Cmds) -> Vec<(&str, &str)> {
 fn env_values_are_resolved_then_quoted_and_output_streams() {
     let module = Module::default();
     let cmds = module
-        .run("#endpoint\nssh {{host}}\n#command\necho \"$V\"; echo {{word}}\n#env\nV: {{value}}");
+        .run("#target\nssh {{host}}\n#payload\necho \"$V\"; echo {{word}}\n#env\nV: {{value}}");
     let (tag, text) = resolve(
         &cmds,
         &[("host", "a b"), ("value", "it's \"x\""), ("word", "w")],
@@ -132,7 +132,7 @@ fn env_values_are_resolved_then_quoted_and_output_streams() {
 #[test]
 fn failed_exits_signals_and_errors_finish_the_run() {
     let module = Module::default();
-    let cmds = module.run("#endpoint\nbash -c\n#command\nfalse");
+    let cmds = module.run("#target\nbash -c\n#payload\nfalse");
     let (tag, text) = resolve(&cmds, &[]);
     module.reply(&tag, text);
     let call = "console:terminal:1:call";
@@ -142,7 +142,7 @@ fn failed_exits_signals_and_errors_finish_the_run() {
     assert_eq!(cmds[0].2["text"], "exit 2 · boom");
     assert_eq!(cmds[1].2["outcome"], "ERROR");
 
-    let cmds = module.run("#endpoint\nbash -c\n#command\nsleep 9");
+    let cmds = module.run("#target\nbash -c\n#payload\nsleep 9");
     let (tag, text) = resolve(&cmds, &[]);
     module.reply(&tag, text);
     module.reply(
@@ -158,12 +158,12 @@ fn failed_exits_signals_and_errors_finish_the_run() {
             .starts_with("Warning: Output capture")
     );
 
-    let cmds = module.run("#endpoint\nbash -c\n#command\nls\n#options\nFormat: json");
+    let cmds = module.run("#target\nbash -c\n#payload\nls\n#options\nFormat: json");
     assert_eq!(names(&cmds), [(RUN, "run.result")]);
     assert_eq!(
         cmds[0].2["error"],
         "Unknown option \"Format\"; Terminal takes Repeat and Repeat-Until"
     );
-    let cmds = module.run("#endpoint\nbash -c");
+    let cmds = module.run("#target\nbash -c");
     assert_eq!(cmds[0].2["error"], "command is required");
 }

@@ -499,11 +499,11 @@ mod tests {
             Ok(("x".into(), "line one line two".into()))
         );
         assert_eq!(
-            skill_frontmatter("---\nname: x\ndescription: \"REST checks: #endpoint\"\n---\n"),
-            Ok(("x".into(), "REST checks: #endpoint".into()))
+            skill_frontmatter("---\nname: x\ndescription: \"REST checks: #target\"\n---\n"),
+            Ok(("x".into(), "REST checks: #target".into()))
         );
         assert_eq!(
-            skill_frontmatter("---\nname: x\ndescription: REST checks: #endpoint\n---\n"),
+            skill_frontmatter("---\nname: x\ndescription: REST checks: #target\n---\n"),
             Err("SKILL.md frontmatter is not valid YAML: mapping values are not allowed in this context on line 3; put a value that has \": \" in it in quotes".into())
         );
         assert_eq!(

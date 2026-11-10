@@ -196,7 +196,7 @@ fn column_names(command: Command) -> Vec<&'static str> {
     }
 }
 
-/// The broker from `#endpoint`: its web console, `http(s)://user:password@host:8161`, or its
+/// The broker from `#target`: its web console, `http(s)://user:password@host:8161`, or its
 /// Jolokia URL.
 #[derive(Debug, PartialEq)]
 pub struct Target {
@@ -214,7 +214,7 @@ pub fn target(url: &str) -> Result<Target> {
     let first = url.split_whitespace().next().unwrap_or_default();
     if Command::parse(first).is_some() {
         return Err(Error::new(format!(
-            "#endpoint is only the broker URL now; the command goes in #action: {} /queue",
+            "#target is only the broker URL now; the command goes in #action: {} /queue",
             first.to_ascii_uppercase()
         )));
     }
@@ -222,7 +222,7 @@ pub fn target(url: &str) -> Result<Target> {
     let parsed = url::Url::parse(url).map_err(|_| invalid())?;
     if !matches!(parsed.scheme(), "http" | "https") {
         return Err(Error::new(
-            "The Artemis endpoint is the broker's web console URL: http://host:8161",
+            "The Artemis target is the broker's web console URL: http://host:8161",
         ));
     }
     if parsed.host_str().is_none_or(str::is_empty) {
@@ -296,22 +296,22 @@ impl Request {
         for (header, value) in params["headers"].as_object().into_iter().flatten() {
             if target.user.is_some() && header.eq_ignore_ascii_case("authorization") {
                 return Err(Error::new(
-                    "Log in either in the endpoint or with an Authorization header, not both",
+                    "Log in either in the target or with an Authorization header, not both",
                 ));
             }
             headers.retain(|name, _| !name.eq_ignore_ascii_case(header));
             headers.insert(header.clone(), json!(string(value)));
         }
-        let body = text(params, "body");
+        let body = text(params, "payload");
         let takes_body = matches!(command, Command::Send | Command::Publish | Command::Jolokia);
         if !takes_body && !body.trim().is_empty() {
             return Err(Error::new(format!(
-                "{name} takes no #body: it is the message of SEND and PUBLISH, or the request of JOLOKIA"
+                "{name} takes no #payload: it is the message of SEND and PUBLISH, or the request of JOLOKIA"
             )));
         }
         if command == Command::Jolokia && body.trim().is_empty() {
             return Err(Error::new(
-                "JOLOKIA sends #body to Jolokia: {\"type\":\"read\",\"mbean\":\"java.lang:type=Memory\"}",
+                "JOLOKIA sends #payload to Jolokia: {\"type\":\"read\",\"mbean\":\"java.lang:type=Memory\"}",
             ));
         }
         let persistent = match text(params, "persistent")
@@ -646,18 +646,18 @@ fn http_error(request: &Request, response: &http::Response, reply: &str) -> Erro
         300..=399 => {
             let location = response.header("location").unwrap_or("another address");
             format!(
-                "{url} redirects to {location} (HTTP {status}): check http or https and the port of the endpoint"
+                "{url} redirects to {location} (HTTP {status}): check http or https and the port of the target"
             )
         }
         401 | 403 if request.header("Authorization").is_none() => format!(
-            "Artemis asks for a login (HTTP {status}): put it in the endpoint, http://user:password@host:8161, or add an Authorization header"
+            "Artemis asks for a login (HTTP {status}): put it in the target, http://user:password@host:8161, or add an Authorization header"
         ),
         401 | 403 => format!(
             "Artemis refused the request (HTTP {status}): check the login, that the user has a management role, and that jolokia-access.xml allows the origin {}",
             request.header("Origin").unwrap_or_default()
         ),
         404 => format!(
-            "No Jolokia at {url} (HTTP 404): the endpoint is the broker's web console, http://host:8161, or its Jolokia URL; the queue goes in #action"
+            "No Jolokia at {url} (HTTP 404): the target is the broker's web console, http://host:8161, or its Jolokia URL; the queue goes in #action"
         ),
         _ => format!(
             "Jolokia answered HTTP {status} {}: {}",
@@ -1029,11 +1029,11 @@ fn pause(jolokia: &mut Jolokia<'_>, request: &Request) -> Result<Value> {
     Ok(done(request, "paused", value(&replies[1])?, "boolean"))
 }
 
-/// JOLOKIA: `#body` as is, one Jolokia request or a list of them; a row per reply.
+/// JOLOKIA: `#payload` as is, one Jolokia request or a list of them; a row per reply.
 fn raw(jolokia: &mut Jolokia<'_>, request: &Request) -> Result<Value> {
     let body: Value = serde_json::from_str(&request.body).map_err(|error| {
         Error::new(format!(
-            "JOLOKIA takes a JSON request or a list of them in #body: {error}"
+            "JOLOKIA takes a JSON request or a list of them in #payload: {error}"
         ))
     })?;
     let sent = match &body {
@@ -1041,7 +1041,7 @@ fn raw(jolokia: &mut Jolokia<'_>, request: &Request) -> Result<Value> {
         Value::Object(_) => vec![body.clone()],
         _ => {
             return Err(Error::new(
-                "JOLOKIA takes a JSON request or a list of them in #body",
+                "JOLOKIA takes a JSON request or a list of them in #payload",
             ));
         }
     };
@@ -1255,7 +1255,7 @@ mod tests {
             super::target("browse http://broker:8161/orders")
                 .unwrap_err()
                 .message(),
-            "#endpoint is only the broker URL now; the command goes in #action: BROWSE /queue"
+            "#target is only the broker URL now; the command goes in #action: BROWSE /queue"
         );
     }
 
@@ -1288,19 +1288,19 @@ mod tests {
     fn body_and_persistent_belong_to_the_message() {
         let error = |params: Value| parse(params).err().unwrap().message().to_owned();
         assert_eq!(
-            error(json!({"url":"http://b:8161","action":"PURGE /q","body":"x"})),
-            "PURGE takes no #body: it is the message of SEND and PUBLISH, or the request of JOLOKIA"
+            error(json!({"url":"http://b:8161","action":"PURGE /q","payload":"x"})),
+            "PURGE takes no #payload: it is the message of SEND and PUBLISH, or the request of JOLOKIA"
         );
         assert!(
             error(json!({"url":"http://b:8161","action":"JOLOKIA"}))
-                .starts_with("JOLOKIA sends #body")
+                .starts_with("JOLOKIA sends #payload")
         );
         assert_eq!(
             error(json!({"url":"http://b:8161","action":"BROWSE /q","persistent":"false"})),
             "Persistent applies to SEND or PUBLISH, not BROWSE"
         );
         let publish = parse(json!({
-            "url":"http://b:8161","action":"PUBLISH /events","persistent":"no","body":"x",
+            "url":"http://b:8161","action":"PUBLISH /events","persistent":"no","payload":"x",
         }))
         .unwrap();
         assert!(!publish.persistent);

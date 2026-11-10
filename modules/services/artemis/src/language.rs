@@ -7,7 +7,7 @@ use services_sdk::lang::check::At;
 use services_sdk::lang::{endpoint, finish, headers, item, json, marker, table, token_start};
 use services_sdk::{Check, Completions, Item, Line, Token};
 
-pub const SECTIONS: [&str; 5] = ["endpoint", "headers", "action", "options", "body"];
+pub const SECTIONS: [&str; 5] = ["target", "headers", "action", "options", "payload"];
 
 const KEYWORDS: [&str; 16] = [
     "WHERE", "LIMIT", "SET", "TO", "AND", "OR", "NOT", "IN", "LIKE", "BETWEEN", "IS", "NULL",
@@ -207,10 +207,10 @@ pub fn highlight(
             });
             let tokens = if is_marker {
                 area = match named.as_deref() {
-                    Some("endpoint") => Area::Endpoint,
+                    Some("target") => Area::Endpoint,
                     Some("headers" | "options") => Area::Headers,
                     Some("action") => Area::Action,
-                    Some("body") => Area::Body,
+                    Some("payload") => Area::Body,
                     Some("responce" | "response") => Area::Response,
                     _ => Area::Other,
                 };
@@ -291,14 +291,14 @@ pub fn complete(check: &Check, pos: usize, discovered: &Value) -> Completions {
         return markers;
     }
     match at.name() {
-        Some("endpoint") => {
+        Some("target") => {
             if let Some(next) = at.next_section(&SECTIONS) {
                 return next;
             }
             let value = at.before.trim_start();
             let from = at.line_start(at.line) + at.before.len() - value.len();
             let items = ["http://localhost:8161", "https://"]
-                .map(|url| item(url, "Endpoint", "url"))
+                .map(|url| item(url, "Target", "url"))
                 .into();
             finish(from, at.pos, value, items)
         }
@@ -418,13 +418,17 @@ mod tests {
 
     #[test]
     fn action_offers_commands_first_then_clauses_never_headers() {
-        let commands = at("#endpoint\nhttp://b\n#action\n", &Value::Null).1;
+        let commands = at("#target\nhttp://b\n#action\n", &Value::Null).1;
         assert_eq!(commands.len(), 13);
         assert!(commands.iter().all(|text| text.ends_with(' ')));
         let clauses = at("#action\nBROWSE\n/orders W", &Value::Null).1;
         assert_eq!(clauses[0], "WHERE ");
         assert!(!clauses.iter().any(|text| text.contains(':')));
-        assert!(at("#action\nSEND /q\n#body\nA", &Value::Null).1.is_empty());
+        assert!(
+            at("#action\nSEND /q\n#payload\nA", &Value::Null)
+                .1
+                .is_empty()
+        );
     }
 
     #[test]

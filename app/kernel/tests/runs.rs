@@ -25,7 +25,7 @@ fn manifest(id: &str, kind: &str, order: u32) -> Manifest {
     .unwrap()
 }
 
-/// A service: `#endpoint METHOD URL`, renders the status and body.
+/// A service: `#target METHOD URL`, renders the status and body.
 #[derive(Default)]
 struct Rest;
 
@@ -33,9 +33,9 @@ impl Module for Rest {
     type Msg = ();
     fn build(&self, check: &Check) -> Result<DriverCall, String> {
         let (method, url) = check
-            .text_of("endpoint")
+            .text_of("target")
             .split_once(' ')
-            .ok_or("#endpoint needs a method and a URL")?;
+            .ok_or("#target needs a method and a URL")?;
         Ok(http::Request::new(method, url).call())
     }
     fn render(&self, chunk: &Chunk) -> Result<Rendered, String> {
@@ -321,7 +321,7 @@ impl Window {
     }
 }
 
-const GET: &str = "#endpoint GET https://example.test/a";
+const GET: &str = "#target GET https://example.test/a";
 
 #[test]
 fn a_driver_run_sends_the_call_renders_the_answer_and_history_saves_it() {
@@ -357,14 +357,14 @@ fn a_driver_run_sends_the_call_renders_the_answer_and_history_saves_it() {
 #[test]
 fn a_check_that_does_not_parse_ends_with_its_error() {
     let window = Window::new();
-    window.run("rest", "#endpoint", "a").expect("the run shows");
+    window.run("rest", "#target", "a").expect("the run shows");
     let (runs, responses) = window.heard();
     assert!(!runs.last().unwrap().running);
     assert_eq!(
         responses,
         [(
             "10:00:00 AM · ERROR".to_owned(),
-            "#endpoint needs a method and a URL".to_owned()
+            "#target needs a method and a URL".to_owned()
         )]
     );
     assert!(window.fake.to("drivers").is_empty());
@@ -473,7 +473,7 @@ fn an_edit_of_a_repeating_check_ends_the_repeat() {
 fn a_module_runs_its_check_with_a_lock_streams_output_and_finishes() {
     let window = Window::new();
     window.kernel.set_service("runner");
-    window.run("runner", "#query x", "r").unwrap();
+    window.run("runner", "#payload x", "r").unwrap();
     assert_eq!(
         *window.fake.locks.borrow(),
         [("runner".to_owned(), "pace".to_owned())]
@@ -502,7 +502,7 @@ fn a_module_runs_its_check_with_a_lock_streams_output_and_finishes() {
 fn stop_cancels_a_run_its_module_makes() {
     let window = Window::new();
     window.kernel.set_service("runner");
-    let key = window.run("runner", "#query x", "r").unwrap();
+    let key = window.run("runner", "#payload x", "r").unwrap();
     let call = window.fake.last();
     window.kernel.stop(&key);
     assert_eq!(*window.fake.stopped.borrow(), [call]);

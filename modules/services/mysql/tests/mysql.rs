@@ -58,7 +58,7 @@ fn check(text: &str) -> Check {
     for (i, line) in text.split('\n').enumerate() {
         if let Some((name, rest)) = marker(line) {
             close(current.take(), &mut body);
-            let head = if name == "endpoint" {
+            let head = if name == "target" {
                 rest.to_owned()
             } else {
                 String::new()
@@ -86,7 +86,7 @@ fn schema() -> Value {
     ]})
 }
 
-const HEAD: &str = "#endpoint\nmysql://db\n#query\n";
+const HEAD: &str = "#target\nmysql://db\n#payload\n";
 
 /// Completion labels at the end of `query` with `schema`.
 fn suggest(query: &str, schema: &Value) -> Vec<String> {
@@ -144,7 +144,7 @@ fn backslash_g_requests_vertical_results() {
 fn checks_become_mysql_driver_calls() {
     let call = run(
         &mut Mysql::default(),
-        &check("#endpoint\nmysql://{{store:USER}}@db/shop\n#query\nSELECT * FROM t\\G"),
+        &check("#target\nmysql://{{store:USER}}@db/shop\n#payload\nSELECT * FROM t\\G"),
     )
     .unwrap();
     assert_eq!(call.driver, "mysql");
@@ -155,11 +155,11 @@ fn checks_become_mysql_driver_calls() {
         json!({"url":"mysql://{{store:USER}}@db/shop","sql":"SELECT * FROM t","console":{"vertical":true}})
     );
     assert_eq!(
-        build("#endpoint\nhttp://db\n#query\nSELECT 1").unwrap_err(),
-        "MySQL request needs a #endpoint block (a mysql:// connection string)"
+        build("#target\nhttp://db\n#payload\nSELECT 1").unwrap_err(),
+        "MySQL request needs a #target block (a mysql:// connection string)"
     );
     assert_eq!(
-        build("#endpoint\nmysql://db\n#query\n").unwrap_err(),
+        build("#target\nmysql://db\n#payload\n").unwrap_err(),
         "SQL query is required"
     );
 }
@@ -167,7 +167,7 @@ fn checks_become_mysql_driver_calls() {
 #[test]
 fn options_use_literal_column_names_and_reject_unknown_types() {
     let request = build(
-        "#endpoint\nmysql://fixture/db\n#options\nColumns-Type: feed_data=json enabled=boolean\n#query\nselect * from fixture\\G",
+        "#target\nmysql://fixture/db\n#options\nColumns-Type: feed_data=json enabled=boolean\n#payload\nselect * from fixture\\G",
     )
     .unwrap();
     assert_eq!(
@@ -176,7 +176,7 @@ fn options_use_literal_column_names_and_reject_unknown_types() {
     );
     assert_eq!(request["sql"], "select * from fixture");
     assert!(
-        build("#endpoint\nmysql://fixture/db\n#options\nColumns-Type: x=xml\n#query\nselect 1")
+        build("#target\nmysql://fixture/db\n#options\nColumns-Type: x=xml\n#payload\nselect 1")
             .is_err()
     );
     let response = json!({"sets":[{"columns":[column("feed_data","blob"),column("enabled","tiny")],"rows":[["{\"a\":1}",1]]}]});
@@ -285,7 +285,7 @@ fn runs_render_their_call_with_the_row_count_and_format() {
     };
     run(
         &mut mysql,
-        &check("#endpoint\nmysql://db\n#query\nSELECT 1\\G"),
+        &check("#target\nmysql://db\n#payload\nSELECT 1\\G"),
     )
     .unwrap();
     let response = json!({"sets":[{"columns":[column("1","longlong")],"rows":[[1]]}]});
@@ -302,13 +302,13 @@ fn runs_render_their_call_with_the_row_count_and_format() {
     assert!(text.ends_with("1: 1"), "{text}");
     run(
         &mut mysql,
-        &check("#endpoint\nmysql://db\n#options\nFormat: json\n#query\nSELECT 1"),
+        &check("#target\nmysql://db\n#options\nFormat: json\n#payload\nSELECT 1"),
     )
     .unwrap();
     let cmds = finish(&mut mysql, response);
     assert_eq!(cmds[1].args()["body"], "[\n  {\n    \"1\": 1\n  }\n]");
     assert_eq!(
-        build("#endpoint\nmysql://db\n#options\nFormat: grid\n#query\nSELECT 1").unwrap_err(),
+        build("#target\nmysql://db\n#options\nFormat: grid\n#payload\nSELECT 1").unwrap_err(),
         "Format takes table, vertical or json, not \"grid\""
     );
 }
@@ -459,13 +459,13 @@ fn markers_scheme_and_options_complete_outside_the_query() {
             .map(|item| item.insert)
             .collect()
     };
-    assert_eq!(inserts("#endpoint\nmy|"), vec!["mysql://"]);
+    assert_eq!(inserts("#target\nmy|"), vec!["mysql://"]);
     assert_eq!(
-        inserts("#endpoint\nmysql://db\n#options\nCol|"),
+        inserts("#target\nmysql://db\n#options\nCol|"),
         vec!["Columns-Type: "]
     );
-    assert!(inserts("#endpoint\nmysql://db\n#query\nSELECT 1\n#responce OK\n|").is_empty());
-    assert!(!inserts("#endpoint\nmysql://db\n#|").is_empty());
+    assert!(inserts("#target\nmysql://db\n#payload\nSELECT 1\n#responce OK\n|").is_empty());
+    assert!(!inserts("#target\nmysql://db\n#|").is_empty());
 }
 
 fn statuses(cmds: &[Cmd]) -> Vec<String> {
@@ -498,7 +498,7 @@ fn discovery_rows() -> Value {
 #[test]
 fn hints_discover_the_schema_once_and_feed_completion() {
     let mut mysql = Mysql::default();
-    let text = "#endpoint\nmysql://root@db/shop\n#query\nSELECT * FROM ";
+    let text = "#target\nmysql://root@db/shop\n#payload\nSELECT * FROM ";
     let cmds = mysql.update(Event::Hints {
         check: check(text),
         pos: text.len() as u32,
@@ -536,7 +536,7 @@ fn hints_discover_the_schema_once_and_feed_completion() {
 #[test]
 fn discovery_resolves_variables_through_the_app_and_reports_failures() {
     let mut mysql = Mysql::default();
-    let text = "#endpoint\nmysql://{{store:DSN}}\n#query\nSELECT 1";
+    let text = "#target\nmysql://{{store:DSN}}\n#payload\nSELECT 1";
     let cmds = mysql.update(Event::Document(check(text)));
     let resolve = cmds.iter().find(|cmd| cmd.name == "vars.resolve").unwrap();
     assert!(
@@ -563,7 +563,7 @@ fn discovery_resolves_variables_through_the_app_and_reports_failures() {
         statuses(&failed),
         vec!["Discovery · ERROR · connect ECONNREFUSED"]
     );
-    let invalid = mysql.update(Event::Discover(check("#endpoint\nmysql://\n#query\nx")));
+    let invalid = mysql.update(Event::Discover(check("#target\nmysql://\n#payload\nx")));
     assert_eq!(
         statuses(&invalid),
         vec!["Discovery · WARNING · Invalid or incomplete service address for discovery"]
@@ -602,7 +602,7 @@ fn styles(lines: &[&str]) -> Vec<Vec<(String, String)>> {
 #[test]
 fn checks_highlight_sql_and_result_tables() {
     let styled = styles(&[
-        "#query",
+        "#payload",
         "SELECT /* a",
         "b */ 'x' # c",
         "#responce 6:02:01 PM · OK",
@@ -613,7 +613,7 @@ fn checks_highlight_sql_and_result_tables() {
         "+----+",
     ]);
     let pair = |a: &str, b: &str| (a.to_owned(), b.to_owned());
-    assert_eq!(styled[0], vec![pair("#query", "comment")]);
+    assert_eq!(styled[0], vec![pair("#payload", "comment")]);
     assert_eq!(
         styled[1],
         vec![pair("SELECT", "keyword"), pair("/* a", "comment")]

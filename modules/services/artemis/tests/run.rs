@@ -107,7 +107,7 @@ const BROKER: &str = "org.apache.activemq.artemis:broker=\"b\"";
 #[test]
 fn queues_finds_the_broker_then_lists_and_shows_a_table() {
     let module = Module::default();
-    let cmds = module.run("#endpoint\nhttp://{{host}}:8161\n#action\nQUEUES WHERE messages > 0 LIMIT 1\n#options\nColumns-Size: queue=3");
+    let cmds = module.run("#target\nhttp://{{host}}:8161\n#action\nQUEUES WHERE messages > 0 LIMIT 1\n#options\nColumns-Size: queue=3");
     let cmds = module.resolve(&cmds, &[("host", "broker")]);
     assert_eq!(cmds[0].1, "driver.call", "{cmds:?}");
     assert_eq!(names(&cmds), [("console:artemis:1:call:0", "driver.call")]);
@@ -147,23 +147,23 @@ fn queues_finds_the_broker_then_lists_and_shows_a_table() {
 fn checks_fail_before_any_call() {
     for (source, error) in [
         (
-            "#endpoint\nBROWSE http://broker:8161/orders",
-            "#endpoint is only the broker URL now; move BROWSE to #action",
+            "#target\nBROWSE http://broker:8161/orders",
+            "#target is only the broker URL now; move BROWSE to #action",
         ),
         (
-            "#endpoint\nhttp://broker:8161\n#action\nLIST",
+            "#target\nhttp://broker:8161\n#action\nLIST",
             "#action starts with a command: QUEUES, ADDRESSES, CONSUMERS, BROWSE, RECEIVE, SEND, PUBLISH, PURGE, MOVE, RETRY, PAUSE, RESUME, JOLOKIA",
         ),
         (
-            "#endpoint\nhttp://broker:8161\n#action\nBROWSE /orders\n#body\nx",
-            "BROWSE takes no #body",
+            "#target\nhttp://broker:8161\n#action\nBROWSE /orders\n#payload\nx",
+            "BROWSE takes no #payload",
         ),
         (
-            "#endpoint\nhttp://broker:8161\n#options\nCount: 5",
+            "#target\nhttp://broker:8161\n#options\nCount: 5",
             "Option \"count\" is now LIMIT n in #action",
         ),
         (
-            "#endpoint\nhttp://broker:8161\n#options\nFormat: wide",
+            "#target\nhttp://broker:8161\n#options\nFormat: wide",
             "Format takes table, vertical or json, not \"wide\"",
         ),
     ] {
@@ -172,8 +172,8 @@ fn checks_fail_before_any_call() {
         assert_eq!(cmds[0].2["error"], error);
     }
     let module = Module::default();
-    let cmds = module
-        .run("#endpoint\nhttp://broker:8161\n#action\nBROWSE /q\n#options\nPersistent: false");
+    let cmds =
+        module.run("#target\nhttp://broker:8161\n#action\nBROWSE /q\n#options\nPersistent: false");
     let cmds = module.resolve(&cmds, &[]);
     assert_eq!(
         cmds[0].2["error"],
@@ -184,7 +184,7 @@ fn checks_fail_before_any_call() {
 #[test]
 fn a_failed_call_fails_the_run_and_cancel_forgets_it() {
     let module = Module::default();
-    let cmds = module.run("#endpoint\nhttp://broker:8161\n#action\nPURGE /orders");
+    let cmds = module.run("#target\nhttp://broker:8161\n#action\nPURGE /orders");
     module.resolve(&cmds, &[]);
     let cmds = module.send(event::Kind::Reply(wire::Reply {
         tag: "console:artemis:1:call:0".into(),
@@ -197,7 +197,7 @@ fn a_failed_call_fails_the_run_and_cancel_forgets_it() {
     assert_eq!(names(&cmds), [(RUN, "run.result")]);
     assert_eq!(cmds[0].2["error"], "Connection refused");
 
-    let cmds = module.run("#endpoint\nhttp://broker:8161\n#action\nPURGE /orders");
+    let cmds = module.run("#target\nhttp://broker:8161\n#action\nPURGE /orders");
     module.resolve(&cmds, &[]);
     assert!(module.send(event::Kind::Cancel(RUN.into())).is_empty());
     let late = module.reply(
@@ -210,7 +210,7 @@ fn a_failed_call_fails_the_run_and_cancel_forgets_it() {
 #[test]
 fn discovery_feeds_action_completion() {
     let module = Module::default();
-    let source = "#endpoint\nhttp://broker:8161\n#action\nBROWSE ";
+    let source = "#target\nhttp://broker:8161\n#action\nBROWSE ";
     let cmds = module.send(event::Kind::Hints(wire::CompleteRequest {
         check: Some(check(source)),
         pos: source.len() as u32,

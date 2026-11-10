@@ -16,10 +16,10 @@
     await key('Enter');
     await type('browser-fixture');
     await key('Enter');
-    await wait(() => candidates()[0] === '#endpoint');
+    await wait(() => candidates()[0] === '#target');
     assert(editor.getValue() === '#check browser-fixture\n', `${service}: Enter must retain request name`);
     await key('Enter');
-    assert(editor.getValue() === '#check browser-fixture\n#endpoint\n', `${service}: section insertion`);
+    assert(editor.getValue() === '#check browser-fixture\n#target\n', `${service}: section insertion`);
     await key('Escape');
   }
   const endpoints = {
@@ -32,7 +32,7 @@
   for (const service of services) {
     await click(testid(`console-service-${service}`));
     const editor = editorOf('console-editor');
-    setSource(editor, `#check scope\n#endpoint\n${methods[service] || ''}`);
+    setSource(editor, `#check scope\n#target\n${methods[service] || ''}`);
     await key('Control+Space');
     await wait(() => candidates().some(text => text.includes(endpoints[service] || 'bash -c')),
       () => `${service}: saved endpoint missing from ${JSON.stringify(candidates())}`);
@@ -62,7 +62,7 @@
     return output();
   };
   const envOutput = await runConsole('rest',
-    `#check env\n#endpoint\nGET ${fixtureUrl}/browser?env={{env:SERVICES_DEVTOOLS_ENV_PROBE}}&interactive={{env:SERVICES_DEVTOOLS_INTERACTIVE_PROBE}}`,
+    `#check env\n#target\nGET ${fixtureUrl}/browser?env={{env:SERVICES_DEVTOOLS_ENV_PROBE}}&interactive={{env:SERVICES_DEVTOOLS_INTERACTIVE_PROBE}}`,
     output => output.includes('rust-ui-fixture'), 'The REST fixture must answer through the companion');
   assert(envOutput.includes('/browser?env=companion-fixture-only'), 'Login shell env substitution');
   assert(envOutput.includes('interactive=interactive-fixture-only'), 'Interactive shell env substitution');
@@ -71,7 +71,7 @@
   // The Console shows the first MAX_RESPONSE_CHARS characters and counts the rest, so the
   // exact prefix plus the exact omitted count prove that no byte was lost in transit.
   const shownLarge = `${expectedLarge.slice(0, 300000).join('')}\n\n… response truncated (${expectedLarge.length - 300000} more characters omitted)`;
-  const largeOutput = await runConsole('rest', `#check large\n#endpoint\nGET ${fixtureUrl}/native-large-response`,
+  const largeOutput = await runConsole('rest', `#check large\n#target\nGET ${fixtureUrl}/native-large-response`,
     output => output.includes('response truncated ('),
     'A response larger than 1 MiB must survive real Chrome native messaging');
   assert(largeOutput.startsWith(shownLarge),
@@ -81,11 +81,11 @@
   assert(document.querySelector('[data-testid="native-status"]').hidden,
     'The large response must not disconnect the companion');
   await runConsole('terminal',
-    '#check env\n#endpoint\n/bin/sh -c\n#command\nprintf rust-ui-terminal; printf "$SERVICES_DEVTOOLS_INTERACTIVE_PROBE"',
+    '#check env\n#target\n/bin/sh -c\n#payload\nprintf rust-ui-terminal; printf "$SERVICES_DEVTOOLS_INTERACTIVE_PROBE"',
     output => output.includes('rust-ui-terminal') && output.includes('interactive-fixture-only'),
     'Terminal commands must run with the interactive shell environment');
   await runConsole('terminal',
-    "#check failure\n#endpoint\n/bin/sh -c\n#command\nprintf partial; printf 'first\\nfixture-failure: boom\\n' >&2; exit 3",
+    "#check failure\n#target\n/bin/sh -c\n#payload\nprintf partial; printf 'first\\nfixture-failure: boom\\n' >&2; exit 3",
     output => output.includes('fixture-failure: boom'),
     'A failed Terminal command must show its stderr');
   const failedStatus = testid('console-main-status').textContent;
@@ -106,7 +106,7 @@
   };
   const restDiscoveryCount = () => nativeProbe.discoveries.filter(request => request.service === 'rest').length;
   for (const site of ['site1', 'site2']) {
-    const source = `#check ${site}\n#endpoint\nPOST ${fixtureUrl}/${site}/rest/v1/product\n#headers\nX-Token: first\n#body\n`;
+    const source = `#check ${site}\n#target\nPOST ${fixtureUrl}/${site}/rest/v1/product\n#headers\nX-Token: first\n#payload\n`;
     setSource(bookEditor, '');
     const before = restDiscoveryCount();
     pasteRest(source);
@@ -122,7 +122,7 @@
   }
   const sitesLoaded = restDiscoveryCount();
   for (const site of ['site1', 'site2', 'site1']) {
-    setSource(bookEditor, `#check cached\n#endpoint\nPOST ${fixtureUrl}/${site}/rest/v1/product\n#headers\nX-Token: changed\n#body\n`);
+    setSource(bookEditor, `#check cached\n#target\nPOST ${fixtureUrl}/${site}/rest/v1/product\n#headers\nX-Token: changed\n#payload\n`);
     await key('Control+Space');
     await wait(() => candidates().some(candidate => candidate.includes(`"${site}"`)));
     assert(!candidates().some(candidate => candidate.includes(`"${site === 'site1' ? 'site2' : 'site1'}"`)),
@@ -131,7 +131,7 @@
   assert(restDiscoveryCount() === sitesLoaded, 'Switching mounted APIs or changing headers must reuse their separate URL caches');
   const badOrigin = fixtureUrl.replace(/:\d+$/, ':0');
   assert(badOrigin !== fixtureUrl, 'The native recovery fixture must use a refused local port');
-  setSource(bookEditor, '#check recovery\n#endpoint\nGET ');
+  setSource(bookEditor, '#check recovery\n#target\nGET ');
   const beforePaste = restDiscoveryCount();
   pasteRest(`${badOrigin}/api/`);
   await during(100, () => assert(restDiscoveryCount() === beforePaste, 'Pasting an unreachable REST URL must not discover it'));
@@ -165,7 +165,7 @@
     'Typing path slashes after real native success must not rediscover the same API'));
   await key('Escape');
   const bookEndpoint = `${fixtureUrl}/api/v1/Books/`;
-  const bookPrefix = method => `#check test1\n#endpoint\n${method} ${bookEndpoint}\n#headers\nContent-Type: application/json\nAccept: application/json\n#body\n`;
+  const bookPrefix = method => `#check test1\n#target\n${method} ${bookEndpoint}\n#headers\nContent-Type: application/json\nAccept: application/json\n#payload\n`;
   const bookFields = ['"id": ', '"title": ""', '"description": ""', '"pageCount": ', '"excerpt": ""', '"publishDate": ""'];
   setSource(bookEditor, bookPrefix('POST'));
   await key('Control+Space');
@@ -198,7 +198,7 @@
     if (typeof value === 'string') await key('ArrowRight');
     if (index < 5) await key('Enter');
   }
-  assert(JSON.parse(bookEditor.getValue().split('#body\n')[1]).publishDate === '2026-10-24T00:00:00Z',
+  assert(JSON.parse(bookEditor.getValue().split('#payload\n')[1]).publishDate === '2026-10-24T00:00:00Z',
     'Selecting Book fields must produce valid JSON, including automatic commas');
   assert(bookEditor.getLine(2) === `POST ${bookEndpoint}`,
     'Schema matching must not remove the trailing slash from the actual request URL');
@@ -215,7 +215,7 @@
   const magentoPath = '/rest/default/V1/integration/admin/token';
   const magentoUrl = `http://{{var:magento}}${magentoPath}`;
   const magentoPrefix = endpoint =>
-    `#check magento\n#endpoint\nPOST ${endpoint}\n#headers\nContent-Type: application/json\n#body\n`;
+    `#check magento\n#target\nPOST ${endpoint}\n#headers\nContent-Type: application/json\n#payload\n`;
   const credentials = ['"username": ""', '"password": ""'];
   const checkLocalBodyHints = async () => {
     for (const source of [magentoPrefix(magentoUrl).trimEnd(), magentoPrefix(magentoUrl)]) {
@@ -238,11 +238,11 @@
         }
         // Window longer than any discovery debounce: repeated shortcuts must never schedule a discovery.
         await holds(() => restDiscoveryCount() === count && magentoEditor.getValue() === source,
-          'Repeated Ctrl-Space on #body must not discover or modify the request', 650);
+          'Repeated Ctrl-Space on #payload must not discover or modify the request', 650);
         assert(keyNames.length === 12 && keyNames.every(name => name === 'Ctrl-Space'),
           'The repeated shortcut fixture must deliver actual Ctrl-Space events, not Alt-Space');
         assert(restDiscoveryCount() === count && magentoEditor.getValue() === source,
-          `Repeated Ctrl-Space on #body or its empty content must not discover or modify the request: ${JSON.stringify({
+          `Repeated Ctrl-Space on #payload or its empty content must not discover or modify the request: ${JSON.stringify({
             cursor: magentoEditor.getCursor(), before: count, after: restDiscoveryCount(),
             status: find('.status-bar').textContent, keyNames,
           })}`);
@@ -276,7 +276,7 @@
   await pick(magentoEditor, '"password": ""');
   await type('fixture-password');
   await key('ArrowRight');
-  assert(JSON.stringify(JSON.parse(magentoEditor.getValue().split('#body\n')[1]))
+  assert(JSON.stringify(JSON.parse(magentoEditor.getValue().split('#payload\n')[1]))
     === JSON.stringify({username: 'fixture-admin', password: 'fixture-password'}),
   'Schema hints must create a valid credentials body without sending an authentication request');
   assert(magentoEditor.getLine(2) === `POST ${magentoUrl}`,
@@ -325,7 +325,7 @@
     'After filling the required template, hints must offer optional fields without duplicates or readOnly fields');
   await pick(magentoEditor, '"scope": ""');
   await type('fixture-scope');
-  const completedCredentials = JSON.parse(magentoEditor.getValue().split('#body\n')[1]);
+  const completedCredentials = JSON.parse(magentoEditor.getValue().split('#payload\n')[1]);
   assert(completedCredentials.scope === 'fixture-scope' && Object.keys(completedCredentials).length === 3,
     'Adding an optional field after the required template must preserve valid JSON and automatic commas');
   assert(restDiscoveryCount() === magentoLoaded && magentoEditor.getLine(2) === `POST ${magentoUrl}`,
@@ -392,7 +392,7 @@
   await click(testid('console-service-rest'));
   const categoryPath = '/rest/default/V1/categories/{categoryId}/move';
   const pathEditor = editorOf('console-editor');
-  setSource(pathEditor, '#check move\n#endpoint\nPUT http://{{var:magento}}/rest/default/V1/categories/');
+  setSource(pathEditor, '#check move\n#target\nPUT http://{{var:magento}}/rest/default/V1/categories/');
   await pick(pathEditor, categoryPath);
   const checkPathParameterColor = async (editor, line) => {
     await wait(() => editor.getLineTokens(line).some(token => token.type?.includes('rest-path-param')));
@@ -414,7 +414,7 @@
   await checkPathParameterColor(pathEditor, 2);
   assert(pathEditor.getLine(2) === 'PUT http://{{var:magento}}/rest/default/V1/categories/42/move',
     'Discovery insertion must retain the full method and variable-based URL');
-  setSource(pathEditor, `#check move\n#endpoint\nPUT http://{{var:magento}}${categoryPath}\n#body\n{"note":"{categoryId}"}`);
+  setSource(pathEditor, `#check move\n#target\nPUT http://{{var:magento}}${categoryPath}\n#payload\n{"note":"{categoryId}"}`);
   await checkPathParameterColor(pathEditor, 2);
   assert(!pathEditor.getLineTokens(4).some(token => token.type?.includes('rest-path-param')),
     'Braces inside a REST JSON body must not become URL-parameter tokens');
@@ -423,14 +423,14 @@
   await click(testid('console-service-graphql'));
   const discoveryEditor = editorOf('console-editor');
   const discoveryEndpoint = `${fixtureUrl}/graphql-native-discovery`;
-  setSource(discoveryEditor, `#check protected-schema\n#endpoint\n${discoveryEndpoint}\n#query\n{\n  `);
+  setSource(discoveryEditor, `#check protected-schema\n#target\n${discoveryEndpoint}\n#payload\n{\n  `);
   await key('Alt+Space');
   await wait(() => find('.status-bar').textContent.includes('Discovery · ERROR')
     && find('.status-bar').textContent.includes('GraphQL discovery requires X-Token'),
   'The real native registry must report GraphQL errors instead of caching an empty successful schema');
   assert(![...document.querySelectorAll('[role="alert"]')].some(visible),
     'A real native manual discovery error must appear only in status/debug');
-  const authenticated = `#check protected-schema\n#endpoint\n${discoveryEndpoint}\n#headers\nX-Token: {{second:TOKEN}}\n#query\n{\n  `;
+  const authenticated = `#check protected-schema\n#target\n${discoveryEndpoint}\n#headers\nX-Token: {{second:TOKEN}}\n#payload\n{\n  `;
   setSource(discoveryEditor, authenticated);
   discoveryEditor.setCursor(discoveryEditor.lastLine(), discoveryEditor.getLine(discoveryEditor.lastLine()).length);
   // Discovery is lazy: asking for hints introspects the new connection.
@@ -444,7 +444,7 @@
   await wait(() => candidates().includes('sku') && candidates().includes('images'),
     'Real native introspection must restore nested GraphQL field completion');
   await key('Escape');
-  setSource(discoveryEditor, `#check protected-schema\n#endpoint\n${discoveryEndpoint}\n#headers\nX-Token: {{second:TOKEN}}\n#query\n{\n  products\n  sku\n}`);
+  setSource(discoveryEditor, `#check protected-schema\n#target\n${discoveryEndpoint}\n#headers\nX-Token: {{second:TOKEN}}\n#payload\n{\n  products\n  sku\n}`);
   const kindOf = (line, name) => discoveryEditor.getLineTokens(line).find(token => token.string === name)?.type || '';
   await wait(() => kindOf(7, 'products').includes('graphql-object-field'),
     'The discovered schema must mark object fields before their selection set is written');
@@ -453,7 +453,7 @@
   const materializationVariables = '{"skus":["{{var:sku}}"]}';
   await click(testid('console-service-graphql'));
   const materializationEditor = editorOf('console-editor');
-  const materializationSource = `#check materialization\n#endpoint\n${fixtureUrl}/graphql-materialization\n#variables\n${materializationVariables}\n#query\n${materializationQuery}`;
+  const materializationSource = `#check materialization\n#target\n${fixtureUrl}/graphql-materialization\n#variables\n${materializationVariables}\n#payload\n${materializationQuery}`;
   setSource(materializationEditor, materializationSource);
   await key('Shift+Enter');
   await wait(() => materializationEditor.getValue().includes('#responce')

@@ -47,7 +47,7 @@
     'A draft of an unloaded module must not break Templates');
   assert(!testid('templates-panel').querySelector('.agent-intro'),'Templates must not show an introductory heading above the editor');
   assert(status().textContent.includes('@@ = @'),'The short escaping hint must live in the status strip');
-  assert([...testid('templates-sections').querySelectorAll('[role="tab"]')].map(tab=>tab.textContent).join(',')==='check,endpoint,headers,variables,query,options',
+  assert([...testid('templates-sections').querySelectorAll('[role="tab"]')].map(tab=>tab.textContent).join(',')==='check,target,headers,variables,payload,options',
     `GraphQL Templates must expose exactly its own section tabs: ${[...testid('templates-sections').querySelectorAll('[role="tab"]')].map(tab=>tab.textContent)}`);
   await select('variables');
   await save('graphql','variables',definitions);
@@ -67,7 +67,7 @@
       mode:source.getOption('mode'),regions:source.getOption('servicesResponses'),
       text:source.getValue(),
     })}`);
-  const prefix=`#check Template body\n#endpoint\n${fixtureUrl}/template\n#variables `;
+  const prefix=`#check Template body\n#target\n${fixtureUrl}/template\n#variables `;
   setSource(source,prefix.trimEnd());
   await key('Space');
   await pick('@my_create_book2');
@@ -101,8 +101,8 @@
   assert(source.getValue()==='#check Headers\n#headers\nX-Template: yes\nContent-Type: application/json',
     'Header templates must not duplicate the section marker');
   await select('check');
-  const full=`#check Full book\n#endpoint\n${fixtureUrl}/template-full\n#headers\nAccept: application/json\n#variables\n${body}`;
-  const implicit=`#endpoint\n${fixtureUrl}/api/v1/Books/123\n#headers\nContent-Type: application/json\nAccept: application/json\n#variables\n${body2}`;
+  const full=`#check Full book\n#target\n${fixtureUrl}/template-full\n#headers\nAccept: application/json\n#variables\n${body}`;
+  const implicit=`#target\n${fixtureUrl}/api/v1/Books/123\n#headers\nContent-Type: application/json\nAccept: application/json\n#variables\n${body2}`;
   await save('graphql','check',`@full_book Complete check\n${full}\n@test1 mmm\n${implicit}\n@without_description\n${implicit}`);
   setSource(source,'#check @test1');
   await key('Control+Space');
@@ -120,7 +120,7 @@
   await type('@');
   await pick('@full_book');
   assert(source.getValue()===full,'A whole-check template must replace the reference and original #check marker');
-  const previous='#check Previous\n#endpoint\nhttps://fixture.invalid/previous';
+  const previous='#check Previous\n#target\nhttps://fixture.invalid/previous';
   setSource(source,previous+'\n#check @full_book');
   await key('Control+Space');
   await pick('@full_book');
@@ -134,12 +134,12 @@
     'Redo must restore the exact template and separator');
   await click(testid('console-service-mysql'));
   await wait(()=>document.querySelector('[data-testid="templates-section-query"]'));
-  await select('query');
-  await save('mysql','query','@my_create_book SQL query\nSELECT 123 AS id;');
-  setSource(editorOf('console-editor'),'#check SQL\n#query ');
+  await select('payload');
+  await save('mysql','payload','@my_create_book SQL query\nSELECT 123 AS id;');
+  setSource(editorOf('console-editor'),'#check SQL\n#payload ');
   await type('@');
   await pick('@my_create_book');
-  assert(editorOf('console-editor').getValue()==='#check SQL\n#query\nSELECT 123 AS id;',
+  assert(editorOf('console-editor').getValue()==='#check SQL\n#payload\nSELECT 123 AS id;',
     'Same template name must resolve independently for each service/section');
   assert(editorOf('templates-editor').getOption('mode').name==='services-console-mysql',
     'MySQL templates must switch to the MySQL Console syntax mode');
@@ -147,17 +147,17 @@
     'MySQL templates must use the exact main Console SQL token styles');
   await click(testid('console-service-splunk'));
   await wait(()=>document.querySelector('[data-testid="templates-section-options"]'));
-  assert([...testid('templates-sections').querySelectorAll('[role="tab"]')].map(tab=>tab.textContent).join(',')==='check,endpoint,headers,options,search',
+  assert([...testid('templates-sections').querySelectorAll('[role="tab"]')].map(tab=>tab.textContent).join(',')==='check,target,headers,options,payload',
     'Splunk Templates must not duplicate options as empty from/to/app/count tabs');
   setSource(editorOf('console-editor'),'#check Splunk sections\n#');
   await key('Control+Space');
   await wait(()=>entries().some(item=>item.text==='#options'));
-  assert(entries().map(item=>item.text).join(',')==='#endpoint,#headers,#options,#search,#check',
+  assert(entries().map(item=>item.text).join(',')==='#target,#headers,#options,#payload,#check',
     'Splunk section completion must offer only canonical sections');
   await key('Escape');
   for(const section of ['from','to','app','count']) {
     const splunk=editorOf('console-editor');
-    setSource(splunk,`#check Removed ${section}\n#endpoint\nhttps://splunk.fixture\n#search\nindex=main\n#${section}\nvalue`);
+    setSource(splunk,`#check Removed ${section}\n#target\nhttps://splunk.fixture\n#payload\nindex=main\n#${section}\nvalue`);
     splunk.setCursor(6,5);splunk.focus();
     await key('Shift+Enter');
     await wait(()=>testid('console-main-status').textContent.includes(`Unsupported Splunk section #${section}; use #options.`),

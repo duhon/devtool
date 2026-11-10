@@ -83,7 +83,7 @@
     assert(editorOf('console-editor').getValue()==='',`${service}: fresh temporary checks must be empty`);
   }
   await click(testid('console-service-rest'));
-  setSource(editorOf('console-editor'),'#check temp-only\n#endpoint\nGET https://temporary.invalid');
+  setSource(editorOf('console-editor'),'#check temp-only\n#target\nGET https://temporary.invalid');
   await open('variables');
   assert(editorOf('console-variables').getValue()==='','Temporary var must not inherit native legacy variables');
   await open('hints');
@@ -118,17 +118,17 @@
   for(const service of ['mysql','rest','graphql','grpc','splunk','terminal']) {
     await click(testid(`console-service-${service}`));
     setSource(editorOf('console-editor'),service==='rest'
-      ?`#check session-a-rest\n#endpoint\nGET ${fixtureUrl}/session?session-value={{var:SESSION_MARKER}}\n`
+      ?`#check session-a-rest\n#target\nGET ${fixtureUrl}/session?session-value={{var:SESSION_MARKER}}\n`
       :`#check session-a-${service}\n`);
   }
   await vars('SESSION_MARKER: alpha');
-  await hints('#endpoint\nhttps://session-a.invalid\n');
+  await hints('#target\nhttps://session-a.invalid\n');
   await runRest('alpha');
   const large=await copy(0,'Large result');
   await click(testid('console-service-mysql'));
   const largeEditor=editorOf('console-editor');
   // MySQL inline tables, unlike REST previews, are not capped at 300,000 characters.
-  setSource(largeEditor,`#check large-persistence\n#endpoint\nmysql://mysql.fixture.invalid\n#query\nSELECT large_fixture;\n\n#responce OK\nsession-large-start\n${('x'.repeat(1024)+'\n').repeat(7168)}session-large-end`);
+  setSource(largeEditor,`#check large-persistence\n#target\nmysql://mysql.fixture.invalid\n#payload\nSELECT large_fixture;\n\n#responce OK\nsession-large-start\n${('x'.repeat(1024)+'\n').repeat(7168)}session-large-end`);
   const largeDocument=largeEditor.getValue();
   assert(largeDocument.length>6*1024*1024,'The regression must exceed the old Web Storage quota');
   let quotaExceeded=false;
@@ -189,7 +189,7 @@
   await open('hints');
   assert(editorOf('console-hints').getValue().startsWith('## invalid-session-hints'),'Cloning must retain invalid hints drafts');
   await vars('SESSION_MARKER: beta');
-  await hints('#endpoint\nhttps://session-b.invalid\n');
+  await hints('#target\nhttps://session-b.invalid\n');
   await runRest('beta');
   await open('dictionary');
   const dictionary=editorOf('console-dictionary').getValue();
@@ -236,7 +236,7 @@
     assert(editorOf('console-editor',doc).getValue().includes('session-a-rest'),'Named checks must persist across application instances');
     await click(testid('console-hints-toggle',doc));
     await wait(()=>doc.querySelector('[data-testid="console-hints"]')&&editorOf('console-hints',doc));
-    editorOf('console-hints',doc).setValue('#endpoint\nhttps://other-window.invalid\n');
+    editorOf('console-hints',doc).setValue('#target\nhttps://other-window.invalid\n');
     await wait(()=>testid('console-hints-status',doc).textContent.includes('Hints save · OK'));
   } finally { frame.remove(); }
   // The Dictionary is shared by all windows through Local: another window's save shows when the panel is shown again.
@@ -296,7 +296,7 @@
   assert(editorOf('console-hints').getValue().includes('other-window.invalid'),'Explicitly switching back must load the saved winner');
   await activateSession(b);
   await click(testid('console-service-terminal'));
-  setSource(editorOf('console-editor'),"#check session-busy\n#endpoint\nsh -c\n#command\nprintf session-running; sleep 30");
+  setSource(editorOf('console-editor'),"#check session-busy\n#target\nsh -c\n#payload\nprintf session-running; sleep 30");
   await key('Shift+Enter');
   await wait(()=>testid('console-main-status').classList.contains('is-running'));
   await open('sessions');

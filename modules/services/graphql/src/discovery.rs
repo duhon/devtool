@@ -51,7 +51,7 @@ pub struct Connection {
 
 impl Connection {
     pub fn of(check: &Check) -> Option<Self> {
-        let url = check.text_of("endpoint").trim();
+        let url = check.text_of("target").trim();
         let web = url.split_once("://").is_some_and(|(scheme, _)| {
             matches!(scheme.to_ascii_lowercase().as_str(), "http" | "https")
         });

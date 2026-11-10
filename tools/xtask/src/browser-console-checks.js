@@ -55,7 +55,7 @@
     }
     const firstEnd = checks[1] ?? lines.length;
     const section = lines.findIndex((text, line) =>
-      line > checks[0] && line < firstEnd && !output(line) && /^\s*#endpoint(?:\s|$)/i.test(text));
+      line > checks[0] && line < firstEnd && !output(line) && /^\s*#target(?:\s|$)/i.test(text));
     const response = regions[0]?.header ?? lines.findIndex(text => /^\s*#respon(?:ce|se)(?:\s|$)/i.test(text));
     for (const child of [section, response].filter(line => line > checks[0] && line < firstEnd - 1)) {
       await toggle(child);
@@ -79,9 +79,9 @@
     await openConsole();
     await click(testid('console-service-terminal'));
     let editor = editorOf('console-editor');
-    const block = (name, command) => `#check ${name}\n#endpoint\n/bin/sh -c\n#command\n${command}`;
+    const block = (name, command) => `#check ${name}\n#target\n/bin/sh -c\n#payload\n${command}`;
     setSource(editor, [
-      block('move-first', "printf '%s\\n' 'first-executed' '#check literal-output' '#endpoint' 'not-a-request'"),
+      block('move-first', "printf '%s\\n' 'first-executed' '#check literal-output' '#target' 'not-a-request'"),
       block('move-second', "printf '%s\\n' 'second-executed'"),
       block('move-last', "printf '%s\\n' 'moved-executed'"),
     ].join('\n\n'));
@@ -327,7 +327,7 @@
     const active = () => testid('console-check-menu').querySelector('.active .check-rail-number')?.textContent;
     const top = () => editor.lineAtHeight(editor.getScrollInfo().top, 'local');
     setSource(editor, ['cursor-one', 'cursor-two', 'cursor-three'].map(name =>
-      `#check ${name}\n#endpoint\nGET ${endpoint}`).join('\n\n'));
+      `#check ${name}\n#target\nGET ${endpoint}`).join('\n\n'));
     editor.setCursor(0, 0);
     editor.scrollTo(null, 0);
     await wait(() => links().length === 3 && active() === '1');
@@ -525,7 +525,7 @@
     await wait(() => links().length === 3 && links()[1].dataset.line === '100');
     const source = editor.getValue();
     setSource(editor, Array.from({length: 60}, (_, index) =>
-      `#check Scroll ${index + 1}\n#endpoint\nGET ${endpoint}`).join('\n\n'));
+      `#check Scroll ${index + 1}\n#target\nGET ${endpoint}`).join('\n\n'));
     await wait(() => links().length === 60);
     const checkMenu = testid('console-check-menu').querySelector('.check-rail-links');
     checkMenu.scrollTop = checkMenu.scrollHeight;
@@ -559,12 +559,12 @@
       'Hints must have a tab-styled title matching the active service tabs');
     const hints = await wait(() => testDriver.editorAt('console-hints'));
     const originalHints = hints.getValue();
-    setSource(hints, '#endpoint\nhttp://\n');
+    setSource(hints, '#target\nhttp://\n');
     await type('#');
-    await wait(() => JSON.stringify(candidates().sort()) === JSON.stringify(['#body', '#headers', '#options']),
+    await wait(() => JSON.stringify(candidates().sort()) === JSON.stringify(['#payload', '#headers', '#options']),
       () => `Typing # in Hints must offer the sections it lacks: ${JSON.stringify(candidates())}`);
-    await pick(hints, '#body');
-    assert(hints.getLine(2) === '#body', 'Picking a Hints section must insert its header');
+    await pick(hints, '#payload');
+    assert(hints.getLine(2) === '#payload', 'Picking a Hints section must insert its header');
     const changedHints = `${originalHints.trimEnd()}\n#headers\nX-Console-Panel-Fixture: saved\n`;
     hints.setValue(changedHints);
     await wait(() => toolStatus()?.textContent.includes('Hints save · OK'), 'Edited hints must be saved to Local');
@@ -688,7 +688,7 @@
     editorOf('console-hints').setValue('{{incomplete:');
     await wait(() => toolStatus().textContent.includes('ERROR'));
     await closePanel('hints');
-    setSource(editor, `#check panel-status\n#endpoint\nGET ${endpoint}\n`);
+    setSource(editor, `#check panel-status\n#target\nGET ${endpoint}\n`);
     await key('Shift+Enter');
     await wait(() => find('.status-bar').textContent.startsWith('Request · ')
       && find('.status-bar').textContent.includes('OK'),

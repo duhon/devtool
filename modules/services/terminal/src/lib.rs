@@ -1,5 +1,5 @@
-//! The Terminal service: a `#endpoint` command line (a local shell or an ssh connection)
-//! runs the `#command` text as its last argument through the Host `process` driver, with
+//! The Terminal service: a `#target` command line (a local shell or an ssh connection)
+//! runs the `#payload` text as its last argument through the Host `process` driver, with
 //! `#env` exported first.
 
 use serde::Deserialize;
@@ -12,7 +12,7 @@ use services_sdk::{
 };
 use std::collections::BTreeMap;
 
-pub const SECTIONS: [&str; 3] = ["endpoint", "command", "env"];
+pub const SECTIONS: [&str; 3] = ["target", "payload", "env"];
 
 const ENDPOINTS: [&str; 3] = ["bash -c", "zsh -c", "ssh "];
 const ENV: [&str; 6] = [
@@ -43,7 +43,7 @@ pub fn parse_argv(input: &str) -> Result<Vec<String>, String> {
                     match chars.next() {
                         Some('\'') => break,
                         Some(c) => token.push(c),
-                        None => return Err("Unterminated single quote in endpoint".into()),
+                        None => return Err("Unterminated single quote in #target".into()),
                     }
                 },
                 '"' => loop {
@@ -53,7 +53,7 @@ pub fn parse_argv(input: &str) -> Result<Vec<String>, String> {
                             token.extend(chars.next());
                         }
                         Some(c) => token.push(c),
-                        None => return Err("Unterminated double quote in endpoint".into()),
+                        None => return Err("Unterminated double quote in #target".into()),
                     }
                 },
                 '\\' if chars.peek().is_some() => token.extend(chars.next()),
@@ -76,11 +76,11 @@ pub fn build_command(command: &str, env: &[(String, String)]) -> String {
     format!("export {}; {command}", exports.join(" "))
 }
 
-/// The endpoint line and the command: `#command`, or the lines after the endpoint.
+/// The endpoint line and the command: `#payload`, or the lines after the endpoint.
 fn parts(check: &Check) -> (&str, &str) {
-    let endpoint = check.text_of("endpoint");
+    let endpoint = check.text_of("target");
     let (line, rest) = endpoint.split_once('\n').unwrap_or((endpoint, ""));
-    let command = match check.section("command") {
+    let command = match check.section("payload") {
         Some(command) => command,
         None if !rest.trim().is_empty() => rest.trim(),
         None => check.text_of("leftover"),
@@ -101,7 +101,7 @@ pub fn plan(check: &Check) -> Result<Value, String> {
     let (endpoint, command) = parts(check);
     let argv = parse_argv(endpoint)?;
     if argv.is_empty() {
-        return Err("endpoint must not be empty".into());
+        return Err("#target must not be empty".into());
     }
     if command.trim().is_empty() {
         return Err("command is required".into());
@@ -121,7 +121,7 @@ pub fn resolved(plan: &Value) -> Result<Request, String> {
     }
     let plan = Plan::deserialize(plan).map_err(|error| error.to_string())?;
     let Some((program, args)) = plan.argv.split_first() else {
-        return Err("endpoint must not be empty".into());
+        return Err("#target must not be empty".into());
     };
     let mut request = Request::new(program, &[]);
     request.args = args.to_vec();
@@ -203,11 +203,11 @@ impl Area {
     }
 }
 
-/// Tokens of a marker line: the marker as a comment; the rest of an `#endpoint` line as
+/// Tokens of a marker line: the marker as a comment; the rest of an `#target` line as
 /// shell, of other lines as part of the comment.
 fn marker_tokens(line: &str, name: &str, rest: &str, quote: &mut shell::State) -> Vec<Token> {
     let head = line.len() - line.trim_start().len() + 1 + name.len();
-    if name != "endpoint" || rest.is_empty() {
+    if name != "target" || rest.is_empty() {
         return vec![Token {
             start: 0,
             len: line.trim_end().len() as u32,
@@ -242,7 +242,7 @@ pub fn highlight(state: &[u8], lines: &[String]) -> Vec<Line> {
                 {
                     quote = shell::State::default();
                     area = match name.as_str() {
-                        "endpoint" | "command" => Area::Shell,
+                        "target" | "payload" => Area::Shell,
                         "env" => Area::Env,
                         "responce" | "response" => Area::Response,
                         _ => Area::Other,
@@ -274,16 +274,16 @@ pub fn complete(check: &Check, pos: usize) -> Completions {
     let line_start = at.line_start(at.line);
     let first = at.section.as_ref().is_some_and(|(i, _)| at.line == i + 1);
     match at.name() {
-        Some("endpoint") if first => {
+        Some("target") if first => {
             let value = at.before.trim_start();
             let from = line_start + at.before.len() - value.len();
             let items = ENDPOINTS
                 .iter()
-                .map(|text| item(*text, "Endpoint", "keyword"))
+                .map(|text| item(*text, "Target", "keyword"))
                 .collect();
             finish(from, at.pos, value, items)
         }
-        Some("endpoint") => at.next_section(&SECTIONS).unwrap_or_else(|| at.none()),
+        Some("target") => at.next_section(&SECTIONS).unwrap_or_else(|| at.none()),
         Some("env") => {
             let used = headers::used(at.other_lines());
             let items = headers::items(&ENV, &[], &used);

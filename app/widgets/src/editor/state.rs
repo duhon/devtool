@@ -762,7 +762,7 @@ mod tests {
     fn nested_folds_return_when_the_outer_one_opens() {
         let mut state = State::new(
             "#check
-#body
+#payload
 a
 b
 #response

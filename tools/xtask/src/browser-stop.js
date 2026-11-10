@@ -23,8 +23,8 @@
     editor().focus();
     await key('Shift+Enter');
   };
-  const terminal = name => `#check ${name}\n#endpoint\nsh -c\n#command\nprintf '${name}-pid:%s\\n' $$; ${name === 'first' ? "printf '#check second\\n#endpoint\\nsh -c\\n#command\\nneighbor-copy\\n'; " : ""}while :; do printf '${name}-tick\\n'; sleep 0.2; done`;
-  const rest = name => `#check ${name}\n#endpoint\nGET ${fixtureUrl}/stop-slow?${name}`;
+  const terminal = name => `#check ${name}\n#target\nsh -c\n#payload\nprintf '${name}-pid:%s\\n' $$; ${name === 'first' ? "printf '#check second\\n#target\\nsh -c\\n#payload\\nneighbor-copy\\n'; " : ""}while :; do printf '${name}-tick\\n'; sleep 0.2; done`;
+  const rest = name => `#check ${name}\n#target\nGET ${fixtureUrl}/stop-slow?${name}`;
   const count = async () => (await (await fetch(`${fixtureUrl}/stop-count`)).json()).count;
   const openAgent = async () => {
     await testDriver.openPanel('agent', 'console-agent');
@@ -136,7 +136,7 @@
     && light(testid('console-service-terminal')) === 'ready',
     'Viewing both stop results must acknowledge the aggregate without clearing either status');
 
-  const timed = (name, code) => `#check ${name}\n#endpoint\nsh -c\n#command\nsleep 2; printf '${name}-finished'; exit ${code}`;
+  const timed = (name, code) => `#check ${name}\n#target\nsh -c\n#payload\nsleep 2; printf '${name}-finished'; exit ${code}`;
   setSource(editor(), `${timed('unseen-success', 0)}\n\n${timed('unseen-error', 1)}`);
   await wait(() => checks().length === 2);
   await select(0);
@@ -217,7 +217,7 @@
   await click(testid('console-service-rest'));
   assert(light(testid('console-service-terminal')) === 'running',
     'The service tab must expose a background Terminal process');
-  setSource(editor(), `${rest('manual')}\n\n${rest('agentchild')}\n\n#check success\n#endpoint\nGET ${fixtureUrl}/status-success\n\n#check failure\n#endpoint\nGET`);
+  setSource(editor(), `${rest('manual')}\n\n${rest('agentchild')}\n\n#check success\n#target\nGET ${fixtureUrl}/status-success\n\n#check failure\n#target\nGET`);
   await wait(() => checks().length === 4);
   await select(2);
   await run();
@@ -454,7 +454,7 @@
   window.dispatchEvent(new Event('services-console-shown'));
   await click(testid('console-service-terminal'));
   await wait(() => stopped('hiddenfirst') && stopped('hiddensecond'));
-  setSource(editor(), '#check after-show\n#endpoint\nsh -c\n#command\nprintf after-show-ready');
+  setSource(editor(), '#check after-show\n#target\nsh -c\n#payload\nprintf after-show-ready');
   await run();
   await wait(() => source().includes('#responce') && source().includes('after-show-ready')
     && testid('console-stop').disabled,

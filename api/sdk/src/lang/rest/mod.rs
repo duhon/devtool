@@ -1,5 +1,5 @@
-//! The language of REST-like services: a `#endpoint` (`METHOD URL`), `#headers` and a JSON
-//! `#body`, with completion from a discovered OpenAPI-like summary (`paths`,
+//! The language of REST-like services: a `#target` (`METHOD URL`), `#headers` and a JSON
+//! `#payload`, with completion from a discovered OpenAPI-like summary (`paths`,
 //! `methodsByPath`, `headers`, `bodySchemas`, `baseUrl`/`basePath`) and the discovery runs
 //! that find it through the `http` driver.
 

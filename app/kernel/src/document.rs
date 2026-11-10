@@ -69,7 +69,7 @@ mod tests {
     fn splits_at_marker_lines_only() {
         let check = check(
             "rest",
-            "#endpoint GET https://x/a\n#headers\nAccept: */*\n# a comment\n#body\n{\"a\":#1}\n",
+            "#target GET https://x/a\n#headers\nAccept: */*\n# a comment\n#payload\n{\"a\":#1}\n",
             &json!({"Repeat": "5s"}),
         );
         let names: Vec<(&str, &str)> = check
@@ -80,9 +80,9 @@ mod tests {
         assert_eq!(
             names,
             [
-                ("endpoint", "GET https://x/a"),
+                ("target", "GET https://x/a"),
                 ("headers", "Accept: */*\n# a comment"),
-                ("body", "{\"a\":#1}")
+                ("payload", "{\"a\":#1}")
             ]
         );
         assert_eq!(check.sections[2].line, 4);
@@ -91,9 +91,9 @@ mod tests {
 
     #[test]
     fn text_before_a_marker_is_leftover() {
-        let check = check("rest", "hello\n#Body x", &Value::Null);
+        let check = check("rest", "hello\n#Payload x", &Value::Null);
         assert_eq!(check.text_of("leftover"), "hello");
-        assert_eq!(check.text_of("body"), "x");
+        assert_eq!(check.text_of("payload"), "x");
         assert_eq!(marker("#1abc"), None);
         assert_eq!(marker("#a:b"), None);
     }

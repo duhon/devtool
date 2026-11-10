@@ -1136,7 +1136,7 @@ mod tests {
         );
         assert!(styles.contains(&("7".into(), "number".into())));
         assert!(styles.contains(&("\"a\"".into(), "property".into())));
-        let text = "#query\nx\\G\n#responce OK\n*************************** 1. row ***************************\n doc: {\n        \"a\": [\n          1\n        ]\n      }\n  id: 1\n+---+\n| { |\n+---+\n| } |";
+        let text = "#payload\nx\\G\n#responce OK\n*************************** 1. row ***************************\n doc: {\n        \"a\": [\n          1\n        ]\n      }\n  id: 1\n+---+\n| { |\n+---+\n| } |";
         let ranges = |text| -> Vec<(u32, u32)> {
             folds(text, &[])
                 .into_iter()
@@ -1173,7 +1173,7 @@ mod tests {
         assert_eq!(declared.kind_of("doc"), Some(Kind::Text));
         assert_eq!(declared.kind_of("n"), Some(Kind::Number));
         let text =
-            "#query\nx\\G\n#responce OK\n***** 1. row *****\n doc: {\n        \"a\": 1\n      }";
+            "#payload\nx\\G\n#responce OK\n***** 1. row *****\n doc: {\n        \"a\": 1\n      }";
         let folded = |columns: &[crate::ColumnType]| folds(text, columns).len();
         assert_eq!(folded(&[]), 1);
         assert_eq!(folded(&[crate::ColumnType::new("doc", "text")]), 1);

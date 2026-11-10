@@ -27,7 +27,7 @@ fn modules() -> Modules {
     Modules::new("3.7.0", drivers(), Box::new(|| 0.0))
 }
 
-/// A service: `#endpoint METHOD URL`, renders the status and body.
+/// A service: `#target METHOD URL`, renders the status and body.
 #[derive(Default)]
 struct Rest;
 
@@ -35,9 +35,9 @@ impl Module for Rest {
     type Msg = ();
     fn build(&self, check: &Check) -> Result<DriverCall, String> {
         let (method, url) = check
-            .text_of("endpoint")
+            .text_of("target")
             .split_once(' ')
-            .ok_or("#endpoint needs a method and a URL")?;
+            .ok_or("#target needs a method and a URL")?;
         Ok(http::Request::new(method, url).call())
     }
     fn render(&self, chunk: &Chunk) -> Result<Rendered, String> {
@@ -318,21 +318,21 @@ fn a_hidden_panel_stops_its_work_and_gets_no_events() {
 fn the_request_pipeline_runs_the_service_then_panels_in_order() {
     let mut modules = modules();
     load(&mut modules);
-    let check = document::check("rest", "#endpoint GET https://{{host}}/a", &Value::Null);
+    let check = document::check("rest", "#target GET https://{{host}}/a", &Value::Null);
     let call = modules.prepare("rest", check).unwrap();
     assert_eq!(
         call.request()["headers"],
         json!([["X-Seen", "https://example.test/a"]])
     );
 
-    let missing = document::check("rest", "#endpoint GET https://{{missing}}/", &Value::Null);
+    let missing = document::check("rest", "#target GET https://{{missing}}/", &Value::Null);
     assert_eq!(
         modules.prepare("rest", missing),
         Err("Unknown variable {{missing}}".into())
     );
     assert_eq!(
-        modules.prepare("rest", document::check("rest", "#endpoint", &Value::Null)),
-        Err("#endpoint needs a method and a URL".into())
+        modules.prepare("rest", document::check("rest", "#target", &Value::Null)),
+        Err("#target needs a method and a URL".into())
     );
 
     let response = json!({"status": 201, "body": "made"});
@@ -509,7 +509,7 @@ fn hints_reach_only_the_subscribed_service_of_the_check() {
             check: Some(Check {
                 columns: Vec::new(),
                 service: service.into(),
-                text: "#endpoint".into(),
+                text: "#target".into(),
                 ..Check::default()
             }),
             pos: 3,
@@ -526,7 +526,7 @@ fn hints_reach_only_the_subscribed_service_of_the_check() {
     };
 
     modules.broadcast(hints("one"));
-    assert_eq!(status(&modules, "one").as_deref(), Some("#endpoint 3"));
+    assert_eq!(status(&modules, "one").as_deref(), Some("#target 3"));
     assert_eq!(status(&modules, "two"), None);
     // `rest` does not subscribe to hints.
     assert!(modules.broadcast(hints("rest")).is_empty());

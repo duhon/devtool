@@ -43,7 +43,7 @@
       'Folding the complete response must remain available');
     return region;
   };
-  setSource(editor, `#check Streaming export\n#endpoint\n${fixtureUrl}\n#options\nFrom: -1h\nTo: now\nApp: search\nCount: 2\n${typedOptions}\n#search\nindex=fixture | sort - _time`);
+  setSource(editor, `#check Streaming export\n#target\n${fixtureUrl}\n#options\nFrom: -1h\nTo: now\nApp: search\nCount: 2\n${typedOptions}\n#payload\nindex=fixture | sort - _time`);
   editor.setCursor(editor.lastLine(), editor.getLine(editor.lastLine()).length);
   await key('Shift+Enter');
   await wait(() => editor.getValue().includes('splunk-final-🦀-1')
@@ -74,7 +74,7 @@
   assert(debug.includes('"ignoredPreviewRecords": 4') && debug.includes('"legacyFallbacks": 0'),
     'The normal export must ignore preview and require no compatibility retry');
   await click(testid('console-main-status'));
-  setSource(editor, `#check Preview and offset\n#endpoint\n${fixtureUrl}\n#options\nFrom: -1h\nTo: now\nApp: search\nCount: 2\nPreview: true\nOffset: 1\n${typedOptions}\n#search\nindex=fixture | sort - _time`);
+  setSource(editor, `#check Preview and offset\n#target\n${fixtureUrl}\n#options\nFrom: -1h\nTo: now\nApp: search\nCount: 2\nPreview: true\nOffset: 1\n${typedOptions}\n#payload\nindex=fixture | sort - _time`);
   editor.setCursor(editor.lastLine(), editor.getLine(editor.lastLine()).length);
   await key('Shift+Enter');
   await wait(() => editor.getValue().includes('splunk-preview-🦀-2')
@@ -120,7 +120,7 @@
   setSource(restored, previous);
   await click(testid('console-service-mysql'));
   const mysql = editorOf('console-editor'), oldMysql = mysql.getValue();
-  const rendered = '#check MySQL rendering fixture\n#endpoint\nmysql://fixture.invalid/db\n#options\nColumns-Type: id=number enabled=boolean created=datetime feed_data=json plain=text\n#query\nselect fixture\\G\n\n#responce OK\n*************************** 1. row ***************************\n       id: 42\n  enabled: 1\n  created: 2026-10-27T09:00:00Z\nfeed_data: {\n             "n": 12,\n             "ok": true,\n             "nested": {\n               "label": "😀 braces { [ and escaped \\" quote",\n               "items": [\n                 1,\n                 2\n               ]\n             }\n           }\n    plain: {"not":"typed"}\n           untyped {\n             "inner": [1, 2]\n           }';
+  const rendered = '#check MySQL rendering fixture\n#target\nmysql://fixture.invalid/db\n#options\nColumns-Type: id=number enabled=boolean created=datetime feed_data=json plain=text\n#payload\nselect fixture\\G\n\n#responce OK\n*************************** 1. row ***************************\n       id: 42\n  enabled: 1\n  created: 2026-10-27T09:00:00Z\nfeed_data: {\n             "n": 12,\n             "ok": true,\n             "nested": {\n               "label": "😀 braces { [ and escaped \\" quote",\n               "items": [\n                 1,\n                 2\n               ]\n             }\n           }\n    plain: {"not":"typed"}\n           untyped {\n             "inner": [1, 2]\n           }';
   setSource(mysql, rendered);
   await settle();
   const mysqlRegion = {request:0,header:8,end:mysql.lineCount()};

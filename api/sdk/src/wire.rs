@@ -25,7 +25,7 @@ pub struct Check {
     /// The id of the module whose language the check is in.
     #[prost(string, tag = "1")]
     pub service: String,
-    /// The whole check, from its `#endpoint` line on.
+    /// The whole check, from its `#target` line on.
     #[prost(string, tag = "2")]
     pub text: String,
     #[prost(message, repeated, tag = "3")]

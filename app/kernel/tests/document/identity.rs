@@ -7,7 +7,7 @@ use services_kernel::document::identity::{normalize, remap_text};
 fn titles_follow_check_comments_without_changing_identity() {
     let mut checks = vec![];
     normalize(
-        "#check test remove catalog\n#body\n{}\n#check\n#body\n{}",
+        "#check test remove catalog\n#payload\n{}\n#check\n#payload\n{}",
         &[],
         &mut checks,
     );
@@ -15,7 +15,7 @@ fn titles_follow_check_comments_without_changing_identity() {
     assert!(checks[1].title.is_empty());
     let id = checks[0].id.clone();
     normalize(
-        "#check renamed\n#body\n{}\n#check\n#body\n{}",
+        "#check renamed\n#payload\n{}\n#check\n#payload\n{}",
         &[],
         &mut checks,
     );
@@ -25,7 +25,7 @@ fn titles_follow_check_comments_without_changing_identity() {
 
 #[test]
 fn identities_survive_edits_and_response_insertions_but_copies_are_new() {
-    let old = "#check same\n#body\n{}\n#check same\n#body\n{}";
+    let old = "#check same\n#payload\n{}\n#check same\n#payload\n{}";
     let mut checks = Vec::new();
     normalize(old, &[], &mut checks);
     assert_ne!(checks[0].id, checks[1].id);
@@ -34,7 +34,7 @@ fn identities_survive_edits_and_response_insertions_but_copies_are_new() {
     remap_text(old, &new, &mut checks);
     normalize(&new, &[], &mut checks);
     assert_eq!(checks, ids);
-    let copy = format!("{new}\n#check same\n#body\n{{}}");
+    let copy = format!("{new}\n#check same\n#payload\n{{}}");
     remap_text(&new, &copy, &mut checks);
     normalize(&copy, &[], &mut checks);
     assert_eq!(checks[0].id, ids[0].id);

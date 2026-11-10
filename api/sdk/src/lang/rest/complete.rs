@@ -97,9 +97,9 @@ pub fn complete<P: Probe>(
     let section_end = (line + 1..lines.0.len())
         .find(|i| lines.text(*i).trim_start().starts_with('#'))
         .unwrap_or(lines.0.len());
-    let url = discovery.resolved(endpoint_url(check.text_of("endpoint")).unwrap_or(""));
+    let url = discovery.resolved(endpoint_url(check.text_of("target")).unwrap_or(""));
     match name.as_str() {
-        "endpoint" => {
+        "target" => {
             if before.trim().is_empty()
                 && (body_start..line).any(|i| !lines.text(i).trim().is_empty())
             {
@@ -135,13 +135,13 @@ pub fn complete<P: Probe>(
             }
             result
         }
-        "body" => {
+        "payload" => {
             let start = lines.0.get(body_start).map_or(text.len(), |(at, _)| *at);
             let end = lines
                 .0
                 .get(section_end)
                 .map_or(text.len(), |(at, _)| at - 1);
-            let fields = body_fields(discovery, check.text_of("endpoint"));
+            let fields = body_fields(discovery, check.text_of("target"));
             let mut result = json::complete(&fields, &text[start..end], pos - start);
             result.from += start as u32;
             result.to += start as u32;

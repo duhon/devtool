@@ -15,7 +15,7 @@ use services_sdk::{
 };
 use std::collections::BTreeMap;
 
-/// Commands that send `#body`.
+/// Commands that send `#payload`.
 const WITH_BODY: [&str; 3] = ["SEND", "PUBLISH", "JOLOKIA"];
 /// `#options` names and the params they fill.
 const OPTIONS: [(&str, &str); 3] = [
@@ -29,7 +29,7 @@ const MOVED: [(&str, &str); 5] = [
     ("filter", "QUEUES text (names containing it) in #action"),
     ("selector", "WHERE in #action"),
     ("durable", "Persistent"),
-    ("jolokia-path", "the #endpoint path"),
+    ("jolokia-path", "the #target path"),
 ];
 const DISCOVER: &str = "discover:";
 /// Connections whose names are kept, the most recent last.
@@ -44,7 +44,7 @@ struct Plan {
 /// The check checked as written: one broker URL, a known command, a body only where the
 /// command sends one and known options.
 fn plan(check: &Check) -> Result<Plan, String> {
-    let endpoint = check.text_of("endpoint");
+    let endpoint = check.text_of("target");
     let words: Vec<_> = endpoint.split_whitespace().collect();
     if let Some(command) = words
         .first()
@@ -52,11 +52,11 @@ fn plan(check: &Check) -> Result<Plan, String> {
         .filter(|word| action::COMMANDS.iter().any(|c| c.name() == word))
     {
         return Err(format!(
-            "#endpoint is only the broker URL now; move {command} to #action"
+            "#target is only the broker URL now; move {command} to #action"
         ));
     }
     if words.len() != 1 {
-        return Err("#endpoint must be the broker's http:// URL".into());
+        return Err("#target must be the broker's http:// URL".into());
     }
     let action = check.text_of("action");
     let command = action
@@ -71,9 +71,9 @@ fn plan(check: &Check) -> Result<Plan, String> {
             names.join(", ")
         ));
     }
-    let body = check.text_of("body").trim();
+    let body = check.text_of("payload").trim();
     if !body.is_empty() && !WITH_BODY.contains(&command.as_str()) {
-        return Err(format!("{command} takes no #body"));
+        return Err(format!("{command} takes no #payload"));
     }
     let mut options = Map::new();
     let mut format = None;
@@ -107,7 +107,7 @@ fn plan(check: &Check) -> Result<Plan, String> {
             "url": words[0],
             "action": action,
             "headers": header_map(check),
-            "body": body,
+            "payload": body,
             "options": options,
         }),
         format,
@@ -247,14 +247,14 @@ pub struct Artemis {
 fn connection(check: &Check) -> String {
     format!(
         "{}\n{}",
-        check.text_of("endpoint").trim(),
+        check.text_of("target").trim(),
         check.text_of("headers").trim()
     )
 }
 
 /// An endpoint discovery can use: one `http://` or `https://` URL with a host.
 fn discoverable(check: &Check) -> bool {
-    let endpoint = check.text_of("endpoint").trim();
+    let endpoint = check.text_of("target").trim();
     let rest = ["http://", "https://"].iter().find_map(|scheme| {
         endpoint
             .get(..scheme.len())
@@ -382,7 +382,7 @@ impl Artemis {
             calls: None,
         });
         let sections = json!({
-            "url": check.text_of("endpoint").trim(),
+            "url": check.text_of("target").trim(),
             "action": "QUEUES",
             "headers": header_map(check),
         });

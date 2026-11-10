@@ -1,4 +1,4 @@
-//! The GraphQL service: a `#endpoint` URL, `#headers`, `#variables` (JSON) and a `#query`
+//! The GraphQL service: a `#target` URL, `#headers`, `#variables` (JSON) and a `#payload`
 //! (also the text before the first marker) POSTed through the Host `http` driver, with
 //! introspection for completion when the user asks for hints.
 
@@ -29,9 +29,9 @@ pub struct Graphql {
 
 const RESOLVE: &str = ":resolve";
 
-/// The query of a check: its `#query`, else the text before the first marker.
+/// The query of a check: its `#payload`, else the text before the first marker.
 fn query(check: &Check) -> &str {
-    match check.section("query") {
+    match check.section("payload") {
         Some(query) => query,
         None => check.text_of("leftover"),
     }
@@ -46,9 +46,9 @@ struct Parts<'a> {
 }
 
 fn parts(check: &Check) -> Result<Parts<'_>, String> {
-    let url = check.text_of("endpoint").trim();
+    let url = check.text_of("target").trim();
     if url.contains(char::is_whitespace) {
-        return Err("#endpoint must be a GraphQL URL".into());
+        return Err("#target must be a GraphQL URL".into());
     }
     let variables = check.text_of("variables").trim();
     let variables = (!variables.is_empty())
@@ -67,8 +67,8 @@ fn parts(check: &Check) -> Result<Parts<'_>, String> {
 fn document(check: &Check) -> String {
     let variables = check.text_of("variables").trim();
     format!(
-        "{{\"endpoint\":{},\"headers\":{},\"query\":{},\"variables\":{}}}",
-        json!(check.text_of("endpoint")),
+        "{{\"target\":{},\"headers\":{},\"payload\":{},\"variables\":{}}}",
+        json!(check.text_of("target")),
         json!(check.text_of("headers")),
         json!(query(check)),
         if variables.is_empty() {
@@ -81,15 +81,15 @@ fn document(check: &Check) -> String {
 
 /// The request of a resolved document.
 fn resolved_request(document: Value) -> Result<services_sdk::DriverCall, String> {
-    let url = document["endpoint"].as_str().unwrap_or("").trim();
+    let url = document["target"].as_str().unwrap_or("").trim();
     if url.contains(char::is_whitespace) {
-        return Err("#endpoint must be a GraphQL URL".into());
+        return Err("#target must be a GraphQL URL".into());
     }
     let connection = Connection {
         url: url.to_owned(),
         headers: headers::pairs(document["headers"].as_str().unwrap_or("")),
     };
-    let query = document["query"].as_str().unwrap_or("");
+    let query = document["payload"].as_str().unwrap_or("");
     let variables = Some(document["variables"].clone()).filter(|v| !v.is_null());
     Ok(discovery::request(&connection, query, variables).call())
 }
@@ -247,7 +247,7 @@ impl Module for Graphql {
         if query.trim().is_empty() {
             return Err("Could not find a GraphQL query in the curl command".into());
         }
-        let mut sections = vec![format!("#endpoint\n{}", command.url)];
+        let mut sections = vec![format!("#target\n{}", command.url)];
         if let Some(headers) = curl::imported_headers(&command) {
             sections.push(format!("#headers\n{headers}"));
         }
@@ -258,7 +258,7 @@ impl Module for Graphql {
             let variables = serde_json::to_string_pretty(variables).map_err(|e| e.to_string())?;
             sections.push(format!("#variables\n{variables}"));
         }
-        sections.push(format!("#query\n{}", query.trim()));
+        sections.push(format!("#payload\n{}", query.trim()));
         Ok(sections.join("\n"))
     }
 }

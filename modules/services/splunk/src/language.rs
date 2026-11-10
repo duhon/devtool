@@ -6,7 +6,7 @@ use services_sdk::lang::table;
 use services_sdk::lang::{endpoint, finish, headers, item, marker};
 use services_sdk::{Check, Completions, Item, Line, Token};
 
-pub const SECTIONS: [&str; 4] = ["endpoint", "headers", "options", "search"];
+pub const SECTIONS: [&str; 4] = ["target", "headers", "options", "payload"];
 
 const COMMANDS: &str = "search stats eval where table fields sort dedup rex rename lookup join transaction head tail top rare chart timechart bin bucket stream streamstats eventstats fillnull convert foreach makemv mvexpand mvcombine spath xmlkv regex format addinfo appendcols append appendpipe multisearch map tstats inputlookup outputlookup collect delete outputcsv inputcsv iplocation geostats cluster anomalydetection predict trendline gauge highlight loadjob savedsearch sendemail sistats sireduce strcat transpose untable union";
 
@@ -223,9 +223,9 @@ pub fn highlight(
             });
             let tokens = if is_marker {
                 area = match named.as_deref() {
-                    Some("endpoint") => Area::Endpoint,
+                    Some("target") => Area::Endpoint,
                     Some("headers" | "options") => Area::Headers,
-                    Some("search") => Area::Search,
+                    Some("payload") => Area::Search,
                     Some("responce" | "response") => Area::Response,
                     _ => Area::Other,
                 };
@@ -285,14 +285,14 @@ pub fn complete(check: &Check, pos: usize) -> Completions {
         return markers;
     }
     match at.name() {
-        Some("endpoint") => {
+        Some("target") => {
             if let Some(next) = at.next_section(&SECTIONS) {
                 return next;
             }
             let value = at.before.trim_start();
             let from = at.line_start(at.line) + at.before.len() - value.len();
             let items = ["https://", "http://"]
-                .map(|scheme| item(scheme, "Endpoint", "url"))
+                .map(|scheme| item(scheme, "Target", "url"))
                 .into();
             finish(from, at.pos, value, items)
         }
@@ -304,7 +304,7 @@ pub fn complete(check: &Check, pos: usize) -> Completions {
             pairs(&at, hints)
         }
         Some("headers") => pairs(&at, headers::items(&HEADERS, &[], &Default::default())),
-        Some("search") => {
+        Some("payload") => {
             if let Some(next) = at.next_section(&SECTIONS) {
                 return next;
             }
@@ -352,7 +352,7 @@ mod tests {
 
     #[test]
     fn highlight_keeps_spl_state_across_lines() {
-        let lines: Vec<String> = ["#search", "```a", "#b```", "index=x"]
+        let lines: Vec<String> = ["#payload", "```a", "#b```", "index=x"]
             .map(String::from)
             .into();
         let out = highlight(&[], &lines, &[]);
@@ -379,9 +379,9 @@ mod tests {
     fn completes_markers_endpoints_and_options() {
         assert_eq!(
             labels("#"),
-            ["#endpoint\n", "#headers\n", "#options\n", "#search\n"]
+            ["#target\n", "#headers\n", "#options\n", "#payload\n"]
         );
-        assert_eq!(labels("#endpoint\nhttp"), ["https://", "http://"]);
+        assert_eq!(labels("#target\nhttp"), ["https://", "http://"]);
         assert_eq!(
             labels("#options\n"),
             [
@@ -403,6 +403,6 @@ mod tests {
                 .iter()
                 .any(|l| l.starts_with("Format"))
         );
-        assert!(labels("#search\nso").contains(&"sourcetype=".into()));
+        assert!(labels("#payload\nso").contains(&"sourcetype=".into()));
     }
 }

@@ -6,7 +6,7 @@ use serde_json::Value;
 use services_sdk::lang::{self, finish, headers, item, json, marker};
 use services_sdk::{Check, Completions, Item};
 
-pub const SECTIONS: [&str; 4] = ["endpoint", "headers", "variables", "query"];
+pub const SECTIONS: [&str; 4] = ["target", "headers", "variables", "payload"];
 
 pub const HEADERS: [&str; 9] = [
     "Accept: */*",
@@ -104,7 +104,7 @@ pub fn complete(schema: Option<&Value>, check: &Check, pos: usize) -> Completion
     }
     let (body_start, name) = match section {
         Some((at, name)) => (at + 1, name.as_str()),
-        None => (0, "query"),
+        None => (0, "payload"),
     };
     let section_end = (line + 1..lines.0.len())
         .find(|i| markers.iter().any(|(at, _)| at == i))
@@ -112,7 +112,7 @@ pub fn complete(schema: Option<&Value>, check: &Check, pos: usize) -> Completion
     let start = lines.start(body_start, text);
     let end = lines.start(section_end, text).saturating_sub(1).max(pos);
     match name {
-        "endpoint" => {
+        "target" => {
             if before.trim().is_empty()
                 && (body_start..line).any(|i| !lines.text(i).trim().is_empty())
             {
@@ -151,7 +151,7 @@ pub fn complete(schema: Option<&Value>, check: &Check, pos: usize) -> Completion
             "",
             json::templates(&text[start..pos], before, &text[pos..end]),
         ),
-        "query" => query(
+        "payload" => query(
             schema.unwrap_or(&Value::Null),
             check.text_of("variables"),
             &text[start..pos],

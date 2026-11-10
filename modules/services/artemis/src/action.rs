@@ -318,7 +318,7 @@ pub fn parse(text: &str) -> Result<Action, String> {
     let resource = match (head, command.resource()) {
         ([], _) => String::new(),
         ([token], Some(_)) => self::name(token)?,
-        ([_], None) => return Err(format!("{name} takes no queue: its request is #body")),
+        ([_], None) => return Err(format!("{name} takes no queue: its request is #payload")),
         ([first, second, ..], _) => {
             return Err(format!(
                 "Unexpected {} after {}{}",

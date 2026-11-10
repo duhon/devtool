@@ -59,10 +59,10 @@ impl Area {
             if response || !self.response() {
                 let area = match name.as_str() {
                     _ if response => Area::Response,
-                    "endpoint" => Area::Endpoint,
+                    "target" => Area::Endpoint,
                     "headers" => Area::Headers,
                     "variables" => Area::Variables,
-                    "query" => Area::Query,
+                    "payload" => Area::Query,
                     "options" => Area::Options,
                     _ => Area::Other,
                 };

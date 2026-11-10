@@ -164,9 +164,9 @@ pub fn parse(service: &str, source: &str) -> Result<Value, String> {
 pub fn parse_run(service: &str, source: &str) -> Result<(Value, RunOptions), String> {
     let (check, options) = kernel_run(service, source)?;
     if crate::modules::registry::with(|modules| modules.runs(service)) {
-        // The module checks it when it runs; `endpoint` shows in approvals.
-        let endpoint = check.text_of("endpoint").to_owned();
-        return Ok((json!({"check": check.text, "endpoint": endpoint}), options));
+        // The module checks it when it runs; `target` shows in approvals.
+        let endpoint = check.text_of("target").to_owned();
+        return Ok((json!({"check": check.text, "target": endpoint}), options));
     }
     let call = crate::modules::registry::with(|modules| modules.prepare(service, check))?;
     Ok((call_value(&call), options))

@@ -30,7 +30,7 @@ fn check(text: &str) -> Check {
     for (i, line) in text.split('\n').enumerate() {
         if let Some((name, rest)) = marker(line) {
             close(current.take(), &mut body);
-            let head = if name == "endpoint" {
+            let head = if name == "target" {
                 rest.to_owned()
             } else {
                 String::new()
@@ -63,11 +63,11 @@ fn argv_quotes_and_env_match_the_shell_contract() {
     assert_eq!(parse_argv("sh -c ''").unwrap(), vec!["sh", "-c", ""]);
     assert_eq!(
         parse_argv("sh 'bad").unwrap_err(),
-        "Unterminated single quote in endpoint"
+        "Unterminated single quote in #target"
     );
     assert_eq!(
         parse_argv("sh \"bad").unwrap_err(),
-        "Unterminated double quote in endpoint"
+        "Unterminated double quote in #target"
     );
     assert_eq!(
         build_command("printf \"$VALUE\"", &[("VALUE".into(), "a'b".into())]),
@@ -78,7 +78,7 @@ fn argv_quotes_and_env_match_the_shell_contract() {
 #[test]
 fn checks_become_process_driver_calls() {
     let call = request(&check(
-        "#check indexer\n#endpoint\ndocker exec fixture bash -c\n#command\nbin/magento indexer:status\n#env\nA: 1\nB: {{store:B}}",
+        "#check indexer\n#target\ndocker exec fixture bash -c\n#payload\nbin/magento indexer:status\n#env\nA: 1\nB: {{store:B}}",
     ))
     .unwrap()
     .call();
@@ -91,15 +91,15 @@ fn checks_become_process_driver_calls() {
             "env":[],"text":true})
     );
     assert_eq!(
-        build("#endpoint\nbash -c\necho hi").unwrap()["args"],
+        build("#target\nbash -c\necho hi").unwrap()["args"],
         json!(["-c", "echo hi"])
     );
     assert_eq!(
-        build("#endpoint\n\n#command\nls").unwrap_err(),
-        "endpoint must not be empty"
+        build("#target\n\n#payload\nls").unwrap_err(),
+        "#target must not be empty"
     );
     assert_eq!(
-        build("#endpoint\nbash -c").unwrap_err(),
+        build("#target\nbash -c").unwrap_err(),
         "command is required"
     );
 }
@@ -153,17 +153,17 @@ fn inserts(text: &str) -> Vec<String> {
 
 #[test]
 fn endpoints_env_names_and_markers_complete() {
-    assert_eq!(inserts("#endpoint\n|"), vec!["bash -c", "zsh -c", "ssh "]);
-    assert_eq!(inserts("#endpoint\nss|"), vec!["ssh "]);
+    assert_eq!(inserts("#target\n|"), vec!["bash -c", "zsh -c", "ssh "]);
+    assert_eq!(inserts("#target\nss|"), vec!["ssh "]);
     assert_eq!(
-        inserts("#endpoint\nbash -c\n#env\nPATH: /bin\nNO|"),
+        inserts("#target\nbash -c\n#env\nPATH: /bin\nNO|"),
         vec!["NODE_ENV: production"]
     );
     assert_eq!(
-        inserts("#endpoint\nbash -c\n#|"),
-        vec!["#command\n", "#env\n"]
+        inserts("#target\nbash -c\n#|"),
+        vec!["#payload\n", "#env\n"]
     );
-    assert!(inserts("#endpoint\nbash -c\n#command\nls |").is_empty());
+    assert!(inserts("#target\nbash -c\n#payload\nls |").is_empty());
 }
 
 fn styles(lines: &[&str]) -> Vec<Vec<(String, String)>> {
@@ -190,8 +190,8 @@ fn styles(lines: &[&str]) -> Vec<Vec<(String, String)>> {
 #[test]
 fn shell_commands_variables_and_flags_highlight() {
     let styled = styles(&[
-        "#endpoint bash -c",
-        "#command",
+        "#target bash -c",
+        "#payload",
         "echo \"$HOME\" --flag && printf {{:NAME}} 'a",
         "b'",
         "#env",
@@ -202,7 +202,7 @@ fn shell_commands_variables_and_flags_highlight() {
     let pair = |a: &str, b: &str| (a.to_owned(), b.to_owned());
     assert_eq!(
         styled[0],
-        vec![pair("#endpoint", "comment"), pair("-c", "attribute")]
+        vec![pair("#target", "comment"), pair("-c", "attribute")]
     );
     for expected in [
         pair("echo", "builtin"),

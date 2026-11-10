@@ -7,7 +7,7 @@ fn record() -> serde_json::Value {
         "service": "rest", "checkId": "019a1234-5678-7890-abcd-012345678901",
         "sessionId": "019a1234-5678-7890-abcd-012345678902",
         "title": "#check token=t0k", "secrets": ["s3cr3t"],
-        "source": "#check token=t0k\n#endpoint GET https://u:pw@x.test/?k=s3cr3t\n#headers\nAuthorization: Bearer abc",
+        "source": "#check token=t0k\n#target GET https://u:pw@x.test/?k=s3cr3t\n#headers\nAuthorization: Bearer abc",
         "started": 1, "ended": 3, "status": "success", "outcome": "OK", "text": "{\"a\":1}",
     })
 }
@@ -26,7 +26,7 @@ fn a_finished_run_is_saved_with_its_secrets_masked() {
     let args = commands[0].args();
     assert_eq!(
         args["text"],
-        "#check token=[redacted]\n#endpoint GET https://[redacted]@x.test/?k=[redacted]\n#headers\nAuthorization: [redacted]\n[redacted] [redacted]\n\n#responce OK\n{\"a\":1}"
+        "#check token=[redacted]\n#target GET https://[redacted]@x.test/?k=[redacted]\n#headers\nAuthorization: [redacted]\n[redacted] [redacted]\n\n#responce OK\n{\"a\":1}"
     );
     assert_eq!(args["title"], "#check token=[redacted]");
     assert_eq!(args["module"], "rest");
@@ -140,6 +140,6 @@ fn a_saved_run_shows_its_body_whole_under_a_timed_outcome() {
             format!("{prefix}\n#responce 1:00:00 PM · {outcome}\nbody")
         );
     }
-    let unanswered = format!("{prefix}\n#endpoint\nx");
+    let unanswered = format!("{prefix}\n#target\nx");
     assert_eq!(document(&unanswered, "t"), unanswered);
 }

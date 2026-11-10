@@ -1,6 +1,6 @@
 ---
 name: module-artemis
-description: "ActiveMQ Artemis checks in the Services DevTools Console: #endpoint, #action commands (QUEUES, ADDRESSES, CONSUMERS, BROWSE, RECEIVE, SEND, PUBLISH, PURGE, MOVE, RETRY, PAUSE, RESUME, JOLOKIA) with WHERE, LIMIT, SET and TO, #headers, #options and #body, through the broker's Jolokia console API. Load before writing, editing or explaining Artemis requests."
+description: "ActiveMQ Artemis checks in the Services DevTools Console: #target, #action commands (QUEUES, ADDRESSES, CONSUMERS, BROWSE, RECEIVE, SEND, PUBLISH, PURGE, MOVE, RETRY, PAUSE, RESUME, JOLOKIA) with WHERE, LIMIT, SET and TO, #headers, #options and #payload, through the broker's Jolokia console API. Load before writing, editing or explaining Artemis requests."
 ---
 
 # Artemis service
@@ -8,7 +8,7 @@ description: "ActiveMQ Artemis checks in the Services DevTools Console: #endpoin
 Apache ActiveMQ Artemis through its Jolokia management API, the broker's web
 console (port 8161), not a messaging protocol.
 
-- `#endpoint` is only the broker: the web console URL, `http://user:password@host:8161`
+- `#target` is only the broker: the web console URL, `http://user:password@host:8161`
   (`https://` with TLS), or its Jolokia URL when that is not at
   `/console/jolokia`. Log in in the URL or with an `Authorization: Basic …`
   header in `#headers`, not both; the user needs a management role.
@@ -17,7 +17,7 @@ console (port 8161), not a messaging protocol.
   line or several. It defaults to QUEUES. A name with spaces or `=<>!,()` is
   quoted: `'my queue'`; a quote inside doubles: `'it''s'`.
 - `#options`: `Persistent: false` (SEND, PUBLISH), Columns-Type, Columns-Size.
-- `#body` is the message of SEND and PUBLISH, or the request of JOLOKIA.
+- `#payload` is the message of SEND and PUBLISH, or the request of JOLOKIA.
 
 Commands:
 
@@ -34,14 +34,14 @@ Commands:
 - RECEIVE `/queue` removes messages and returns them, 1 by default.
   Management has no consumer: it browses, then removes the messages it could
   show; one that another consumer got first is skipped.
-- SEND `/queue` and PUBLISH `/address` put a text message with `#body` there.
+- SEND `/queue` and PUBLISH `/address` put a text message with `#payload` there.
   `SET name = 'value', …` adds string properties; values are always quoted.
   Returns the message ID.
 - PURGE `/queue` deletes messages; MOVE `/queue` TO `/queue` moves them; both
   take an optional WHERE. RETRY `/DLQ` sends dead letters back to their
   queues. PAUSE and RESUME `/queue` stop and restart delivery. Each returns
   the count or the paused state.
-- JOLOKIA sends `#body`, one Jolokia request object or an array, as is and
+- JOLOKIA sends `#payload`, one Jolokia request object or an array, as is and
   shows each reply's status, value and error.
 
 WHERE of BROWSE, RECEIVE, PURGE and MOVE is a JMS selector
@@ -49,7 +49,7 @@ WHERE of BROWSE, RECEIVE, PURGE and MOVE is a JMS selector
 warns when the broker has more.
 
       #check failed orders
-      #endpoint
+      #target
       http://user:password@localhost:8161
       #action
       BROWSE /DLQ
@@ -57,13 +57,13 @@ warns when the broker has more.
       LIMIT 20
 
       #check new order
-      #endpoint
+      #target
       http://localhost:8161
       #headers
       Authorization: Basic YWRtaW46YWRtaW4=
       #action
       SEND /orders SET tenant = 't1', _AMQ_GROUP_ID = 'g1'
-      #body
+      #payload
       {"id":7}
 
 Properties are sent as strings, so `_AMQ_SCHED_DELIVERY` can't schedule a

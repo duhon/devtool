@@ -77,7 +77,7 @@ fn check(text: &str) -> Check {
     for (i, line) in text.split('\n').enumerate() {
         if let Some((name, rest)) = marker(line) {
             close(current.take(), &mut body);
-            let head = if name == "endpoint" {
+            let head = if name == "target" {
                 rest.to_owned()
             } else {
                 String::new()
@@ -115,7 +115,7 @@ const PROTO: &str = r#"syntax = "proto3";
 fn with_proto(method: &str, message: &str) -> String {
     let proto: Vec<_> = PROTO.lines().map(str::trim).collect();
     format!(
-        "#endpoint\ngrpc://localhost:50051/fixture.Echo/{method}\n#headers\nX-Token: sent-token\n#proto\n{}\n#message\n{message}",
+        "#target\ngrpc://localhost:50051/fixture.Echo/{method}\n#headers\nX-Token: sent-token\n#proto\n{}\n#payload\n{message}",
         proto.join("\n")
     )
 }
@@ -344,7 +344,7 @@ fn call_shapes_streams_and_statuses() {
     assert_eq!(
         build(
             &mut grpc,
-            &check("#endpoint\ngrpc://localhost:1\n#proto\nsyntax = \"proto3\";"),
+            &check("#target\ngrpc://localhost:1\n#proto\nsyntax = \"proto3\";"),
             &[]
         )
         .unwrap_err(),
@@ -355,7 +355,7 @@ fn call_shapes_streams_and_statuses() {
 #[test]
 fn reflection_falls_back_to_v1alpha_and_asks_for_each_dependency() {
     let mut grpc = Grpc::default();
-    let text = "#endpoint\ngrpc://{{host}}/fixture.Echo/Unary\n#headers\nAuthorization: Bearer t\n#message\n{\"text\":\"{{name}}\"}";
+    let text = "#target\ngrpc://{{host}}/fixture.Echo/Unary\n#headers\nAuthorization: Bearer t\n#payload\n{\"text\":\"{{name}}\"}";
     let cmds = grpc.update(Event::Document(check(text)));
     assert!(statuses(&cmds).is_empty(), "quiet while editing");
     assert!(cmds.iter().all(|cmd| cmd.name != "vars.resolve"));
@@ -416,7 +416,7 @@ fn reflection_falls_back_to_v1alpha_and_asks_for_each_dependency() {
     assert_eq!(body["text"], "Ann");
 
     let fields: Vec<_> = grpc
-        .complete(&check("#endpoint\ngrpc://{{host}}/fixture.Echo/Unary\n#headers\nAuthorization: Bearer t\n#message\n{\n  \"te"), 999)
+        .complete(&check("#target\ngrpc://{{host}}/fixture.Echo/Unary\n#headers\nAuthorization: Bearer t\n#payload\n{\n  \"te"), 999)
         .items
         .into_iter()
         .map(|item| item.label)
@@ -427,8 +427,8 @@ fn reflection_falls_back_to_v1alpha_and_asks_for_each_dependency() {
     );
     let methods: Vec<_> = grpc
         .complete(
-            &check("#endpoint\ngrpc://{{host}}/fixture.Echo/U\n#headers\nAuthorization: Bearer t"),
-            40,
+            &check("#target\ngrpc://{{host}}/fixture.Echo/U\n#headers\nAuthorization: Bearer t"),
+            38,
         )
         .items
         .into_iter()
@@ -440,7 +440,7 @@ fn reflection_falls_back_to_v1alpha_and_asks_for_each_dependency() {
 #[test]
 fn hints_list_services_and_discover_reports_failures() {
     let mut grpc = Grpc::default();
-    let text = "#endpoint\ngrpc://localhost:50051/";
+    let text = "#target\ngrpc://localhost:50051/";
     let cmds = grpc.update(Event::Hints {
         check: check(text),
         pos: text.len() as u32,
@@ -478,7 +478,7 @@ fn hints_list_services_and_discover_reports_failures() {
     );
 
     let cmds = grpc.update(Event::Discover(check(
-        "#endpoint\ngrpc://localhost:50051/fixture.Echo/Unary",
+        "#target\ngrpc://localhost:50051/fixture.Echo/Unary",
     )));
     let (tag, _, _) = reflection_call(&cmds);
     let failed = grpc.update(Event::Reply {
@@ -492,14 +492,14 @@ fn hints_list_services_and_discover_reports_failures() {
     assert_eq!(
         build(
             &mut grpc,
-            &check("#endpoint\ngrpc://localhost:50051/fixture.Echo/Unary"),
+            &check("#target\ngrpc://localhost:50051/fixture.Echo/Unary"),
             &[]
         )
         .unwrap_err(),
         "Reflection failed: connection refused"
     );
     assert_eq!(
-        statuses(&grpc.update(Event::Discover(check("#endpoint\n#message\n{}")))),
+        statuses(&grpc.update(Event::Discover(check("#target\n#payload\n{}")))),
         vec!["Discovery · WARNING · Invalid or incomplete service address for discovery"]
     );
     assert_eq!(
@@ -511,7 +511,7 @@ fn hints_list_services_and_discover_reports_failures() {
 #[test]
 fn grpcurl_export_and_import() {
     let grpc = Grpc::default();
-    let text = "#endpoint\ngrpc://localhost:50051/fixture.Echo/Unary\n#headers\nX-Token: it's\n#message\n{\"text\":\"a\"}";
+    let text = "#target\ngrpc://localhost:50051/fixture.Echo/Unary\n#headers\nX-Token: it's\n#payload\n{\"text\":\"a\"}";
     let command = grpc.export(&check(text)).unwrap();
     assert_eq!(
         command,
@@ -524,7 +524,7 @@ fn grpcurl_export_and_import() {
     assert_eq!(
         grpc.import("grpcurl -d @ example.com:443 pkg.Svc.Method")
             .unwrap(),
-        "#endpoint\ngrpcs://example.com:443/pkg.Svc/Method"
+        "#target\ngrpcs://example.com:443/pkg.Svc/Method"
     );
     assert!(grpc.import("curl x").is_err());
     assert!(grpc.import("grpcurl -plaintext host:1").is_err());
@@ -534,11 +534,11 @@ fn grpcurl_export_and_import() {
 fn highlighting_and_folds() {
     let grpc = Grpc::default();
     let lines: Vec<String> = [
-        "#endpoint",
+        "#target",
         "grpcs://{{host}}:443/fixture.Echo/Unary",
         "#headers",
         "x-token: abc",
-        "#message",
+        "#payload",
         "{",
         "  \"text\": 1",
         "}",
@@ -568,7 +568,7 @@ fn highlighting_and_folds() {
             ("Unary".into(), "variable-3".into()),
         ]
     );
-    assert_eq!(styled(0), vec![("#endpoint".into(), "comment".into())]);
+    assert_eq!(styled(0), vec![("#target".into(), "comment".into())]);
     assert!(styled(6).iter().any(|(_, kind)| kind == "number"));
     let again = grpc.highlight(&highlighted[5].state, &lines[6..7], &[]);
     assert_eq!(again[0].tokens, highlighted[6].tokens);

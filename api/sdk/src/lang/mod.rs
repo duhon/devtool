@@ -143,10 +143,7 @@ mod tests {
 
     #[test]
     fn markers_need_a_name_that_starts_with_a_letter() {
-        assert_eq!(
-            marker("  #Endpoint GET x"),
-            Some(("endpoint".into(), "GET x"))
-        );
+        assert_eq!(marker("  #Target GET x"), Some(("target".into(), "GET x")));
         assert_eq!(marker("#responce 5:47 · OK").unwrap().0, "responce");
         for line in ["# a comment", "#1abc", "#a:b", "text", "#"] {
             assert_eq!(marker(line), None, "{line}");

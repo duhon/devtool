@@ -48,7 +48,8 @@ fn reloading_a_workspace_invalidates_old_ids_and_revisions() {
 fn edits_preserve_connections_outputs_and_use_utf16_positions() {
     services_shell::link();
     let mut workspace = Workspace::default();
-    let source = "#check A\n#endpoint\nmysql://u:p@host/db\n\nselect 1\n#response\nok\n#check B\nselect '😀'";
+    let source =
+        "#check A\n#target\nmysql://u:p@host/db\n\nselect 1\n#response\nok\n#check B\nselect '😀'";
     workspace.refresh(
         "mysql",
         source,
@@ -66,19 +67,19 @@ fn edits_preserve_connections_outputs_and_use_utf16_positions() {
     let edit = workspace
         .edit(
             "mysql",
-            &json!({"revision":"1","checkId":id,"request":"#query\nselect 2"}),
+            &json!({"revision":"1","checkId":id,"request":"#payload\nselect 2"}),
             1,
             false,
         )
         .unwrap();
     assert_eq!(edit.from, Position { line: 1, ch: 0 });
     assert_eq!(edit.to, Position { line: 5, ch: 0 });
-    assert!(edit.text.starts_with("#endpoint\nmysql://"));
-    assert!(edit.text.ends_with("\n\n#query\nselect 2\n"));
+    assert!(edit.text.starts_with("#target\nmysql://"));
+    assert!(edit.text.ends_with("\n\n#payload\nselect 2\n"));
     let create = workspace
         .edit(
             "mysql",
-            &json!({"revision":"1","checkId":id,"title":"C","request":"#query\nselect 3"}),
+            &json!({"revision":"1","checkId":id,"title":"C","request":"#payload\nselect 3"}),
             2,
             true,
         )
@@ -102,7 +103,7 @@ fn titles_are_plain_names_and_prefixed_inputs_are_rejected() {
     let mut workspace = Workspace::default();
     workspace.refresh(
         "rest",
-        "#check Products\n#endpoint\nGET https://example.invalid/products",
+        "#check Products\n#target\nGET https://example.invalid/products",
         &[],
     );
     let context = workspace.context("rest", 0).unwrap();
@@ -144,7 +145,7 @@ fn titles_are_plain_names_and_prefixed_inputs_are_rejected() {
     assert!(
         create
             .text
-            .starts_with("\n\n#check products overview\n#endpoint\n")
+            .starts_with("\n\n#check products overview\n#target\n")
     );
     assert!(!create.text.contains("#check #check"));
     let hashtag_title = workspace
@@ -171,7 +172,7 @@ fn renaming_preserves_body_response_ownership_and_check_identity() {
     let mut workspace = Workspace::default();
     let old_header = "#check #check products 😀";
     let source = format!(
-        "{old_header}\n#endpoint\nGET https://example.invalid/products\n#body\n{{\"id\":123}}\n#response\ncaptured response\n#check Other\nunfinished draft"
+        "{old_header}\n#target\nGET https://example.invalid/products\n#payload\n{{\"id\":123}}\n#response\ncaptured response\n#check Other\nunfinished draft"
     );
     let regions = vec![ResponseRegion {
         request: 0,
@@ -250,7 +251,7 @@ fn renaming_preserves_body_response_ownership_and_check_identity() {
 fn combined_title_and_request_edits_preserve_connection_and_response_boundary() {
     services_shell::link();
     let mut workspace = Workspace::default();
-    let source = "#check Products\n#endpoint\nGET https://example.invalid/products\n#headers\nX-Test: old\n#response\ncaptured";
+    let source = "#check Products\n#target\nGET https://example.invalid/products\n#headers\nX-Test: old\n#response\ncaptured";
     workspace.refresh(
         "rest",
         source,
@@ -267,7 +268,7 @@ fn combined_title_and_request_edits_preserve_connection_and_response_boundary() 
     assert_eq!(edit.to, Position { line: 5, ch: 0 });
     assert_eq!(
         edit.text,
-        "#check Updated products\n#endpoint\nGET https://example.invalid/products\n\n#headers\nX-Test: new\n"
+        "#check Updated products\n#target\nGET https://example.invalid/products\n\n#headers\nX-Test: new\n"
     );
 }
 

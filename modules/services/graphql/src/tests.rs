@@ -28,7 +28,7 @@ fn check(text: &str) -> Check {
     for (i, line) in text.split('\n').enumerate() {
         if let Some((name, rest)) = marker(line) {
             close(current.take(), &mut body);
-            let head = if name == "endpoint" {
+            let head = if name == "target" {
                 rest.to_owned()
             } else {
                 String::new()
@@ -92,7 +92,7 @@ fn suggest(
         (lines[first..end].join("\n"), line - first)
     } else {
         let mut head = String::new();
-        if field == "query"
+        if field == "payload"
             && let Some(variables) = schema.get("requestVariables")
         {
             let variables = match variables {
@@ -156,30 +156,30 @@ fn tokens(text: &str, state: &mut State) -> Vec<(String, Option<&'static str>)> 
 
 #[test]
 fn existing_separator_completion_preserves_its_suffix_and_other_requests() {
-    let source = "#check first\n#endpoint\nurl\n#query\nquery { viewer { name } }\n#check second\n  #endpoint\nurl\n#variables\n{}\n#query\nquery { viewer { name } }";
+    let source = "#check first\n#target\nurl\n#payload\nquery { viewer { name } }\n#check second\n  #target\nurl\n#variables\n{}\n#payload\nquery { viewer { name } }";
     let result = suggest("", source, 6, 6, &Value::Null);
-    assert_eq!((result.from, result.to), (2, 11));
+    assert_eq!((result.from, result.to), (2, 9));
     assert_eq!(
         result
             .candidates
             .iter()
             .map(|candidate| candidate.text.as_str())
             .collect::<Vec<_>>(),
-        ["#endpoint"]
+        ["#target"]
     );
-    let source = "#check first\n#ENDPOINT\nurl\n#";
+    let source = "#check first\n#TARGET\nurl\n#";
     let result = suggest("", source, 3, 1, &Value::Null);
     assert!(
         !result
             .candidates
             .iter()
-            .any(|candidate| candidate.text == "#endpoint")
+            .any(|candidate| candidate.text == "#target")
     );
 }
 
 #[test]
 fn completed_graphql_operations_offer_separators_without_polluting_field_hints() {
-    let prefix = "#check first\n#endpoint\nhttps://example.test/graphql\n#query\n";
+    let prefix = "#check first\n#target\nhttps://example.test/graphql\n#payload\n";
     for operation in [
         "query Q { viewer { name } }",
         "mutation M { update { name } }",
@@ -222,10 +222,10 @@ fn nested_graphql_snippets_preserve_indent_and_place_cursor_inside() {
     }});
     for indent in ["    ", "\t\t"] {
         let source = format!("{{\n  viewer {{\n{indent}ad");
-        let r = suggest("query", &source, 2, indent.len() + 2, &d);
+        let r = suggest("payload", &source, 2, indent.len() + 2, &d);
         assert_eq!(r.candidates[0].text, "address");
         let source = format!("{{\n  viewer {{\n{indent}address ");
-        let r = suggest("query", &source, 2, indent.len() + 8, &d);
+        let r = suggest("payload", &source, 2, indent.len() + 8, &d);
         let expected = format!("{{\n{indent}  \n{indent}}}");
         assert_eq!(r.candidates.len(), 3);
         assert_eq!(r.candidates[0].text, expected);
@@ -252,7 +252,7 @@ fn variables_offer_only_json_templates() {
         let cases: &[(&str, &[&str])] = &[
             ("", &["JSON object"]),
             ("  ", &["JSON object"]),
-            ("query", &[]),
+            ("payload", &[]),
             ("pro", &[]),
             ("{\n  ", &["JSON property"]),
             ("{\n  \"sk", &[]),
@@ -293,7 +293,7 @@ fn variables_offer_only_json_templates() {
             let line = head.split('\n').count() - 1;
             let before = head.split('\n').next_back().unwrap();
             let source = if field.is_empty() {
-                format!("{head}\n#query\nquery {{ products }}")
+                format!("{head}\n#payload\nquery {{ products }}")
             } else {
                 head.clone()
             };
@@ -347,7 +347,7 @@ fn json_templates_preserve_existing_values_and_delimiters() {
             let offset = prefix.len() + marked.find('|').unwrap();
             let source = format!("{prefix}{}", marked.replace('|', ""));
             let source = if field.is_empty() {
-                format!("{source}\n#query\nquery {{ products }}")
+                format!("{source}\n#payload\nquery {{ products }}")
             } else {
                 source
             };
@@ -364,7 +364,7 @@ fn json_templates_preserve_existing_values_and_delimiters() {
                     let body = inserted
                         .strip_prefix(prefix)
                         .unwrap()
-                        .split("\n#query")
+                        .split("\n#payload")
                         .next()
                         .unwrap();
                     assert!(serde_json::from_str::<Value>(body).is_ok(), "{inserted}");
@@ -377,7 +377,7 @@ fn json_templates_preserve_existing_values_and_delimiters() {
 #[test]
 fn nested_selection_completes_fields_of_the_resolved_type() {
     let d = json!({"queryType":"Query","types":{"Query":{"fields":[{"name":"viewer","type":"User"}]},"User":{"fields":[{"name":"id","type":"ID"},{"name":"name","type":"String"}]}}});
-    let r = suggest("query", "query { viewer {\n na", 1, 3, &d);
+    let r = suggest("payload", "query { viewer {\n na", 1, 3, &d);
     assert_eq!(r.candidates[0].text, "name");
 }
 
@@ -431,7 +431,7 @@ fn schema() -> Value {
 }
 
 fn complete(source: &str) -> Vec<String> {
-    at(source, "query", &schema())
+    at(source, "payload", &schema())
         .candidates
         .into_iter()
         .map(|c| c.text)
@@ -508,7 +508,7 @@ fn explore_reference_retains_all_scopes_and_fragment_choices() {
         let at = source.find(needle).unwrap() + prefix.len();
         let marked = format!("{}|{}", &source[..at], &source[at..]);
         assert!(
-            marked_at(&marked, "query", &schema)
+            marked_at(&marked, "payload", &schema)
                 .candidates
                 .iter()
                 .any(|candidate| candidate.text == expected),
@@ -516,12 +516,12 @@ fn explore_reference_retains_all_scopes_and_fragment_choices() {
         );
     }
     let console = format!(
-        "#endpoint\nhttps://countries.fixture.invalid/graphql\n#variables\n{}\n#query\n{source}",
+        "#target\nhttps://countries.fixture.invalid/graphql\n#variables\n{}\n#payload\n{source}",
         reference["variables"]
     );
     let marked = console.replacen("$hideCurrency)", "$|hideCurrency)", 1);
     let marked = format!(
-        "{marked}\n#check other\n#query\nquery Other($outside: Boolean!) {{ country(code: \"PL\") {{ code }} }}"
+        "{marked}\n#check other\n#payload\nquery Other($outside: Boolean!) {{ country(code: \"PL\") {{ code }} }}"
     );
     let names: Vec<_> = marked_at(&marked, "", &schema)
         .candidates
@@ -541,7 +541,7 @@ fn directives_are_advertised_only_at_valid_attachment_sites() {
         "{ viewer { ... on User ",
         "fragment U on User { name }\nquery { viewer { ...U ",
     ] {
-        let result = at(source, "query", &schema());
+        let result = at(source, "payload", &schema());
         for name in ["@include()", "@skip()"] {
             assert!(
                 result
@@ -563,14 +563,14 @@ fn directives_are_advertised_only_at_valid_attachment_sites() {
         "{ viewer @include ",
     ] {
         assert!(
-            !at(source, "query", &schema())
+            !at(source, "payload", &schema())
                 .candidates
                 .iter()
                 .any(|candidate| candidate.text.starts_with('@')),
             "{source}"
         );
     }
-    let result = at("{ viewer { name @include(if: true) ", "query", &schema());
+    let result = at("{ viewer { name @include(if: true) ", "payload", &schema());
     let directives: Vec<_> = result
         .candidates
         .iter()
@@ -579,14 +579,14 @@ fn directives_are_advertised_only_at_valid_attachment_sites() {
         .collect();
     assert_eq!(directives, ["@skip()"]);
     assert!(
-        at("{ viewer { name ", "query", &schema())
+        at("{ viewer { name ", "payload", &schema())
             .candidates
             .iter()
             .any(|candidate| candidate.text == "address"),
         "Completion retains sibling fields next to directives"
     );
     let inserts = |source| {
-        at(source, "query", &schema())
+        at(source, "payload", &schema())
             .candidates
             .into_iter()
             .filter(|candidate| candidate.text.contains("include"))
@@ -644,7 +644,7 @@ fn directive_names_arguments_values_and_tail_syntax_are_contextual() {
     assert!(
         !marked_at(
             "{ viewer @inc|lude(if: true) { name } }",
-            "query",
+            "payload",
             &schema()
         )
         .candidates
@@ -677,7 +677,7 @@ fn value_variable_prefix_uses_request_names_only_without_declarations() {
     schema["requestVariables"] =
         json!({"hideCurrency": false, "primaryCode": "PL", "bad-name": true});
     let names = |source: &str| {
-        at(source, "query", &schema)
+        at(source, "payload", &schema)
             .candidates
             .into_iter()
             .map(|candidate| candidate.text)
@@ -698,14 +698,14 @@ fn value_variable_prefix_uses_request_names_only_without_declarations() {
     assert!(names("query Q($flag: Boolean! = $").is_empty());
     let marked = "fragment U on User { name @skip(if: $|) }\nquery Q($hideCurrency: Boolean!, $id: ID!) { viewer { ...U } }";
     assert_eq!(
-        marked_at(marked, "query", &schema)
+        marked_at(marked, "payload", &schema)
             .candidates
             .iter()
             .map(|candidate| candidate.text.as_str())
             .collect::<Vec<_>>(),
         ["$hideCurrency"]
     );
-    let console = "#check first\n#variables\n{\"hideCurrency\":false}\n#query\nfragment U on User { name @skip(if: $|) }\n#check other\n#variables\n{\"outside\":true}\n#query\nquery Other($outside: Boolean!) { viewer { name } }";
+    let console = "#check first\n#variables\n{\"hideCurrency\":false}\n#payload\nfragment U on User { name @skip(if: $|) }\n#check other\n#variables\n{\"outside\":true}\n#payload\nquery Other($outside: Boolean!) { viewer { name } }";
     assert_eq!(
         marked_at(console, "", &schema)
             .candidates
@@ -722,7 +722,7 @@ fn leading_fragments_use_later_operation_declarations_without_guessing_variable_
         serde_json::from_str(include_str!("../tests/fixtures/graphql-explore.json")).unwrap();
     let source = reference["query"].as_str().unwrap();
     let marked = source.replacen("$hideCurrency)", "$|hideCurrency)", 1);
-    let result = marked_at(&marked, "query", &explore_schema());
+    let result = marked_at(&marked, "payload", &explore_schema());
     let names: Vec<_> = result
         .candidates
         .iter()
@@ -733,7 +733,7 @@ fn leading_fragments_use_later_operation_declarations_without_guessing_variable_
         "{marked}\nquery Other($withLanguages: Boolean!) {{ country(code: \"PL\") {{ ...CountrySummary }} }}"
     );
     assert_eq!(
-        marked_at(&multiple, "query", &explore_schema())
+        marked_at(&multiple, "payload", &explore_schema())
             .candidates
             .iter()
             .map(|candidate| candidate.text.as_str())
@@ -759,7 +759,7 @@ fn schema_directives_respect_locations_repeatability_and_argument_types() {
     ]);
     schema["directives"] = json!(directives);
     let names = |source| {
-        at(source, "query", &schema)
+        at(source, "payload", &schema)
             .candidates
             .into_iter()
             .map(|candidate| candidate.text)
@@ -784,7 +784,7 @@ fn operation_hints_are_single_per_document_but_fragments_and_requests_are_repeat
         "{ viewer { name } }",
     ] {
         assert!(
-            at(&format!("{operation}\n"), "query", &schema())
+            at(&format!("{operation}\n"), "payload", &schema())
                 .candidates
                 .iter()
                 .all(|candidate| candidate.detail == "Section"),
@@ -792,7 +792,7 @@ fn operation_hints_are_single_per_document_but_fragments_and_requests_are_repeat
         );
         let marked = format!("fragment U on User {{ name }}\n|\n{operation}");
         assert_eq!(
-            marked_at(&marked, "query", &schema())
+            marked_at(&marked, "payload", &schema())
                 .candidates
                 .iter()
                 .map(|candidate| candidate.text.as_str())
@@ -801,10 +801,12 @@ fn operation_hints_are_single_per_document_but_fragments_and_requests_are_repeat
         );
         let marked = format!("fragment U on User {{ name }}\nmu|\n{operation}");
         assert!(
-            marked_at(&marked, "query", &schema()).candidates.is_empty(),
+            marked_at(&marked, "payload", &schema())
+                .candidates
+                .is_empty(),
             "{operation}"
         );
-        let console = format!("#check first\n#query\n{operation}\n#check second\n#query\n");
+        let console = format!("#check first\n#payload\n{operation}\n#check second\n#payload\n");
         assert!(
             at(&console, "", &schema())
                 .candidates
@@ -813,7 +815,7 @@ fn operation_hints_are_single_per_document_but_fragments_and_requests_are_repeat
         );
     }
     let source = "# query Phantom { }\nfragment query on User { name }\nfragment mutation on Query { user(id: \"subscription { mutation }\") { name } }\n";
-    let result = at(source, "query", &schema());
+    let result = at(source, "payload", &schema());
     for name in ["query", "mutation", "subscription", "fragment", "{\n  \n}"] {
         assert!(
             result
@@ -823,13 +825,13 @@ fn operation_hints_are_single_per_document_but_fragments_and_requests_are_repeat
         );
     }
     assert!(
-        marked_at("que|ry Q { viewer { name } }", "query", &schema())
+        marked_at("que|ry Q { viewer { name } }", "payload", &schema())
             .candidates
             .iter()
             .any(|candidate| candidate.text == "query")
     );
     assert_eq!(
-        marked_at("|\nquery Q($id:", "query", &schema())
+        marked_at("|\nquery Q($id:", "payload", &schema())
             .candidates
             .iter()
             .map(|candidate| candidate.text.as_str())
@@ -841,9 +843,9 @@ fn operation_hints_are_single_per_document_but_fragments_and_requests_are_repeat
 #[test]
 fn document_starts_with_operations_even_without_discovery() {
     for (source, field) in [
-        ("", "query"),
+        ("", "payload"),
         (
-            "#check g\n#endpoint\nhttps://fixture.invalid/graphql\n#query\n",
+            "#check g\n#target\nhttps://fixture.invalid/graphql\n#payload\n",
             "",
         ),
     ] {
@@ -905,7 +907,7 @@ fn countries_schema() -> Value {
 fn named_fragment_definitions_precede_operation_suggestions() {
     let schema = countries_schema();
     let names = |source: &str| {
-        at(source, "query", &schema)
+        at(source, "payload", &schema)
             .candidates
             .into_iter()
             .map(|c| c.text)
@@ -949,7 +951,7 @@ fn field_suggestions_include_complete_compatible_fragment_spreads() {
     let definitions = "fragment UserFields on User { id name }\nfragment CountryFields on Country { code name capital currency }\n";
     let query = "query { firstCountry: country(code: \"PL\") { ";
     let source = format!("{definitions}{query}");
-    let result = at(&source, "query", &schema);
+    let result = at(&source, "payload", &schema);
     assert!(result.candidates.iter().any(|candidate| {
         candidate.text == "...CountryFields" && candidate.detail == "Fragment on Country"
     }));
@@ -975,7 +977,7 @@ fn field_suggestions_include_complete_compatible_fragment_spreads() {
     );
     for prefix in ["Cou", ".", ".."] {
         assert!(
-            at(&format!("{source}{prefix}"), "query", &schema)
+            at(&format!("{source}{prefix}"), "payload", &schema)
                 .candidates
                 .iter()
                 .any(|candidate| candidate.text == "...CountryFields"),
@@ -983,7 +985,7 @@ fn field_suggestions_include_complete_compatible_fragment_spreads() {
         );
     }
     assert!(
-        !at(&format!("{source}...CountryFields\n  "), "query", &schema)
+        !at(&format!("{source}...CountryFields\n  "), "payload", &schema)
             .candidates
             .iter()
             .any(|candidate| candidate.text == "...CountryFields")
@@ -991,21 +993,22 @@ fn field_suggestions_include_complete_compatible_fragment_spreads() {
     assert!(
         at(
             &format!("{source}...CountryFields }} secondCountry: country(code: \"DE\") {{ "),
-            "query",
+            "payload",
             &schema
         )
         .candidates
         .iter()
         .any(|candidate| candidate.text == "...CountryFields")
     );
-    let console = format!("#check countries\n#query\n{source}");
+    let console = format!("#check countries\n#payload\n{source}");
     assert!(
         at(&console, "", &schema)
             .candidates
             .iter()
             .any(|candidate| candidate.text == "...CountryFields")
     );
-    let other = format!("{console}}} }}\n#check other\n#query\nquery {{ country(code: \"DE\") {{ ");
+    let other =
+        format!("{console}}} }}\n#check other\n#payload\nquery {{ country(code: \"DE\") {{ ");
     assert!(
         !at(&other, "", &schema)
             .candidates
@@ -1024,7 +1027,7 @@ fn direct_fragment_spreads_replace_whole_prefixes_and_respect_existing_syntax() 
         let lines: Vec<_> = before.split('\n').collect();
         let original = format!("{before}{after}");
         let result = suggest(
-            "query",
+            "payload",
             &original,
             lines.len() - 1,
             lines.last().unwrap().encode_utf16().count(),
@@ -1053,7 +1056,7 @@ fn direct_fragment_spreads_replace_whole_prefixes_and_respect_existing_syntax() 
         let lines: Vec<_> = before.split('\n').collect();
         let original = format!("{before}{after}");
         let result = suggest(
-            "query",
+            "payload",
             &original,
             lines.len() - 1,
             lines.last().unwrap().encode_utf16().count(),
@@ -1079,7 +1082,7 @@ fn direct_fragment_spreads_preserve_dependency_and_subscription_guards() {
         "fragment A on Country { ...Missing }\nquery { country(code: \"PL\") { ",
     ] {
         assert!(
-            !at(source, "query", &schema)
+            !at(source, "payload", &schema)
                 .candidates
                 .iter()
                 .any(|candidate| matches!(candidate.text.as_str(), "...A" | "...B")),
@@ -1087,7 +1090,7 @@ fn direct_fragment_spreads_preserve_dependency_and_subscription_guards() {
         );
     }
     let source = "fragment Meta on Subscription { kind: __typename }\nfragment Wrapped on Subscription { ... on Subscription { ...Meta } }\nfragment Safe on Subscription { userChanged { __typename } }\nsubscription { ";
-    let result = at(source, "query", &schema);
+    let result = at(source, "payload", &schema);
     assert!(
         result
             .candidates
@@ -1101,7 +1104,7 @@ fn direct_fragment_spreads_preserve_dependency_and_subscription_guards() {
             .any(|candidate| matches!(candidate.text.as_str(), "...Meta" | "...Wrapped"))
     );
     let source = "fragment Inline on Product { sku }\nfragment Simple on SimpleProductView { price { amount } }\nquery { products { ";
-    let result = at(source, "query", &fragment_schema());
+    let result = at(source, "payload", &fragment_schema());
     for name in ["...Inline", "...Simple"] {
         assert!(
             result
@@ -1118,7 +1121,7 @@ fn spreads_offer_preceding_compatible_fragments_and_can_be_reused_in_aliases() {
     let definitions = "fragment UserFields on User { id name }\nfragment CountryFields on Country { code name capital currency }\n";
     let query = "query CompareCountries($first: ID!, $second: ID!) { firstCountry: country(code: $first) { ...";
     let source = format!("{definitions}{query}");
-    let result = at(&source, "query", &schema);
+    let result = at(&source, "payload", &schema);
     assert!(
         result
             .candidates
@@ -1128,14 +1131,14 @@ fn spreads_offer_preceding_compatible_fragments_and_can_be_reused_in_aliases() {
     assert!(!result.candidates.iter().any(|c| c.text == "UserFields"));
     assert!(!result.candidates.iter().any(|c| c.text == " on "));
     assert_eq!(
-        at(&format!("{source}Cou"), "query", &schema).candidates[0].text,
+        at(&format!("{source}Cou"), "payload", &schema).candidates[0].text,
         "CountryFields"
     );
-    let used = at(&format!("{source}CountryFields ..."), "query", &schema);
+    let used = at(&format!("{source}CountryFields ..."), "payload", &schema);
     assert!(!used.candidates.iter().any(|c| c.text == "CountryFields"));
     let reused = at(
         &format!("{source}CountryFields }} secondCountry: country(code: $second) {{ ..."),
-        "query",
+        "payload",
         &schema,
     );
     assert!(reused.candidates.iter().any(|c| c.text == "CountryFields"));
@@ -1144,7 +1147,7 @@ fn spreads_offer_preceding_compatible_fragments_and_can_be_reused_in_aliases() {
     let full = format!("{before}{after}");
     let lines: Vec<_> = before.split('\n').collect();
     let result = suggest(
-        "query",
+        "payload",
         &full,
         lines.len() - 1,
         lines.last().unwrap().encode_utf16().count(),
@@ -1153,7 +1156,7 @@ fn spreads_offer_preceding_compatible_fragments_and_can_be_reused_in_aliases() {
     assert!(result.candidates.iter().any(|c| c.text == "CountryFields"));
     assert!(!result.candidates.iter().any(|c| c.text == "Future"));
     let console = format!(
-        "#check countries\n#variables\n{{\"first\":\"PL\",\"second\":\"DE\"}}\n#query\n{definitions}{query}"
+        "#check countries\n#variables\n{{\"first\":\"PL\",\"second\":\"DE\"}}\n#payload\n{definitions}{query}"
     );
     assert!(
         at(&console, "", &schema)
@@ -1162,7 +1165,7 @@ fn spreads_offer_preceding_compatible_fragments_and_can_be_reused_in_aliases() {
             .any(|c| c.text == "CountryFields")
     );
     let other = format!(
-        "{console}CountryFields }} }}\n#check other\n#query\nquery {{ country(code: \"PL\") {{ ..."
+        "{console}CountryFields }} }}\n#check other\n#payload\nquery {{ country(code: \"PL\") {{ ..."
     );
     assert!(
         !at(&other, "", &schema)
@@ -1181,7 +1184,7 @@ fn named_fragment_graphs_exclude_cycles_and_respect_subscription_typename() {
         "fragment A on Country { ...B }\nfragment B on Country { ...A }\nquery { country(code: \"PL\") { ...",
         "fragment A on Country { ...Missing }\nquery { country(code: \"PL\") { ...",
     ] {
-        let result = at(source, "query", &schema);
+        let result = at(source, "payload", &schema);
         assert!(
             !result
                 .candidates
@@ -1192,13 +1195,13 @@ fn named_fragment_graphs_exclude_cycles_and_respect_subscription_typename() {
     }
     let forward = "fragment A on Country { ...B }\nfragment B on Country { code }\nquery { country(code: \"PL\") { ...";
     assert!(
-        at(forward, "query", &schema)
+        at(forward, "payload", &schema)
             .candidates
             .iter()
             .any(|c| c.text == "A")
     );
     let source = "fragment Meta on Subscription { kind: __typename }\nfragment Wrapped on Subscription { ... on Subscription { ...Meta } }\nfragment Safe on Subscription { userChanged { __typename } }\nsubscription { ...";
-    let result = at(source, "query", &schema);
+    let result = at(source, "payload", &schema);
     assert!(result.candidates.iter().any(|c| c.text == "Safe"));
     assert!(
         !result
@@ -1208,13 +1211,13 @@ fn named_fragment_graphs_exclude_cycles_and_respect_subscription_typename() {
     );
     let source = "fragment Shared on Country { code }\nfragment A on Country { ...Shared }\nfragment B on Country { ...Shared }\nfragment Both on Country { ...A ...B }\nquery { country(code: \"PL\") { ...";
     assert!(
-        at(source, "query", &schema)
+        at(source, "payload", &schema)
             .candidates
             .iter()
             .any(|c| c.text == "Both")
     );
     let source = "fragment Inline on Product { sku }\nfragment Simple on SimpleProductView { price { amount } }\nquery { products { ...";
-    let result = at(source, "query", &fragment_schema());
+    let result = at(source, "payload", &fragment_schema());
     assert!(result.candidates.iter().any(|c| c.text == "Inline"));
     assert!(result.candidates.iter().any(|c| c.text == "Simple"));
 }
@@ -1233,7 +1236,7 @@ fn named_fragment_replacement_preserves_spread_suffixes_and_existing_syntax() {
         let original = format!("{before}{after}");
         let lines: Vec<_> = before.split('\n').collect();
         let result = suggest(
-            "query",
+            "payload",
             &original,
             lines.len() - 1,
             lines.last().unwrap().encode_utf16().count(),
@@ -1256,7 +1259,7 @@ fn named_fragment_replacement_preserves_spread_suffixes_and_existing_syntax() {
         let (before, after) = source.split_once('|').unwrap();
         let original = format!("{before}{after}");
         assert!(
-            suggest("query", &original, 0, before.len(), &schema)
+            suggest("payload", &original, 0, before.len(), &schema)
                 .candidates
                 .is_empty(),
             "{source}"
@@ -1291,7 +1294,7 @@ fn alias_fields_offer_fields_after_colon_space() {
         "fragment Summary on User { displayName: ",
         "query { viewer { name otherName: ",
     ] {
-        let result = at(source, "query", &schema());
+        let result = at(source, "payload", &schema());
         assert!(
             result
                 .candidates
@@ -1306,7 +1309,7 @@ fn alias_fields_offer_fields_after_colon_space() {
                 .any(|candidate| candidate.text.starts_with("...")),
             "{source}"
         );
-        let console = format!("#check aliases\n#query\n{source}");
+        let console = format!("#check aliases\n#payload\n{source}");
         assert!(
             at(&console, "", &schema())
                 .candidates
@@ -1316,7 +1319,7 @@ fn alias_fields_offer_fields_after_colon_space() {
         );
     }
     for source in ["fragment Summary on ", "fragment Summary on C"] {
-        let result = at(source, "query", &countries_schema());
+        let result = at(source, "payload", &countries_schema());
         assert!(
             result
                 .candidates
@@ -1419,7 +1422,7 @@ fn aliases_arguments_and_string_delimiters_preserve_selection_scope() {
 #[test]
 fn snippets_keep_the_cursor_inside_arguments_and_inputs() {
     let insert = |source, find: fn(&str) -> bool| {
-        at(source, "query", &schema())
+        at(source, "payload", &schema())
             .candidates
             .into_iter()
             .find(|candidate| find(&candidate.text))
@@ -1449,7 +1452,7 @@ fn cursor(source: &str) -> completion::Completion {
     let (before, after) = source.split_once('|').unwrap();
     let source = format!("{before}{after}");
     suggest(
-        "query",
+        "payload",
         &source,
         before.split('\n').count() - 1,
         before
@@ -1466,7 +1469,7 @@ fn cursor(source: &str) -> completion::Completion {
 fn fields_offer_arguments_or_selection_after_inserting_the_name() {
     let schema = product_schema();
     let names = |source: &str| {
-        at(source, "query", &schema)
+        at(source, "payload", &schema)
             .candidates
             .into_iter()
             .map(|c| c.text)
@@ -1637,11 +1640,15 @@ fn typename_is_an_implicit_scalar_in_selection_sets() {
         "mutation {\n  __ty",
         "{ viewer {\n  __ty",
         "subscription { userChanged {\n  __ty",
-        "#check g\n#query\n{ viewer {\n  __ty",
+        "#check g\n#payload\n{ viewer {\n  __ty",
     ] {
         let result = at(
             source,
-            if source.starts_with('#') { "" } else { "query" },
+            if source.starts_with('#') {
+                ""
+            } else {
+                "payload"
+            },
             &schema(),
         );
         assert_eq!(result.candidates.len(), 1, "{source}");
@@ -1749,7 +1756,7 @@ fn type_condition_hints_require_another_compatible_composite_type() {
             true,
         ),
     ] {
-        for (field, prefix) in [("query", ""), ("", "#check types\n#query\n")] {
+        for (field, prefix) in [("payload", ""), ("", "#check types\n#payload\n")] {
             for tail in ["", ".", "..", "... ", "... o"] {
                 let result = at(&format!("{prefix}{body}{tail}"), field, &schema);
                 assert_eq!(
@@ -1766,7 +1773,7 @@ fn type_condition_hints_require_another_compatible_composite_type() {
     }
     let schema = countries_schema();
     assert_eq!(
-        at("{ country(code: \"PL\") { ... on ", "query", &schema)
+        at("{ country(code: \"PL\") { ... on ", "payload", &schema)
             .candidates
             .iter()
             .map(|candidate| candidate.text.as_str())
@@ -1774,7 +1781,7 @@ fn type_condition_hints_require_another_compatible_composite_type() {
         ["Country"]
     );
     assert_eq!(
-        at("fragment New ", "query", &schema)
+        at("fragment New ", "payload", &schema)
             .candidates
             .iter()
             .map(|candidate| candidate.text.as_str())
@@ -1787,7 +1794,7 @@ fn type_condition_hints_require_another_compatible_composite_type() {
 fn inline_fragment_steps_offer_only_compatible_composite_types() {
     let schema = fragment_schema();
     let names = |source| {
-        let mut names = at(source, "query", &schema)
+        let mut names = at(source, "payload", &schema)
             .candidates
             .into_iter()
             .map(|c| c.text)
@@ -1868,7 +1875,7 @@ fn inline_fragment_steps_offer_only_compatible_composite_types() {
 fn typename_and_fragment_conditions_obey_selection_scope() {
     let schema = fragment_schema();
     assert_eq!(
-        at("{ products { ", "query", &schema)
+        at("{ products { ", "payload", &schema)
             .candidates
             .iter()
             .find(|candidate| candidate.text == "... on ")
@@ -1883,7 +1890,7 @@ fn typename_and_fragment_conditions_obey_selection_scope() {
         "{ products { ... on SimpleProductView { price { quantity { ... on ProductViewTierRangeCondition { __ty",
     ] {
         assert_eq!(
-            at(source, "query", &schema)
+            at(source, "payload", &schema)
                 .candidates
                 .iter()
                 .map(|c| c.text.as_str())
@@ -1897,7 +1904,7 @@ fn typename_and_fragment_conditions_obey_selection_scope() {
         complete("subscription { ... on Subscription { userChanged { __ty"),
         ["__typename"]
     );
-    let prefix = "#check fragment\n#query\n";
+    let prefix = "#check fragment\n#payload\n";
     let source = format!("{prefix}{{ products {{ ... on Sim");
     assert_eq!(
         at(&source, "", &schema).candidates[0].text,
@@ -1905,7 +1912,7 @@ fn typename_and_fragment_conditions_obey_selection_scope() {
     );
     for source in ["query ($value: ... on ", "{ products(skus: ... on "] {
         assert!(
-            at(source, "query", &schema).candidates.is_empty(),
+            at(source, "payload", &schema).candidates.is_empty(),
             "{source}"
         );
     }
@@ -1930,7 +1937,7 @@ fn fragment_completion_preserves_existing_spreads_and_selection_sets() {
     ] {
         let (before, after) = source.split_once('|').unwrap();
         let original = format!("{before}{after}");
-        let result = suggest("query", &original, 0, before.len(), &schema);
+        let result = suggest("payload", &original, 0, before.len(), &schema);
         let text = &result
             .candidates
             .iter()
@@ -1943,7 +1950,7 @@ fn fragment_completion_preserves_existing_spreads_and_selection_sets() {
     }
     let source = "{ products { ... on SimpleProductView  { sku } }";
     let result = suggest(
-        "query",
+        "payload",
         source,
         0,
         "{ products { ... on SimpleProductView ".len(),
@@ -1961,7 +1968,7 @@ fn fragment_completion_preserves_existing_spreads_and_selection_sets() {
 
 #[test]
 fn declaration_names_come_from_request_json_without_exposing_values() {
-    let prefix = "#variables\n{\"skus\":[\"private-fixture\"],\"locale\":\"en\",\"nested\":{\"hidden\":1},\"bad-key\":1,\"1bad\":2}\n#query\n";
+    let prefix = "#variables\n{\"skus\":[\"private-fixture\"],\"locale\":\"en\",\"nested\":{\"hidden\":1},\"bad-key\":1,\"1bad\":2}\n#payload\n";
     for fragment in ["query (", "query ($", "query ($s"] {
         let source = format!("{prefix}{fragment}");
         let result = at(&source, "", &Value::Null);
@@ -1996,21 +2003,21 @@ fn declaration_names_come_from_request_json_without_exposing_values() {
     let mut schema = schema();
     schema["requestVariables"] = json!({"skus":["fixture"]});
     assert_eq!(
-        at("query ($s", "query", &schema).candidates[0].text,
+        at("query ($s", "payload", &schema).candidates[0].text,
         "$skus: "
     );
     schema["requestVariables"] = json!("{\"formOnly\":true}");
     assert_eq!(
-        at("query ($f", "query", &schema).candidates[0].text,
+        at("query ($f", "payload", &schema).candidates[0].text,
         "$formOnly: "
     );
     for bad in [json!("unfinished {"), json!([1, 2]), Value::Null] {
         schema["requestVariables"] = bad;
-        assert!(at("query ($", "query", &schema).candidates.is_empty());
+        assert!(at("query ($", "payload", &schema).candidates.is_empty());
     }
     schema["requestVariables"] = json!({"skus":["fixture"]});
     let source = "query ($skus: [String]) { products(skus: $skus) { sku } }";
-    let result = suggest("query", source, 0, "query ($s".len(), &schema);
+    let result = suggest("payload", source, 0, "query ($s".len(), &schema);
     assert_eq!(result.from, "query (".len());
     assert_eq!(result.to, "query ($skus".len());
     assert_eq!(result.candidates[0].text, "$skus");
@@ -2029,9 +2036,10 @@ fn declaration_names_come_from_request_json_without_exposing_values() {
 #[test]
 fn console_variable_names_are_scoped_to_the_current_request() {
     for first in ["#check first\n", ""] {
-        let prefix = format!("{first}#variables\n{{\"firstOnly\":1}}\n#query\nquery ($");
-        let source =
-            format!("{prefix}\n#check second\n#variables\n{{\"secondOnly\":2}}\n#query\nquery ($");
+        let prefix = format!("{first}#variables\n{{\"firstOnly\":1}}\n#payload\nquery ($");
+        let source = format!(
+            "{prefix}\n#check second\n#variables\n{{\"secondOnly\":2}}\n#payload\nquery ($"
+        );
         let line = prefix.split('\n').count() - 1;
         let first = suggest("", &source, line, "query ($".len(), &Value::Null);
         assert_eq!(
@@ -2052,7 +2060,7 @@ fn console_variable_names_are_scoped_to_the_current_request() {
             ["$secondOnly: "]
         );
     }
-    let source = "#check after\n#query\nquery ($\n#variables\n{\"after\":true}";
+    let source = "#check after\n#payload\nquery ($\n#variables\n{\"after\":true}";
     let result = suggest("", source, 2, "query ($".len(), &Value::Null);
     assert_eq!(result.candidates[0].text, "$after: ");
 }
@@ -2060,7 +2068,7 @@ fn console_variable_names_are_scoped_to_the_current_request() {
 #[test]
 fn replacement_offsets_are_utf16_and_do_not_eat_variable_dollars() {
     let source = "query Get($id: ID!) { user(id: \"😀\", optionalId: $i";
-    let result = at(source, "query", &schema());
+    let result = at(source, "payload", &schema());
     assert_eq!(
         result.from,
         source[..source.rfind("$i").unwrap()].encode_utf16().count()
@@ -2212,12 +2220,12 @@ fn marks_survive_incomplete_queries_and_need_no_selection_set() {
 
 #[test]
 fn marks_skip_variables_headers_and_responses() {
-    let source = "#variables\n{\"images\":{},\"products\":{}}\n#query\nfragment Fields on Product { images { url } }\nquery { products { sku ...Fields } }\n#headers\nimages: products\n#responce\n{ products { images } }";
+    let source = "#variables\n{\"images\":{},\"products\":{}}\n#payload\nfragment Fields on Product { images { url } }\nquery { products { sku ...Fields } }\n#headers\nimages: products\n#responce\n{ products { images } }";
     assert_eq!(
         marked(source, &product_schema()),
         [(3, "images".into()), (4, "products".into())]
     );
-    let prelude = "{ products { # comment\n images\n} }\n#endpoint\nhttp://x";
+    let prelude = "{ products { # comment\n images\n} }\n#target\nhttp://x";
     assert_eq!(
         marked(prelude, &product_schema()),
         [(0, "products".into()), (1, "images".into())]

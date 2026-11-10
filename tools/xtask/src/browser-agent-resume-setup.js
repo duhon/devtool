@@ -5,7 +5,7 @@
   await openConsole();
   await click(testid('console-service-rest'));
   await openPanel('agent', 'console-agent');
-  setSource(editorOf('console-editor'), `#check Agent resume\n#endpoint\nGET ${fixtureUrl}/agent-before\n`);
+  setSource(editorOf('console-editor'), `#check Agent resume\n#target\nGET ${fixtureUrl}/agent-before\n`);
   const input = text => {
     const textarea = testid('agent-composer');
     textarea.value = text;

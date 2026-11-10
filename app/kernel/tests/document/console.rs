@@ -9,7 +9,7 @@ use services_kernel::document::{
 
 #[test]
 fn response_touches_request_but_next_check_has_one_empty_line() {
-    let source = "#check first\n#query\nselect 1;\n\n\n#check next\n#query\nselect 2;";
+    let source = "#check first\n#payload\nselect 1;\n\n\n#check next\n#payload\nselect 2;";
     let mut regions = vec![];
     let result = replace_response(source, 0, "OK", "first result", Vec::new(), &mut regions);
     assert!(result.contains("select 1;\n#responce OK\nfirst result\n\n#check next"));
@@ -25,7 +25,7 @@ fn response_touches_request_but_next_check_has_one_empty_line() {
 fn check_identity_survives_rename_cut_move_reload_and_undo_but_not_copy() {
     let mut history = EditHistory::default();
     history.scope = "workspace:rest".into();
-    let source = "#check first\n#body\n{}\n#check second\n#body\n{}";
+    let source = "#check first\n#payload\n{}\n#check second\n#payload\n{}";
     history.synchronize(source, &[], 0);
     let first = history.checks()[0].id.clone();
     let second = history.checks()[1].id.clone();
@@ -75,7 +75,7 @@ fn check_identity_survives_rename_cut_move_reload_and_undo_but_not_copy() {
         &mut history,
         (6, 0),
         (6, 0),
-        "#check second\n#body\n{}\n",
+        "#check second\n#payload\n{}\n",
         "paste",
         5,
         &mut copy,
@@ -156,7 +156,7 @@ fn offset(source: &str, position: &Position) -> Result<usize, String> {
 fn editing_fixture() -> EditHistory {
     let mut regions = vec![];
     let source = replace_response(
-        "#check first\n#endpoint\nGET https://fixture.invalid/first\n\n#check second\n#endpoint\nGET https://fixture.invalid/second\n\n#check moved\n#endpoint\nGET https://fixture.invalid/moved",
+        "#check first\n#target\nGET https://fixture.invalid/first\n\n#check second\n#target\nGET https://fixture.invalid/second\n\n#check moved\n#target\nGET https://fixture.invalid/moved",
         0,
         "OK",
         "literal output\n#check literal-output",
@@ -247,11 +247,8 @@ fn line_edit_batches_match_edits_applied_one_by_one() {
     );
     assert_eq!(batched.checks[1].title, "two");
     // A line that becomes a check takes the step-by-step path and gains its own identity.
-    let endpoint = text
-        .split('\n')
-        .position(|line| line == "#endpoint")
-        .unwrap();
-    let (_, batched, single) = batch_and_single(&[(endpoint, 0, 9, "#check new"), edits[0]]);
+    let endpoint = text.split('\n').position(|line| line == "#target").unwrap();
+    let (_, batched, single) = batch_and_single(&[(endpoint, 0, 7, "#check new"), edits[0]]);
     assert_eq!(batched.text, single.text);
     assert_eq!(batched.regions, single.regions);
     assert_eq!(batched.checks.len(), single.checks.len());
@@ -379,7 +376,7 @@ fn inserting_a_check_inside_output_promotes_only_the_user_inserted_marker() {
     let header = history.regions()[0].header;
     let before = history.regions().to_vec();
     let original = history.text().to_owned();
-    let inserted = "#check pasted\n#endpoint\nGET https://fixture.invalid/pasted\n\n";
+    let inserted = "#check pasted\n#target\nGET https://fixture.invalid/pasted\n\n";
     let pasted = edit(
         &mut history,
         (header + 2, 0),
@@ -396,7 +393,7 @@ fn inserting_a_check_inside_output_promotes_only_the_user_inserted_marker() {
         request_at(&pasted.text, header + 2, &pasted.regions)
             .unwrap()
             .text,
-        "#endpoint\nGET https://fixture.invalid/pasted"
+        "#target\nGET https://fixture.invalid/pasted"
     );
     assert_eq!(
         request_at(&pasted.text, header + 2, &pasted.regions)
@@ -545,7 +542,7 @@ fn edits_use_exact_utf16_positions_and_reject_inconsistent_metadata() {
 
 #[test]
 fn check_navigation_follows_document_order_and_excludes_output() {
-    let source = "intro\n#check first\n#command\ntrue\n#responce OK\n#check output\n#check second\n#command\ntrue\n#check third";
+    let source = "intro\n#check first\n#payload\ntrue\n#responce OK\n#check output\n#check second\n#payload\ntrue\n#check third";
     let regions = [ResponseRegion {
         request: 1,
         header: 4,
@@ -591,14 +588,14 @@ fn active_check_follows_visible_cursor_then_viewport() {
 
 #[test]
 fn legacy_headers_migrate_without_rewriting_output_or_line_boundaries() {
-    let source = "  #REQUEST first\r\n#endpoint\r\nbash -c\r\n#command\r\necho '#request inline'\r\n#responce OK\r\n#request output\r\n#check output\r\n\r\n#request second\r\n#command\r\necho next\r\n#requestSuffix";
+    let source = "  #REQUEST first\r\n#target\r\nbash -c\r\n#payload\r\necho '#request inline'\r\n#responce OK\r\n#request output\r\n#check output\r\n\r\n#request second\r\n#payload\r\necho next\r\n#requestSuffix";
     let regions = vec![ResponseRegion {
         request: 0,
         header: 5,
         end: 9,
         columns: Vec::new(),
     }];
-    let expected = "  #check first\r\n#endpoint\r\nbash -c\r\n#command\r\necho '#request inline'\r\n#responce OK\r\n#request output\r\n#check output\r\n\r\n#check second\r\n#command\r\necho next\r\n#requestSuffix";
+    let expected = "  #check first\r\n#target\r\nbash -c\r\n#payload\r\necho '#request inline'\r\n#responce OK\r\n#request output\r\n#check output\r\n\r\n#check second\r\n#payload\r\necho next\r\n#requestSuffix";
     let migrated = migrate_check_markers(source, &regions);
     assert_eq!(migrated, expected);
     assert_eq!(migrated.split('\n').count(), source.split('\n').count());
@@ -612,11 +609,11 @@ fn legacy_headers_migrate_without_rewriting_output_or_line_boundaries() {
 
 #[test]
 fn old_and_new_headers_can_be_pasted_together_without_merging_blocks() {
-    let source = "#request old\n#command\nfirst\n#check new\n#command\nsecond\n#request last\n#command\nthird";
+    let source = "#request old\n#payload\nfirst\n#check new\n#payload\nsecond\n#request last\n#payload\nthird";
     for (line, start, command) in [(2, 0, "first"), (5, 3, "second"), (8, 6, "third")] {
         let block = request_at(source, line, &[]).unwrap();
         assert_eq!(block.start, start);
-        assert_eq!(block.text, format!("#command\n{command}"));
+        assert_eq!(block.text, format!("#payload\n{command}"));
         assert_eq!(check_at(source, line).unwrap(), block);
     }
     for line in ["#check", " #CHECK name", "#request", "\t#REQUEST name"] {
@@ -629,13 +626,13 @@ fn old_and_new_headers_can_be_pasted_together_without_merging_blocks() {
 
 #[test]
 fn literal_markers_are_output_not_requests() {
-    let source = "#check\n#endpoint\nbash -c\n#command\necho hello\n\n#check\n#endpoint\nbash -c\n#command\necho next";
+    let source = "#check\n#target\nbash -c\n#payload\necho hello\n\n#check\n#target\nbash -c\n#payload\necho next";
     let mut regions = vec![];
     let text = replace_response(
         source,
         0,
         "OK",
-        "#check\n#responce fake\n#endpoint\nnot a real request",
+        "#check\n#responce fake\n#target\nnot a real request",
         Vec::new(),
         &mut regions,
     );
@@ -654,7 +651,7 @@ fn literal_markers_are_output_not_requests() {
 fn output_ranges_follow_edits_and_restore() {
     let mut regions = vec![];
     let text = replace_response(
-        "#check\n#command\necho",
+        "#check\n#payload\necho",
         0,
         "OK",
         "#check",
@@ -695,7 +692,7 @@ fn output_ranges_follow_edits_and_restore() {
 
 #[test]
 fn invalid_restored_ranges_never_hide_or_slice_requests() {
-    let source = "#check\n#command\necho";
+    let source = "#check\n#payload\necho";
     for region in [
         ResponseRegion {
             request: 0,
@@ -717,14 +714,14 @@ fn invalid_restored_ranges_never_hide_or_slice_requests() {
         },
     ] {
         let block = request_at(source, 0, &[region]).unwrap();
-        assert_eq!(block.text, "#command\necho");
+        assert_eq!(block.text, "#payload\necho");
     }
 }
 
 #[test]
 fn other_responses_follow_stream_updates_and_request_edits() {
     let mut regions = vec![];
-    let source = "#check\n#command\nfirst\n\n#check\n#command\nsecond";
+    let source = "#check\n#payload\nfirst\n\n#check\n#payload\nsecond";
     let text = replace_response(
         source,
         4,
@@ -747,7 +744,7 @@ fn other_responses_follow_stream_updates_and_request_edits() {
         &text,
         0,
         "OK",
-        "first output\n#check\n#endpoint\nliteral",
+        "first output\n#check\n#target\nliteral",
         Vec::new(),
         &mut regions,
     );

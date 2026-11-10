@@ -15,8 +15,8 @@
     editor().focus();
     await key('Shift+Enter');
   };
-  const terminal = name => `#check ${name}\n#endpoint\nsh -c\n#command\nprintf '${name}-pid:%s\\n' $$; while :; do printf '${name}-tick\\n'; sleep 0.2; done`;
-  const rest = name => `#check ${name}\n#endpoint\nGET ${fixtureUrl}/stop-slow?${name}`;
+  const terminal = name => `#check ${name}\n#target\nsh -c\n#payload\nprintf '${name}-pid:%s\\n' $$; while :; do printf '${name}-tick\\n'; sleep 0.2; done`;
+  const rest = name => `#check ${name}\n#target\nGET ${fixtureUrl}/stop-slow?${name}`;
   const send = async text => {
     const textarea = testid('agent-composer');
     textarea.value = text;

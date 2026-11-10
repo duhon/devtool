@@ -6,7 +6,7 @@ requests using the configured connection and headers.
 
 `console_context.schemaAvailable` reports a matching schema already cached in
 the current application instance. False can mean discovery has not run, the
-endpoint/authentication changed, discovery is pending, or a previous attempt
+target/authentication changed, discovery is pending, or a previous attempt
 failed. It does not prove the remote service lacks a specification.
 `console_schema` reads cached metadata with offset/limit paging. The Agent has
 no tool to start or force discovery and cannot dispatch editor keystrokes or
@@ -18,23 +18,23 @@ for these user-driven discovery triggers.
 There is no Discover button. Alt+Space in the editor requests discovery for
 the check at the cursor. The automatic triggers are:
 
-1. Select the rest service tab and the relevant check. Its `#endpoint` must
+1. Select the rest service tab and the relevant check. Its `#target` must
    contain METHOD URL, and any authentication headers belong in `#headers`.
 2. In the URL, typing `/` triggers discovery for the prefix up to that slash.
    For an existing URL, delete and retype its slash immediately after the host
    or at the API mount boundary. Do not add an extra slash or execute the check.
    Merely pasting the full URL, focusing it or pressing Enter there is not
    itself a REST discovery trigger.
-3. Alternatively, for a request with `#body`, put the cursor on its body content
-   and press Ctrl+Space. If matching REST paths are missing, body completion
-   requests discovery for the check's endpoint.
+3. Alternatively, for a request with `#payload`, put the cursor on its payload content
+   and press Ctrl+Space. If matching REST paths are missing, payload completion
+   requests discovery for the check's target.
 4. Watch the bottom status strip for Discovery, OK, WARNING or ERROR. Inspect
    Debug for probe addresses and transport/authentication failures.
 5. Read fresh console_context, then console_schema if schemaAvailable is true.
 
 For `PUT https://fakerestapi.azurewebsites.net/api/v1/Books/123`, a concrete
 instruction is to retype the existing slash between the host and `api`, or
-request Ctrl+Space in its `#body`. Shift+Enter would run the PUT, not discovery;
+request Ctrl+Space in its `#payload`. Shift+Enter would run the PUT, not discovery;
 do not suggest executing it just to obtain schema.
 
 The REST module looks for OpenAPI 3.x or Swagger 2.0 at known locations beneath

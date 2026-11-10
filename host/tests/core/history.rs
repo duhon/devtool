@@ -67,8 +67,7 @@ async fn entries_keep_their_text_verbatim_and_report_service_and_duration() {
             "request":{"method":"GET","url":url,"text":true}}))
         .await;
     let response = called["result"]["body"].as_str().unwrap();
-    let source =
-        format!("#check fixture\n#endpoint\nGET {url}\n#headers\nAuthorization: [redacted]");
+    let source = format!("#check fixture\n#target\nGET {url}\n#headers\nAuthorization: [redacted]");
     let saved = runtime
         .dispatch(
             &json!({"service":"history","op":"insert","checkId":CHECK,"sessionId":OTHER,
@@ -90,7 +89,7 @@ async fn executions_are_immutable_and_survive_restart() {
     let runtime = data.runtime();
     for n in 1..=3 {
         let source = format!(
-            "#check immutable\n#endpoint\nsh -c\n#env\n{{\"VALUE\":\"edit-{n}\"}}\n#command\nprintf '%s %s %s' 'edit-{n}' 'dictionary-visible' '[redacted]'"
+            "#check immutable\n#target\nsh -c\n#env\n{{\"VALUE\":\"edit-{n}\"}}\n#payload\nprintf '%s %s %s' 'edit-{n}' 'dictionary-visible' '[redacted]'"
         );
         let output = shell(
             &runtime,
@@ -108,7 +107,7 @@ async fn executions_are_immutable_and_survive_restart() {
     for (index, entry) in entries["entries"].as_array().unwrap().iter().enumerate() {
         let text = get(&runtime, &entry["id"]).await;
         assert!(text.contains(&format!("edit-{}", 3 - index)), "{text}");
-        assert!(text.contains("#env") && text.contains("#command"));
+        assert!(text.contains("#env") && text.contains("#payload"));
         assert!(text.contains("dictionary-visible"), "{text}");
         let (request, response) = text.split_once("\n\n#responce OK\n").unwrap();
         assert!(!request.contains("private-variable"), "{request}");
@@ -132,7 +131,7 @@ async fn failed_and_stopped_runs_keep_their_status_and_inserts_cross_native_mess
     let runtime = data.runtime();
     let saved = record(
         &runtime,
-        "#check fail\n#command\nexit 7",
+        "#check fail\n#payload\nexit 7",
         "error",
         "out\nerr",
     )
@@ -142,7 +141,7 @@ async fn failed_and_stopped_runs_keep_their_status_and_inserts_cross_native_mess
     assert_eq!(list(&runtime, CHECK).await["entries"][0]["status"], "error");
     let saved = record(
         &runtime,
-        "#check stopped\n#command\nsleep 30",
+        "#check stopped\n#payload\nsleep 30",
         "stopped",
         "ready",
     )

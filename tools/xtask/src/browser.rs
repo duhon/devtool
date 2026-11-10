@@ -589,7 +589,7 @@ async fn installed_reload(
     ensure!(
         cdp.evaluate(&page, r##"(async () => {
       const services = ['rest', 'mysql', 'graphql', 'grpc', 'splunk', 'terminal'];
-      const document = '#request legacy\n#endpoint\nbash -c\n#command\necho "#request inline"\n\n#responce OK\n#request literal output\n#check literal output\n\n#request second\n#command\necho next';
+      const document = '#request legacy\n#target\nbash -c\n#payload\necho "#request inline"\n\n#responce OK\n#request literal output\n#check literal output\n\n#request second\n#payload\necho next';
       const lines = document.split('\n');
       const regions = [{ request: 0, header: lines.indexOf('#responce OK'), end: lines.indexOf('#request second') }];
       localStorage.setItem('servicesConsole.state', JSON.stringify({
@@ -1218,7 +1218,7 @@ fn seed_data(data: &Path) -> Result<Vec<(PathBuf, String)>> {
     ] {
         seeds.push((
             local.join(format!("hints/{service}.md")),
-            format!("#endpoint\n{url}\n"),
+            format!("#target\n{url}\n"),
         ));
     }
     fs::create_dir_all(data)?;

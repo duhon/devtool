@@ -1,11 +1,11 @@
 ---
 name: module-splunk
-description: "Splunk searches in the Services DevTools Console: #endpoint, #search SPL, #options (From, To, Count, Preview, Offset, Columns-Type, Columns-Size), the rate limit and preview results. Load before writing, editing or explaining Splunk requests."
+description: "Splunk searches in the Services DevTools Console: #target, #payload SPL, #options (From, To, Count, Preview, Offset, Columns-Type, Columns-Size), the rate limit and preview results. Load before writing, editing or explaining Splunk requests."
 ---
 
 # Splunk service
 
-Use `#endpoint` for the base URL, optional `#headers`, and `#search` with SPL.
+Use `#target` for the base URL, optional `#headers`, and `#payload` with SPL.
 `#options` accepts From, To, App, Count, Preview, Offset, Columns-Type and
 Columns-Size as Name: value lines. These parameters
 must be inside `#options`, not separate sections. Do not invent indexes or use

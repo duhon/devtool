@@ -48,17 +48,17 @@ fn the_linked_modules_give_the_tabs_labels_and_order() {
 fn section_markers_come_from_the_modules() {
     services_shell::link();
     for (service, sections) in [
-        ("mysql", &["endpoint", "options", "query"][..]),
+        ("mysql", &["target", "options", "payload"][..]),
         // The console's own `#options` (Repeat, Repeat-Until) come last.
         (
             "grpc",
-            &["endpoint", "headers", "proto", "message", "options"],
+            &["target", "headers", "proto", "payload", "options"],
         ),
-        ("splunk", &["endpoint", "headers", "options", "search"]),
-        ("terminal", &["endpoint", "command", "env", "options"]),
+        ("splunk", &["target", "headers", "options", "payload"]),
+        ("terminal", &["target", "payload", "env", "options"]),
         (
             "artemis",
-            &["endpoint", "headers", "action", "options", "body"],
+            &["target", "headers", "action", "options", "payload"],
         ),
     ] {
         assert_eq!(console::markers(service), sections, "{service}");

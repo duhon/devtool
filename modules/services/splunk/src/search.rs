@@ -40,10 +40,10 @@ pub fn check_markers(text: &str) -> Result<(), String> {
 /// The sections a search reads, to resolve their variables at once.
 pub fn sections(check: &Check) -> Value {
     json!({
-        "endpoint": check.text_of("endpoint").trim(),
+        "target": check.text_of("target").trim(),
         "headers": check.text_of("headers"),
         "options": check.text_of("options"),
-        "search": check.text_of("search"),
+        "payload": check.text_of("payload"),
     })
 }
 
@@ -117,13 +117,13 @@ impl Plan {
     /// The plan of resolved [`sections`].
     pub fn parse(sections: &Value) -> Result<Self, String> {
         let text = |name: &str| sections[name].as_str().unwrap_or("");
-        let search = text("search");
+        let search = text("payload");
         if search.trim().is_empty() {
-            return Err("Splunk request needs a #search block".into());
+            return Err("Splunk request needs a #payload block".into());
         }
-        let base = text("endpoint").trim();
+        let base = text("target").trim();
         if base.is_empty() {
-            return Err("splunk request needs a #endpoint block".into());
+            return Err("splunk request needs a #target block".into());
         }
         let mut options = std::collections::BTreeMap::new();
         for (name, value) in headers::pairs(text("options")) {
@@ -140,7 +140,7 @@ impl Plan {
         let base = url::Url::parse(&format!("{}/", base.trim_end_matches('/')))
             .map_err(|_| format!("Invalid baseUrl: {base}"))?;
         if !matches!(base.scheme(), "http" | "https") {
-            return Err("Splunk endpoint must use HTTP or HTTPS".into());
+            return Err("Splunk #target must use HTTP or HTTPS".into());
         }
         let path = if app.is_empty() {
             "services/search/v2/jobs/export".to_string()
@@ -684,8 +684,8 @@ mod tests {
     }
 
     fn plan(options: &str) -> Result<Plan, String> {
-        Plan::parse(&json!({"endpoint": "https://splunk.fixture", "headers": "",
-            "options": options, "search": "index=main"}))
+        Plan::parse(&json!({"target": "https://splunk.fixture", "headers": "",
+            "options": options, "payload": "index=main"}))
     }
 
     #[test]
@@ -731,10 +731,10 @@ mod tests {
             plan.body,
             "search=search+index%3Dmain&output_mode=json&preview=true&segmentation=none&earliest_time=-24h&latest_time=-5m"
         );
-        assert!(Plan::parse(&json!({"endpoint": "ftp://x", "search": "a"})).is_err());
+        assert!(Plan::parse(&json!({"target": "ftp://x", "payload": "a"})).is_err());
         assert_eq!(
-            Plan::parse(&json!({"endpoint": "https://x"})).unwrap_err(),
-            "Splunk request needs a #search block"
+            Plan::parse(&json!({"target": "https://x"})).unwrap_err(),
+            "Splunk request needs a #payload block"
         );
     }
 
@@ -750,11 +750,11 @@ mod tests {
     fn removed_sections_are_refused() {
         for marker in LEGACY_SECTIONS {
             assert_eq!(
-                check_markers(&format!("#endpoint\nx\n  #{}  \n", marker.to_uppercase()))
+                check_markers(&format!("#target\nx\n  #{}  \n", marker.to_uppercase()))
                     .unwrap_err(),
                 format!("Unsupported Splunk section #{marker}; use #options.")
             );
         }
-        assert!(check_markers("#search\nindex=main").is_ok());
+        assert!(check_markers("#payload\nindex=main").is_ok());
     }
 }

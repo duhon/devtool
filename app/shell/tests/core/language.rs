@@ -57,7 +57,7 @@ fn edits_keep_the_responses_set_directly() {
     let mut session = Session::new(
         setup,
         language.clone(),
-        "#check A\n#query\nselect 1\n#responce OK\n{\n}",
+        "#check A\n#payload\nselect 1\n#responce OK\n{\n}",
     );
     let region = ResponseRegion {
         request: 0,

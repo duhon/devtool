@@ -66,7 +66,7 @@ fn check(text: &str) -> Check {
     for (i, line) in text.split('\n').enumerate() {
         if let Some((name, rest)) = marker(line) {
             close(current.take(), &mut body);
-            let head = if name == "endpoint" {
+            let head = if name == "target" {
                 rest.to_owned()
             } else {
                 String::new()
@@ -186,7 +186,7 @@ fn introspection() -> String {
     .to_string()
 }
 
-const CONNECTION: &str = "#endpoint\nhttp://svc/graphql\n#headers\nX-Token: secret\n#query\n";
+const CONNECTION: &str = "#target\nhttp://svc/graphql\n#headers\nX-Token: secret\n#payload\n";
 
 /// A Graphql whose discovery introspected `CONNECTION`.
 fn discovered() -> Graphql {
@@ -202,13 +202,13 @@ fn discovered() -> Graphql {
 fn highlight_styles_each_section_and_carries_state() {
     let graphql = Graphql::default();
     let lines = [
-        "#endpoint",
+        "#target",
         "https://api.test/graphql",
         "#headers",
         "Accept: */*",
         "#variables",
         "{\"id\": 1}",
-        "#query",
+        "#payload",
         "query Q($id: ID!) {",
         "  user(id: $id) { ...F }",
         "}",
@@ -217,11 +217,11 @@ fn highlight_styles_each_section_and_carries_state() {
     ];
     let s = styles(&graphql, &[], &lines);
     let comment = |text: &str| vec![(text.to_owned(), "comment".to_owned())];
-    assert_eq!(s[0], comment("#endpoint"));
+    assert_eq!(s[0], comment("#target"));
     assert!(s[1].contains(&("https://".into(), "keyword".into())));
     assert_eq!(s[3], pairs(&[("Accept", "attribute"), ("*/*", "string")]));
     assert!(s[5].contains(&("\"id\"".into(), "string property".into())));
-    assert_eq!(s[6], comment("#query"));
+    assert_eq!(s[6], comment("#payload"));
     assert_eq!(
         s[7],
         pairs(&[
@@ -252,7 +252,7 @@ fn highlight_styles_each_section_and_carries_state() {
 #[test]
 fn folds_cover_selections_variables_and_a_json_response() {
     let graphql = Graphql::default();
-    let text = "#variables\n{\n  \"a\": 1\n}\n#query\nquery {\n  pets {\n    name\n  }\n}\n#responce OK\n{\n  \"b\": 1\n}";
+    let text = "#variables\n{\n  \"a\": 1\n}\n#payload\nquery {\n  pets {\n    name\n  }\n}\n#responce OK\n{\n  \"b\": 1\n}";
     let folds: Vec<_> = graphql
         .fold(&check(text))
         .iter()
@@ -264,11 +264,11 @@ fn folds_cover_selections_variables_and_a_json_response() {
 #[test]
 fn completion_offers_unused_markers_urls_and_headers() {
     let graphql = Graphql::default();
-    let (_, c) = complete(&graphql, "#endpoint\nhttp://x\n#|");
-    assert_eq!(labels(&c), ["#headers", "#variables", "#query"]);
-    let (_, c) = complete(&graphql, "#endpoint\nht|");
+    let (_, c) = complete(&graphql, "#target\nhttp://x\n#|");
+    assert_eq!(labels(&c), ["#headers", "#variables", "#payload"]);
+    let (_, c) = complete(&graphql, "#target\nht|");
     assert_eq!(labels(&c), ["http://", "https://"]);
-    assert_eq!((c.from, c.to), (10, 12));
+    assert_eq!((c.from, c.to), (8, 10));
     let (_, c) = complete(&graphql, "#headers\nX-Api-Key: 1\nX-A|");
     assert!(
         !labels(&c)
@@ -277,7 +277,7 @@ fn completion_offers_unused_markers_urls_and_headers() {
     );
     let (_, c) = complete(&graphql, "#variables\n|");
     assert_eq!(labels(&c), ["{}"]);
-    let (_, c) = complete(&graphql, "#query\n|");
+    let (_, c) = complete(&graphql, "#payload\n|");
     assert_eq!(
         labels(&c)[..4],
         ["query", "mutation", "subscription", "fragment"]
@@ -314,7 +314,7 @@ fn discovery_feeds_query_completion() {
     let (_, c) = complete(&graphql, &format!("{CONNECTION}{{ pets {{ Na|"));
     assert_eq!(labels(&c), ["name"]);
     // Another connection has no schema yet.
-    let (_, c) = complete(&graphql, "#endpoint\nhttp://other\n#query\n{ pe|");
+    let (_, c) = complete(&graphql, "#target\nhttp://other\n#payload\n{ pe|");
     assert!(c.items.is_empty());
 }
 
@@ -326,14 +326,14 @@ fn discovery_waits_for_hints_and_a_web_address() {
             .update(Event::Document(check(CONNECTION)))
             .is_empty()
     );
-    assert!(hints(&mut graphql, "#endpoint\nsvc/graphql\n#query\n").is_empty());
-    let cmds = graphql.update(Event::Discover(check("#endpoint\nsvc\n")));
+    assert!(hints(&mut graphql, "#target\nsvc/graphql\n#payload\n").is_empty());
+    let cmds = graphql.update(Event::Discover(check("#target\nsvc\n")));
     assert_eq!(
         statuses(&cmds),
         ["Discovery · WARNING · Invalid or incomplete service address for discovery"]
     );
     // A variable address is resolved by the App before the call.
-    let cmds = hints(&mut graphql, "#endpoint\n{{base}}/graphql\n#query\n");
+    let cmds = hints(&mut graphql, "#target\n{{base}}/graphql\n#payload\n");
     assert_eq!(driver_calls(&cmds)[0].1["url"], "{{base}}/graphql");
 }
 
@@ -396,7 +396,7 @@ fn discovery_reports_failures_and_rediscovers_on_demand() {
 fn hints_for_another_connection_during_a_run_discover_it_next() {
     let mut graphql = Graphql::default();
     let first = hints(&mut graphql, CONNECTION);
-    let other = "#endpoint\nhttp://other/graphql\n#query\n";
+    let other = "#target\nhttp://other/graphql\n#payload\n";
     assert!(hints(&mut graphql, other).is_empty());
     let answer = reply(
         &mut graphql,
@@ -418,7 +418,7 @@ fn request(call: &DriverCall) -> Value {
 #[test]
 fn build_posts_the_query_and_variables() {
     let mut graphql = Graphql::default();
-    let text = "#endpoint\nhttps://x/graphql\n#headers\nContent-Type: application/graphql+json\nX: 1\n#variables\n{\"id\": \"{{id}}\"}\n#query\nquery ($id: ID) { user(id: $id) { name } }";
+    let text = "#target\nhttps://x/graphql\n#headers\nContent-Type: application/graphql+json\nX: 1\n#variables\n{\"id\": \"{{id}}\"}\n#payload\nquery ($id: ID) { user(id: $id) { name } }";
     let r = request(&build(&mut graphql, &check(text), &[("id", "a\"b")]).unwrap());
     assert_eq!(r["method"], "POST");
     assert_eq!(r["url"], "https://x/graphql");
@@ -435,7 +435,7 @@ fn build_posts_the_query_and_variables() {
     let r = request(
         &build(
             &mut graphql,
-            &check("{ pets { name } }\n#endpoint\nhttp://x"),
+            &check("{ pets { name } }\n#target\nhttp://x"),
             &[],
         )
         .unwrap(),
@@ -443,17 +443,17 @@ fn build_posts_the_query_and_variables() {
     let body: Value = serde_json::from_str(r["body"].as_str().unwrap()).unwrap();
     assert_eq!(body, json!({"query": "{ pets { name } }"}));
     for (text, error) in [
-        ("#endpoint\nhttp://x\n#query\n", "query is required"),
+        ("#target\nhttp://x\n#payload\n", "query is required"),
         (
-            "#endpoint\nhttp://x\n#variables\nbad\n#query\n{ a }",
+            "#target\nhttp://x\n#variables\nbad\n#payload\n{ a }",
             "Variables must be valid JSON",
         ),
         (
-            "#endpoint\nPOST http://x\n#query\n{ a }",
-            "#endpoint must be a GraphQL URL",
+            "#target\nPOST http://x\n#payload\n{ a }",
+            "#target must be a GraphQL URL",
         ),
         (
-            "#endpoint\nhttp://x\n#options\nFormat: json\n#query\n{ a }",
+            "#target\nhttp://x\n#options\nFormat: json\n#payload\n{ a }",
             "Unknown option \"Format\"; GraphQL takes Repeat and Repeat-Until",
         ),
     ] {
@@ -478,7 +478,7 @@ fn render_pretty_prints_json_and_maps_outcomes() {
 #[test]
 fn export_and_import_round_trip_through_curl() {
     let graphql = Graphql::default();
-    let text = "#endpoint\nhttps://x/graphql\n#headers\nX: it's\n#variables\n{\n  \"id\": 1\n}\n#query\n{ user(id: $id) { name } }";
+    let text = "#target\nhttps://x/graphql\n#headers\nX: it's\n#variables\n{\n  \"id\": 1\n}\n#payload\n{ user(id: $id) { name } }";
     let curl = graphql.export(&check(text)).unwrap();
     assert_eq!(
         curl,
@@ -486,13 +486,13 @@ fn export_and_import_round_trip_through_curl() {
     );
     assert_eq!(
         graphql.import(&curl).unwrap(),
-        "#endpoint\nhttps://x/graphql\n#headers\nX: it's\nContent-Type: application/json\n#variables\n{\n  \"id\": 1\n}\n#query\n{ user(id: $id) { name } }"
+        "#target\nhttps://x/graphql\n#headers\nX: it's\nContent-Type: application/json\n#variables\n{\n  \"id\": 1\n}\n#payload\n{ user(id: $id) { name } }"
     );
     assert_eq!(
         graphql
             .import("curl https://x/graphql --data '{ pets }'")
             .unwrap(),
-        "#endpoint\nhttps://x/graphql\n#query\n{ pets }"
+        "#target\nhttps://x/graphql\n#payload\n{ pets }"
     );
     assert_eq!(
         graphql.import("curl https://x").unwrap_err(),
@@ -548,11 +548,11 @@ fn curl_matches_the_original_javascript() {
         graphql
             .import("curl 'https://api.example.com/graphql' -H 'content-type: application/json' --data-raw '{\"query\":\"query Foo($id: ID!) { foo(id: $id) { name } }\",\"variables\":{\"id\":\"1\"}}'")
             .unwrap(),
-        "#endpoint\nhttps://api.example.com/graphql\n#headers\ncontent-type: application/json\n#variables\n{\n  \"id\": \"1\"\n}\n#query\nquery Foo($id: ID!) { foo(id: $id) { name } }"
+        "#target\nhttps://api.example.com/graphql\n#headers\ncontent-type: application/json\n#variables\n{\n  \"id\": \"1\"\n}\n#payload\nquery Foo($id: ID!) { foo(id: $id) { name } }"
     );
     assert_eq!(
         graphql
-            .export(&check("#endpoint\nhttps://api.example.com/graphql\n#variables\n{\"id\":\"1\"}\n#query\nquery Foo($id: ID!) { foo(id: $id) { name } }"))
+            .export(&check("#target\nhttps://api.example.com/graphql\n#variables\n{\"id\":\"1\"}\n#payload\nquery Foo($id: ID!) { foo(id: $id) { name } }"))
             .unwrap(),
         "curl \\\n  --request POST \\\n  --url 'https://api.example.com/graphql' \\\n  --header 'Content-Type: application/json' \\\n  --data '{\n  \"query\": \"query Foo($id: ID!) { foo(id: $id) { name } }\",\n  \"variables\": {\n    \"id\": \"1\"\n  }\n}'"
     );

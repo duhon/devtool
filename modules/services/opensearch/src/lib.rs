@@ -1,5 +1,5 @@
-//! The OpenSearch service: `#endpoint` (`METHOD URL`, the index and API in the URL path),
-//! `#headers` and a JSON `#body`, NDJSON for bulk and multi-search, sent through the Host
+//! The OpenSearch service: `#target` (`METHOD URL`, the index and API in the URL path),
+//! `#headers` and a JSON `#payload`, NDJSON for bulk and multi-search, sent through the Host
 //! `http` driver; completion of indices, aliases and mapped fields from discovery.
 
 mod discovery;
@@ -12,17 +12,17 @@ use services_sdk::{
     Check, Chunk, Cmd, Completions, DriverCall, Event, Fold, Line, Module, Rendered, Subscriptions,
 };
 
-/// The methods of the console's `#endpoint`.
+/// The methods of the console's `#target`.
 const METHODS: [&str; 7] = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
 /// APIs whose body is NDJSON: one JSON document per line.
 const NDJSON_APIS: [&str; 3] = ["/_bulk", "/_msearch", "/_msearch/template"];
 /// Searches and bulk loads may run long.
 const TIMEOUT_MS: u64 = 120_000;
 const ENDPOINT: &str =
-    "#endpoint must be METHOD URL, for example GET http://localhost:9200/logs-*/_search";
+    "#target must be METHOD URL, for example GET http://localhost:9200/logs-*/_search";
 
 const LANGUAGE: Language = Language {
-    sections: &["endpoint", "headers", "body"],
+    sections: &["target", "headers", "payload"],
     methods: &METHODS,
     headers: &[
         "Authorization: ",
@@ -42,7 +42,7 @@ pub struct OpenSearch {
 /// without a Content-Type gets the JSON one, or NDJSON's for bulk and multi-search, whose
 /// body then also ends with a newline. Writes are never redirected.
 pub fn request(check: &Check) -> Result<Request, String> {
-    let words: Vec<_> = check.text_of("endpoint").split_whitespace().collect();
+    let words: Vec<_> = check.text_of("target").split_whitespace().collect();
     let [method, url] = words[..] else {
         return Err(ENDPOINT.into());
     };
@@ -52,7 +52,7 @@ pub fn request(check: &Check) -> Result<Request, String> {
         return Err(ENDPOINT.into());
     }
     let mut headers = headers::pairs(check.text_of("headers"));
-    let mut body = Some(check.text_of("body").to_owned()).filter(|body| !body.is_empty());
+    let mut body = Some(check.text_of("payload").to_owned()).filter(|body| !body.is_empty());
     if let Some(body) = &mut body {
         let given = headers
             .iter()

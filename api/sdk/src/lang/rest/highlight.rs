@@ -53,9 +53,9 @@ impl Area {
             if response || !self.response() {
                 let area = match name.as_str() {
                     _ if response => Area::Response,
-                    "endpoint" => Area::Endpoint,
+                    "target" => Area::Endpoint,
                     "headers" => Area::Headers,
-                    "body" => Area::Body,
+                    "payload" => Area::Body,
                     "options" => Area::Options,
                     _ => Area::Other,
                 };
