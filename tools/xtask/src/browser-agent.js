@@ -33,6 +33,10 @@
   assert(!document.querySelector('[data-testid="agent-share-context"]'), 'Context sharing must not require a checkbox');
   assert(!document.querySelector('[data-testid="agent-send"]'), 'Sending must use Enter without a Send button');
   assert(textarea().getAttribute('aria-keyshortcuts') === 'Enter', 'The accessible send shortcut must match Enter');
+  const composerBox = textarea().getBoundingClientRect();
+  assert(composerBox.top - testid('agent-transcript').getBoundingClientRect().bottom >= 4
+    && testid('console-agent-status').getBoundingClientRect().top - composerBox.bottom >= 4,
+    'The composer must keep a gap from the chat text and the status');
   textarea().focus();
   await key('Enter');
   assert(testid('agent-stop').disabled && textarea().value === '', 'An empty keyboard send must not start a turn');

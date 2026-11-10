@@ -279,6 +279,8 @@
 textarea.ui-input { resize: vertical; min-height: 56px; max-height: 30vh; }
 
 :is(.ui-panel-body, .ui-tab-body) > textarea.ui-input { margin: 0 6px; }
+/* A flush panel has no gaps: the field keeps its own, off the scrolled text and the status. */
+.ui-panel.is-flush :is(.ui-panel-body, .ui-tab-body) > textarea.ui-input { margin: 6px; }
 
 .ui-input.is-fixed, .ui-row > .ui-input[size] { flex: none; }
 
