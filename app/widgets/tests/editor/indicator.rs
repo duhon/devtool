@@ -57,12 +57,18 @@ fn an_outcome_counts_as_seen_only_after_staying_on_screen() {
         signal.observe(Indicator::Warning, 1700.0),
         Some(SEEN_AFTER_MS)
     );
-    assert_eq!(signal.observe(Indicator::Warning, 2200.0), None);
+    assert_eq!(
+        signal.observe(Indicator::Warning, 1700.0 + SEEN_AFTER_MS),
+        None
+    );
     assert_eq!(
         signal.indicator(Indicator::Warning, false),
         Indicator::Ready
     );
-    assert_eq!(signal.observe(Indicator::Ready, 2300.0), None);
+    assert_eq!(
+        signal.observe(Indicator::Ready, 1800.0 + SEEN_AFTER_MS),
+        None
+    );
     assert_eq!(sooner(Some(300.0), Some(200.0)), Some(200.0));
     assert_eq!(sooner(None, Some(200.0)), Some(200.0));
     assert_eq!(sooner(None, None), None);

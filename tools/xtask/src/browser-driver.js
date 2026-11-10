@@ -12,8 +12,8 @@
   });
   const assert = (value, message) => { if (!value) throw new Error(typeof message === 'function' ? message() : message); };
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-  // Keeps the status on screen long enough to count as seen (`SEEN_AFTER_MS` in activity.rs).
-  const seen = () => sleep(600);
+  // Keeps the status on screen long enough to count as seen (`SEEN_AFTER_MS` in indicator.rs).
+  const seen = () => sleep(2100);
   // Records application installs; with `installError` or `installResult` set, answers them instead
   // of the native host, after `deliver()` when `hold` is set.
   globalThis.updateFixture = {installs:[],installError:null,installResult:null,hold:false,deliver:null};

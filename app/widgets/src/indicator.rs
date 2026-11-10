@@ -37,7 +37,7 @@ impl Indicator {
 
 /// How long, in milliseconds, a finished status must stay on screen to count as seen, so an
 /// outcome that flashes by while the user switches away still lights its tab.
-pub const SEEN_AFTER_MS: f64 = 500.0;
+pub const SEEN_AFTER_MS: f64 = 2000.0;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Signal {
