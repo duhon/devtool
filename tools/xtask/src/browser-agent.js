@@ -5,7 +5,7 @@
   await testDriver.openPanel('agent', 'console-agent');
   await wait(() => document.querySelector('[data-testid="agent-composer"]'),
     () => `Agent did not mount: ${document.querySelector('[data-testid="console-tool-panel"]')?.textContent}`);
-  const source = `#check Agent acceptance\n#target\nGET ${fixtureUrl}/agent-before\n\n#headers\nX-Token: {{second:TOKEN}}\n`;
+  const source = `#check Agent acceptance\n#target\n${fixtureUrl}/agent-before\n\n#headers\nX-Token: {{second:TOKEN}}\n`;
   setSource(editorOf('console-editor'), source);
   await settle();
   const textarea = () => testid('agent-composer');

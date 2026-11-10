@@ -42,13 +42,13 @@
   };
   const rest = [];
   for (let round = 0; round < 25; round++) {
-    const elapsed = await run(`#check perf\n#target\nGET ${fixtureUrl}/perf-baseline?round=${round}`,
+    const elapsed = await run(`#check perf\n#target\n${fixtureUrl}/perf-baseline?round=${round}`,
       output => output.includes(`round=${round}`), 'The REST fixture must answer');
     if (round >= 5) rest.push(elapsed);
   }
   const large = [];
   for (let round = 0; round < 7; round++) {
-    const elapsed = await run(`#check large ${round}\n#target\nGET ${fixtureUrl}/native-large-response`,
+    const elapsed = await run(`#check large ${round}\n#target\n${fixtureUrl}/native-large-response`,
       output => output.includes('response truncated ('), 'The large response must render');
     if (round >= 2) large.push(elapsed);
   }

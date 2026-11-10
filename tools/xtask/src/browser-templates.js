@@ -35,7 +35,7 @@
   const body2='{\n  "id": 1,\n  "title": "Example Book Title",\n}';
   const definitions=`@my_create_book bla bla comment\n${body}\n@my_create_book2 another comment\n${body2}`;
   // A module removed with its data kept leaves its draft behind; it must neither block nor lose the others.
-  const unloaded='@kept\nGET /kept';
+  const unloaded='@kept\n/kept';
   localStorage.setItem('module:templates:drafts',JSON.stringify({'removed-module/check':unloaded}));
   const first=Number(testid('console-session-name').dataset.sessionId);
   await activateSession(first===0?1:0);
@@ -133,7 +133,7 @@
   assert(source.getValue()===previous+'\n\n'+full,
     'Redo must restore the exact template and separator');
   await click(testid('console-service-mysql'));
-  await wait(()=>document.querySelector('[data-testid="templates-section-query"]'));
+  await wait(()=>document.querySelector('[data-testid="templates-section-payload"]'));
   await select('payload');
   await save('mysql','payload','@my_create_book SQL query\nSELECT 123 AS id;');
   setSource(editorOf('console-editor'),'#check SQL\n#payload ');

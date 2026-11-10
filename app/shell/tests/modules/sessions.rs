@@ -99,15 +99,14 @@ fn session_copies_do_not_inherit_execution_history_identities() {
     library.select(original).unwrap();
     library.snapshot_mut().console["workspaceId"] = json!("original-workspace");
     library.snapshot_mut().console["checkIdentities"] = json!({"rest":[{"id":"old-check"}]});
-    library.snapshot_mut().console["documents"] =
-        json!({"rest":"#check copied\n#target\nGET /books"});
+    library.snapshot_mut().console["documents"] = json!({"rest":"#check copied\n#target\n/books"});
     let copy = library.copy(original, "Copy").unwrap();
     let snapshot = library.get(copy).unwrap();
     assert!(snapshot.console.get("workspaceId").is_none());
     assert!(snapshot.console.get("checkIdentities").is_none());
     assert_eq!(
         snapshot.console["documents"]["rest"],
-        "#check copied\n#target\nGET /books"
+        "#check copied\n#target\n/books"
     );
     assert_eq!(
         library.get(original).unwrap().console["workspaceId"],

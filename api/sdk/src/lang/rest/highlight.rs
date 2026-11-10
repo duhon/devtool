@@ -12,6 +12,7 @@ enum Area {
     /// Before the first marker: the payload, JSON.
     Prelude,
     Endpoint,
+    Action,
     Headers,
     Body,
     Options,
@@ -23,9 +24,10 @@ enum Area {
 }
 
 impl Area {
-    const ALL: [Area; 9] = [
+    const ALL: [Area; 10] = [
         Area::Prelude,
         Area::Endpoint,
+        Area::Action,
         Area::Headers,
         Area::Body,
         Area::Options,
@@ -54,6 +56,7 @@ impl Area {
                 let area = match name.as_str() {
                     _ if response => Area::Response,
                     "target" => Area::Endpoint,
+                    "action" => Area::Action,
                     "headers" => Area::Headers,
                     "payload" => Area::Body,
                     "options" => Area::Options,
@@ -101,6 +104,20 @@ fn whole(line: &str, kind: &str) -> Vec<Token> {
     }]
 }
 
+/// The method of an `#action` line is a `property`.
+fn method(lang: &Language, line: &str) -> Vec<Token> {
+    let word = line.trim();
+    if !lang.methods.iter().any(|m| m.eq_ignore_ascii_case(word)) {
+        return vec![];
+    }
+    let start = line.len() - line.trim_start().len();
+    vec![Token {
+        start: start as u32,
+        len: word.len() as u32,
+        kind: "property".into(),
+    }]
+}
+
 pub fn highlight(lang: &Language, state: &[u8], lines: &[String]) -> Vec<Line> {
     let (mut area, mut json) = decode(state);
     lines
@@ -118,7 +135,8 @@ pub fn highlight(lang: &Language, state: &[u8], lines: &[String]) -> Vec<Line> {
                     Area::Prelude | Area::Body | Area::ResponseJson => {
                         json::tokens(line, &mut json)
                     }
-                    Area::Endpoint => endpoint::tokens_with(line, true, lang.methods),
+                    Area::Endpoint => endpoint::tokens(line, true),
+                    Area::Action => method(lang, line),
                     Area::Headers | Area::Options => headers::tokens(line),
                     _ => vec![],
                 }

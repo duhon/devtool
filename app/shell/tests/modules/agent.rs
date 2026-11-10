@@ -103,7 +103,7 @@ fn titles_are_plain_names_and_prefixed_inputs_are_rejected() {
     let mut workspace = Workspace::default();
     workspace.refresh(
         "rest",
-        "#check Products\n#target\nGET https://example.invalid/products",
+        "#check Products\n#target\nhttps://example.invalid/products",
         &[],
     );
     let context = workspace.context("rest", 0).unwrap();
@@ -172,7 +172,7 @@ fn renaming_preserves_body_response_ownership_and_check_identity() {
     let mut workspace = Workspace::default();
     let old_header = "#check #check products 😀";
     let source = format!(
-        "{old_header}\n#target\nGET https://example.invalid/products\n#payload\n{{\"id\":123}}\n#response\ncaptured response\n#check Other\nunfinished draft"
+        "{old_header}\n#target\nhttps://example.invalid/products\n#payload\n{{\"id\":123}}\n#response\ncaptured response\n#check Other\nunfinished draft"
     );
     let regions = vec![ResponseRegion {
         request: 0,
@@ -251,7 +251,7 @@ fn renaming_preserves_body_response_ownership_and_check_identity() {
 fn combined_title_and_request_edits_preserve_connection_and_response_boundary() {
     services_shell::link();
     let mut workspace = Workspace::default();
-    let source = "#check Products\n#target\nGET https://example.invalid/products\n#headers\nX-Test: old\n#response\ncaptured";
+    let source = "#check Products\n#target\nhttps://example.invalid/products\n#headers\nX-Test: old\n#response\ncaptured";
     workspace.refresh(
         "rest",
         source,
@@ -268,7 +268,7 @@ fn combined_title_and_request_edits_preserve_connection_and_response_boundary() 
     assert_eq!(edit.to, Position { line: 5, ch: 0 });
     assert_eq!(
         edit.text,
-        "#check Updated products\n#target\nGET https://example.invalid/products\n\n#headers\nX-Test: new\n"
+        "#check Updated products\n#target\nhttps://example.invalid/products\n\n#headers\nX-Test: new\n"
     );
 }
 

@@ -116,7 +116,7 @@
   assert(editor.getAllMarks().length===1&&editor.getSelection()===foldedSource,
     'Text-only painting must preserve folds and copy every selected hidden character');
   folded.clear();
-  const base='#check First\n#target\nGET https://fixture.invalid/first';
+  const base='#check First\n#target\nhttps://fixture.invalid/first';
   const checks=()=>editor.getOption('servicesChecks')||[];
   const reset=async text=>{
     setSource(editor,text);

@@ -1,6 +1,6 @@
 ---
 name: module-opensearch
-description: "OpenSearch checks in the Services DevTools Console: METHOD and URL under #target, #headers and a JSON or NDJSON #payload for search, documents, indices, bulk and multi-search. Load before writing, editing or explaining OpenSearch requests."
+description: "OpenSearch checks in the Services DevTools Console: the URL under #target, the HTTP method under #action, #headers and a JSON or NDJSON #payload for search, documents, indices, bulk and multi-search. Load before writing, editing or explaining OpenSearch requests."
 ---
 
 # OpenSearch service
@@ -10,7 +10,7 @@ The OpenSearch HTTP API. Each check is one request.
 ```text
 #check Search
 #target
-GET http://localhost:9200/logs-*/_search?pretty=true
+http://localhost:9200/logs-*/_search?pretty=true
 #headers
 Accept: application/json
 #payload
@@ -18,14 +18,18 @@ Accept: application/json
 
 #check Multi-search
 #target
-POST http://localhost:9200/_msearch
+http://localhost:9200/_msearch
+#action
+POST
 #payload
 {"index":"logs-*"}
 {"size":5,"query":{"match_all":{}}}
 ```
 
-- `#target` is `METHOD URL` like REST: GET, POST, PUT, PATCH, DELETE, HEAD
-  or OPTIONS, then the full URL with the index, API path and query string.
+- `#target` is only the full URL with the index, API path and query string.
+  `#action` is the method like REST: GET, POST, PUT, PATCH, DELETE, HEAD or
+  OPTIONS; without it the request is a GET, which keeps its `#payload` for
+  searches.
 - `#headers` uses one `Name: value` per line. Log in with an
   `Authorization` header built from application variables; never put real
   credentials in a check. AWS SigV4 signing is not supported.

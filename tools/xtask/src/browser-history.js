@@ -3,14 +3,14 @@
   await openConsole();
   await click(testid('console-service-rest'));
   const editor=editorOf('console-editor');
-  setSource(editor,`#check History acceptance\n#target\nPUT ${fixtureUrl}/history-fixture?value={{env:SERVICES_DEVTOOLS_ENV_PROBE}}\n#headers\nContent-Type: application/json\nAuthorization: Bearer history-secret-token\n#payload\n{"text":"first","env":"{{env:SERVICES_DEVTOOLS_ENV_PROBE}}"}`);
+  setSource(editor,`#check History acceptance\n#target\n${fixtureUrl}/history-fixture?value={{env:SERVICES_DEVTOOLS_ENV_PROBE}}\n#action\nPUT\n#headers\nContent-Type: application/json\nAuthorization: Bearer history-secret-token\n#payload\n{"text":"first","env":"{{env:SERVICES_DEVTOOLS_ENV_PROBE}}"}`);
   const current=Number(testid('console-session-name').dataset.sessionId);
   const snapshot=async()=>(await testDriver.sessionLibrary()).sessions.find(s=>s.id===current).snapshot.console;
   await wait(async()=>(await snapshot()).checkIdentities?.rest?.length===1);
   const identity=(await snapshot()).checkIdentities.rest[0].id;
   const workspace=(await snapshot()).workspaceId;
   const run=async()=>{
-    editor.closeHint();editor.focus();editor.setCursor(7,5);
+    editor.closeHint();editor.focus();editor.setCursor(9,5);
     const before=editor.getValue();
     await key('Shift+Enter');
     await wait(()=>editor.getValue()!==before && !testid('console-main-status').classList.contains('is-running')
@@ -19,8 +19,8 @@
     assert((await snapshot()).checkIdentities.rest[0].id===identity,'A response insertion must not change the check ID');
   };
   await run();await run();
-  const line=editor.getLine(7),from=line.indexOf('first');
-  editor.replaceRange('third',{line:7,ch:from},{line:7,ch:from+5},'+input');
+  const line=editor.getLine(9),from=line.indexOf('first');
+  editor.replaceRange('third',{line:9,ch:from},{line:9,ch:from+5},'+input');
   await run();
   const topBar=()=>document.querySelector('.console-top-bar');
   const initialHeaderHeight=topBar().getBoundingClientRect().height;
@@ -144,7 +144,7 @@
   await click(testid('console-service-rest'));
   await wait(()=>entries().length===10);
   const largeEditor=editorOf('console-editor');
-  setSource(largeEditor,`#check Large History\n#target\nGET ${fixtureUrl}/history-large-fixture`);
+  setSource(largeEditor,`#check Large History\n#target\n${fixtureUrl}/history-large-fixture`);
   largeEditor.closeHint();largeEditor.focus();largeEditor.setCursor(2,0);
   await key('Shift+Enter');
   await wait(()=>largeEditor.getValue().includes('response truncated')

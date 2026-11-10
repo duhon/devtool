@@ -28,11 +28,10 @@
     splunk: 'https://splunk.fixture.invalid', artemis: 'http://artemis.fixture.invalid:8161',
     opensearch: 'http://opensearch.fixture.invalid:9200',
   };
-  const methods = {rest: 'GET ', opensearch: 'GET '};
   for (const service of services) {
     await click(testid(`console-service-${service}`));
     const editor = editorOf('console-editor');
-    setSource(editor, `#check scope\n#target\n${methods[service] || ''}`);
+    setSource(editor, `#check scope\n#target\n`);
     await key('Control+Space');
     await wait(() => candidates().some(text => text.includes(endpoints[service] || 'bash -c')),
       () => `${service}: saved endpoint missing from ${JSON.stringify(candidates())}`);
@@ -62,7 +61,7 @@
     return output();
   };
   const envOutput = await runConsole('rest',
-    `#check env\n#target\nGET ${fixtureUrl}/browser?env={{env:SERVICES_DEVTOOLS_ENV_PROBE}}&interactive={{env:SERVICES_DEVTOOLS_INTERACTIVE_PROBE}}`,
+    `#check env\n#target\n${fixtureUrl}/browser?env={{env:SERVICES_DEVTOOLS_ENV_PROBE}}&interactive={{env:SERVICES_DEVTOOLS_INTERACTIVE_PROBE}}`,
     output => output.includes('rust-ui-fixture'), 'The REST fixture must answer through the companion');
   assert(envOutput.includes('/browser?env=companion-fixture-only'), 'Login shell env substitution');
   assert(envOutput.includes('interactive=interactive-fixture-only'), 'Interactive shell env substitution');
@@ -71,7 +70,7 @@
   // The Console shows the first MAX_RESPONSE_CHARS characters and counts the rest, so the
   // exact prefix plus the exact omitted count prove that no byte was lost in transit.
   const shownLarge = `${expectedLarge.slice(0, 300000).join('')}\n\n… response truncated (${expectedLarge.length - 300000} more characters omitted)`;
-  const largeOutput = await runConsole('rest', `#check large\n#target\nGET ${fixtureUrl}/native-large-response`,
+  const largeOutput = await runConsole('rest', `#check large\n#target\n${fixtureUrl}/native-large-response`,
     output => output.includes('response truncated ('),
     'A response larger than 1 MiB must survive real Chrome native messaging');
   assert(largeOutput.startsWith(shownLarge),
@@ -106,7 +105,7 @@
   };
   const restDiscoveryCount = () => nativeProbe.discoveries.filter(request => request.service === 'rest').length;
   for (const site of ['site1', 'site2']) {
-    const source = `#check ${site}\n#target\nPOST ${fixtureUrl}/${site}/rest/v1/product\n#headers\nX-Token: first\n#payload\n`;
+    const source = `#check ${site}\n#target\n${fixtureUrl}/${site}/rest/v1/product\n#action\nPOST\n#headers\nX-Token: first\n#payload\n`;
     setSource(bookEditor, '');
     const before = restDiscoveryCount();
     pasteRest(source);
@@ -122,7 +121,7 @@
   }
   const sitesLoaded = restDiscoveryCount();
   for (const site of ['site1', 'site2', 'site1']) {
-    setSource(bookEditor, `#check cached\n#target\nPOST ${fixtureUrl}/${site}/rest/v1/product\n#headers\nX-Token: changed\n#payload\n`);
+    setSource(bookEditor, `#check cached\n#target\n${fixtureUrl}/${site}/rest/v1/product\n#action\nPOST\n#headers\nX-Token: changed\n#payload\n`);
     await key('Control+Space');
     await wait(() => candidates().some(candidate => candidate.includes(`"${site}"`)));
     assert(!candidates().some(candidate => candidate.includes(`"${site === 'site1' ? 'site2' : 'site1'}"`)),
@@ -131,7 +130,7 @@
   assert(restDiscoveryCount() === sitesLoaded, 'Switching mounted APIs or changing headers must reuse their separate URL caches');
   const badOrigin = fixtureUrl.replace(/:\d+$/, ':0');
   assert(badOrigin !== fixtureUrl, 'The native recovery fixture must use a refused local port');
-  setSource(bookEditor, '#check recovery\n#target\nGET ');
+  setSource(bookEditor, '#check recovery\n#target\n');
   const beforePaste = restDiscoveryCount();
   pasteRest(`${badOrigin}/api/`);
   await during(100, () => assert(restDiscoveryCount() === beforePaste, 'Pasting an unreachable REST URL must not discover it'));
@@ -144,20 +143,20 @@
       requests: nativeProbe.discoveries,
     })}`);
   const failedRestCount = nativeProbe.discoveries.filter(request => request.service === 'rest').length;
-  bookEditor.setSelection({line: 2, ch: 4}, {line: 2, ch: 4 + badOrigin.length});
+  bookEditor.setSelection({line: 2, ch: 0}, {line: 2, ch: badOrigin.length});
   pasteRest(fixtureUrl);
   await during(100, () => assert(restDiscoveryCount() === failedRestCount, 'Correcting a host by paste must not automatically discover'));
   await commitRestUrl(bookEditor);
   await wait(() => find('.status-bar').textContent.includes('Discovery · OK')
     && candidates().includes('/api/v1/Books'),
   'Typing a URL slash after correcting the host must discover and offer real native paths');
-  assert(bookEditor.getLine(2) === `GET ${fixtureUrl}/api/`
+  assert(bookEditor.getLine(2) === `${fixtureUrl}/api/`
     && bookEditor.getCursor().ch === bookEditor.getLine(2).length,
   'Native recovery must preserve the complete corrected URL');
   assert(nativeProbe.discoveries.filter(request => request.service === 'rest').length === failedRestCount + 1,
     'Only the corrected connection may start a fresh native discovery');
   await key('Enter');
-  assert(bookEditor.getLine(2) === `GET ${fixtureUrl}/api/v1/Books`,
+  assert(bookEditor.getLine(2) === `${fixtureUrl}/api/v1/Books`,
     'Recovered automatic path selection must preserve the complete local origin');
   await type('/');
   await type('/');
@@ -165,7 +164,7 @@
     'Typing path slashes after real native success must not rediscover the same API'));
   await key('Escape');
   const bookEndpoint = `${fixtureUrl}/api/v1/Books/`;
-  const bookPrefix = method => `#check test1\n#target\n${method} ${bookEndpoint}\n#headers\nContent-Type: application/json\nAccept: application/json\n#payload\n`;
+  const bookPrefix = method => `#check test1\n#target\n${bookEndpoint}\n#action\n${method}\n#headers\nContent-Type: application/json\nAccept: application/json\n#payload\n`;
   const bookFields = ['"id": ', '"title": ""', '"description": ""', '"pageCount": ', '"excerpt": ""', '"publishDate": ""'];
   setSource(bookEditor, bookPrefix('POST'));
   await key('Control+Space');
@@ -200,7 +199,7 @@
   }
   assert(JSON.parse(bookEditor.getValue().split('#payload\n')[1]).publishDate === '2026-10-24T00:00:00Z',
     'Selecting Book fields must produce valid JSON, including automatic commas');
-  assert(bookEditor.getLine(2) === `POST ${bookEndpoint}`,
+  assert(bookEditor.getLine(2) === bookEndpoint,
     'Schema matching must not remove the trailing slash from the actual request URL');
   for (const method of ['GET', 'POST']) {
     setSource(bookEditor, `${bookPrefix(method)}{\n  "`);
@@ -215,7 +214,7 @@
   const magentoPath = '/rest/default/V1/integration/admin/token';
   const magentoUrl = `http://{{var:magento}}${magentoPath}`;
   const magentoPrefix = endpoint =>
-    `#check magento\n#target\nPOST ${endpoint}\n#headers\nContent-Type: application/json\n#payload\n`;
+    `#check magento\n#target\n${endpoint}\n#action\nPOST\n#headers\nContent-Type: application/json\n#payload\n`;
   const credentials = ['"username": ""', '"password": ""'];
   const checkLocalBodyHints = async () => {
     for (const source of [magentoPrefix(magentoUrl).trimEnd(), magentoPrefix(magentoUrl)]) {
@@ -279,7 +278,7 @@
   assert(JSON.stringify(JSON.parse(magentoEditor.getValue().split('#payload\n')[1]))
     === JSON.stringify({username: 'fixture-admin', password: 'fixture-password'}),
   'Schema hints must create a valid credentials body without sending an authentication request');
-  assert(magentoEditor.getLine(2) === `POST ${magentoUrl}`,
+  assert(magentoEditor.getLine(2) === magentoUrl,
     'Body completion must preserve the raw host variable in the request document');
   for (const endpoint of [
     `{{var:magentoBase}}${magentoPath}`,
@@ -290,7 +289,7 @@
     await type('"');
     await wait(() => credentials.every(field => candidates().includes(field)),
       `Cached body hints must also resolve this URL template: ${endpoint}`);
-    assert(magentoEditor.getLine(2) === `POST ${endpoint}`,
+    assert(magentoEditor.getLine(2) === endpoint,
       'Looking up a body schema must not expand variables inside the editor');
   }
   await during(650, () => assert(restDiscoveryCount() === magentoLoaded,
@@ -328,7 +327,7 @@
   const completedCredentials = JSON.parse(magentoEditor.getValue().split('#payload\n')[1]);
   assert(completedCredentials.scope === 'fixture-scope' && Object.keys(completedCredentials).length === 3,
     'Adding an optional field after the required template must preserve valid JSON and automatic commas');
-  assert(restDiscoveryCount() === magentoLoaded && magentoEditor.getLine(2) === `POST ${magentoUrl}`,
+  assert(restDiscoveryCount() === magentoLoaded && magentoEditor.getLine(2) === magentoUrl,
     'Required-template selection and filling must not rediscover or rewrite the connection URL');
   await key('Escape');
   const enumUrl = `http://{{var:magento}}/rest/default/V1/enum-test`;
@@ -392,7 +391,8 @@
   await click(testid('console-service-rest'));
   const categoryPath = '/rest/default/V1/categories/{categoryId}/move';
   const pathEditor = editorOf('console-editor');
-  setSource(pathEditor, '#check move\n#target\nPUT http://{{var:magento}}/rest/default/V1/categories/');
+  setSource(pathEditor, '#check move\n#target\nhttp://{{var:magento}}/rest/default/V1/categories/\n#action\nPUT');
+  pathEditor.setCursor({line: 2, ch: pathEditor.getLine(2).length});
   await pick(pathEditor, categoryPath);
   const checkPathParameterColor = async (editor, line) => {
     await wait(() => editor.getLineTokens(line).some(token => token.type?.includes('rest-path-param')));
@@ -412,9 +412,9 @@
     'Replacing a path parameter must clear its highlight without modifying URL variables');
   };
   await checkPathParameterColor(pathEditor, 2);
-  assert(pathEditor.getLine(2) === 'PUT http://{{var:magento}}/rest/default/V1/categories/42/move',
+  assert(pathEditor.getLine(2) === 'http://{{var:magento}}/rest/default/V1/categories/42/move',
     'Discovery insertion must retain the full method and variable-based URL');
-  setSource(pathEditor, `#check move\n#target\nPUT http://{{var:magento}}${categoryPath}\n#payload\n{"note":"{categoryId}"}`);
+  setSource(pathEditor, `#check move\n#target\nhttp://{{var:magento}}${categoryPath}\n#action\nPUT\n#payload\n{"note":"{categoryId}"}`);
   await checkPathParameterColor(pathEditor, 2);
   assert(!pathEditor.getLineTokens(4).some(token => token.type?.includes('rest-path-param')),
     'Braces inside a REST JSON body must not become URL-parameter tokens');
@@ -569,7 +569,7 @@
   assert(testid('console-import', doc).textContent.startsWith('Import curl'), 'REST imports curl');
   assert(toolbar() === loadingToolbar, `Loading modules must not shift the toolbar: ${loadingToolbar} → ${toolbar()}`);
   await click(button(/^Import/, doc));
-  await wait(() => editorOf('console-editor', doc).getValue().includes('POST https://fixture.invalid/import'));
+  await wait(() => editorOf('console-editor', doc).getValue().includes('https://fixture.invalid/import\n#action\nPOST'));
   assert(editorOf('console-editor', doc).getValue().includes('X-Fixture: imported'), 'Import headers');
   assert(win.nativeProbe.clipboardReads === 1, 'Import reads synthetic clipboard exactly once');
   const transferStatus = () => testid('console-transfer-status', doc).textContent;

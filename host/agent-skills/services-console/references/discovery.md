@@ -19,7 +19,7 @@ There is no Discover button. Alt+Space in the editor requests discovery for
 the check at the cursor. The automatic triggers are:
 
 1. Select the rest service tab and the relevant check. Its `#target` must
-   contain METHOD URL, and any authentication headers belong in `#headers`.
+   contain the URL (the method goes in `#action`), and any authentication headers belong in `#headers`.
 2. In the URL, typing `/` triggers discovery for the prefix up to that slash.
    For an existing URL, delete and retype its slash immediately after the host
    or at the API mount boundary. Do not add an extra slash or execute the check.
@@ -32,7 +32,7 @@ the check at the cursor. The automatic triggers are:
    Debug for probe addresses and transport/authentication failures.
 5. Read fresh console_context, then console_schema if schemaAvailable is true.
 
-For `PUT https://fakerestapi.azurewebsites.net/api/v1/Books/123`, a concrete
+For the `PUT` of `https://fakerestapi.azurewebsites.net/api/v1/Books/123`, a concrete
 instruction is to retype the existing slash between the host and `api`, or
 request Ctrl+Space in its `#payload`. Shift+Enter would run the PUT, not discovery;
 do not suggest executing it just to obtain schema.

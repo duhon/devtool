@@ -1,4 +1,4 @@
-//! Completion in a REST check: section markers, methods, URLs and OpenAPI paths, headers
+//! Completion in a REST check: section markers, `#action` methods, URLs and OpenAPI paths, headers
 //! and JSON body fields from the discovered schema.
 
 use super::Language;
@@ -105,7 +105,21 @@ pub fn complete<P: Probe>(
             {
                 return finish(line_start, pos, "", unused());
             }
-            endpoint_line(lang, discovery, line_start, full, before, pos)
+            let method = method_of(check);
+            endpoint_line(discovery, &method, line_start, full, before, pos)
+        }
+        "action" => {
+            if before.trim().is_empty()
+                && (body_start..line).any(|i| !lines.text(i).trim().is_empty())
+            {
+                return finish(line_start, pos, "", unused());
+            }
+            let methods = lang
+                .methods
+                .iter()
+                .map(|method| item(*method, "Method", "keyword"))
+                .collect();
+            finish(line_start, pos, before.trim(), methods)
         }
         "headers" => {
             let used = headers::used(
@@ -141,7 +155,7 @@ pub fn complete<P: Probe>(
                 .0
                 .get(section_end)
                 .map_or(text.len(), |(at, _)| at - 1);
-            let fields = body_fields(discovery, check.text_of("target"));
+            let fields = body_fields(discovery, check);
             let mut result = json::complete(&fields, &text[start..end], pos - start);
             result.from += start as u32;
             result.to += start as u32;
@@ -151,31 +165,31 @@ pub fn complete<P: Probe>(
     }
 }
 
+/// The method of the `#action`, GET without one.
+fn method_of(check: &Check) -> String {
+    let action = check.text_of("action").trim();
+    if action.is_empty() {
+        "GET".into()
+    } else {
+        action.to_owned()
+    }
+}
+
 fn endpoint_line<P: Probe>(
-    lang: &Language,
     discovery: &Discovery<P>,
+    method: &str,
     line_start: usize,
     full: &str,
     before: &str,
     pos: usize,
 ) -> Completions {
-    let value_start = before.find(char::is_whitespace).unwrap_or(0);
-    if value_start == 0 {
-        let methods = lang
-            .methods
-            .iter()
-            .map(|method| item(format!("{method} "), "Method", "keyword"))
-            .collect();
-        return finish(line_start, pos, before, methods);
-    }
-    let value = before[value_start..].trim_start();
+    let value = before.trim_start();
     let value_at = before.len() - value.len();
     if value.contains("://") {
         let existing = full[before.len()..].starts_with('/');
         let value = if existing { &full[value_at..] } else { value };
         let scheme = value.find("://").map_or(0, |i| i + 3);
         if let Some(path) = value[scheme..].find('/').map(|i| i + scheme) {
-            let method = before.split_whitespace().next().unwrap_or("GET");
             let schema = discovery.schema_or_origin(discovery.resolved(value));
             let paths = schema
                 .and_then(|schema| schema["paths"].as_array())
@@ -206,11 +220,10 @@ fn endpoint_line<P: Probe>(
     finish(line_start + value_at, pos, value, urls)
 }
 
-/// The body fields of the endpoint's `METHOD path` in a discovered schema.
-fn body_fields<P: Probe>(discovery: &Discovery<P>, endpoint: &str) -> Value {
-    let mut words = endpoint.split_whitespace();
-    let method = words.next().unwrap_or("GET");
-    let Some(url) = words.next().map(|url| discovery.resolved(url)) else {
+/// The body fields of the check's `METHOD path` in a discovered schema.
+fn body_fields<P: Probe>(discovery: &Discovery<P>, check: &Check) -> Value {
+    let method = method_of(check);
+    let Some(url) = endpoint_url(check.text_of("target")).map(|url| discovery.resolved(url)) else {
         return Value::Null;
     };
     let path = endpoint::path(url);
@@ -230,7 +243,7 @@ fn body_fields<P: Probe>(discovery: &Discovery<P>, endpoint: &str) -> Value {
                 } else {
                     pattern.trim_end_matches('/')
                 };
-                let matches = m.eq_ignore_ascii_case(method)
+                let matches = m.eq_ignore_ascii_case(&method)
                     && pattern.split('/').count() == path.split('/').count()
                     && pattern.split('/').zip(path.split('/')).all(|(a, b)| {
                         a == b || (!b.is_empty() && a.starts_with('{') && a.ends_with('}'))

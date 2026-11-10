@@ -1,6 +1,6 @@
 ---
 name: module-rest
-description: "REST checks in the Services DevTools Console: METHOD and URL under #target, #headers and #payload. Load before writing, editing or explaining REST requests."
+description: "REST checks in the Services DevTools Console: the URL under #target, the HTTP method under #action, #headers and #payload. Load before writing, editing or explaining REST requests."
 ---
 
 # REST service
@@ -8,7 +8,9 @@ description: "REST checks in the Services DevTools Console: METHOD and URL under
 ```text
 #check Book example
 #target
-PUT https://fakerestapi.azurewebsites.net/api/v1/Books/123
+https://fakerestapi.azurewebsites.net/api/v1/Books/123
+#action
+PUT
 #headers
 Content-Type: application/json
 Accept: application/json
@@ -16,8 +18,9 @@ Accept: application/json
 {"id": 123}
 ```
 
-The method and URL are together under `#target`, not a separate bare method
-line. Supported methods are GET, POST, PUT, PATCH, DELETE and HEAD. `#headers`
+`#target` holds only the URL; a method written there is an error. The HTTP
+method goes under `#action`: GET, POST, PUT, PATCH, DELETE, HEAD or OPTIONS.
+Without `#action` the method is GET, even with a `#payload`. `#headers`
 uses one Name: value per line. `#payload` is optional request text.
 Path parameters, enum suggestions and JSON body templates depend on matching
 discovered metadata; consult the discovery topic, not a guessed UI button.

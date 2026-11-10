@@ -24,7 +24,7 @@
     await key('Shift+Enter');
   };
   const terminal = name => `#check ${name}\n#target\nsh -c\n#payload\nprintf '${name}-pid:%s\\n' $$; ${name === 'first' ? "printf '#check second\\n#target\\nsh -c\\n#payload\\nneighbor-copy\\n'; " : ""}while :; do printf '${name}-tick\\n'; sleep 0.2; done`;
-  const rest = name => `#check ${name}\n#target\nGET ${fixtureUrl}/stop-slow?${name}`;
+  const rest = name => `#check ${name}\n#target\n${fixtureUrl}/stop-slow?${name}`;
   const count = async () => (await (await fetch(`${fixtureUrl}/stop-count`)).json()).count;
   const openAgent = async () => {
     await testDriver.openPanel('agent', 'console-agent');
@@ -217,7 +217,7 @@
   await click(testid('console-service-rest'));
   assert(light(testid('console-service-terminal')) === 'running',
     'The service tab must expose a background Terminal process');
-  setSource(editor(), `${rest('manual')}\n\n${rest('agentchild')}\n\n#check success\n#target\nGET ${fixtureUrl}/status-success\n\n#check failure\n#target\nGET`);
+  setSource(editor(), `${rest('manual')}\n\n${rest('agentchild')}\n\n#check success\n#target\n${fixtureUrl}/status-success\n\n#check failure\n#target\n`);
   await wait(() => checks().length === 4);
   await select(2);
   await run();

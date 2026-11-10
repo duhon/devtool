@@ -1,5 +1,5 @@
-//! The OpenSearch service: `#target` (`METHOD URL`, the index and API in the URL path),
-//! `#headers` and a JSON `#payload`, NDJSON for bulk and multi-search, sent through the Host
+//! The OpenSearch service: `#target` (the URL with the index and API in its path),
+//! `#action` (the method, GET by default), `#headers` and a JSON `#payload`, NDJSON for bulk and multi-search, sent through the Host
 //! `http` driver; completion of indices, aliases and mapped fields from discovery.
 
 mod discovery;
@@ -12,18 +12,16 @@ use services_sdk::{
     Check, Chunk, Cmd, Completions, DriverCall, Event, Fold, Line, Module, Rendered, Subscriptions,
 };
 
-/// The methods of the console's `#target`.
-const METHODS: [&str; 7] = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
 /// APIs whose body is NDJSON: one JSON document per line.
 const NDJSON_APIS: [&str; 3] = ["/_bulk", "/_msearch", "/_msearch/template"];
 /// Searches and bulk loads may run long.
 const TIMEOUT_MS: u64 = 120_000;
 const ENDPOINT: &str =
-    "#target must be METHOD URL, for example GET http://localhost:9200/logs-*/_search";
+    "#target must be an http(s) URL, for example http://localhost:9200/logs-*/_search";
 
 const LANGUAGE: Language = Language {
-    sections: &["target", "headers", "payload"],
-    methods: &METHODS,
+    sections: &["target", "action", "headers", "payload"],
+    methods: &endpoint::METHODS,
     headers: &[
         "Authorization: ",
         "Accept: application/json",
@@ -42,13 +40,9 @@ pub struct OpenSearch {
 /// without a Content-Type gets the JSON one, or NDJSON's for bulk and multi-search, whose
 /// body then also ends with a newline. Writes are never redirected.
 pub fn request(check: &Check) -> Result<Request, String> {
-    let words: Vec<_> = check.text_of("target").split_whitespace().collect();
-    let [method, url] = words[..] else {
-        return Err(ENDPOINT.into());
-    };
-    let method = method.to_ascii_uppercase();
+    let (method, url) = LANGUAGE.request_line(check)?;
     let http = url.starts_with("http://") || url.starts_with("https://");
-    if !METHODS.contains(&method.as_str()) || !http || url.contains('#') {
+    if !http || url.contains('#') {
         return Err(ENDPOINT.into());
     }
     let mut headers = headers::pairs(check.text_of("headers"));

@@ -27,18 +27,19 @@ fn modules() -> Modules {
     Modules::new("3.7.0", drivers(), Box::new(|| 0.0))
 }
 
-/// A service: `#target METHOD URL`, renders the status and body.
+/// A service: `#target` URL, `#action` method (GET), renders the status and body.
 #[derive(Default)]
 struct Rest;
 
 impl Module for Rest {
     type Msg = ();
     fn build(&self, check: &Check) -> Result<DriverCall, String> {
-        let (method, url) = check
-            .text_of("target")
-            .split_once(' ')
-            .ok_or("#target needs a method and a URL")?;
-        Ok(http::Request::new(method, url).call())
+        let url = check.text_of("target");
+        if url.is_empty() {
+            return Err("#target needs a URL".into());
+        }
+        let method = Some(check.text_of("action")).filter(|m| !m.is_empty());
+        Ok(http::Request::new(method.unwrap_or("GET"), url).call())
     }
     fn render(&self, chunk: &Chunk) -> Result<Rendered, String> {
         let response = http::Response::parse(&chunk.response())?;
@@ -318,21 +319,21 @@ fn a_hidden_panel_stops_its_work_and_gets_no_events() {
 fn the_request_pipeline_runs_the_service_then_panels_in_order() {
     let mut modules = modules();
     load(&mut modules);
-    let check = document::check("rest", "#target GET https://{{host}}/a", &Value::Null);
+    let check = document::check("rest", "#target https://{{host}}/a", &Value::Null);
     let call = modules.prepare("rest", check).unwrap();
     assert_eq!(
         call.request()["headers"],
         json!([["X-Seen", "https://example.test/a"]])
     );
 
-    let missing = document::check("rest", "#target GET https://{{missing}}/", &Value::Null);
+    let missing = document::check("rest", "#target https://{{missing}}/", &Value::Null);
     assert_eq!(
         modules.prepare("rest", missing),
         Err("Unknown variable {{missing}}".into())
     );
     assert_eq!(
         modules.prepare("rest", document::check("rest", "#target", &Value::Null)),
-        Err("#target needs a method and a URL".into())
+        Err("#target needs a URL".into())
     );
 
     let response = json!({"status": 201, "body": "made"});

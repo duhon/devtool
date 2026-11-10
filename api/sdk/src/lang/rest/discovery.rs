@@ -116,11 +116,9 @@ impl<P: Probe> Default for Discovery<P> {
     }
 }
 
-/// The URL of an endpoint section: `METHOD URL` or a bare URL.
+/// The URL of a target section.
 pub fn endpoint_url(endpoint: &str) -> Option<&str> {
-    let mut words = endpoint.split_whitespace();
-    let first = words.next()?;
-    Some(words.next().unwrap_or(first))
+    endpoint.split_whitespace().next()
 }
 
 /// The address discovery keys on: an `http(s)://authority/path` URL without its query.

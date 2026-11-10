@@ -156,7 +156,7 @@ fn offset(source: &str, position: &Position) -> Result<usize, String> {
 fn editing_fixture() -> EditHistory {
     let mut regions = vec![];
     let source = replace_response(
-        "#check first\n#target\nGET https://fixture.invalid/first\n\n#check second\n#target\nGET https://fixture.invalid/second\n\n#check moved\n#target\nGET https://fixture.invalid/moved",
+        "#check first\n#target\nhttps://fixture.invalid/first\n\n#check second\n#target\nhttps://fixture.invalid/second\n\n#check moved\n#target\nhttps://fixture.invalid/moved",
         0,
         "OK",
         "literal output\n#check literal-output",
@@ -232,7 +232,7 @@ fn line_edit_batches_match_edits_applied_one_by_one() {
         .collect();
     edits.reverse();
     let (ids, batched, single) = batch_and_single(&edits);
-    assert!(batched.text.contains("GET https://pin.invalid/moved"));
+    assert!(batched.text.contains("https://pin.invalid/moved"));
     assert!(batched.text.contains("#check two\n"));
     assert_eq!(batched.text, single.text);
     assert_eq!(batched.regions, single.regions);
@@ -376,7 +376,7 @@ fn inserting_a_check_inside_output_promotes_only_the_user_inserted_marker() {
     let header = history.regions()[0].header;
     let before = history.regions().to_vec();
     let original = history.text().to_owned();
-    let inserted = "#check pasted\n#target\nGET https://fixture.invalid/pasted\n\n";
+    let inserted = "#check pasted\n#target\nhttps://fixture.invalid/pasted\n\n";
     let pasted = edit(
         &mut history,
         (header + 2, 0),
@@ -393,7 +393,7 @@ fn inserting_a_check_inside_output_promotes_only_the_user_inserted_marker() {
         request_at(&pasted.text, header + 2, &pasted.regions)
             .unwrap()
             .text,
-        "#target\nGET https://fixture.invalid/pasted"
+        "#target\nhttps://fixture.invalid/pasted"
     );
     assert_eq!(
         request_at(&pasted.text, header + 2, &pasted.regions)

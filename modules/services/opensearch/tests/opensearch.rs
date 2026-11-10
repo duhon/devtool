@@ -154,7 +154,7 @@ fn discover(
 
 fn source(path: &str) -> String {
     format!(
-        "#check test\n#target\nGET http://example.test/proxy/{path}\n#headers\nAuthorization: Basic fixture\n#payload\n"
+        "#check test\n#target\nhttp://example.test/proxy/{path}\n#headers\nAuthorization: Basic fixture\n#payload\n"
     )
 }
 
@@ -192,16 +192,16 @@ fn inserts(completions: &Completions) -> Vec<String> {
 
 /// Body completion for `body` in a request to `path` under the fixture cluster.
 fn body(module: &OpenSearch, path: &str, body: &str) -> Vec<String> {
-    let text = format!("#target\nGET http://example.test/proxy/{path}\n#payload\n{body}");
+    let text = format!("#target\nhttp://example.test/proxy/{path}\n#payload\n{body}");
     inserts(&complete(module, &text))
 }
 
 #[test]
-fn endpoint_is_method_and_url_and_bodies_pass_unchanged() {
+fn target_is_url_action_is_method_and_bodies_pass_unchanged() {
     let module = OpenSearch::default();
     let search = request(
         &module,
-        "#target\nget https://example.test:9200/logs-*/_search?size=5\n#headers\nAuthorization: Basic eA==\n#payload\n{\"query\":{\"match_all\":{}}}",
+        "#target\nhttps://example.test:9200/logs-*/_search?size=5\n#action\nget\n#headers\nAuthorization: Basic eA==\n#payload\n{\"query\":{\"match_all\":{}}}",
     )
     .unwrap();
     assert_eq!(search["method"], "GET");
@@ -215,18 +215,27 @@ fn endpoint_is_method_and_url_and_bodies_pass_unchanged() {
     assert_eq!(search["timeoutMs"], 120_000);
     assert_eq!(search["redirects"], 0);
     for endpoint in [
-        "GET",
-        "GET http://localhost:9200/ extra",
-        "TRACE http://localhost:9200/",
-        "http://localhost:9200/",
-        "GET /_search",
-        "GET file:///tmp/test",
-        "GET http://localhost:9200/#fragment",
+        "",
+        "http://localhost:9200/ extra",
+        "/_search",
+        "file:///tmp/test",
+        "http://localhost:9200/#fragment",
     ] {
         let error = request(&module, &format!("#target\n{endpoint}")).unwrap_err();
-        assert!(error.contains("METHOD URL"), "{endpoint}: {error}");
+        assert!(error.contains("#target"), "{endpoint}: {error}");
     }
-    let empty = request(&module, "#target\nGET http://localhost:9200/\n#payload\n").unwrap();
+    let error = request(&module, "#target\nGET http://localhost:9200/").unwrap_err();
+    assert!(error.contains("put the method GET in #action"), "{error}");
+    let error = request(&module, "#target\nhttp://localhost:9200/\n#action\nTRACE").unwrap_err();
+    assert!(error.contains("#action must be one HTTP method"), "{error}");
+    let get = request(
+        &module,
+        "#target\nhttp://localhost:9200/_search\n#payload\n{}",
+    )
+    .unwrap();
+    assert_eq!(get["method"], "GET");
+    assert_eq!(get["body"], "{}");
+    let empty = request(&module, "#target\nhttp://localhost:9200/\n#payload\n").unwrap();
     assert!(empty["body"].is_null() && empty["headers"] == json!([]));
 }
 
@@ -242,7 +251,7 @@ fn ndjson_apis_get_their_content_type_and_exactly_one_final_newline() {
         for body in ["{}\n{}", "{}\n{}\n"] {
             let request = request(
                 &module,
-                &format!("#target\nPOST http://localhost:9200{path}\n#payload\n{body}"),
+                &format!("#target\nhttp://localhost:9200{path}\n#action\nPOST\n#payload\n{body}"),
             )
             .unwrap();
             assert_eq!(request["body"], "{}\n{}\n", "{path}");
@@ -251,14 +260,14 @@ fn ndjson_apis_get_their_content_type_and_exactly_one_final_newline() {
     }
     let bulk = request(
         &module,
-        "#target\nPOST http://localhost:9200/_bulk\n#headers\ncontent-type: application/json\n#payload\n{}",
+        "#target\nhttp://localhost:9200/_bulk\n#action\nPOST\n#headers\ncontent-type: application/json\n#payload\n{}",
     )
     .unwrap();
     assert_eq!(header(&bulk, "content-type"), ["application/json"]);
     assert_eq!(bulk["body"], "{}\n");
     let custom = request(
         &module,
-        "#target\nPOST http://localhost:9200/custom\n#headers\nContent-Type: application/x-ndjson; charset=utf-8\n#payload\n{}",
+        "#target\nhttp://localhost:9200/custom\n#action\nPOST\n#headers\nContent-Type: application/x-ndjson; charset=utf-8\n#payload\n{}",
     )
     .unwrap();
     assert_eq!(custom["body"], "{}\n");
@@ -288,8 +297,8 @@ fn responses_render_like_rest() {
 fn highlight_styles_options_and_the_ndjson_body() {
     let module = OpenSearch::default();
     let lines: Vec<String> = [
-        "#target",
-        "OPTIONS http://localhost:9200/_bulk",
+        "#action",
+        "OPTIONS",
         "#payload",
         "{\"index\":{}}",
         "{\"a\":1}",
@@ -298,7 +307,7 @@ fn highlight_styles_options_and_the_ndjson_body() {
     .to_vec();
     let highlighted = module.highlight(&[], &lines, &[]);
     assert_eq!(highlighted[1].tokens[0].kind, "property");
-    assert_eq!(highlighted[1].tokens[0].len, "OPTIONS ".len() as u32);
+    assert_eq!(highlighted[1].tokens[0].len, "OPTIONS".len() as u32);
     assert!(
         highlighted[4]
             .tokens
@@ -316,26 +325,22 @@ fn highlight_styles_options_and_the_ndjson_body() {
 }
 
 #[test]
-fn endpoint_completion_offers_the_methods_and_valid_urls() {
+fn completion_offers_the_methods_in_action_and_valid_urls() {
     let module = OpenSearch::default();
-    let methods = inserts(&complete(&module, "#check test\n#target\n"));
+    let methods = inserts(&complete(&module, "#check test\n#action\n"));
     assert_eq!(
         methods,
-        [
-            "GET ", "POST ", "PUT ", "PATCH ", "DELETE ", "HEAD ", "OPTIONS "
-        ]
+        ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
     );
-    for endpoint in ["GET ", "GET h", "POST ", "POST h"] {
+    for endpoint in ["", "h"] {
         let candidates = inserts(&complete(
             &module,
             &format!("#check test\n#target\n{endpoint}"),
         ));
         assert!(!candidates.is_empty(), "{endpoint}");
         for candidate in candidates {
-            let method = endpoint.split_whitespace().next().unwrap();
-            let params = request(&module, &format!("#target\n{method} {candidate}x"))
+            request(&module, &format!("#target\n{candidate}x"))
                 .unwrap_or_else(|error| panic!("{candidate}: {error}"));
-            assert_eq!(params["method"], method);
         }
     }
 }
@@ -355,7 +360,7 @@ fn discovery_is_cached_at_the_cluster_root_and_service_apis_apart() {
     assert_eq!(statuses(&last), ["Discovery · OK"]);
     let paths = inserts(&complete(
         &module,
-        "#target\nGET http://example.test/proxy/_cluster/he",
+        "#target\nhttp://example.test/proxy/_cluster/he",
     ));
     assert!(
         paths.contains(&"/proxy/_cluster/health".to_owned()),
@@ -412,7 +417,7 @@ fn paths_complete_with_the_indices_and_aliases() {
     let module = discovered();
     let paths = inserts(&complete(
         &module,
-        "#check test\n#target\nGET http://example.test/proxy/re",
+        "#check test\n#target\nhttp://example.test/proxy/re",
     ));
     assert!(
         paths.contains(&"/proxy/recent/_search".to_owned()),
@@ -502,7 +507,7 @@ fn bool_clauses_offer_the_leaf_queries_in_every_item() {
 #[test]
 fn header_hints_lead_with_the_module_ones_and_skip_used_names() {
     let module = discovered();
-    let endpoint = "#check test\n#target\nGET http://example.test/proxy/logs/_search\n#headers\n";
+    let endpoint = "#check test\n#target\nhttp://example.test/proxy/logs/_search\n#headers\n";
     assert_eq!(
         inserts(&complete(&module, endpoint)),
         [

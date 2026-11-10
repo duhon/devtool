@@ -62,7 +62,7 @@ fn styled(runs: &[(String, Style)], text: &str) -> Style {
 fn the_module_colors_checks_with_utf16_spans_and_the_console_overlays_variables() {
     services_shell::link();
     let source = lines(
-        "#check Привет 😀\n#target\nGET https://пример.рф/{{:host}}/pets/{id}\n#headers\nX-Имя😀: {{:token}}\n#payload\n{\"имя\": \"значение\"}\n#responce OK\n{\"ok\": true}",
+        "#check Привет 😀\n#target\nhttps://пример.рф/{{:host}}/pets/{id}\n#headers\nX-Имя😀: {{:token}}\n#payload\n{\"имя\": \"значение\"}\n#responce OK\n{\"ok\": true}",
     );
     let mut highlighter = highlighter();
     assert_eq!(
@@ -108,39 +108,41 @@ fn module_completions_merge_with_console_markers_options_and_variables() {
     };
     assert_eq!(
         texts("#check\n#", 1, 1),
-        ["#target", "#headers", "#payload", "#options", "#check"]
+        [
+            "#target", "#action", "#headers", "#payload", "#options", "#check"
+        ]
     );
     // A used section is not offered again; `#check` always is.
     assert_eq!(
-        texts("#check\n#target\nGET https://a/\n#", 3, 1),
-        ["#headers", "#payload", "#options", "#check"]
+        texts("#check\n#target\nhttps://a/\n#", 3, 1),
+        ["#action", "#headers", "#payload", "#options", "#check"]
     );
     assert!(texts("#check\n#options\n", 2, 0).contains(&"Repeat: 5s".to_owned()));
-    let variables = at("#check\n#target\nGET https://a\n#headers\nX: {{", 4, 5);
+    let variables = at("#check\n#target\nhttps://a\n#headers\nX: {{", 4, 5);
     assert_eq!((variables.from, variables.to), (3, 5));
     assert_eq!(variables.candidates[0].text, "{{:");
     // Without a check only `#check` starts one.
     assert_eq!(texts("#", 0, 1), ["#check"]);
-    let header = at("#check\n#target\nGET https://a\n#headers\nAccept-E", 4, 8);
+    let header = at("#check\n#target\nhttps://a\n#headers\nAccept-E", 4, 8);
     assert_eq!((header.from, header.to), (0, 8));
     assert!(header.candidates[0].text.starts_with("Accept-Encoding"));
     // The module completes on the last, empty line too.
-    let body = "#check\n#target\nPOST https://a/x\n#payload\n";
-    assert_eq!(texts(body, 4, 0), texts(&format!("{body}\n#check"), 4, 0));
-    assert!(!texts(body, 4, 0).is_empty());
+    let body = "#check\n#target\nhttps://a/x\n#action\nPOST\n#payload\n";
+    assert_eq!(texts(body, 6, 0), texts(&format!("{body}\n#check"), 6, 0));
+    assert!(!texts(body, 6, 0).is_empty());
 }
 
 #[test]
 fn checks_and_sections_fold_where_the_module_says() {
     services_shell::link();
-    let source = lines("#check\n#target\nGET https://a\n#payload\n{\n  \"a\": 1\n}");
+    let source = lines("#check\n#target\nhttps://a\n#payload\n{\n  \"a\": 1\n}");
     let mut highlighter = highlighter();
     let fold = |highlighter: &mut Highlighter, line| {
         fold::range(highlighter, &source, line)
             .map(|fold| ((fold.from.line, fold.from.ch), (fold.to.line, fold.to.ch)))
     };
     assert_eq!(fold(&mut highlighter, 0), Some(((0, 6), (6, 1))));
-    assert_eq!(fold(&mut highlighter, 1), Some(((1, 7), (2, 13))));
+    assert_eq!(fold(&mut highlighter, 1), Some(((1, 7), (2, 9))));
     assert_eq!(fold(&mut highlighter, 4), Some(((4, 1), (6, 0))));
     assert_eq!(fold(&mut highlighter, 2), None);
 }
@@ -150,7 +152,7 @@ fn a_run_is_the_modules_http_call_with_the_console_options() {
     services_shell::link();
     let (call, options) = console::parse_run(
         "rest",
-        "#target\nPOST https://a/x\n#headers\nX: y\n#options\nRepeat: 5s\n#payload\n{}",
+        "#target\nhttps://a/x\n#action\nPOST\n#headers\nX: y\n#options\nRepeat: 5s\n#payload\n{}",
     )
     .unwrap();
     assert_eq!(
@@ -161,14 +163,14 @@ fn a_run_is_the_modules_http_call_with_the_console_options() {
     assert_eq!(options.repeat, Some(5000));
     // before_request passes the Variables panel, which reports unknown refs.
     assert_eq!(
-        console::parse_run("rest", "#target\nGET https://a/{{:x}}").unwrap_err(),
+        console::parse_run("rest", "#target\nhttps://a/{{:x}}").unwrap_err(),
         "Missing environment variable(s): x"
     );
     assert_eq!(
-        console::parse_run("rest", "#target\nhttps://a").unwrap_err(),
-        "#target must be METHOD URL"
+        console::parse_run("rest", "#target\nGET https://a").unwrap_err(),
+        "#target holds only the URL: put the method GET in #action"
     );
-    assert!(console::parse_run("rest", "#target\nGET https://a\n#options\nRepeat: soon").is_err());
+    assert!(console::parse_run("rest", "#target\nhttps://a\n#options\nRepeat: soon").is_err());
 }
 
 #[test]
@@ -178,18 +180,18 @@ fn curl_export_and_import_go_through_the_module() {
     assert_eq!(
         console::export(
             "rest",
-            "#target\nPOST https://a\n#options\nRepeat: 5s\n#payload\n{}"
+            "#target\nhttps://a\n#action\nPOST\n#options\nRepeat: 5s\n#payload\n{}"
         )
         .unwrap(),
         "curl \\\n  --request POST \\\n  --url 'https://a' \\\n  --data '{}'"
     );
     assert_eq!(
-        console::export("rest", "#target\nGET https://{{var:host}}/a").unwrap_err(),
+        console::export("rest", "#target\nhttps://{{var:host}}/a").unwrap_err(),
         "Variables could not be resolved: Unknown variable \"host\" in var"
     );
     assert_eq!(
         console::import("rest", "curl -X POST https://a -d '{}'").unwrap(),
-        "#target\nPOST https://a\n#payload\n{}"
+        "#target\nhttps://a\n#action\nPOST\n#payload\n{}"
     );
 }
 
@@ -201,11 +203,11 @@ fn rest_is_a_kernel_tab_ordered_by_its_manifest() {
     assert_eq!(services::default_service(), "rest");
     assert_eq!(
         console::markers("rest"),
-        ["target", "headers", "payload", "options"]
+        ["target", "action", "headers", "payload", "options"]
     );
     assert_eq!(
         services::template_sections("rest"),
-        ["check", "target", "headers", "payload", "options"]
+        ["check", "target", "action", "headers", "payload", "options"]
     );
 }
 
@@ -238,13 +240,13 @@ fn discovery_runs_as_module_driver_calls_and_reports_its_status() {
     services_shell::link();
     let document = check(
         "rest",
-        "#target\nGET https://fixture.invalid/api/pets",
+        "#target\nhttps://fixture.invalid/api/pets",
         &Value::Null,
     );
     assert!(events::broadcast(events::document(document)).is_empty());
     let check = check(
         "rest",
-        "#target\nGET https://fixture.invalid/api/pets",
+        "#target\nhttps://fixture.invalid/api/pets",
         &Value::Null,
     );
     let effects = events::broadcast(events::hints(check, 0));
@@ -287,7 +289,7 @@ fn discovery_runs_as_module_driver_calls_and_reports_its_status() {
 #[test]
 fn a_field_after_a_value_puts_its_comma_after_the_value() {
     services_shell::link();
-    let source = "#check\n#target\nPOST http://comma.invalid/api/users\n#payload\n";
+    let source = "#check\n#target\nhttp://comma.invalid/api/users\n#action\nPOST\n#payload\n";
     let check = check("rest", &source[7..], &Value::Null);
     let mut pending: Vec<(String, String)> = Vec::new();
     let calls = |effects: Vec<Effect>| -> Vec<(String, String)> {
@@ -317,8 +319,8 @@ fn a_field_after_a_value_puts_its_comma_after_the_value() {
         })));
     }
     let source = format!("{source}{{\n  \"name\": \"x\"\n  \n}}");
-    let completion = suggest("rest", "", &source, 6, 2, &[]);
-    assert_eq!(completion.comma, Some((5, 13)));
+    let completion = suggest("rest", "", &source, 8, 2, &[]);
+    assert_eq!(completion.comma, Some((7, 13)));
     assert_eq!((completion.from, completion.to), (2, 2));
     assert_eq!(completion.candidates[0].text, "\"age\": ");
     // Picking a field with a list of values asks for the value next.
@@ -327,7 +329,7 @@ fn a_field_after_a_value_puts_its_comma_after_the_value() {
     assert!(mood.continue_hint && !mood.literal);
     // A value goes in as the module wrote it, though it ends with `""`.
     let source = format!("{}{{\"mood\": \"\"}}", &source[..source.find('{').unwrap()]);
-    let value = &suggest("rest", "", &source, 4, 10, &[]).candidates[0];
+    let value = &suggest("rest", "", &source, 6, 10, &[]).candidates[0];
     assert_eq!(value.text, "\"say \\\"hi\\\"\"");
     assert!(value.literal);
 }

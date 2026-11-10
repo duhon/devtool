@@ -287,7 +287,7 @@ impl Peer {
                 .next()
                 .context("Missing host")?;
             self.tool(session,"console_create_check",json!({"service":context["service"],"revision":context["revision"],
-                "title":"Created by agent","request":format!("#target\nGET http://{origin}/agent-created")}),"create",context)
+                "title":"Created by agent","request":format!("#target\nhttp://{origin}/agent-created")}),"create",context)
         } else if message.contains("agent run") || message.contains("agent stop") {
             self.tool(session, "console_run_check", args, "run", context)
         } else if message.contains("agent debug") {

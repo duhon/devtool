@@ -327,7 +327,7 @@
     const active = () => testid('console-check-menu').querySelector('.active .check-rail-number')?.textContent;
     const top = () => editor.lineAtHeight(editor.getScrollInfo().top, 'local');
     setSource(editor, ['cursor-one', 'cursor-two', 'cursor-three'].map(name =>
-      `#check ${name}\n#target\nGET ${endpoint}`).join('\n\n'));
+      `#check ${name}\n#target\n${endpoint}`).join('\n\n'));
     editor.setCursor(0, 0);
     editor.scrollTo(null, 0);
     await wait(() => links().length === 3 && active() === '1');
@@ -341,7 +341,7 @@
       && checkBackground('cursor-one')!==checkBackground('cursor-two'),
       'Whole checks must alternate between two neutral backgrounds');
     const firstEndpoint=[...editor.getWrapperElement().querySelectorAll('pre.editor-line')]
-      .find(line=>line.textContent.includes(`GET ${endpoint}`));
+      .find(line=>line.textContent.includes(endpoint));
     assert(getComputedStyle(firstEndpoint,'::before').backgroundColor===checkBackground('cursor-one'),
       'Request sections must keep their owning check background, not alternate by physical row');
     const lastPoint = editor.charCoords({line:10,ch:0}, 'window');
@@ -525,7 +525,7 @@
     await wait(() => links().length === 3 && links()[1].dataset.line === '100');
     const source = editor.getValue();
     setSource(editor, Array.from({length: 60}, (_, index) =>
-      `#check Scroll ${index + 1}\n#target\nGET ${endpoint}`).join('\n\n'));
+      `#check Scroll ${index + 1}\n#target\n${endpoint}`).join('\n\n'));
     await wait(() => links().length === 60);
     const checkMenu = testid('console-check-menu').querySelector('.check-rail-links');
     checkMenu.scrollTop = checkMenu.scrollHeight;
@@ -561,7 +561,7 @@
     const originalHints = hints.getValue();
     setSource(hints, '#target\nhttp://\n');
     await type('#');
-    await wait(() => JSON.stringify(candidates().sort()) === JSON.stringify(['#payload', '#headers', '#options']),
+    await wait(() => JSON.stringify(candidates().sort()) === JSON.stringify(['#action', '#headers', '#options', '#payload']),
       () => `Typing # in Hints must offer the sections it lacks: ${JSON.stringify(candidates())}`);
     await pick(hints, '#payload');
     assert(hints.getLine(2) === '#payload', 'Picking a Hints section must insert its header');
@@ -688,7 +688,7 @@
     editorOf('console-hints').setValue('{{incomplete:');
     await wait(() => toolStatus().textContent.includes('ERROR'));
     await closePanel('hints');
-    setSource(editor, `#check panel-status\n#target\nGET ${endpoint}\n`);
+    setSource(editor, `#check panel-status\n#target\n${endpoint}\n`);
     await key('Shift+Enter');
     await wait(() => find('.status-bar').textContent.startsWith('Request · ')
       && find('.status-bar').textContent.includes('OK'),

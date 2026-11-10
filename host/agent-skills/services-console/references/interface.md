@@ -25,7 +25,7 @@ Undock into separate window.
   Lines under a `#section` line of Hints are offered only in that section;
   lines before any section are offered where their shape fits.
 - Templates opens a global, per-service library with section tabs (REST:
-  check, target, headers, payload). Each definition starts with `@name description`
+  check, target, action, headers, payload). Each definition starts with `@name description`
   at the start of a line, followed by literal multiline content until the next
   definition. `@@` escapes a leading literal `@` in a body. Names are unique
   within a service/section. Definitions autosave; invalid drafts stay visible

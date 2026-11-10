@@ -42,13 +42,13 @@ fn full_checks_and_unicode_are_literal() {
     services_shell::link();
     let templates = BTreeMap::from([(
         "check".into(),
-        "@готово full\n#check new\n#target\nGET /books\n#payload\n{}".into(),
+        "@готово full\n#check new\n#target\n/books\n#payload\n{}".into(),
     )]);
     let completion = suggest("artemis", "", "#check @гот", 0, 11, &templates).unwrap();
     assert_eq!(completion.from, 0);
     assert_eq!(
         completion.candidates[0].text,
-        "#check new\n#target\nGET /books\n#payload\n{}"
+        "#check new\n#target\n/books\n#payload\n{}"
     );
     assert!(completion.candidates[0].literal);
     assert!(suggest("artemis", "", "@", 0, 1, &templates).is_none());
@@ -58,7 +58,9 @@ fn full_checks_and_unicode_are_literal() {
 fn check_header_uses_description_without_copying_template_definition() {
     services_shell::link();
     let body = r#"#target
-PUT https://fakerestapi.azurewebsites.net/api/v1/Books/123
+https://fakerestapi.azurewebsites.net/api/v1/Books/123
+#action
+PUT
 #headers
 Content-Type: application/json
 Accept: application/json
@@ -85,25 +87,22 @@ Accept: application/json
 fn check_names_fall_back_to_template_name_and_keep_explicit_headers() {
     services_shell::link();
     for (definition, expected) in [
+        ("@test1\n#target\n/books", "#check test1\n#target\n/books"),
         (
-            "@test1\n#target\nGET /books",
-            "#check test1\n#target\nGET /books",
+            "@test1 Create a book\n#target\n/books",
+            "#check Create a book\n#target\n/books",
         ),
         (
-            "@test1 Create a book\n#target\nGET /books",
-            "#check Create a book\n#target\nGET /books",
+            "@test1 mmm\n  #CHECK Existing\n#target\n/books",
+            "  #CHECK Existing\n#target\n/books",
         ),
         (
-            "@test1 mmm\n  #CHECK Existing\n#target\nGET /books",
-            "  #CHECK Existing\n#target\nGET /books",
+            "@test1 mmm\n#request Existing\n#target\n/books",
+            "#request Existing\n#target\n/books",
         ),
         (
-            "@test1 mmm\n#request Existing\n#target\nGET /books",
-            "#request Existing\n#target\nGET /books",
-        ),
-        (
-            "@test1 mmm\n#checker\n#target\nGET /books",
-            "#check mmm\n#checker\n#target\nGET /books",
+            "@test1 mmm\n#checker\n#target\n/books",
+            "#check mmm\n#checker\n#target\n/books",
         ),
     ] {
         let templates = BTreeMap::from([("check".into(), definition.into())]);
@@ -145,7 +144,7 @@ fn space_after_section_marker_offers_templates_without_an_at_sign() {
         ("payload".into(), "@example Body\n{}".into()),
         (
             "check".into(),
-            "@create Create book\n#target\nPUT /books\n#payload\n{}".into(),
+            "@create Create book\n#target\n/books\n#action\nPUT\n#payload\n{}".into(),
         ),
     ]);
     let completion = suggest("artemis", "", "#payload ", 0, 9, &templates).unwrap();
@@ -158,7 +157,7 @@ fn space_after_section_marker_offers_templates_without_an_at_sign() {
             .unwrap()
             .candidates[0]
             .text,
-        "#check Create book\n#target\nPUT /books\n#payload\n{}"
+        "#check Create book\n#target\n/books\n#action\nPUT\n#payload\n{}"
     );
     let existing = suggest("artemis", "", "#payload @example", 0, 9, &templates).unwrap();
     assert_eq!((existing.from, existing.to), (8, 17));

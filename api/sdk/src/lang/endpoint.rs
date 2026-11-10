@@ -1,29 +1,17 @@
-//! Endpoint lines: `METHOD URL` (REST) or a bare URL.
+//! Target lines: a bare URL.
 
 use super::{placeholder, run, token};
 use crate::Token;
 
-/// The HTTP methods an endpoint line may start with.
-pub const METHODS: [&str; 6] = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"];
+/// The HTTP methods of a REST `#action`.
+pub const METHODS: [&str; 7] = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
 
-/// Tokens of an endpoint line: `scheme://` is a `keyword`, the host `def`, the path
-/// `string`. With `http` the line may start with a method (`property`), `{name}` path
-/// segments are `rest-path-param` and the query after `?` is `number`.
+/// Tokens of a target line: `scheme://` is a `keyword`, the host `def`, the path
+/// `string`. With `http` `{name}` path segments are `rest-path-param` and the query after
+/// `?` is `number`.
 pub fn tokens(line: &str, http: bool) -> Vec<Token> {
-    tokens_with(line, http, &METHODS)
-}
-
-/// [`tokens`] of a line whose method is one of `methods`.
-pub fn tokens_with(line: &str, http: bool, methods: &[&str]) -> Vec<Token> {
     let mut out = Vec::new();
     let mut pos = 0;
-    if http
-        && let Some((method, _)) = line.split_once(char::is_whitespace)
-        && methods.contains(&method.to_ascii_uppercase().as_str())
-    {
-        pos = run(line, method.len(), char::is_whitespace);
-        out.push(token(0, pos, "property"));
-    }
     // 0: before the scheme, 1: the host, 2: the path, 3: the query.
     let mut part = 0;
     while pos < line.len() {
@@ -90,14 +78,6 @@ pub fn tokens_with(line: &str, http: bool, methods: &[&str]) -> Vec<Token> {
         pos += end;
     }
     out
-}
-
-/// The uppercased method and the URL of a `METHOD URL` line.
-pub fn request_line(text: &str) -> Option<(String, &str)> {
-    let mut words = text.split_whitespace();
-    let (method, url) = (words.next()?, words.next()?);
-    let method = method.to_ascii_uppercase();
-    (words.next().is_none() && METHODS.contains(&method.as_str())).then_some((method, url))
 }
 
 /// An absolute URL split into its parts; `{{…}}` placeholders stay as they are.
@@ -167,12 +147,11 @@ mod tests {
     }
 
     #[test]
-    fn method_scheme_host_path_and_query() {
-        let line = "post  https://api.test:8080/v1/items?limit=5&q=a";
+    fn scheme_host_path_and_query() {
+        let line = "https://api.test:8080/v1/items?limit=5&q=a";
         assert_eq!(
             styled(line, &tokens(line, true)),
             [
-                ("post  ", "property"),
                 ("https://", "keyword"),
                 ("api.test:8080", "def"),
                 ("/v1/items", "string"),
@@ -190,12 +169,11 @@ mod tests {
             ]
             .map(|(a, b)| (a.to_owned(), b.to_owned()))
         );
-        assert!(kinds("FETCH https://x", true, "property").is_empty());
     }
 
     #[test]
     fn path_parameters_are_distinct_from_variables_and_query_values() {
-        let line = "PUT http://{{var:magento}}/rest/default/V1/categories/{categoryId}/move/{имя-id}?filter={query}";
+        let line = "http://{{var:magento}}/rest/default/V1/categories/{categoryId}/move/{имя-id}?filter={query}";
         assert_eq!(
             kinds(line, true, "rest-path-param"),
             ["{categoryId}", "{имя-id}"]
@@ -223,7 +201,7 @@ mod tests {
     #[test]
     fn tokens_never_split_characters() {
         for line in [
-            "GET \u{a0}https://пример.рф/api/{x}?é={{a}}$b",
+            "\u{a0}https://пример.рф/api/{x}?é={{a}}$b",
             "{{base}}/x",
             "{{",
             "GET",
@@ -242,14 +220,7 @@ mod tests {
     }
 
     #[test]
-    fn request_lines_and_urls() {
-        assert_eq!(
-            request_line(" get\thttps://x/a "),
-            Some(("GET".into(), "https://x/a"))
-        );
-        assert_eq!(request_line("FETCH https://x"), None);
-        assert_eq!(request_line("GET https://x extra"), None);
-        assert_eq!(request_line("GET"), None);
+    fn urls() {
         let url = Url::parse("HTTP://{{var:host}}:80/a/b?x=1#f").unwrap();
         assert_eq!(url.origin(), "http://{{var:host}}:80");
         assert_eq!((url.path, url.query), ("/a/b", "x=1"));

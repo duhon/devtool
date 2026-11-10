@@ -83,7 +83,7 @@
     assert(editorOf('console-editor').getValue()==='',`${service}: fresh temporary checks must be empty`);
   }
   await click(testid('console-service-rest'));
-  setSource(editorOf('console-editor'),'#check temp-only\n#target\nGET https://temporary.invalid');
+  setSource(editorOf('console-editor'),'#check temp-only\n#target\nhttps://temporary.invalid');
   await open('variables');
   assert(editorOf('console-variables').getValue()==='','Temporary var must not inherit native legacy variables');
   await open('hints');
@@ -118,7 +118,7 @@
   for(const service of ['mysql','rest','graphql','grpc','splunk','terminal']) {
     await click(testid(`console-service-${service}`));
     setSource(editorOf('console-editor'),service==='rest'
-      ?`#check session-a-rest\n#target\nGET ${fixtureUrl}/session?session-value={{var:SESSION_MARKER}}\n`
+      ?`#check session-a-rest\n#target\n${fixtureUrl}/session?session-value={{var:SESSION_MARKER}}\n`
       :`#check session-a-${service}\n`);
   }
   await vars('SESSION_MARKER: alpha');

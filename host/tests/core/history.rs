@@ -67,7 +67,7 @@ async fn entries_keep_their_text_verbatim_and_report_service_and_duration() {
             "request":{"method":"GET","url":url,"text":true}}))
         .await;
     let response = called["result"]["body"].as_str().unwrap();
-    let source = format!("#check fixture\n#target\nGET {url}\n#headers\nAuthorization: [redacted]");
+    let source = format!("#check fixture\n#target\n{url}\n#headers\nAuthorization: [redacted]");
     let saved = runtime
         .dispatch(
             &json!({"service":"history","op":"insert","checkId":CHECK,"sessionId":OTHER,

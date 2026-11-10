@@ -287,7 +287,7 @@ fn owners_then_scoped_variables() {
 fn repeat_until_is_offered_under_a_repeat() {
     services_shell::link();
     let options = |lines: &str| -> Vec<String> {
-        let source = format!("#check a\n#target\nGET https://a\n#options\n{lines}");
+        let source = format!("#check a\n#target\nhttps://a\n#options\n{lines}");
         let line = source.lines().count();
         suggest("rest", "", &format!("{source}\n"), line, 0, &[])
             .candidates

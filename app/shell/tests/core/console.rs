@@ -11,7 +11,7 @@ fn every_service_console_parses_into_its_request_shape() {
     assert_eq!(
         parse(
             "rest",
-            "#headers\nX: y\n#payload\n{}\n#target\nPOST https://a"
+            "#headers\nX: y\n#payload\n{}\n#target\nhttps://a\n#action\nPOST"
         )
         .unwrap(),
         json!({"driver":"http","stream":false,"request":{"method":"POST","url":"https://a",
@@ -31,10 +31,10 @@ fn console_options_run_the_check_and_never_reach_the_module() {
     services_shell::link();
     let (params, options) = parse_run(
         "rest",
-        "#target\nGET https://a\n#options\nrepeat: 2m\nRepeat-Until: Changed",
+        "#target\nhttps://a\n#options\nrepeat: 2m\nRepeat-Until: Changed",
     )
     .unwrap();
-    assert_eq!(params, parse("rest", "#target\nGET https://a").unwrap());
+    assert_eq!(params, parse("rest", "#target\nhttps://a").unwrap());
     assert_eq!(
         options,
         RunOptions {
@@ -71,7 +71,7 @@ fn console_options_run_the_check_and_never_reach_the_module() {
         ),
         ("rest", "X-Debug: 1", "Unknown option \"X-Debug\""),
     ] {
-        let source = format!("#target\nGET https://a\n#options\n{options}");
+        let source = format!("#target\nhttps://a\n#options\n{options}");
         let result = parse_run(service, &source).unwrap_err();
         assert!(result.contains(error), "{options}: {result}");
     }
@@ -106,7 +106,7 @@ fn exported_commands_quote_text_so_it_splits_back_unchanged() {
     let value = "it's \"quoted\"";
     let command = export(
         "rest",
-        &format!("#target\nGET https://fixture.invalid\n#headers\nX-Note: {value}"),
+        &format!("#target\nhttps://fixture.invalid\n#headers\nX-Note: {value}"),
     )
     .unwrap();
     assert!(
