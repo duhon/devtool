@@ -18,8 +18,7 @@
   const save=async(service,section,text)=>{
     setSource(editorOf('templates-editor'),text);
     await wait(()=>!drafts()[`${service}/${section}`]
-      &&status().textContent.includes('Templates saved · OK')
-      &&JSON.parse(localStorage.getItem('module:templates:library')||'{}')[service]?.[section]===text,
+      &&status().textContent.includes('Templates saved · OK'),
       ()=>`Templates did not autosave: ${status().textContent}; ${testid('templates-panel').textContent}`);
   };
   const entries=()=>editorOf('console-editor').state.completionActive?.data?.list||[];

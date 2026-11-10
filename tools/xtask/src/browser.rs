@@ -885,10 +885,17 @@ fn scenarios() -> Vec<Scenario> {
         )
         .starts_sdk(),
         scenario(
+            "config-sync",
+            Core,
+            90,
+            "Local source and folder sync: edits push to the folder, external changes pull, a conflict opens in Diff and Done writes both sides",
+            script(include_str!("browser-config-sync.js")),
+        ),
+        scenario(
             "agent-settings",
             Agent,
             60,
-            "Agent model and reasoning settings; a folder source: its skill reaches the Agent, its Dictionary set is overridden and reset, removal",
+            "Agent model and reasoning settings; a folder source: its skill reaches the Agent, its Dictionary set arrives by sync, removal",
             script(include_str!("browser-agent-settings.js")),
         ),
         scenario(
@@ -1185,32 +1192,22 @@ fn update_source(
 
 /// Writes the Host data every scenario starts from.
 fn seed_data(data: &Path) -> Result<Vec<(PathBuf, String)>> {
-    let seeds = vec![(
+    let mut seeds = vec![(
         // No sources: the Standard one would reach GitHub from every panel.
         data.join(".sources.json"),
         json!({"version":1,"sources":[]}).to_string(),
     )];
-    fs::create_dir_all(data)?;
-    for (path, contents) in &seeds {
-        fs::write(path, contents)?;
-    }
-    Ok(seeds)
-}
-
-/// A script that gives a fresh origin storage the fixture variables before the App loads: the
-/// session variables of the Variables panel, the user's Dictionary sets and Hints.
-fn seed_storage(fixture_port: u16) -> String {
-    let variables = json!({
-        "sku":"fixture-materialized-sku",
-        "magento":format!("localhost:{fixture_port}"),
-        "magentoBase":format!("http://localhost:{fixture_port}"),
-        "magentoToken":format!("http://localhost:{fixture_port}/rest/default/V1/integration/admin/token")
-    });
-    let sets = json!({
-        "order":["default","second"],
-        "sets":{"default":{"TOKEN":"fixture","REF":"{{second:TOKEN}}"},"second":{"TOKEN":"resolved-fixture"}},
-    });
-    let hints: serde_json::Map<String, Value> = [
+    // The user's own configs live in the Local source.
+    let local = data.join("local");
+    seeds.push((
+        local.join("dictionary.json"),
+        json!({
+            "order":["default","second"],
+            "sets":{"default":{"TOKEN":"fixture","REF":"{{second:TOKEN}}"},"second":{"TOKEN":"resolved-fixture"}},
+        })
+        .to_string(),
+    ));
+    for (service, url) in [
         ("mysql", "mysql://mysql.fixture.invalid"),
         ("rest", "https://rest.fixture.invalid"),
         ("graphql", "https://graphql.fixture.invalid"),
@@ -1218,19 +1215,36 @@ fn seed_storage(fixture_port: u16) -> String {
         ("splunk", "https://splunk.fixture.invalid"),
         ("artemis", "http://artemis.fixture.invalid:8161"),
         ("opensearch", "http://opensearch.fixture.invalid:9200"),
-    ]
-    .into_iter()
-    .map(|(service, url)| (service.to_owned(), json!(format!("#endpoint\n{url}\n"))))
-    .collect();
+    ] {
+        seeds.push((
+            local.join(format!("hints/{service}.md")),
+            format!("#endpoint\n{url}\n"),
+        ));
+    }
+    fs::create_dir_all(data)?;
+    for (path, contents) in &seeds {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(path, contents)?;
+    }
+    Ok(seeds)
+}
+
+/// A script that gives a fresh origin storage the fixture variables before the App loads: the
+/// session variables of the Variables panel, (the user's Dictionary sets and Hints are seeded into the Local source files).
+fn seed_storage(fixture_port: u16) -> String {
+    let variables = json!({
+        "sku":"fixture-materialized-sku",
+        "magento":format!("localhost:{fixture_port}"),
+        "magentoBase":format!("http://localhost:{fixture_port}"),
+        "magentoToken":format!("http://localhost:{fixture_port}/rest/default/V1/integration/admin/token")
+    });
     format!(
         "if (location.protocol === 'chrome-extension:' && localStorage.getItem('__fixtureSeeded') === null) {{\n\
          localStorage.setItem('__fixtureSeeded', '1');\n\
-         localStorage.setItem('module:variables:var', {});\n\
-         localStorage.setItem('module:dictionary:sets', {});\n\
-         localStorage.setItem('module:hints:hints', {});\n}}",
-        json!(variables.to_string()),
-        json!(sets.to_string()),
-        json!(Value::Object(hints).to_string())
+         localStorage.setItem('module:variables:var', {});\n}}",
+        json!(variables.to_string())
     )
 }
 
@@ -1329,12 +1343,38 @@ fn sdk_peers(data: &Path) -> Result<Vec<u64>> {
     Ok(peers)
 }
 
-fn fixture_router() -> Router {
+fn fixture_router(sync: PathBuf) -> Router {
     let agent_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let count_read = agent_count.clone();
     let stop_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let stop_read = stop_count.clone();
     Router::new()
+        // The folder source of the config-sync scenario, read and written from the page.
+        .route(
+            "/sync-file",
+            axum::routing::get({
+                let sync = sync.clone();
+                move |axum::extract::Query(query): axum::extract::Query<HashMap<String, String>>| {
+                    let path = sync.join(query.get("name").map(String::as_str).unwrap_or("x"));
+                    async move {
+                        (
+                            [("Access-Control-Allow-Origin", "*")],
+                            fs::read_to_string(path).unwrap_or_default(),
+                        )
+                    }
+                }
+            })
+            .post(
+                move |axum::extract::Query(query): axum::extract::Query<HashMap<String, String>>,
+                      body: String| {
+                    let path = sync.join(query.get("name").map(String::as_str).unwrap_or("x"));
+                    async move {
+                        let _ = fs::write(path, body);
+                        [("Access-Control-Allow-Origin", "*")]
+                    }
+                },
+            ),
+        )
         .route("/page-agent-fixture", axum::routing::get(|| async {
             axum::response::Html(include_str!("browser-page-fixture.html"))
         }))
@@ -1608,8 +1648,14 @@ impl Harness {
         cdp.evaluate(&setup, "(async () => { await testDriver.click(testDriver.button('Retry connection')); await testDriver.wait(() => document.querySelector('[data-testid=\"native-status\"]').hidden); return true; })()").await?;
         cdp.close(&setup).await?;
         let control = cdp.page("about:blank", "").await?;
+        let sync = temporary.path().join("sync source");
+        fs::create_dir_all(&sync)?;
+        fs::write(
+            sync.join("dictionary.json"),
+            r#"{"sets":{"sync":{"HOST":"a.invalid","PORT":"1"}}}"#,
+        )?;
         let fixture = Fixture(tokio::spawn(async move {
-            axum::serve(listener, fixture_router())
+            axum::serve(listener, fixture_router(sync))
                 .await
                 .expect("Browser HTTP fixture failed");
         }));
@@ -1675,6 +1721,9 @@ impl Harness {
             }
         }
         for (path, contents) in &self.seeds {
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)?;
+            }
             fs::write(path, contents)?;
         }
         match fs::remove_dir_all(self.data.join("sources")) {
@@ -1752,10 +1801,11 @@ impl Harness {
         }
         let globals = format!(
             "globalThis.fixtureUrl = {}; globalThis.fixtureVersion = {}; globalThis.fixtureSource = {}; \
-             globalThis.fixtureModules = {}; globalThis.fixtureUpdates = {};",
+             globalThis.fixtureSync = {}; globalThis.fixtureModules = {}; globalThis.fixtureUpdates = {};",
             json!(self.fixture_url),
             json!(env!("CARGO_PKG_VERSION")),
             json!(source),
+            json!(self.temporary.path().join("sync source")),
             json!(modules),
             json!(updates)
         );

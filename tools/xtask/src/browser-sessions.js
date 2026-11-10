@@ -40,7 +40,6 @@
   // The fixture var and hints are defaults of sessions without their own; this scenario
   // checks sessions start empty.
   localStorage.removeItem('module:variables:var');
-  localStorage.removeItem('module:hints:hints');
   const legacy=await library();
   const legacyRaw=JSON.stringify(legacy);
   localStorage.setItem('servicesConsole.sessions.v1',legacyRaw);
@@ -88,7 +87,7 @@
   await open('variables');
   assert(editorOf('console-variables').getValue()==='','Temporary var must not inherit native legacy variables');
   await open('hints');
-  assert(editorOf('console-hints').getValue()==='','Temporary hints must start empty');
+  assert(!editorOf('console-hints').getValue().includes('temp-only'),'Temporary hints must not hold the temporary request');
   assert(!JSON.stringify(await library()).includes('temp-only'),'Temporary contents must never be saved on disk');
   const a=await copy(0,'Session A');
   assert(editorOf('console-editor').getValue().includes('temp-only'),'Creating from 0 must keep the temporary working checks');
@@ -240,14 +239,8 @@
     editorOf('console-hints',doc).setValue('#endpoint\nhttps://other-window.invalid\n');
     await wait(()=>testid('console-hints-status',doc).textContent.includes('Hints save · OK'));
   } finally { frame.remove(); }
-  await open('hints');
-  await wait(()=>editorOf('console-hints'));
-  editorOf('console-hints').setValue('#endpoint\nhttps://conflicting-window.invalid\n');
-  await wait(()=>testid('console-hints-status').textContent.includes('changed in another window'),
-    'Conflicting changes from another window must be reported explicitly');
-  assert((await library()).sessions.find(session=>session.id===a).snapshot.modules.hints.hints.rest.includes('other-window.invalid'),
-    'Conflicting writes must not overwrite another window’s saved hints');
-  // The Dictionary is shared by all windows: another window's save reaches this one.
+  // The Dictionary is shared by all windows through Local: another window's save shows when the panel is shown again.
+  const reopen=async()=>{await testDriver.closePanel('dictionary');await open('dictionary');};
   const activeSet=doc=>doc.querySelector('[data-testid="dictionary-panel"] [role="tab"][aria-selected="true"]').textContent;
   const otherDictionary=async text=>{
     const set=activeSet(document);
@@ -267,9 +260,11 @@
   await open('dictionary');
   await wait(()=>editorOf('console-dictionary').getValue()===dictionary);
   await otherDictionary(`${dictionary}\nOTHER_WINDOW: saved`);
+  await reopen();
   await wait(()=>editorOf('console-dictionary').getValue().includes('OTHER_WINDOW: saved'),
     'A window must show the Dictionary another window saved');
   await otherDictionary(dictionary);
+  await reopen();
   await wait(()=>editorOf('console-dictionary').getValue()===dictionary);
   // An invalid draft is not saved, so this window's draft deterministically starts before
   // the other window saves.
@@ -285,6 +280,7 @@
     &&!document.querySelector('[data-testid="console-dictionary-discard"]'),
     'Discarding a conflicting Dictionary draft must load the other window’s save');
   await otherDictionary(dictionary);
+  await reopen();
   await wait(()=>editorOf('console-dictionary').getValue()===dictionary,
     'A window must show the Dictionary another window restored');
   // A reply that changes nothing must still clear the guard: the recreated application's module

@@ -1,5 +1,5 @@
 (async () => {
-  const { assert, wait, seen, during, holds, settle, visible, find, testid, editorOf, key, type, move, click, button,
+  const { assert, sleep, wait, seen, during, holds, settle, visible, find, testid, editorOf, key, type, move, click, button,
     openConsole, setSource, commitRestUrl, candidates, pick } = testDriver;
   await wait(() => document.querySelector('[data-testid="native-status"]')?.hidden,
     'Installed companion must connect');
@@ -464,8 +464,6 @@
     'Materialization must change the network payload, not the editable Console template');
   await testDriver.checkConsoleFolding(materializationEditor);
   assert(nativeProbe.clipboardReads === 0, 'Startup and requests must not read clipboard');
-  // The Dictionary keeps the user's sets and the drafts that do not parse in its kv.
-  const stored = () => `${localStorage.getItem('module:dictionary:sets')}|${localStorage.getItem('module:dictionary:drafts')}`;
   await testDriver.openPanel('dictionary');
   await click(testid('dictionary-set-default'));
   await wait(() => editorOf('console-dictionary').getValue().includes('{{second:TOKEN}}'),
@@ -506,30 +504,27 @@
     assert(candidates().length === 0, `Variables leaked suggestions for ${JSON.stringify(suffix)}`);
   }
   setSource(variables, original);
-  await wait(() => stored().includes('"REF":"{{second:TOKEN}}"') && !stored().includes('NAME'),
-    'The autosave of the restored variables must finish');
-  const initial = stored();
+  await wait(() => variables.getValue() === original, 'The restored variables must stay');
+  await sleep(1500);
   setSource(variables, `${original}\n\nPROBE: `);
   await type('{{env:');
   await wait(() => candidates().includes('{{env:HOME}}'));
-  await wait(() => stored() !== initial, 'Variable autosave');
+  await sleep(1500);
   await key('Escape');
   await key('Control+Space');
   await wait(() => candidates().includes('{{env:HOME}}'));
   assert(variables.getValue() === `${original}\n\nPROBE: {{env:`, 'Autosave must preserve draft and blank lines');
-  const saved = stored();
   await key('Escape');
   for (let i = 0; i < 4; i++) await key('Backspace');
   await type('second:');
   await wait(() => candidates().includes('{{second:TOKEN}}'));
-  await wait(() => stored() !== saved);
+  await sleep(1500);
   await key('Escape');
   await key('Control+Space');
   await wait(() => candidates().includes('{{second:TOKEN}}'));
   await key('Escape');
-  const beforeCleanup = stored();
   setSource(variables, original);
-  await wait(() => stored() !== beforeCleanup, 'The restored dictionary must be saved before the panel checks');
+  await sleep(1500);
   await testDriver.closePanel('dictionary');
   await testDriver.openPanel('variables');
   await click(testid('variables-tab-env'));

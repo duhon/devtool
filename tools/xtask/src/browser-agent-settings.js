@@ -113,11 +113,11 @@
     await wait(() => document.querySelector('[data-testid="source-apply-team"]'),
       () => `The added source must be checked and offer its settings: ${testid('settings-tab-sources-body').textContent}; ${status()}`);
     const changes = testid('source-changes-team').textContent;
-    assert(changes.includes('skill team-shop-deploy added') && changes.includes('dictionary team/HOST added'),
-      `The check must list what applying changes: ${changes}`);
+    assert(changes.includes('skill team-shop-deploy added') && !changes.includes('dictionary'),
+      `The check must list the skills applying changes: ${changes}`);
     await click(testid('source-apply-team'));
     await wait(() => document.querySelector('[data-testid="source-up-to-date-team"]'),
-      () => `Applying must bring the source's settings: ${testid('source-team').textContent}`);
+      () => `Applying must bring the source's skills: ${document.body.innerText.slice(0,600)}`);
     await agent();
     await newChat();
     const used = await ask('agent skills');
@@ -126,24 +126,22 @@
     assert(document.querySelector('[data-testid="console-agent-status-debug"]')?.textContent.includes('team-shop-deploy'),
       'The Agent status debug must list the skills Copilot used');
 
+    await testDriver.settingsTab('sources');
+    await click(await wait(() => document.querySelector('[data-testid="source-sync-team"]'),
+      () => `The source's Dictionary must wait to be synced: ${document.body.innerText.slice(0, 600)}`));
+    // Local has its own Dictionary and the new source no cache: the difference is a conflict; Done takes the source's.
+    await click(await wait(() => document.querySelector('[data-testid="diff-done"]'), 'The Dictionary conflict must open in Diff'));
+    await testDriver.settingsTab('sources');
+    await wait(() => document.querySelector('[data-testid="source-in-sync-team"]'),
+      () => `Syncing must bring the source's settings to Local: ${document.body.innerText.slice(0,700)}`);
     await openPanel('dictionary');
     const set = await wait(() => document.querySelector('[data-testid="dictionary-set-team"]'),
-      () => `The source's Dictionary set must be listed: ${testid('dictionary-tabs').textContent}`);
+      () => `The synced Dictionary set must be listed: ${testid('dictionary-tabs').textContent}`);
     await click(set);
-    const dictionary = () => editorAt('console-dictionary');
-    await wait(() => document.querySelector('[data-testid="dictionary-origin-label"]')?.textContent === 'From source Team'
-      && dictionary()?.getValue().includes('team.fixture.invalid'),
-      () => `A source set must name its source: ${document.querySelector('[data-testid="dictionary-origin"]')?.textContent}`);
-    assert(!document.querySelector('[data-testid="dictionary-reset"]'), 'An untouched source set has nothing to reset');
-    dictionary().setValue(dictionary().getValue().replace('team.fixture.invalid', 'mine.fixture.invalid'));
-    const own = () => document.querySelector('[data-testid="dictionary-reset-variable-HOST"]');
-    await wait(() => own() && !document.querySelector('[data-testid="dictionary-reset-variable-PORT"]')
-      && testid('dictionary-origin-label').textContent === 'From source Team',
-      () => `A changed variable must become the user's own: ${document.querySelector('[data-testid="dictionary-origin"]')?.textContent}`);
-    await click(own());
-    await wait(() => !own() && !document.querySelector('[data-testid="dictionary-reset"]')
-      && dictionary()?.getValue().includes('team.fixture.invalid'),
-      () => `Reset must restore the source's value: ${dictionary()?.getValue()}`);
+    await wait(() => editorAt('console-dictionary')?.getValue().includes('team.fixture.invalid'),
+      'The synced set must hold the source values');
+    assert(!document.querySelector('[data-testid="dictionary-reset"]') && !document.querySelector('[data-testid="dictionary-origin"]'),
+      'Dictionary has no source layers any more');
 
     await testDriver.settingsTab('sources');
     await click(testid('source-remove-team'));

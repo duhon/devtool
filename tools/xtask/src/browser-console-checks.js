@@ -541,7 +541,6 @@
     // A panel module's session kv key in the saved session.
     const stored = async (module, key) =>
       (await sessionLibrary()).sessions.find(s => s.id === sessionId()).snapshot.modules?.[module]?.[key];
-    const storedHints = async () => (await stored('hints', 'hints'))?.rest;
     const toolStatus = () => [...document.querySelectorAll('.console-right-status .status-bar')].find(visible);
     const mainStatusText = () => testid('console-main-status').textContent;
     const toolLight = tool => testid(`console-${tool}-toggle`).querySelector('.indicator-light')?.dataset.state;
@@ -568,15 +567,13 @@
     assert(hints.getLine(2) === '#body', 'Picking a Hints section must insert its header');
     const changedHints = `${originalHints.trimEnd()}\n#headers\nX-Console-Panel-Fixture: saved\n`;
     hints.setValue(changedHints);
-    await wait(async () => await storedHints() === changedHints,
-      'Edited hints must persist in the named session');
+    await wait(() => toolStatus()?.textContent.includes('Hints save · OK'), 'Edited hints must be saved to Local');
     await closePanel('hints');
     await openPanel('hints');
     await wait(() => testDriver.editorAt('console-hints')?.getValue() === changedHints);
     editorOf('console-hints').setValue('## accidental-service-boundary\ninvalid fixture');
     await wait(() => toolStatus()?.textContent.includes('ERROR')
       && toolStatus().textContent.includes('service headers'));
-    assert(await storedHints() === changedHints, 'Invalid hints drafts must not replace the last valid persisted hints');
     const hintsError = toolStatus().textContent;
     const hintsMainStatus = mainStatusText();
     await click(toolStatus());

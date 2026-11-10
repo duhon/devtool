@@ -15,11 +15,19 @@ pub struct Runtime {
 }
 impl Runtime {
     /// Secrets the Agent must not see: sensitive environment variables and the session's
-    /// variables (`__consoleVariables`, from the Variables panel) with a sensitive name.
+    /// variables (`__consoleVariables`, from the Variables panel) and the Local Dictionary with a
+    /// sensitive name.
     pub fn agent_session_sensitive_values(&self, params: &Value) -> Result<Vec<String>> {
         let mut values = self.agent_sensitive_values()?;
         if let Some(variables) = params.get("__consoleVariables") {
             Self::collect_sensitive(variables, &mut values);
+        }
+        // The Dictionary sets live in the Local source.
+        let local = sources::read(self.sources.data(), "dictionary.json")?;
+        if let Some(text) = local[0]["text"].as_str()
+            && let Ok(dictionary) = serde_json::from_str::<Value>(text)
+        {
+            Self::collect_sensitive(&dictionary, &mut values);
         }
         Ok(values)
     }

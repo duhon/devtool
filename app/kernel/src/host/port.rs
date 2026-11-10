@@ -269,8 +269,8 @@ impl Transport {
         if let Some(session) = self.session.borrow().clone() {
             let service = message["service"].as_str().unwrap_or("");
             if service == "agent" {
-                // The Agent masks the values of sensitive variables: the session's (Variables)
-                // and the Dictionary sets'.
+                // The Agent masks the values of the session's sensitive variables (Variables);
+                // the Host adds the Dictionary's from the Local source.
                 let modules = session.borrow().library.snapshot().modules.clone();
                 let stored = |module: &str, key: &str| {
                     modules
@@ -290,7 +290,6 @@ impl Transport {
                 };
                 let variables = json!({
                     "variables": stored("variables", "var"),
-                    "dictionary": stored("dictionary", "sets"),
                 });
                 if !message["params"].is_object() {
                     message["params"] = json!({});

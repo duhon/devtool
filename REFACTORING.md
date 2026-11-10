@@ -181,10 +181,19 @@ dist/ docs/ dev/ scripts/ install.sh prerelease
     (`.variable-profiles.json`, `.dictionary-profiles.json`, `.console-hints.txt`,
     `.console-templates.json`, `.console-history.sqlite3`, localStorage/IndexedDB) мигрируют
     в базу;
-  - слоёв в Host нет: `sources.rs` отдаёт сырые документы источников по порядку
-    (`[(источник, документ)]`), локальные правки — запись в db, а складывает слои (правило
-    перекрытия, происхождение, «сбросить к источнику») панель в App; общий помощник — в SDK.
-    Исключение — скилы: их читает Agent в Host;
+  - слоёв конфигов нет: источник «Local» (`<data>/local/`: `dictionary.json`,
+    `templates.json`, `hints/<модуль>.md`) всегда существует, панели Dictionary/Templates/
+    Hints читают его через `sources.read` и сохраняют сразу через `sources.write`.
+    Общие источники (папка, GitHub) синхронизируются только с Local (звезда): `sources.sync`
+    (трёхстороннее слияние Local / кеш = файлы источника на прошлой синхронизации в
+    `<data>/sources/<slug>/` / источник сейчас, по записям: словарь — переменная, шаблоны —
+    секция, подсказки — строка; движок — `host/src/core/config_sync.rs`) применяет
+    непересекающиеся изменения в обе стороны и возвращает конфликты; `sources.resolve`
+    пишет результат всегда в Local, а в источник — только если его ревизия (sha256 файла /
+    blob sha GitHub) не изменилась с проверки (иначе кеш = версия источника, с которой
+    сливали). Запись в GitHub — Contents API PUT с `sha`, токен как раньше. `modules.check`
+    возвращает `sync` (`state`: same/local/source/both/conflict, файлы) и `skills` (бывшее
+    `configs`). Скилы читает Agent в Host, как раньше;
   - `modules.rs`, `sources.rs`, `updates.rs`.
 - Модули не запрашивают разрешений на драйверы.
 - Общее у драйверов:
@@ -452,21 +461,22 @@ Kernel не знает ни одной панели: даёт точки рас�
 - Имена Cmd в SDK (`api/sdk/src/cmd.rs`): `driver.call`, `driver.stream`, `driver.cancel`;
   `vars.resolve` (`mode: "json"` — значения экранируются как содержимое JSON-строки);
   `history.insert`, `history.search` (хранилище — Host); `os.env` (окружение из Host),
-  `clipboard.read`/`write` (App); `sources.read` (сырые документы источников по порядку);
+  `clipboard.read`/`write` (App); `sources.read` (документы Local); `sources.write` (имя, текст: сохранить конфиг в Local);
   `editor.contribute`, `editor.relight` (подсветить редакторы сервиса заново);
   `diff.open` (`left`, `right`, `left_title`, `right_title`, `language`: Shell открывает панель
   «Разница» и отдаёт ей сравнение через `ToolCall`; ответ — когда пользователь решил:
   `{text}` — правая колонка; `Cancelled` — Stop; повторный `diff.open` заменяет ждущее
   сравнение, прежний автор получает ошибку), `diff.done`/`diff.cancel` (шлёт только сама
   панель; Shell отвечает тому, кто её открыл; в тестах его роль играет `testDriver` через
-  событие окна `services-test-diff-open`);
+  событие окна `services-test-diff-open`; Kernel помечает тег `diff.open` как «boot», чтобы скрытая
+  на время сравнения панель-автор (Settings при синхронизации) получила ответ);
   `document.read`/`insert`/`replace`/`select`/`run`;
   `workspace.list` (сессии с `used` — время последнего сохранения)/`restore`/`copy` (копия
   Temporary — его снимок)/`delete`/`rename`; `page.eval`, `page.network`; `agent.turn`
   (стрим событий Copilot), `agent.stop`, `agent.reply` (ответ на `ToolCall`; ответы
   остановленному ходу не доставляются), `agent.approve`, `agent.sessions`, `agent.models`,
   `agent.options`; только встроенные: `modules.check`/`install`/`remove`,
-  `sources.list`/`save`/`token`/`apply`/`open`, `app.update`, `app.reload`;
+  `sources.list`/`save`/`token`/`apply`/`open`/`sync`/`resolve`, `app.update`, `app.reload`;
   `run.output`, `run.result` (тело, исход, язык, Debug или ошибка); `status.set` (с меткой
   запуска — статус запуска, например `3 rows`; у занятого статуса App показывает время с
   начала; необязательное `stop: {msg, testid}` — кнопка Stop в строке статуса панели,
