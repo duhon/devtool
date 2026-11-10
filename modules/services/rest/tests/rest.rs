@@ -362,6 +362,16 @@ fn header_completion_skips_used_names() {
 }
 
 #[test]
+fn the_discovered_spec_is_returned_for_its_address() {
+    let target = check("#target\nhttp://svc/api/users\n#payload\n");
+    assert_eq!(Rest::default().schema(&target), None);
+    let rest = discovered();
+    let schema = rest.schema(&target).unwrap();
+    assert!(schema["paths"].is_array());
+    assert_eq!(rest.schema(&check("#target\nhttp://other/x\n")), None);
+}
+
+#[test]
 fn discovery_feeds_paths_headers_and_body_fields() {
     let mut rest = Rest::default();
     let cmds = hints(&mut rest, "#target\nhttp://svc/api/users?q=1");
@@ -779,4 +789,19 @@ fn linked_module_answers_requests_and_events() {
         panic!("a call")
     };
     assert_eq!(call.request()["url"], "http://svc");
+    let answer::Kind::Schema(schema) = call_schema(&linked) else {
+        panic!("a schema")
+    };
+    assert_eq!(schema.json, None);
+}
+
+fn call_schema(linked: &Linked<Rest>) -> answer::Kind {
+    let bytes = wire::Request {
+        kind: Some(request::Kind::Schema(check("#target\nhttp://svc"))),
+    }
+    .encode_to_vec();
+    wire::Answer::decode(linked.call(&bytes).as_slice())
+        .unwrap()
+        .kind
+        .unwrap()
 }

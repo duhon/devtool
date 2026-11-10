@@ -169,6 +169,13 @@ pub trait Module: Default + 'static {
         Vec::new()
     }
 
+    /// The schema this module discovered for the check (what Hints discovery learned),
+    /// for the Agent to write checks by; `None` before a successful discovery.
+    fn schema(&self, check: &Check) -> Option<Value> {
+        let _ = check;
+        None
+    }
+
     /// The driver call a check runs.
     fn build(&self, check: &Check) -> Result<DriverCall, String> {
         let _ = check;
@@ -289,6 +296,9 @@ fn handle<T: Module>(state: &RefCell<Option<T>>, request: &[u8]) -> Result<answe
         }),
         request::Kind::Marks(check) => answer::Kind::Highlighted(wire::Highlighted {
             lines: module.marks(&check),
+        }),
+        request::Kind::Schema(check) => answer::Kind::Schema(wire::Schema {
+            json: module.schema(&check).map(|schema| wire::json(&schema)),
         }),
         request::Kind::Build(check) => answer::Kind::Call(module.build(&check)?),
         request::Kind::Render(chunk) => answer::Kind::Rendered(module.render(&chunk)?),

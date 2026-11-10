@@ -4,6 +4,7 @@
 pub mod openapi;
 mod probe;
 
+use serde_json::Value;
 use services_sdk::http::Request;
 use services_sdk::lang::rest::{self, Language, discovery::Discovery, highlight};
 use services_sdk::lang::{curl, endpoint, headers};
@@ -84,6 +85,10 @@ impl Module for Rest {
 
     fn complete(&self, check: &Check, pos: u32) -> Completions {
         rest::complete::complete(&LANGUAGE, &self.discovery, check, pos as usize)
+    }
+
+    fn schema(&self, check: &Check) -> Option<Value> {
+        self.discovery.schema_of(check).cloned()
     }
 
     fn fold(&self, check: &Check) -> Vec<Fold> {

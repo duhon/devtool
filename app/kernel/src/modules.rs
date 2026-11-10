@@ -863,6 +863,7 @@ impl Modules {
             request::Kind::Complete(_) => "complete",
             request::Kind::Fold(_) => "fold",
             request::Kind::Marks(_) => "marks",
+            request::Kind::Schema(_) => "schema",
             request::Kind::Build(_) => "build",
             request::Kind::Render(_) => "render",
             request::Kind::Export(_) => "export",
@@ -979,6 +980,17 @@ impl Modules {
         match self.sync(id, request::Kind::Marks(check))? {
             answer::Kind::Highlighted(highlighted) => Ok(highlighted.lines),
             _ => Err(unexpected("marks")),
+        }
+    }
+
+    /// The schema the service module discovered for `check`, from its own memory.
+    pub fn schema(&mut self, id: &str, check: Check) -> Result<Option<Value>, String> {
+        match self.sync(id, request::Kind::Schema(check))? {
+            answer::Kind::Schema(schema) => Ok(schema
+                .json
+                .and_then(|json| serde_json::from_slice(&json).ok())
+                .filter(|schema: &Value| !schema.is_null())),
+            _ => Err(unexpected("schema")),
         }
     }
 

@@ -52,6 +52,17 @@ impl Module for Rest {
     }
 }
 
+/// A service that discovered a schema for one address only.
+#[derive(Default)]
+struct Discovered;
+
+impl Module for Discovered {
+    type Msg = ();
+    fn schema(&self, check: &Check) -> Option<Value> {
+        (check.text_of("target") == "known").then(|| json!({"types": {"Pet": {}}}))
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 enum PanelMsg {
     Fetch,
@@ -817,4 +828,24 @@ fn a_chat_panel_hears_its_watched_keys_and_its_turn_stops_when_hidden() {
         module: "chat".into(),
         tag: "turn".into()
     }));
+}
+
+#[test]
+fn a_service_module_answers_for_the_schema_it_discovered() {
+    let mut modules = modules();
+    modules
+        .load(
+            manifest("found", "service", 1),
+            Box::new(Linked::<Discovered>::default()),
+            json!({}),
+        )
+        .unwrap();
+    let check =
+        |target: &str| document::check("found", &format!("#target\n{target}"), &Value::Null);
+    assert_eq!(
+        modules.schema("found", check("known")).unwrap(),
+        Some(json!({"types": {"Pet": {}}}))
+    );
+    assert_eq!(modules.schema("found", check("other")).unwrap(), None);
+    assert!(modules.schema("missing", check("known")).is_err());
 }

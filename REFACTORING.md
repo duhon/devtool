@@ -538,6 +538,7 @@ Kernel вызывает модуль напрямую и сразу получа
 | | `complete(check, pos) -> items` | подсказки |
 | | `fold(check) -> ranges` | свёртки |
 | | `marks(check) -> tokens по строкам` | поверх `highlight`: то, что одна строка не знает (GraphQL — поля-объекты по схеме discovery); после новой схемы модуль шлёт `editor.relight` |
+| | `schema(check) -> JSON?` | Агент (`console_schema`, `schemaAvailable`): что модуль открыл discovery'ем для чека, из своей памяти; Kernel ничего не хранит, в статус схема не попадает |
 | Сервис | `build(check) -> driver call` | Run |
 | | `render(chunk) -> response text, metadata` | ответ или кусок стрима (`stream: true` — по куску) |
 | | `export(check) -> text`, `import(text) -> check` | Export (чек с подставленными переменными, секреты тоже), Import |

@@ -492,7 +492,7 @@ pub struct AfterResponse {
 pub struct Request {
     #[prost(
         oneof = "request::Kind",
-        tags = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13"
+        tags = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14"
     )]
     pub kind: Option<request::Kind>,
 }
@@ -528,7 +528,17 @@ pub mod request {
         Resolve(ResolveRequest),
         #[prost(message, tag = "13")]
         Marks(Check),
+        /// The schema the module discovered for this check.
+        #[prost(message, tag = "14")]
+        Schema(Check),
     }
+}
+
+/// A module's answer to [`request::Kind::Schema`]: the schema as JSON, or none.
+#[derive(Clone, PartialEq, Message)]
+pub struct Schema {
+    #[prost(bytes = "vec", optional, tag = "1")]
+    pub json: Option<Vec<u8>>,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -540,7 +550,7 @@ pub struct OptionalNode {
 /// A module's answer to one [`Request`].
 #[derive(Clone, PartialEq, Message)]
 pub struct Answer {
-    #[prost(oneof = "answer::Kind", tags = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11")]
+    #[prost(oneof = "answer::Kind", tags = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12")]
     pub kind: Option<answer::Kind>,
 }
 
@@ -571,5 +581,7 @@ pub mod answer {
         Cmds(Cmds),
         #[prost(message, tag = "11")]
         Resolved(Resolved),
+        #[prost(message, tag = "12")]
+        Schema(Schema),
     }
 }

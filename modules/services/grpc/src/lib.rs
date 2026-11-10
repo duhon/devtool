@@ -277,6 +277,24 @@ pub fn import(command: &str) -> Result<String, String> {
     Ok(sections.join("\n"))
 }
 
+/// A service as the Agent reads it: its methods with the fields of their messages.
+fn describe(service: &prost_reflect::ServiceDescriptor) -> Value {
+    let message = |message: prost_reflect::MessageDescriptor| json!({"name": message.full_name(), "fields": proto::fields(&message, 0)});
+    let methods: Vec<_> = service
+        .methods()
+        .map(|method| {
+            json!({
+                "name": method.name(),
+                "clientStreaming": method.is_client_streaming(),
+                "serverStreaming": method.is_server_streaming(),
+                "input": message(method.input()),
+                "output": message(method.output()),
+            })
+        })
+        .collect();
+    json!({"name": service.full_name(), "methods": methods})
+}
+
 #[derive(Debug, Default)]
 pub struct Grpc {
     /// Services of servers, the most recent last.
@@ -340,6 +358,37 @@ impl Grpc {
                 "The descriptors of {service} are not loaded; add #proto or run Discover"
             )),
         }
+    }
+
+    /// What the check's server or `#proto` describes: its services and their methods with
+    /// the fields of their input and output; `None` before reflection or compilation found any.
+    pub fn schema(&self, check: &Check) -> Option<Value> {
+        let source = check.text_of("proto");
+        let mut services = vec![];
+        let mut known = vec![];
+        if !source.trim().is_empty() {
+            let pool = proto::compile(source).ok()?;
+            services.extend(pool.services().map(|service| describe(&service)));
+        } else {
+            let (target, _, _) = parse_endpoint(check.text_of("target"));
+            if target.is_empty() {
+                return None;
+            }
+            let server = server(check, &target);
+            known = self.services(check, &target);
+            for ((owner, name), pool) in &self.pools {
+                if *owner == server
+                    && let Some(service) =
+                        pool.as_ref().ok().and_then(|p| p.get_service_by_name(name))
+                {
+                    services.push(describe(&service));
+                }
+            }
+        }
+        if services.is_empty() && known.is_empty() {
+            return None;
+        }
+        Some(json!({"services": known, "described": services}))
     }
 
     /// The services reflection found on the check's server.
@@ -867,6 +916,10 @@ impl Module for Grpc {
         _: &[services_sdk::LineColumns],
     ) -> Vec<Line> {
         highlight(state, lines)
+    }
+
+    fn schema(&self, check: &Check) -> Option<Value> {
+        self.schema(check)
     }
 
     fn complete(&self, check: &Check, pos: u32) -> Completions {

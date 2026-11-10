@@ -4,11 +4,13 @@ Discovery obtains metadata for completions; it does not run the check's normal
 SQL, REST operation, GraphQL query or gRPC method. It still makes real metadata
 requests using the configured connection and headers.
 
-`console_context.schemaAvailable` reports a matching schema already cached in
-the current application instance. False can mean discovery has not run, the
+`console_context.schemaAvailable` reports that the service module holds a
+discovered schema for the active check in the current application instance. False can mean discovery has not run, the
 target/authentication changed, discovery is pending, or a previous attempt
 failed. It does not prove the remote service lacks a specification.
-`console_schema` reads cached metadata with offset/limit paging. The Agent has
+`console_schema` asks the module for that schema (GraphQL introspection, REST
+OpenAPI summary, OpenSearch mappings, MySQL tables and columns, Artemis broker
+names, gRPC services and message fields) and reads it with offset/limit paging. The Agent has
 no tool to start or force discovery and cannot dispatch editor keystrokes or
 click interface controls. Editing through workspace tools is not a substitute
 for these user-driven discovery triggers.

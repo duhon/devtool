@@ -213,6 +213,10 @@ impl Module for Graphql {
         highlight::folds(&check.text)
     }
 
+    fn schema(&self, check: &Check) -> Option<Value> {
+        self.discovery.schema(check).cloned()
+    }
+
     fn marks(&self, check: &Check) -> Vec<Line> {
         self.discovery
             .schema(check)

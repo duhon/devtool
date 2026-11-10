@@ -370,6 +370,15 @@ pub fn status(id: &str) -> Option<crate::Status> {
     with(|modules| modules.get(id).and_then(|loaded| loaded.status.clone()))
 }
 
+/// The schema the service module discovered for `check`; `None` when it has none or the
+/// module is not running.
+pub fn schema(check: services_sdk::Check) -> Option<Value> {
+    let service = check.service.clone();
+    with(|modules| modules.schema(&service, check))
+        .ok()
+        .flatten()
+}
+
 /// The module's latest log lines, the newest last.
 pub fn log(id: &str, lines: usize) -> Vec<(String, String)> {
     with(|modules| {

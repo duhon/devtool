@@ -1116,7 +1116,7 @@ impl App {
                         .take(512)
                         .collect::<Vec<_>>()
                 );
-                value["schemaAvailable"] = json!(module_schema(&service).is_some());
+                value["schemaAvailable"] = json!(self.module_schema(&service).is_some());
                 value
             }
             "console_read_check" => self.agent_workspace.read_check(
@@ -1151,8 +1151,9 @@ impl App {
                 }
             }
             "console_schema" => {
-                let schema = module_schema(&service)
-                    .ok_or("No cached schema. Discover the service in Console first.")?;
+                let schema = self.module_schema(&service).ok_or(
+                    "No discovered schema for this check. Run Discovery (hints) in Console first.",
+                )?;
                 page(&schema.to_string(), offset, limit)
             }
             "console_select_service" => {
@@ -1432,13 +1433,6 @@ fn time() -> String {
         .as_string()
         .unwrap_or_default()
 }
-/// What the module of `service` reports it discovered: the details of its status.
-fn module_schema(service: &str) -> Option<Value> {
-    services_kernel::modules::registry::status(service)
-        .map(|status| status.detail)
-        .filter(|detail| !detail.is_null())
-}
-
 /// The editor command of an Agent edit.
 fn editor_command(
     edit: &services_kernel::agent::CheckEdit,

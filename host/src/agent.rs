@@ -675,7 +675,7 @@ fn workspace_tools(bridge: Arc<Mutex<Option<Bridge>>>) -> Vec<Tool> {
         ("console_read_check", "Read a request page. Requires service and checkId; optional offset/limit."),
         ("console_read_response", "Read a bounded response page. Requires service, checkId; optional offset and limit."),
         ("console_read_debug", "Read a check's current status and Debug: the error, exit code, stderr, timing and request/connection details the user sees. Requires service, checkId. Long values are clipped; read output with console_read_response."),
-        ("console_schema", "Read a bounded page of the cached discovery schema. Requires service; optional offset and limit."),
+        ("console_schema", "Read a bounded page of the schema the service module discovered for the active check. Requires service; optional offset and limit."),
         ("console_edit_check", "Edit a check's title, request, or both through editor/Undo. Requires service, checkId, revision and at least one of title/request. Omit request for rename-only. title is a plain name without #check or #request."),
         ("console_create_check", "Append a check through the editor/Undo. Requires service, revision, title, request; title is a plain name without #check or #request because the app adds the marker. Optional checkId reuses its connection locally."),
         ("console_select_service", "Select a visible Console service. Requires service."),

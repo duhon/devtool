@@ -518,6 +518,10 @@ impl Module for Artemis {
     fn complete(&self, check: &Check, pos: u32) -> Completions {
         language::complete(check, pos as usize, &self.names(check))
     }
+
+    fn schema(&self, check: &Check) -> Option<Value> {
+        Some(self.names(check)).filter(|names| !names.is_null())
+    }
 }
 
 services_sdk::export!(Artemis);

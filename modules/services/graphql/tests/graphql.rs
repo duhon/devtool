@@ -199,6 +199,22 @@ fn discovered() -> Graphql {
 }
 
 #[test]
+fn the_discovered_schema_is_returned_per_connection() {
+    let mut graphql = Graphql::default();
+    assert_eq!(graphql.schema(&check(CONNECTION)), None);
+    let cmds = hints(&mut graphql, CONNECTION);
+    let (tag, _) = &driver_calls(&cmds)[0];
+    assert_eq!(graphql.schema(&check(CONNECTION)), None);
+    reply(&mut graphql, tag, 200, &introspection());
+    let schema = graphql.schema(&check(CONNECTION)).unwrap();
+    assert!(schema["types"]["Pet"].is_object());
+    assert_eq!(
+        graphql.schema(&check("#target\nhttp://other\n#payload\n")),
+        None
+    );
+}
+
+#[test]
 fn highlight_styles_each_section_and_carries_state() {
     let graphql = Graphql::default();
     let lines = [

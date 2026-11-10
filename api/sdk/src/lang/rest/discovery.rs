@@ -229,6 +229,13 @@ impl<P: Probe> Discovery<P> {
         })
     }
 
+    /// What discovery learned for the check's `#target`: the schema of its address, else the
+    /// latest one of its origin.
+    pub fn schema_of(&self, check: &Check) -> Option<&Value> {
+        let url = self.resolved(endpoint_url(check.text_of("target"))?);
+        self.schema_or_origin(url)
+    }
+
     /// The schema for `url` first, then every cached one, the latest first.
     pub fn schemas<'a>(&'a self, url: &str) -> impl Iterator<Item = &'a Value> {
         self.schema(url)

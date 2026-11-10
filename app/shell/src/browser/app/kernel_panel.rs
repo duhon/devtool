@@ -299,6 +299,12 @@ impl App {
         self.kernel.discover(check);
     }
 
+    /// What the module of `service` discovered for the check under the cursor, asked of the
+    /// module itself.
+    pub(in crate::browser) fn module_schema(&self, service: &str) -> Option<Value> {
+        services_kernel::modules::registry::schema(self.kernel_check(service)?)
+    }
+
     /// The check under the cursor as its module sees it.
     fn kernel_check(&self, service: &str) -> Option<services_sdk::Check> {
         let line = self.active_console_line(service)?;

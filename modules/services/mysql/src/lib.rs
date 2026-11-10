@@ -676,6 +676,10 @@ impl Module for Mysql {
     fn complete(&self, check: &Check, pos: u32) -> Completions {
         complete(check, pos as usize, &self.schema(check))
     }
+
+    fn schema(&self, check: &Check) -> Option<Value> {
+        Some(Mysql::schema(self, check)).filter(|schema| !schema.is_null())
+    }
 }
 
 services_sdk::export!(Mysql);
