@@ -2859,7 +2859,7 @@ dependencies = [
 
 [[package]]
 name = "services-contracts"
-version = "3.7.0"
+version = "4.0.0"
 dependencies = [
  "flate2",
  "serde",
@@ -2870,7 +2870,7 @@ dependencies = [
 
 [[package]]
 name = "services-installer"
-version = "3.7.0"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2887,7 +2887,7 @@ dependencies = [
 
 [[package]]
 name = "services-kernel"
-version = "3.7.0"
+version = "4.0.0"
 dependencies = [
  "base64 0.22.1",
  "js-sys",
@@ -2905,7 +2905,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-agent"
-version = "3.7.0"
+version = "4.0.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2915,7 +2915,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-artemis"
-version = "4.0.1"
+version = "5.0.0"
 dependencies = [
  "base64 0.22.1",
  "percent-encoding",
@@ -2927,7 +2927,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-dictionary"
-version = "3.7.0"
+version = "4.0.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2936,7 +2936,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-diff"
-version = "3.7.0"
+version = "4.0.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2953,7 +2953,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-graphql"
-version = "3.2.2"
+version = "4.0.0"
 dependencies = [
  "prost",
  "serde_json",
@@ -2962,7 +2962,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-grpc"
-version = "3.2.2"
+version = "4.0.0"
 dependencies = [
  "prost",
  "prost-reflect",
@@ -2974,7 +2974,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-hints"
-version = "3.7.0"
+version = "4.0.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2983,7 +2983,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-history"
-version = "3.7.0"
+version = "4.0.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2992,7 +2992,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-mysql"
-version = "3.2.2"
+version = "4.0.0"
 dependencies = [
  "serde_json",
  "services-sdk",
@@ -3000,7 +3000,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-opensearch"
-version = "1.0.0"
+version = "2.0.0"
 dependencies = [
  "serde_json",
  "services-sdk",
@@ -3009,7 +3009,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-rest"
-version = "3.2.2"
+version = "4.0.0"
 dependencies = [
  "prost",
  "serde_json",
@@ -3018,7 +3018,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-sessions"
-version = "3.7.0"
+version = "4.0.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3027,7 +3027,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-settings"
-version = "3.7.0"
+version = "4.0.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3037,7 +3037,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-splunk"
-version = "3.2.2"
+version = "4.0.0"
 dependencies = [
  "httpdate",
  "prost",
@@ -3048,7 +3048,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-templates"
-version = "3.7.0"
+version = "4.0.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3058,7 +3058,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-terminal"
-version = "3.2.2"
+version = "4.0.0"
 dependencies = [
  "prost",
  "serde",
@@ -3068,7 +3068,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-variables"
-version = "3.7.0"
+version = "4.0.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3077,7 +3077,7 @@ dependencies = [
 
 [[package]]
 name = "services-native"
-version = "3.7.0"
+version = "4.0.0"
 dependencies = [
  "async-trait",
  "axum 0.8.9",
@@ -3113,7 +3113,7 @@ dependencies = [
 
 [[package]]
 name = "services-sdk"
-version = "3.7.0"
+version = "4.0.0"
 dependencies = [
  "base64 0.22.1",
  "prost",
@@ -3124,7 +3124,7 @@ dependencies = [
 
 [[package]]
 name = "services-shell"
-version = "3.7.0"
+version = "4.0.0"
 dependencies = [
  "js-sys",
  "serde_json",
@@ -3159,7 +3159,7 @@ dependencies = [
 
 [[package]]
 name = "services-testkit"
-version = "3.7.0"
+version = "4.0.0"
 dependencies = [
  "axum 0.8.9",
  "serde_json",
@@ -3171,7 +3171,7 @@ dependencies = [
 
 [[package]]
 name = "services-widgets"
-version = "3.7.0"
+version = "4.0.0"
 dependencies = [
  "js-sys",
  "pulldown-cmark",
@@ -4106,7 +4106,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "3.7.0"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "axum 0.8.9",

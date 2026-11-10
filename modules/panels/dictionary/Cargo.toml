@@ -1,6 +1,6 @@
 [package]
 name = "services-module-dictionary"
-version = "3.7.0"
+version = "4.0.0"
 edition.workspace = true
 publish.workspace = true
 description = "Dictionary panel module: named sets of variables from sources and the user"

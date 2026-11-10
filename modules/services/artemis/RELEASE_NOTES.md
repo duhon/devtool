@@ -1,5 +1,12 @@
 # Artemis module release notes
 
+## 5.0.0
+
+- A WebAssembly module for Services DevTools 4.0; it needs that version or newer.
+- `#endpoint` is `#target` and `#body` is `#payload`. Saved checks, templates and
+  hints are not converted: rename their sections by hand.
+- The Agent reads the schema the module discovered in full, not a short summary.
+
 ## 4.0.1
 
 - The Agent can load the module's skill, `module-artemis`. Its description was not valid

@@ -2,10 +2,10 @@
   "id": "templates",
   "kind": "panel",
   "name": "Templates",
-  "version": "3.7.0",
+  "version": "4.0.0",
   "description": "Templates of whole checks and sections that completion inserts by @name.",
   "abi": 2,
-  "app": ">=3.7",
+  "app": ">=4.0",
   "order": 2,
   "toolbar": 3
 }

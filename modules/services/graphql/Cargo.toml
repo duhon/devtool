@@ -1,6 +1,6 @@
 [package]
 name = "services-module-graphql"
-version = "3.2.2"
+version = "4.0.0"
 edition.workspace = true
 publish.workspace = true
 description = "GraphQL service module"

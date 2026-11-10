@@ -48,15 +48,15 @@ service or a panel module with the SDK:
 [examples/echo/README.md](examples/echo/README.md).
 
 A team can share modules and settings through **Settings** → **Sources**: add a
-GitHub repository or a local folder, then install its modules and apply its
-Dictionary sets, templates, hints and Agent skills. A source is laid out as
+GitHub repository or a local folder, then install its modules, sync its
+Dictionary sets, templates and hints, and apply its Agent skills. A source is laid out as
 
 ```text
 dictionary.json          {"sets": {"<set>": {"<VAR>": "value"}}}
 templates.json           {"<module>": {"<section>": "<templates text>"}}
 hints/<module>.md        a module's hints
 skills/<name>/SKILL.md   Agent skills
-modules/*.module.tgz     module packages, <id>-<version>-<platform>.module.tgz
+modules/*.module.tgz     module packages, <id>-<version>.module.tgz
 ```
 
 A GitHub source is a folder of a branch: **Repository**, optional **Branch**
@@ -77,8 +77,11 @@ newest of each module. Commit the package files where suits the team:
 The Standard source is the `modules` branch of `duhon/devtool`, which CI
 replaces with the newest package of each standard module.
 
-Your own changes stay on top of a source's and survive its updates; **Reset**
-returns to the source's.
+Panels save your Dictionary, templates and hints into the **Local** source, the
+first row of Settings → Sources. **Sync** on a source's row merges it with Local
+file by file, both ways: a folder source gets the files written, a GitHub source
+a commit. A file only the source has is copied into Local; a change made on both
+sides opens in the **Diff** panel to resolve.
 
 A skill gets the source's name as a prefix: `skills/wordpress/` of source
 *Team* becomes `team-wordpress`. The Agent sees only each skill's name and

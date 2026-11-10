@@ -2,10 +2,10 @@
   "id": "hints",
   "kind": "panel",
   "name": "Hints",
-  "version": "3.7.0",
+  "version": "4.0.0",
   "description": "Completion hints of each service, saved as you edit and synced with sources in Settings.",
   "abi": 2,
-  "app": ">=3.7",
+  "app": ">=4.0",
   "order": 3,
   "toolbar": 5
 }

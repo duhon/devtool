@@ -2,10 +2,10 @@
   "id": "dictionary",
   "kind": "panel",
   "name": "Dictionary",
-  "version": "3.7.0",
+  "version": "4.0.0",
   "description": "Named sets of variables ({{set:name}}), saved as you edit and synced with sources in Settings.",
   "abi": 2,
-  "app": ">=3.7",
+  "app": ">=4.0",
   "order": 5,
   "toolbar": 7
 }

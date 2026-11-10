@@ -46,7 +46,7 @@ examples/echo/
 - `kind` — `service` for a Console tab, `panel` for a side tool.
 - `name`, `description` — shown in the tab and in Settings → Modules.
 - `abi` — the SDK ABI version (`services_sdk::ABI`, `2`); `app` — the application
-  versions it works with (`">=3.7"`).
+  versions it works with (`">=4.0"`).
 - `drivers` — the drivers it calls and their versions (`{"http": "1"}`); the Kernel
   refuses a module whose drivers the host lacks.
 - Optional: `order`, the tab or tool position and the order of the hooks; `toolbar`, the

@@ -5,6 +5,6 @@
   "version": "0.1.0",
   "description": "Example module: sends the text of a check back.",
   "abi": 2,
-  "app": ">=3.7",
+  "app": ">=4.0",
   "drivers": {}
 }

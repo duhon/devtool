@@ -2,10 +2,10 @@
   "id": "mysql",
   "kind": "service",
   "name": "MySQL",
-  "version": "3.2.2",
+  "version": "4.0.0",
   "description": "Run a SQL query against a MySQL connection.",
   "abi": 2,
-  "app": ">=3.7",
+  "app": ">=4.0",
   "drivers": {"mysql": "1"},
   "order": 2
 }

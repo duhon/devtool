@@ -2,10 +2,10 @@
   "id": "terminal",
   "kind": "service",
   "name": "Terminal",
-  "version": "3.2.2",
+  "version": "4.0.0",
   "description": "Run a command through a target (a local shell or an ssh connection) and show its output.",
   "abi": 2,
-  "app": ">=3.7",
+  "app": ">=4.0",
   "drivers": {"process": "1"},
   "order": 6
 }

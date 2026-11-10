@@ -2,10 +2,10 @@
   "id": "diff",
   "kind": "panel",
   "name": "Diff",
-  "version": "3.7.0",
+  "version": "4.0.0",
   "description": "Compare two texts side by side, take either side's version of a difference, and settle conflicts other modules open.",
   "abi": 2,
-  "app": ">=3.7",
+  "app": ">=4.0",
   "order": 7,
   "toolbar": 8
 }

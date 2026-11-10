@@ -2,10 +2,10 @@
   "id": "sessions",
   "kind": "panel",
   "name": "Sessions",
-  "version": "3.7.0",
+  "version": "4.0.0",
   "description": "Saved workspaces: switch between them, start one from another, delete them.",
   "abi": 2,
-  "app": ">=3.7",
+  "app": ">=4.0",
   "order": 0,
   "toolbar": 0
 }

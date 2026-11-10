@@ -220,13 +220,29 @@ class ReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "older"):
             release.new_modules({"rest": "3.1.0"}, published)
 
+    def test_service_and_panel_module_crates_are_released(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for folder, module, version, kind in (
+                ("services", "rest", "4.0.0", '["cdylib", "rlib"]'),
+                ("panels", "history", "4.0.0", '["cdylib", "rlib"]'),
+                ("panels", "shared", "1.0.0", '["rlib"]'),
+            ):
+                crate = root / "modules" / folder / module
+                crate.mkdir(parents=True)
+                (crate / "Cargo.toml").write_text(
+                    f'[package]\nname = "{module}"\nversion = "{version}"\n\n[lib]\ncrate-type = {kind}\n'
+                )
+                (crate / "manifest.json").write_text(json.dumps({"id": module}))
+            self.assertEqual(release.modules(root), {"rest": "4.0.0", "history": "4.0.0"})
+
     def module(self, root, notes):
         modules = root / "dist/modules"
         modules.mkdir(parents=True)
-        archive = modules / "rest-1.2.0-macos-arm64.module.tgz"
+        archive = modules / "rest-1.2.0.module.tgz"
         with tarfile.open(archive, "w:gz") as package:
             for name, data in {
-                "package.json": json.dumps({"id": "rest", "version": "1.2.0", "platform": "macos-arm64"}),
+                "package.json": json.dumps({"id": "rest", "version": "1.2.0"}),
                 "RELEASE_NOTES.md": notes,
             }.items():
                 entry = tarfile.TarInfo(name)

@@ -1,5 +1,14 @@
 # REST module release notes
 
+## 4.0.0
+
+- A WebAssembly module for Services DevTools 4.0; it needs that version or newer.
+- `#endpoint` is `#target` and `#body` is `#payload`. Saved checks, templates and
+  hints are not converted: rename their sections by hand.
+- `#target` holds only the URL. The HTTP method goes in `#action` and is GET
+  without it; a method left in `#target` is an error that points to `#action`.
+- The Agent reads the schema the module discovered in full, not a short summary.
+
 ## 3.2.2
 
 - The Agent can load the module's skill, `module-rest`. Its description was not valid

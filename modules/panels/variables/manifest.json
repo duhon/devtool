@@ -2,10 +2,10 @@
   "id": "variables",
   "kind": "panel",
   "name": "Variables",
-  "version": "3.7.0",
+  "version": "4.0.0",
   "description": "Session variables ({{var:name}}, {{:name}}) and the environment ({{env:NAME}}).",
   "abi": 2,
-  "app": ">=3.7",
+  "app": ">=4.0",
   "order": 4,
   "toolbar": 6
 }

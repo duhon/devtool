@@ -2,10 +2,10 @@
   "id": "grpc",
   "kind": "service",
   "name": "gRPC",
-  "version": "3.2.2",
+  "version": "4.0.0",
   "description": "Make a gRPC call and inspect the response.",
   "abi": 2,
-  "app": ">=3.7",
+  "app": ">=4.0",
   "drivers": {"grpc": "1"},
   "order": 4,
   "transfer": "grpcurl"

@@ -2,10 +2,10 @@
   "id": "agent",
   "kind": "panel",
   "name": "Agent",
-  "version": "3.7.0",
+  "version": "4.0.0",
   "description": "Copilot chats about the active check and the inspected web page.",
   "abi": 2,
-  "app": ">=3.7",
+  "app": ">=4.0",
   "order": 6,
   "toolbar": 1
 }

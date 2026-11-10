@@ -2,10 +2,10 @@
   "id": "graphql",
   "kind": "service",
   "name": "GraphQL",
-  "version": "3.2.2",
+  "version": "4.0.0",
   "description": "Send a GraphQL query or mutation and inspect the response.",
   "abi": 2,
-  "app": ">=3.7",
+  "app": ">=4.0",
   "drivers": {"http": "1"},
   "order": 3,
   "transfer": "curl"

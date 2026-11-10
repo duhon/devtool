@@ -1,5 +1,14 @@
 # OpenSearch module release notes
 
+## 2.0.0
+
+- A WebAssembly module for Services DevTools 4.0; it needs that version or newer.
+- `#endpoint` is `#target` and `#body` is `#payload`. Saved checks, templates and
+  hints are not converted: rename their sections by hand.
+- `#target` holds only the URL. The HTTP method goes in `#action` and is GET
+  without it; a method left in `#target` is an error that points to `#action`.
+- The Agent reads the schema the module discovered in full, not a short summary.
+
 ## 1.0.0
 
 - The OpenSearch module ships with Services DevTools: install and update it in

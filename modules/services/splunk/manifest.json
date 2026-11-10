@@ -2,10 +2,10 @@
   "id": "splunk",
   "kind": "service",
   "name": "Splunk",
-  "version": "3.2.2",
+  "version": "4.0.0",
   "description": "Stream Splunk export results; Preview enables provisional snapshots, Offset skips rows locally, Count limits the portion (default 100, 0 = all).",
   "abi": 2,
-  "app": ">=3.7",
+  "app": ">=4.0",
   "drivers": {"http": "1"},
   "order": 5
 }

@@ -2,10 +2,10 @@
   "id": "history",
   "kind": "panel",
   "name": "History",
-  "version": "3.7.0",
+  "version": "4.0.0",
   "description": "Every finished run, searchable, with secrets masked.",
   "abi": 2,
-  "app": ">=3.7",
+  "app": ">=4.0",
   "order": 1,
   "toolbar": 4
 }

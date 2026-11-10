@@ -1,5 +1,11 @@
 # Splunk module release notes
 
+## 4.0.0
+
+- A WebAssembly module for Services DevTools 4.0; it needs that version or newer.
+- `#endpoint` is `#target` and `#search` is `#payload`. Saved checks, templates and
+  hints are not converted: rename their sections by hand.
+
 ## 3.2.2
 
 - The Agent can load the module's skill, `module-splunk`. Its description was not valid

@@ -1,5 +1,35 @@
 # Release notes
 
+## 4.0.0
+
+- Every service and side panel is now a WebAssembly module. After the update, open
+  Settings → Modules and update every module: REST, GraphQL, gRPC, MySQL, Splunk and
+  Terminal 4.0.0, Artemis 5.0.0, OpenSearch 2.0.0 and the panels 4.0.0. Modules of
+  3.x do not load in 4.0.
+- Request sections have new names in every service: `#endpoint` is `#target`, and
+  `#query`, `#message`, `#body`, `#command` and `#search` are `#payload`. REST-like
+  services keep only the URL in `#target`; the HTTP method goes in `#action` and is
+  GET without it. Saved checks, templates and hints are not converted: rename their
+  sections by hand. A method left in `#target` is an error that points to `#action`.
+- Settings → Sources has a Local source, its first row. Panels save the Dictionary,
+  templates and hints into Local. **Sync** on a source's row merges it with Local file
+  by file, both ways: a folder source gets the files written, a GitHub source a commit.
+  A change made on both sides opens in the new **Diff** panel to resolve. Local
+  changes kept over a source by 3.x, and **Reset to source**, are gone.
+- The Transfer panel holds Export and Import of the service's command; Export resolves
+  the check's variables. Results and errors stay in its status line.
+- The Sessions panel is a table: rename a session in place, create one from another,
+  see when each was last used. The side panel stays open when you switch sessions.
+- The Console has its own editor instead of CodeMirror.
+- Services start sooner: modules start from the list cached by the last run, in
+  parallel, the active service first.
+- The Agent reads the schema a service discovered (GraphQL types and fields, REST
+  paths) in full, page by page, instead of a short summary.
+- GraphQL marks object fields again, by syntax and by the discovered schema.
+- Panel toolbar lights stay on until you have seen the outcome for 2 seconds.
+- A darker background; panels have the editor's background, table headers their own.
+  History rows no longer move when you select one.
+
 ## 3.7.0
 
 - Find and Replace in every editor. ⌘F (Ctrl+F) opens a find bar in the editor of the

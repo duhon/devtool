@@ -168,9 +168,11 @@ def new_modules(versions, published):
 
 
 def modules(root=ROOT):
-    """`{id: version}` of the module crates in modules/services (the version in each Cargo.toml)."""
+    """`{id: version}` of the module crates in modules/services and modules/panels (the version
+    in each Cargo.toml)."""
     found = {}
-    for cargo in sorted((root / "modules/services").glob("*/Cargo.toml")):
+    cargos = [*(root / "modules/services").glob("*/Cargo.toml"), *(root / "modules/panels").glob("*/Cargo.toml")]
+    for cargo in sorted(cargos):
         crate = tomllib.loads(cargo.read_text())
         manifest = cargo.parent / "manifest.json"
         if "cdylib" not in crate.get("lib", {}).get("crate-type", []) or not manifest.is_file():
@@ -338,7 +340,8 @@ def module_package(archive):
     noted, _ = newest_notes(text)
     if noted != version:
         raise ValueError(f"{archive.name}: the newest module notes are for {noted}, not {version}")
-    if archive.name != f"{module}-{version}-{described['platform']}{MODULE_SUFFIX}":
+    platform = f"-{described['platform']}" if described.get("platform") else ""
+    if archive.name != f"{module}-{version}{platform}{MODULE_SUFFIX}":
         raise ValueError(f"{archive.name} is not named by its package")
     return module, version
 
