@@ -1,5 +1,5 @@
 use serde_json::json;
-use services_module_hints::{Hints, Msg, OWN, validate};
+use services_module_hints::{Hints, Msg, validate};
 use services_sdk::{Event, Module};
 
 fn reply(hints: &mut Hints, tag: &str, value: serde_json::Value) -> Vec<services_sdk::Cmd> {
@@ -18,7 +18,7 @@ fn contributed(commands: &[services_sdk::Cmd]) -> serde_json::Value {
 }
 
 #[test]
-fn own_hints_replace_the_source_until_reset() {
+fn hints_are_read_from_and_saved_to_the_local_source() {
     let mut hints = Hints::default();
     let commands = reply(
         &mut hints,
@@ -29,7 +29,7 @@ fn own_hints_replace_the_source_until_reset() {
     let commands = reply(
         &mut hints,
         "source:rest",
-        json!([{"source": "Team", "text": "# Paths\n/users"}]),
+        json!([{"source": "Local", "text": "# Paths\n/users"}]),
     );
     assert_eq!(contributed(&commands), json!({"rest": "# Paths\n/users"}));
 
@@ -37,11 +37,12 @@ fn own_hints_replace_the_source_until_reset() {
         msg: Msg::Edit,
         value: Some("# Mine\n/me".into()),
     });
-    assert!(
-        commands
-            .iter()
-            .any(|command| command.name == "kv.put" && command.args()["key"] == OWN)
-    );
+    let save = commands
+        .iter()
+        .find(|command| command.name == "sources.write")
+        .expect("saves into Local");
+    assert_eq!(save.args()["name"], "hints/rest.md");
+    assert_eq!(save.args()["text"], "# Mine\n/me");
     assert_eq!(contributed(&commands), json!({"rest": "# Mine\n/me"}));
 
     let commands = hints.update(Event::Ui {
@@ -54,12 +55,6 @@ fn own_hints_replace_the_source_until_reset() {
             .all(|command| command.name != "editor.contribute")
     );
     assert_eq!(hints.effective("rest"), "# Mine\n/me");
-
-    let commands = hints.update(Event::Ui {
-        msg: Msg::Reset,
-        value: None,
-    });
-    assert_eq!(contributed(&commands), json!({"rest": "# Paths\n/users"}));
 }
 
 #[test]

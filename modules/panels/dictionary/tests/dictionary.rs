@@ -1,15 +1,13 @@
 use serde_json::{Value, json};
-use services_module_dictionary::{Dictionary, LOCAL, Msg};
+use services_module_dictionary::{Dictionary, FILE, Msg};
 use services_sdk::{Cmd, Event, Module, cmd};
 
+fn files(local: &Value) -> Value {
+    json!([{"source": "Local", "text": local.to_string()}])
+}
+
 fn dictionary() -> Dictionary {
-    Dictionary::with(
-        json!([
-            {"source": "Base", "text": r#"{"profiles": {"dev": {"HOST": "base.test"}}}"#},
-            {"source": "Team", "text": r#"{"sets": {"dev": {"HOST": "dev.test", "URL": "https://{{dev:HOST}}/{{var:path}}"}, "stage": {"HOST": "stage.test", "token": "s3"}}}"#},
-        ]),
-        json!({"order": ["mine"], "sets": {"stage": {"HOST": "mine.test", "token": "t0k"}, "mine": {"A": "{{:HOST}}"}}}),
-    )
+    Dictionary::with(files(&local()))
 }
 
 fn pass(dictionary: &Dictionary, text: &str) -> Result<String, String> {
@@ -20,7 +18,7 @@ fn pass(dictionary: &Dictionary, text: &str) -> Result<String, String> {
 }
 
 #[test]
-fn sets_layer_sources_then_the_users_own() {
+fn sets_resolve_by_name_and_from_the_first_set_with_the_variable() {
     let dictionary = dictionary();
     assert_eq!(
         pass(
@@ -28,7 +26,7 @@ fn sets_layer_sources_then_the_users_own() {
             "{{dev:URL}} {{stage:HOST}} {{mine:A}} {{:HOST}}"
         )
         .unwrap(),
-        "https://dev.test/{{var:path}} mine.test dev.test dev.test"
+        "https://dev.test/{{var:path}} stage.test dev.test dev.test"
     );
     assert_eq!(
         pass(&dictionary, "{{var:x}} {{:nope}}").unwrap(),
@@ -51,10 +49,10 @@ fn transact(dictionary: &mut Dictionary, stored: Value) -> Vec<Cmd> {
         tag: "dictionary".into(),
         result: Ok(Value::Null),
     });
-    assert_eq!(fresh, [cmd::kv_get("fresh", LOCAL)]);
+    assert_eq!(fresh, [cmd::sources_read("fresh", FILE)]);
     let mut commands = dictionary.update(Event::Reply {
         tag: "fresh".into(),
-        result: Ok(stored),
+        result: Ok(files(&stored)),
     });
     if commands.iter().any(|command| command.tag == "save") {
         commands.extend(dictionary.update(Event::Reply {
@@ -66,12 +64,13 @@ fn transact(dictionary: &mut Dictionary, stored: Value) -> Vec<Cmd> {
 }
 
 fn saved(commands: &[Cmd]) -> Value {
-    commands
+    let text = commands
         .iter()
-        .find(|command| command.name == "kv.put" && command.tag == "save")
+        .find(|command| command.name == "sources.write" && command.tag == "save")
         .expect("saved")
-        .args()["value"]
-        .clone()
+        .args()["text"]
+        .clone();
+    serde_json::from_str(text.as_str().unwrap()).unwrap()
 }
 
 fn status(commands: &[Cmd]) -> String {
@@ -91,11 +90,14 @@ fn ui(dictionary: &mut Dictionary, msg: Msg, value: &str) -> Vec<Cmd> {
 }
 
 fn local() -> Value {
-    json!({"order": ["mine"], "sets": {"stage": {"HOST": "mine.test", "token": "t0k"}, "mine": {"A": "{{:HOST}}"}}})
+    json!({"order": ["dev", "stage", "mine"], "sets": {
+        "dev": {"HOST": "dev.test", "URL": "https://{{dev:HOST}}/{{var:path}}"},
+        "stage": {"HOST": "stage.test", "token": "t0k"},
+        "mine": {"A": "{{:HOST}}"}}})
 }
 
 #[test]
-fn edits_keep_only_overrides_of_a_source_set_and_reset_restores_it() {
+fn edits_are_saved_at_once_into_the_local_file() {
     let mut dictionary = dictionary();
     ui(
         &mut dictionary,
@@ -111,18 +113,10 @@ fn edits_keep_only_overrides_of_a_source_set_and_reset_restores_it() {
     let commands = transact(&mut dictionary, local());
     assert_eq!(
         saved(&commands)["sets"]["dev"],
-        json!({"HOST": "edited.test", "PORT": "1"}),
-        "only what differs from the source is kept"
+        json!({"HOST": "edited.test", "URL": "https://{{dev:HOST}}/{{var:path}}", "PORT": "1"})
     );
     assert_eq!(status(&commands), "Dictionary save · OK");
     assert_eq!(pass(&dictionary, "{{dev:HOST}}").unwrap(), "edited.test");
-    let view = format!("{:?}", dictionary.view());
-    assert!(
-        view.contains("dictionary-reset-variable-HOST")
-            && view.contains("dictionary-reset-variable-PORT")
-            && !view.contains("dictionary-reset-variable-URL"),
-        "{view}"
-    );
 
     let commands = ui(&mut dictionary, Msg::Edit, "broken");
     assert!(commands.contains(&cmd::status(
@@ -130,38 +124,15 @@ fn edits_keep_only_overrides_of_a_source_set_and_reset_restores_it() {
         "error"
     )));
     assert_eq!(pass(&dictionary, "{{dev:HOST}}").unwrap(), "edited.test");
-
-    // Deleting a source's variable is refused.
-    ui(&mut dictionary, Msg::Edit, "HOST: x");
-    let stored = json!({"order": ["mine"], "sets": {"dev": {"HOST": "edited.test", "PORT": "1"}}});
-    let commands = transact(&mut dictionary, stored.clone());
-    assert_eq!(
-        status(&commands),
-        "Dictionary save · ERROR · dev:URL comes from source Team; reset it instead of deleting it"
+    let view = format!("{:?}", dictionary.view());
+    assert!(
+        !view.contains("Reset") && !view.contains("From source"),
+        "{view}"
     );
-
-    // One variable goes back to the source; one the source lacks goes.
-    dictionary.update(Event::Ui {
-        msg: Msg::Reset(Some("PORT".into())),
-        value: None,
-    });
-    let commands = transact(&mut dictionary, stored);
-    assert_eq!(
-        saved(&commands)["sets"]["dev"],
-        json!({"HOST": "edited.test"})
-    );
-    assert_eq!(status(&commands), "Dictionary reset · OK");
-    dictionary.update(Event::Ui {
-        msg: Msg::Reset(None),
-        value: None,
-    });
-    let commands = transact(&mut dictionary, saved(&commands));
-    assert_eq!(saved(&commands)["sets"].get("dev"), None);
-    assert_eq!(pass(&dictionary, "{{dev:HOST}}").unwrap(), "dev.test");
 }
 
 #[test]
-fn own_sets_are_renamed_and_reordered_but_source_sets_are_not() {
+fn sets_are_renamed_and_reordered() {
     let mut dictionary = dictionary();
     ui(
         &mut dictionary,
@@ -172,7 +143,7 @@ fn own_sets_are_renamed_and_reordered_but_source_sets_are_not() {
     assert_eq!(pass(&dictionary, "{{ours:A}}").unwrap(), "dev.test");
     let commands = transact(&mut dictionary, local());
     assert_eq!(status(&commands), "Dictionary rename · OK");
-    assert_eq!(saved(&commands)["order"], json!(["ours", "dev", "stage"]));
+    assert_eq!(saved(&commands)["order"], json!(["dev", "stage", "ours"]));
     let stored = saved(&commands);
 
     let commands = ui(&mut dictionary, Msg::Rename("ours".into()), "dev");
@@ -183,17 +154,17 @@ fn own_sets_are_renamed_and_reordered_but_source_sets_are_not() {
     let view = format!("{:?}", dictionary.view());
     assert!(
         view.contains("on_rename: Some"),
-        "own sets rename in place: {view}"
+        "sets rename in place: {view}"
     );
 
     ui(
         &mut dictionary,
         Msg::Reorder,
-        r#"["dictionary-set-stage","dictionary-set-ours"]"#,
+        r#"["dictionary-set-ours","dictionary-set-dev"]"#,
     );
     let commands = transact(&mut dictionary, stored);
     assert_eq!(status(&commands), "Dictionary reorder · OK");
-    assert_eq!(saved(&commands)["order"], json!(["stage", "ours", "dev"]));
+    assert_eq!(saved(&commands)["order"], json!(["ours", "dev", "stage"]));
 }
 
 #[test]
@@ -212,8 +183,8 @@ fn a_draft_started_before_another_window_saved_conflicts_until_discarded() {
     );
     let other = json!({"order": ["mine"], "sets": {"mine": {"A": "other window"}}});
     dictionary.update(Event::Reply {
-        tag: LOCAL.into(),
-        result: Ok(other.clone()),
+        tag: "sources".into(),
+        result: Ok(files(&other)),
     });
     let commands = ui(&mut dictionary, Msg::Edit, "A: stale");
     assert!(commands.contains(&cmd::lock("dictionary", "dictionary")));
@@ -237,10 +208,10 @@ fn a_draft_started_before_another_window_saved_conflicts_until_discarded() {
         msg: Msg::Discard,
         value: None,
     });
-    assert!(commands.contains(&cmd::kv_get(LOCAL, LOCAL)));
+    assert!(commands.contains(&cmd::sources_read("sources", FILE)));
     dictionary.update(Event::Reply {
-        tag: LOCAL.into(),
-        result: Ok(other),
+        tag: "sources".into(),
+        result: Ok(files(&other)),
     });
     let view = format!("{:?}", dictionary.view());
     assert!(
@@ -257,7 +228,7 @@ fn new_sets_are_named_like_references() {
     assert_eq!(status(&commands), "Dictionary add · OK");
     assert_eq!(
         saved(&commands)["order"],
-        json!(["mine", "dev", "stage", "qa"])
+        json!(["dev", "stage", "mine", "qa"])
     );
     let commands = dictionary.update(Event::Ui {
         msg: Msg::Add,
@@ -292,11 +263,11 @@ fn another_windows_save_replaces_the_shown_set() {
         Msg::Tab(String::new()),
         "dictionary-set-mine",
     );
-    let commands = dictionary.update(Event::Storage { key: LOCAL.into() });
-    assert_eq!(commands, [cmd::kv_get(LOCAL, LOCAL)]);
     dictionary.update(Event::Reply {
-        tag: LOCAL.into(),
-        result: Ok(json!({"order": ["mine"], "sets": {"mine": {"A": "other"}}})),
+        tag: "sources".into(),
+        result: Ok(files(
+            &json!({"order": ["mine"], "sets": {"mine": {"A": "other"}}}),
+        )),
     });
     let view = format!("{:?}", dictionary.view());
     assert!(view.contains("\"A: other\""), "{view}");

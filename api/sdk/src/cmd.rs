@@ -21,6 +21,7 @@ pub const NAMES: &[&str] = &[
     "clipboard.read",
     "clipboard.write",
     "sources.read",
+    "sources.write",
     "editor.contribute",
     "editor.relight",
     "document.read",
@@ -54,6 +55,8 @@ pub const NAMES: &[&str] = &[
     "sources.token",
     "sources.apply",
     "sources.open",
+    "sources.sync",
+    "sources.resolve",
     "app.update",
     "app.reload",
     "lock.acquire",
@@ -159,10 +162,16 @@ pub fn clipboard_write(tag: impl Into<String>, text: &str) -> Cmd {
     Cmd::new(tag, "clipboard.write", &json!({"text": text}))
 }
 
-/// The raw document `name` (like `dictionary.json`) of every applied source, by order:
-/// `[{source, text}]`, the local layer last.
+/// The raw document `name` (like `dictionary.json`) of the Local source: `[{source, text}]`,
+/// empty if it has none yet.
 pub fn sources_read(tag: impl Into<String>, name: &str) -> Cmd {
     Cmd::new(tag, "sources.read", &json!({"name": name}))
+}
+
+/// Saves the file `name` of the Local source (`dictionary.json`, `templates.json` or
+/// `hints/<module>.md`): the reply is `{}`.
+pub fn sources_write(tag: impl Into<String>, name: &str, text: &str) -> Cmd {
+    Cmd::new(tag, "sources.write", &json!({"name": name, "text": text}))
 }
 
 /// The saved workspaces (sessions): `{current, sessions: [{id, name}], saving, saveError,
@@ -261,6 +270,8 @@ pub const PRIVILEGED: &[&str] = &[
     "sources.token",
     "sources.apply",
     "sources.open",
+    "sources.sync",
+    "sources.resolve",
     "app.update",
     "app.reload",
 ];
@@ -370,6 +381,22 @@ pub fn sources_apply(tag: impl Into<String>, source: &str) -> Cmd {
 /// Opens folder source `source` in the file manager.
 pub fn sources_open(tag: impl Into<String>, source: &str) -> Cmd {
     Cmd::new(tag, "sources.open", &json!({"source": source}))
+}
+
+/// Syncs the shared source `source` with Local: what changed on one side goes to the other;
+/// the reply lists `{applied, conflicts:[{file, left, right}], errors}`.
+pub fn sources_sync(tag: impl Into<String>, source: &str) -> Cmd {
+    Cmd::new(tag, "sources.sync", &json!({"source": source}))
+}
+
+/// Saves the resolution `text` of a conflict in `file`: to Local, and to the source unless
+/// it changed meanwhile; the reply is `{written}`.
+pub fn sources_resolve(tag: impl Into<String>, source: &str, file: &str, text: &str) -> Cmd {
+    Cmd::new(
+        tag,
+        "sources.resolve",
+        &json!({"source": source, "file": file, "text": text}),
+    )
 }
 
 /// Installs App `version` from source `source`; the App saves the workspace, installs and

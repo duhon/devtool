@@ -443,6 +443,9 @@ pub fn hosted(name: &str, mut args: Value, native: bool) -> Option<Hosted> {
         }
         "os.env" => request(json!({"service":"env"})),
         "sources.read" => request(json!({"service":"sources","op":"read","name":args["name"]})),
+        "sources.write" => request(
+            json!({"service":"sources","op":"write","name":args["name"],"text":args["text"]}),
+        ),
         "modules.check" if !native => Some(Hosted::Done(Value::Null)),
         "modules.check" => {
             request(json!({"service":"sources","op":"check","force":args["force"] == true}))
@@ -468,6 +471,15 @@ pub fn hosted(name: &str, mut args: Value, native: bool) -> Option<Hosted> {
         "sources.token" => request(json!({"service":"sources","op":"token","token":args["token"]})),
         "sources.apply" => Some(Hosted::Request(
             json!({"service":"sources","op":"apply","source":args["source"]}),
+            After::Sources,
+        )),
+        "sources.sync" => Some(Hosted::Request(
+            json!({"service":"sources","op":"sync","source":args["source"]}),
+            After::Sources,
+        )),
+        "sources.resolve" => Some(Hosted::Request(
+            json!({"service":"sources","op":"resolve","source":args["source"],
+                "file":args["file"],"text":args["text"]}),
             After::Sources,
         )),
         "sources.open" => request(json!({"service":"sources","op":"open","source":args["source"]})),

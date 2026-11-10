@@ -1,14 +1,13 @@
 //! The Hints panel: completion hints of each service, shown for the service of the console.
-//! A source's `hints/<service>.md` gives them; the user's own hints replace them for the
-//! session until reset. Every service's hints go to the editors as a contribution.
+//! They are the files `hints/<service>.md` of the Local source, saved as they are edited;
+//! sources sync with them in Settings. Every service's hints go to the editors as a
+//! contribution.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use services_sdk::{Cmd, Event, Module, Subscriptions, cmd, ui};
 use std::collections::BTreeMap;
 
-/// The session kv key of the user's hints by service.
-pub const OWN: &str = "hints";
 /// The session kv key of the edits that are not valid yet, by service.
 pub const DRAFTS: &str = "drafts";
 const DOCUMENT: &str = "document";
@@ -17,7 +16,6 @@ const SOURCE: &str = "source:";
 #[derive(Serialize, Deserialize)]
 pub enum Msg {
     Edit,
-    Reset,
 }
 
 #[derive(Default)]
@@ -25,14 +23,11 @@ pub struct Hints {
     service: String,
     /// Service ids by their tab titles.
     names: BTreeMap<String, String>,
-    /// The highest-priority source's hints: `(source, text)`.
-    sources: BTreeMap<String, (String, String)>,
-    own: Map<String, Value>,
+    /// The saved hints by service.
+    saved: BTreeMap<String, String>,
     drafts: Map<String, Value>,
     /// The level of the last status by service, shown as the title's light.
     light: BTreeMap<String, String>,
-    /// A save of the user's hints is not answered yet.
-    saving: bool,
 }
 
 /// Checks hints the way completion reads them.
@@ -71,12 +66,7 @@ pub fn validate(text: &str) -> Result<(), String> {
 impl Hints {
     /// The hints of `service` that completion uses.
     pub fn effective(&self, service: &str) -> String {
-        self.own
-            .get(service)
-            .and_then(Value::as_str)
-            .map(str::to_owned)
-            .or_else(|| self.sources.get(service).map(|(_, text)| text.clone()))
-            .unwrap_or_default()
+        self.saved.get(service).cloned().unwrap_or_default()
     }
 
     fn shown(&self) -> String {
@@ -87,21 +77,22 @@ impl Hints {
     }
 
     fn contribution(&self) -> Cmd {
-        let services: std::collections::BTreeSet<&String> =
-            self.own.keys().chain(self.sources.keys()).collect();
-        let hints: Map<String, Value> = services
-            .into_iter()
-            .map(|service| (service.clone(), json!(self.effective(service))))
+        let hints: Map<String, Value> = self
+            .saved
+            .iter()
+            .map(|(service, text)| (service.clone(), json!(text)))
             .collect();
         cmd::contribute(&json!({ "hints": hints }))
     }
 
-    fn load() -> Vec<Cmd> {
-        vec![
-            cmd::document_read(DOCUMENT),
-            cmd::kv_get(OWN, OWN),
-            cmd::kv_get(DRAFTS, DRAFTS),
-        ]
+    fn read(id: &String) -> Cmd {
+        cmd::sources_read(format!("{SOURCE}{id}"), &format!("hints/{id}.md"))
+    }
+
+    fn load(&self) -> Vec<Cmd> {
+        let mut commands = vec![cmd::document_read(DOCUMENT), cmd::kv_get(DRAFTS, DRAFTS)];
+        commands.extend(self.names.keys().map(Self::read));
+        commands
     }
 
     fn save(&mut self, text: String) -> Vec<Cmd> {
@@ -112,13 +103,10 @@ impl Hints {
         match validate(&text) {
             Ok(()) => {
                 self.drafts.remove(&service);
-                self.own.insert(service, json!(text));
-                self.saving = true;
-                vec![
-                    cmd::kv_put("save", OWN, &Value::Object(self.own.clone()), true),
-                    self.put_drafts(),
-                    self.contribution(),
-                ]
+                let file = format!("hints/{service}.md");
+                let save = cmd::sources_write("save", &file, &text);
+                self.saved.insert(service, text);
+                vec![save, self.put_drafts(), self.contribution()]
             }
             Err(error) => {
                 self.drafts.insert(service, json!(text));
@@ -152,7 +140,7 @@ impl Module for Hints {
 
     fn update(&mut self, event: Event<Msg>) -> Vec<Cmd> {
         match event {
-            Event::Init { .. } | Event::Workspace => Self::load(),
+            Event::Init { .. } | Event::Workspace => self.load(),
             Event::Shown => vec![cmd::document_read(DOCUMENT)],
             Event::Document(check) if check.service != self.service => {
                 self.service = check.service;
@@ -166,18 +154,11 @@ impl Module for Hints {
                         let id = service["id"].as_str().unwrap_or_default().to_owned();
                         let name = service["name"].as_str().unwrap_or(&id).to_owned();
                         if !self.names.contains_key(&id) {
-                            commands.push(cmd::sources_read(
-                                format!("{SOURCE}{id}"),
-                                &format!("hints/{id}.md"),
-                            ));
+                            commands.push(Self::read(&id));
                         }
                         self.names.insert(id, name);
                     }
                     commands
-                }
-                (OWN, Ok(own)) => {
-                    self.own = own.as_object().cloned().unwrap_or_default();
-                    vec![self.contribution()]
                 }
                 (DRAFTS, Ok(drafts)) => {
                     self.drafts = drafts.as_object().cloned().unwrap_or_default();
@@ -187,35 +168,22 @@ impl Module for Hints {
                     let service = &tag[SOURCE.len()..];
                     match files.as_array().and_then(|files| files.last()) {
                         Some(file) => {
-                            self.sources.insert(
+                            self.saved.insert(
                                 service.to_owned(),
-                                (
-                                    file["source"].as_str().unwrap_or_default().to_owned(),
-                                    file["text"].as_str().unwrap_or_default().to_owned(),
-                                ),
+                                file["text"].as_str().unwrap_or_default().to_owned(),
                             );
                         }
                         None => {
-                            self.sources.remove(service);
+                            self.saved.remove(service);
                         }
                     }
                     vec![self.contribution()]
                 }
-                ("save", Ok(_)) => {
-                    self.saving = false;
-                    vec![self.status("Hints save · OK", "ok")]
-                }
-                ("reset", Ok(_)) => {
-                    self.saving = false;
-                    vec![self.status("Hints reset · OK", "ok")]
-                }
-                (tag @ ("save" | "reset"), Err(failure)) => {
-                    self.saving = false;
-                    vec![self.status(
-                        &format!("Hints {tag} · ERROR · {}", failure.message),
-                        "error",
-                    )]
-                }
+                ("save", Ok(_)) => vec![self.status("Hints save · OK", "ok")],
+                ("save", Err(failure)) => vec![self.status(
+                    &format!("Hints save · ERROR · {}", failure.message),
+                    "error",
+                )],
                 (_, Err(failure)) => {
                     vec![self.status(&format!("ERROR: {}", failure.message), "error")]
                 }
@@ -225,18 +193,6 @@ impl Module for Hints {
                 msg: Msg::Edit,
                 value: Some(text),
             } if text != self.shown() || self.drafts.contains_key(&self.service) => self.save(text),
-            Event::Ui {
-                msg: Msg::Reset, ..
-            } => {
-                self.own.remove(&self.service);
-                self.drafts.remove(&self.service);
-                self.saving = true;
-                vec![
-                    cmd::kv_put("reset", OWN, &Value::Object(self.own.clone()), true),
-                    self.put_drafts(),
-                    self.contribution(),
-                ]
-            }
             _ => Vec::new(),
         }
     }
@@ -250,39 +206,6 @@ impl Module for Hints {
             ));
         }
         let name = self.names.get(&self.service).unwrap_or(&self.service);
-        let source = self.sources.get(&self.service).map(|(source, _)| source);
-        let own = self.own.contains_key(&self.service);
-        let mut origin = Vec::new();
-        match (own, source) {
-            (true, Some(source)) => {
-                origin.push(
-                    ui::badge(format!("Yours, over source {source}")).key("hints-origin-label"),
-                );
-                origin.push(
-                    ui::button(format!("Reset to {source}"), &Msg::Reset)
-                        .variant("tab")
-                        .disabled(self.saving)
-                        .key("hints-reset"),
-                );
-            }
-            (true, None) => {
-                origin.push(ui::badge("Yours").key("hints-origin-label"));
-                origin.push(
-                    ui::button("Reset to the module's", &Msg::Reset)
-                        .variant("tab")
-                        .disabled(self.saving)
-                        .key("hints-reset"),
-                );
-            }
-            (false, Some(source)) => {
-                origin.push(ui::badge(format!("From source {source}")).key("hints-origin-label"));
-            }
-            (false, None) => {}
-        }
-        let mut actions = Vec::new();
-        if !origin.is_empty() {
-            actions.push(ui::row(origin).key("hints-origin"));
-        }
         let body = vec![
             ui::editor(format!("hints/{}", self.service), self.shown(), &Msg::Edit)
                 .label(format!("Hints · {name}"))
@@ -291,8 +214,7 @@ impl Module for Hints {
         Some(
             ui::panel(format!("{name} completion hints"), body, Vec::new())
                 .key("console-hints-heading")
-                .indicator(self.light.get(&self.service).map_or("idle", String::as_str))
-                .actions(actions),
+                .indicator(self.light.get(&self.service).map_or("idle", String::as_str)),
         )
     }
 }

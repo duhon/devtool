@@ -3,7 +3,7 @@
   "kind": "panel",
   "name": "Dictionary",
   "version": "3.7.0",
-  "description": "Named sets of variables ({{set:name}}) from sources and your own edits.",
+  "description": "Named sets of variables ({{set:name}}), saved as you edit and synced with sources in Settings.",
   "abi": 2,
   "app": ">=3.7",
   "order": 5,

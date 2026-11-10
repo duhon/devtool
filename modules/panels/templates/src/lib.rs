@@ -1,7 +1,7 @@
 //! The Templates panel: per service and section, `@name description` templates that
-//! completion inserts. Sources bring them in `templates.json` (`{service: {section: text}}`);
-//! the user's sections replace a source's and are kept in the module's kv, shared by all
-//! sessions, until reset. An edit that does not parse stays a draft.
+//! completion inserts. They are the Local source's `templates.json`
+//! (`{service: {section: text}}`), saved as they are edited; sources sync with it in
+//! Settings. An edit that does not parse stays a draft.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -9,11 +9,9 @@ use services_contracts::templates::{self, Library};
 use services_sdk::{Cmd, Event, Module, Subscriptions, cmd, ui};
 use std::collections::BTreeMap;
 
-/// The kv key of the user's sections.
-pub const LIBRARY: &str = "library";
 /// The kv key of the edits that do not parse, by `service/section`.
 pub const DRAFTS: &str = "drafts";
-const SOURCES: &str = "sources";
+const SOURCES: &str = "local";
 const DOCUMENT: &str = "document";
 const FILE: &str = "templates.json";
 const TAB: &str = "templates-section-";
@@ -29,7 +27,6 @@ pub enum Msg {
     Section(String),
     Edit,
     Discard,
-    Reset,
 }
 
 #[derive(Default)]
@@ -38,17 +35,15 @@ pub struct Templates {
     sections: Vec<String>,
     /// The selected section of each service.
     selected: BTreeMap<String, String>,
-    /// The sources' sections and the source each comes from.
-    base: Library,
-    origins: Library,
-    own: Library,
+    /// Every section, as saved.
+    library: Library,
     drafts: Map<String, Value>,
 }
 
 impl Templates {
-    /// Takes the service with its sections, the sources (`[{source, text}]`) and the user's
-    /// sections directly (tests).
-    pub fn with(service: &str, sections: &[&str], sources: Value, own: Value) -> Self {
+    /// Takes the service with its sections and the Local file (`[{source, text}]`) directly
+    /// (tests).
+    pub fn with(service: &str, sections: &[&str], files: Value) -> Self {
         let mut templates = Self {
             service: service.into(),
             sections: sections
@@ -57,48 +52,21 @@ impl Templates {
                 .collect(),
             ..Self::default()
         };
-        templates.read_sources(&sources);
-        templates.own = serde_json::from_value(own).unwrap_or_default();
+        templates.read(&files);
         templates
     }
 
-    fn read_sources(&mut self, files: &Value) {
-        self.base.clear();
-        self.origins.clear();
-        for file in files.as_array().into_iter().flatten() {
-            let source = file["source"].as_str().unwrap_or_default();
-            let Ok(library) =
-                serde_json::from_str::<Library>(file["text"].as_str().unwrap_or("{}"))
-            else {
-                continue;
-            };
-            for (service, sections) in library {
-                for (section, text) in sections {
-                    self.origins
-                        .entry(service.clone())
-                        .or_default()
-                        .insert(section.clone(), source.to_owned());
-                    self.base
-                        .entry(service.clone())
-                        .or_default()
-                        .insert(section, text);
-                }
-            }
-        }
+    fn read(&mut self, files: &Value) {
+        self.library = files
+            .as_array()
+            .and_then(|files| files.last())
+            .and_then(|file| serde_json::from_str(file["text"].as_str()?).ok())
+            .unwrap_or_default();
     }
 
     /// Every section completion uses.
     pub fn library(&self) -> Library {
-        let mut library = self.base.clone();
-        for (service, sections) in &self.own {
-            for (section, text) in sections {
-                library
-                    .entry(service.clone())
-                    .or_default()
-                    .insert(section.clone(), text.clone());
-            }
-        }
-        library
+        self.library.clone()
     }
 
     fn section(&self) -> String {
@@ -115,10 +83,9 @@ impl Templates {
     }
 
     fn saved(&self, service: &str, section: &str) -> String {
-        self.own
+        self.library
             .get(service)
             .and_then(|sections| sections.get(section))
-            .or_else(|| self.base.get(service)?.get(section))
             .cloned()
             .unwrap_or_default()
     }
@@ -142,8 +109,9 @@ impl Templates {
         }
     }
 
-    fn put_own(&self, operation: &str) -> Cmd {
-        cmd::kv_put(operation, LIBRARY, &json!(self.own), false)
+    fn save(&self) -> Cmd {
+        let text = serde_json::to_string_pretty(&self.library).unwrap_or_default();
+        cmd::sources_write("save", FILE, &text)
     }
 
     fn edit(&mut self, text: String) -> Vec<Cmd> {
@@ -154,8 +122,11 @@ impl Templates {
         match templates::parse(&text) {
             Ok(_) => {
                 self.drafts.remove(&self.key());
-                self.own.entry(service).or_default().insert(section, text);
-                vec![self.put_own("save"), self.put_drafts(), self.contribution()]
+                self.library
+                    .entry(service)
+                    .or_default()
+                    .insert(section, text);
+                vec![self.save(), self.put_drafts(), self.contribution()]
             }
             Err(error) => {
                 self.drafts.insert(self.key(), json!(text));
@@ -197,7 +168,6 @@ impl Module for Templates {
             Event::Init { .. } | Event::Workspace => vec![
                 cmd::document_read(DOCUMENT),
                 cmd::sources_read(SOURCES, FILE),
-                cmd::kv_get(LIBRARY, LIBRARY),
                 cmd::kv_get(DRAFTS, DRAFTS),
             ],
             Event::Shown => vec![cmd::document_read(DOCUMENT), self.idle()],
@@ -217,11 +187,7 @@ impl Module for Templates {
                     Vec::new()
                 }
                 (SOURCES, Ok(files)) => {
-                    self.read_sources(&files);
-                    vec![self.contribution()]
-                }
-                (LIBRARY, Ok(own)) => {
-                    self.own = serde_json::from_value(own).unwrap_or_default();
+                    self.read(&files);
                     vec![self.contribution()]
                 }
                 (DRAFTS, Ok(drafts)) => {
@@ -229,7 +195,6 @@ impl Module for Templates {
                     Vec::new()
                 }
                 ("save", Ok(_)) => vec![cmd::status(&said("Templates saved · OK"), "ok")],
-                ("reset", Ok(_)) => vec![cmd::status(&said("Templates reset · OK"), "ok")],
                 (_, Err(failure)) => {
                     vec![cmd::status(
                         &said(&format!("ERROR: {}", failure.message)),
@@ -256,23 +221,6 @@ impl Module for Templates {
                 self.drafts.remove(&self.key());
                 vec![self.put_drafts(), cmd::status(HINT, "idle")]
             }
-            Event::Ui {
-                msg: Msg::Reset, ..
-            } => {
-                let section = self.section();
-                self.drafts.remove(&self.key());
-                if let Some(sections) = self.own.get_mut(&self.service) {
-                    sections.remove(&section);
-                    if sections.is_empty() {
-                        self.own.remove(&self.service);
-                    }
-                }
-                vec![
-                    self.put_own("reset"),
-                    self.put_drafts(),
-                    self.contribution(),
-                ]
-            }
             _ => Vec::new(),
         }
     }
@@ -283,14 +231,6 @@ impl Module for Templates {
             return Some(ui::panel("Templates", vec![text], Vec::new()));
         }
         let section = self.section();
-        let source = self
-            .origins
-            .get(&self.service)
-            .and_then(|sections| sections.get(&section));
-        let own = self
-            .own
-            .get(&self.service)
-            .is_some_and(|sections| sections.contains_key(&section));
         let mut header = Vec::new();
         if self.drafts.contains_key(&self.key()) {
             header.push(
@@ -299,35 +239,11 @@ impl Module for Templates {
                     .title("Discard draft and reload saved templates"),
             );
         }
-        match (own, source) {
-            (true, Some(source)) => {
-                header.push(
-                    ui::badge(format!("Yours, over source {source}")).key("templates-origin-label"),
-                );
-                header.push(
-                    ui::button(format!("Reset to {source}"), &Msg::Reset)
-                        .key("templates-reset")
-                        .title("Delete your own templates of this section"),
-                );
-            }
-            (true, None) => {
-                header.push(ui::badge("Yours").key("templates-origin-label"));
-                header.push(
-                    ui::button("Reset", &Msg::Reset)
-                        .key("templates-reset")
-                        .title("Delete your own templates of this section"),
-                );
-            }
-            (false, Some(source)) => {
-                header
-                    .push(ui::badge(format!("From source {source}")).key("templates-origin-label"));
-            }
-            _ => {}
-        }
-        let mut actions = Vec::new();
-        if !header.is_empty() {
-            actions.push(ui::row(header).key("templates-origin"));
-        }
+        let actions = if header.is_empty() {
+            Vec::new()
+        } else {
+            vec![ui::row(header).key("templates-origin")]
+        };
         let body = vec![
             ui::editor(
                 format!("{}/{section}", self.service),

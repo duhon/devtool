@@ -18,11 +18,12 @@
 //! git blob) is new, then forgets its bytes; installing downloads it again and checks its
 //! git hash.
 //!
-//! Checking for changes is automatic; the user applies them. The applied copy of a source
-//! lives in `<data>/sources/<slug>/`, its skills renamed `<slug>-<name>`. Configuration is
-//! layered: later sources override earlier ones, and the user's own changes, which the
-//! application keeps apart, override them all. An update replaces the applied copy and
-//! never merges.
+//! The application's own configuration is the Local source, `<data>/local/`, which the panels
+//! save into as the user edits. Each shared source (a folder or a GitHub repository, both
+//! writable) syncs only with Local, per file and per record, by a three-way comparison with
+//! the cache: the source's files as of the last sync, kept in `<data>/sources/<slug>/` next
+//! to the applied skills. Skills are not synced: checking for changes is automatic and the
+//! user applies them; the applied copy replaces the previous one and never merges.
 
 use super::config_sync::{Kind, State, merge, state};
 use super::error::{Error, Result};

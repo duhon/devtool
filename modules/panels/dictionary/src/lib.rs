@@ -1,28 +1,24 @@
-//! The Dictionary panel: named sets of variables. Sources bring sets in `dictionary.json`
-//! (`{"sets": {"<set>": {"<VAR>": "value"}}}`, the old `{"profiles": …}` too); the user's
-//! layer over them is kept in the module's kv: sets of the user's own whole, of a source's
-//! set only the variables the user changed (reset brings back the source's value). It
-//! resolves `{{set:NAME}}` of its sets and `{{:NAME}}` from the first set, in order, that
-//! has it.
+//! The Dictionary panel: named sets of variables. They are the Local source's
+//! `dictionary.json` (`{"order": [..], "sets": {"<set>": {"<VAR>": "value"}}}`), saved as
+//! they are edited; sources sync with it in Settings. It resolves `{{set:NAME}}` of its sets
+//! and `{{:NAME}}` from the first set, in order, that has it.
 //!
-//! Every window of the App edits the same layer, so changes go through a transaction under
-//! a shared lock on the freshly read layer; a draft started before another window saved
-//! the set conflicts instead of overwriting it.
+//! Every window of the App edits the same file, so changes go through a transaction under a
+//! shared lock on the freshly read file; a draft started before another window saved the set
+//! conflicts instead of overwriting it.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use services_sdk::{Cmd, Event, Module, Resolution, Subscriptions, cmd, refs, ui};
 
-/// The kv key of the user's layer: `{"order": [..], "sets": {"<set>": {..}}}`.
-pub const LOCAL: &str = "sets";
 /// The kv key of the edits not saved yet: `{"texts": {"<set>": ..}, "bases": {"<set>": ..}}`.
 pub const DRAFTS: &str = "drafts";
 const SOURCES: &str = "sources";
-const FILE: &str = "dictionary.json";
+pub const FILE: &str = "dictionary.json";
 const TAB: &str = "dictionary-set-";
-/// The lock shared by the windows that change the layer.
+/// The lock shared by the windows that change the file.
 const LOCK: &str = "dictionary";
 const FRESH: &str = "fresh";
 const SAVE: &str = "save";
@@ -33,8 +29,6 @@ pub enum Msg {
     Edit,
     Add,
     Delete,
-    /// Resets the whole set, or one variable of it, to its source.
-    Reset(Option<String>),
     /// The set renamed in place (the value is the new name).
     Rename(String),
     /// Tabs dragged: the value is `["<tab>","<tab>"]`.
@@ -59,151 +53,43 @@ impl State {
             .unwrap_or_default()
     }
 
-    fn read(value: &Value) -> Self {
-        let order = value["order"]
+    /// The sets of the file read from the Local source (`[{source, text}]`).
+    fn read(files: &Value) -> Self {
+        let document: Value = files
+            .as_array()
+            .and_then(|files| files.last())
+            .and_then(|file| serde_json::from_str(file["text"].as_str()?).ok())
+            .unwrap_or_default();
+        let sets: Map<String, Value> = document
+            .get("sets")
+            .or_else(|| document.get("profiles"))
+            .and_then(Value::as_object)
+            .map(|sets| {
+                sets.iter()
+                    .filter(|(name, vars)| !reserved(name) && vars.is_object())
+                    .map(|(name, vars)| (name.clone(), vars.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut order: Vec<String> = document["order"]
             .as_array()
             .into_iter()
             .flatten()
             .filter_map(Value::as_str)
+            .filter(|name| sets.contains_key(*name))
             .map(str::to_owned)
             .collect();
-        let sets = value["sets"].as_object().cloned().unwrap_or_default();
-        Self { order, sets }
-    }
-
-    fn json(&self) -> Value {
-        json!({"order": self.order, "sets": self.sets})
-    }
-}
-
-/// The sets of the sources.
-#[derive(Default)]
-struct Base {
-    order: Vec<String>,
-    sets: Map<String, Value>,
-    /// The highest-priority source of each set.
-    sources: BTreeMap<String, String>,
-    /// The source of each variable: set → variable → source.
-    origins: BTreeMap<String, BTreeMap<String, String>>,
-}
-
-impl Base {
-    fn read(files: &Value) -> Self {
-        let mut base = Self::default();
-        for file in files.as_array().into_iter().flatten() {
-            let source = file["source"].as_str().unwrap_or_default().to_owned();
-            let Ok(document) = serde_json::from_str::<Value>(file["text"].as_str().unwrap_or("{}"))
-            else {
-                continue;
-            };
-            let sets = document
-                .get("sets")
-                .or_else(|| document.get("profiles"))
-                .and_then(Value::as_object)
-                .cloned()
-                .unwrap_or_default();
-            let mut names: Vec<String> = document["order"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(Value::as_str)
-                .filter(|name| sets.contains_key(*name))
-                .map(str::to_owned)
-                .collect();
-            for name in sets.keys() {
-                if !names.contains(name) {
-                    names.push(name.clone());
-                }
-            }
-            for name in names {
-                let Some(vars) = sets[&name].as_object() else {
-                    continue;
-                };
-                if reserved(&name) {
-                    continue;
-                }
-                if !base.sets.contains_key(&name) {
-                    base.order.push(name.clone());
-                }
-                let set = base.sets.entry(name.clone()).or_insert_with(|| json!({}));
-                let origins = base.origins.entry(name.clone()).or_default();
-                for (variable, value) in vars {
-                    set[variable] = value.clone();
-                    origins.insert(variable.clone(), source.clone());
-                }
-                base.sources.insert(name, source.clone());
-            }
-        }
-        base
-    }
-
-    /// The sets of the sources with the user's layer over them.
-    fn layered(&self, local: &State) -> State {
-        let mut sets = self.sets.clone();
-        for (name, vars) in &local.sets {
-            let set = sets.entry(name.clone()).or_insert_with(|| json!({}));
-            if let (Some(set), Some(vars)) = (set.as_object_mut(), vars.as_object()) {
-                for (variable, value) in vars {
-                    set.insert(variable.clone(), value.clone());
-                }
-            }
-        }
-        let mut order: Vec<String> = local
-            .order
-            .iter()
-            .filter(|name| sets.contains_key(*name))
-            .cloned()
-            .collect();
-        for name in self.order.iter().chain(sets.keys()) {
+        for name in sets.keys() {
             if !order.contains(name) {
                 order.push(name.clone());
             }
         }
-        State { order, sets }
+        Self { order, sets }
     }
 
-    /// The user's layer of `state`: own sets and the variables that differ from the sources.
-    fn local(&self, state: &State) -> Result<State, String> {
-        for name in self.sets.keys() {
-            if !state.sets.contains_key(name) {
-                return Err(self.fixed(name));
-            }
-        }
-        let mut sets = Map::new();
-        for (name, vars) in &state.sets {
-            let Some(source) = self.sets.get(name).and_then(Value::as_object) else {
-                sets.insert(name.clone(), vars.clone());
-                continue;
-            };
-            let vars = vars.as_object().cloned().unwrap_or_default();
-            if let Some(missing) = source.keys().find(|key| !vars.contains_key(*key)) {
-                return Err(format!(
-                    "{name}:{missing} comes from source {}; reset it instead of deleting it",
-                    self.origins[name][missing]
-                ));
-            }
-            let overrides: Map<String, Value> = vars
-                .into_iter()
-                .filter(|(key, value)| source.get(key) != Some(value))
-                .collect();
-            if !overrides.is_empty() {
-                sets.insert(name.clone(), Value::Object(overrides));
-            }
-        }
-        Ok(State {
-            order: state.order.clone(),
-            sets,
-        })
-    }
-
-    fn fixed(&self, name: &str) -> String {
-        format!(
-            "Set {name} comes from source {}; it can't be deleted or renamed",
-            self.sources
-                .get(name)
-                .map(String::as_str)
-                .unwrap_or_default()
-        )
+    fn text(&self) -> String {
+        serde_json::to_string_pretty(&json!({"order": self.order, "sets": self.sets}))
+            .unwrap_or_default()
     }
 }
 
@@ -226,7 +112,7 @@ fn valid(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// A change of the user's layer.
+/// A change of the file.
 #[derive(Clone, Debug, PartialEq)]
 enum Op {
     /// `base` is the set the edit started from (`Null` for a new set).
@@ -239,7 +125,6 @@ enum Op {
     Delete(String),
     Rename(String, String),
     Reorder(Vec<String>),
-    Reset(String, Option<String>),
 }
 
 impl Op {
@@ -250,11 +135,10 @@ impl Op {
             Self::Delete(_) => "delete",
             Self::Rename(..) => "rename",
             Self::Reorder(_) => "reorder",
-            Self::Reset(..) => "reset",
         }
     }
 
-    fn apply(&self, state: &mut State, base: &Base) -> Result<(), String> {
+    fn apply(&self, state: &mut State) -> Result<(), String> {
         match self {
             Self::Save {
                 name,
@@ -277,9 +161,6 @@ impl Op {
                 if !state.order.contains(name) {
                     state.order.push(name.clone());
                 }
-            }
-            Self::Delete(name) | Self::Rename(name, _) if base.sets.contains_key(name) => {
-                return Err(base.fixed(name));
             }
             Self::Delete(name) => {
                 if state.sets.remove(name).is_none() {
@@ -317,46 +198,26 @@ impl Op {
                 }
                 state.order.clone_from(order);
             }
-            Self::Reset(name, variable) => {
-                let Some(source) = base.sets.get(name).and_then(Value::as_object) else {
-                    return Err(format!("Set {name} doesn't come from a source"));
-                };
-                let set = state.sets.entry(name.clone()).or_insert_with(|| json!({}));
-                match variable {
-                    Some(variable) => match (source.get(variable), set.as_object_mut()) {
-                        (Some(value), Some(set)) => {
-                            set.insert(variable.clone(), value.clone());
-                        }
-                        (None, Some(set)) => {
-                            set.remove(variable);
-                        }
-                        _ => {}
-                    },
-                    None => *set = Value::Object(source.clone()),
-                }
-            }
         }
         Ok(())
     }
 }
 
-/// Applies `op` if the result is a valid layer.
-fn apply(op: &Op, state: &mut State, base: &Base) -> Result<(), String> {
+/// Applies `op` to `state` unless it fails.
+fn apply(op: &Op, state: &mut State) -> Result<(), String> {
     let mut next = state.clone();
-    op.apply(&mut next, base)?;
-    base.local(&next)?;
+    op.apply(&mut next)?;
     *state = next;
     Ok(())
 }
 
 #[derive(Default)]
 pub struct Dictionary {
-    base: Base,
-    /// The sources were read: changes wait for them.
+    /// The file was read: changes wait for it.
     ready: bool,
-    /// The user's layer as last read or saved.
+    /// The file as last read or saved.
     saved: State,
-    /// What the panel shows and resolves: the saved layer with the queued changes.
+    /// What the panel shows and resolves: the saved sets with the queued changes.
     state: State,
     queue: Vec<Op>,
     /// The changes of the running transaction with their outcomes.
@@ -376,23 +237,22 @@ pub struct Dictionary {
 }
 
 impl Dictionary {
-    /// Takes the sets of the sources (`[{source, text}]`) and the user's layer directly (tests).
-    pub fn with(sources: Value, local: Value) -> Self {
+    /// Takes the Local file (`[{source, text}]`) directly (tests).
+    pub fn with(files: Value) -> Self {
         let mut dictionary = Self {
-            base: Base::read(&sources),
             ready: true,
-            saved: State::read(&local),
+            saved: State::read(&files),
             ..Self::default()
         };
         dictionary.merge();
         dictionary
     }
 
-    /// Shows the saved layer with the queued changes that still apply.
+    /// Shows the saved sets with the queued changes that still apply.
     fn merge(&mut self) {
-        let mut state = self.base.layered(&self.saved);
+        let mut state = self.saved.clone();
         for op in &self.queue {
-            let _ = apply(op, &mut state, &self.base);
+            let _ = apply(op, &mut state);
         }
         self.state = state;
     }
@@ -418,9 +278,7 @@ impl Dictionary {
     fn load(&mut self) -> Vec<Cmd> {
         self.typed.clear();
         vec![
-            cmd::kv_watch(LOCAL),
             cmd::sources_read(SOURCES, FILE),
-            cmd::kv_get(LOCAL, LOCAL),
             cmd::kv_get(DRAFTS, DRAFTS),
         ]
     }
@@ -481,21 +339,20 @@ impl Dictionary {
         vec![cmd::lock(LOCK, LOCK)]
     }
 
-    /// The fresh layer under the lock: the queued changes apply to it.
-    fn transact(&mut self, local: &Value) -> Vec<Cmd> {
-        self.saved = State::read(local);
-        let mut state = self.base.layered(&self.saved);
+    /// The fresh file under the lock: the queued changes apply to it.
+    fn transact(&mut self, files: &Value) -> Vec<Cmd> {
+        self.saved = State::read(files);
+        let mut state = self.saved.clone();
         for op in std::mem::take(&mut self.queue) {
-            let outcome = apply(&op, &mut state, &self.base);
+            let outcome = apply(&op, &mut state);
             self.applied.push((op, outcome));
         }
         let mut commands = Vec::new();
-        match self.base.local(&state) {
-            Ok(local) if self.base.layered(&local) != self.base.layered(&self.saved) => {
-                commands.push(cmd::kv_put(SAVE, LOCAL, &local.json(), false));
-                self.saved = local;
-            }
-            _ => commands.extend(self.finish(Ok(()))),
+        if state == self.saved {
+            commands.extend(self.finish(Ok(())));
+        } else {
+            commands.push(cmd::sources_write(SAVE, FILE, &state.text()));
+            self.saved = state;
         }
         self.merge();
         commands.push(self.contribution());
@@ -555,7 +412,7 @@ impl Dictionary {
         }
         commands.push(self.put_drafts());
         if saved.is_err() {
-            commands.push(cmd::kv_get(LOCAL, LOCAL));
+            commands.push(cmd::sources_read(SOURCES, FILE));
         }
         commands.extend(self.start());
         commands
@@ -734,49 +591,9 @@ impl Dictionary {
         }
     }
 
-    /// The header items of the set: where it comes from and what the user changed in it.
+    /// The header items of the set: a draft that conflicts can be discarded.
     fn origin(&self, name: &str) -> Vec<ui::Node> {
         let mut header = Vec::new();
-        match self.base.sources.get(name) {
-            Some(source) => {
-                header.push(
-                    ui::badge(format!("From source {source}")).key("dictionary-origin-label"),
-                );
-                let from = self.base.sets.get(name).and_then(Value::as_object);
-                let yours: Vec<String> = self
-                    .state
-                    .vars(name)
-                    .into_iter()
-                    .filter(|(variable, value)| {
-                        from.and_then(|from| from.get(variable)) != Some(value)
-                    })
-                    .map(|(variable, _)| variable)
-                    .collect();
-                if !yours.is_empty() {
-                    header.push(ui::text("Yours:").variant("muted"));
-                    for variable in yours {
-                        let title = if from.is_some_and(|from| from.contains_key(&variable)) {
-                            format!("Reset {variable} to the value of {source}")
-                        } else {
-                            format!("Remove {variable}; {source} doesn't have it")
-                        };
-                        header.push(
-                            ui::button(
-                                format!("{variable} ↺"),
-                                &Msg::Reset(Some(variable.clone())),
-                            )
-                            .title(title)
-                            .key(format!("dictionary-reset-variable-{variable}")),
-                        );
-                    }
-                    header.push(
-                        ui::button(format!("Reset all to {source}"), &Msg::Reset(None))
-                            .key("dictionary-reset"),
-                    );
-                }
-            }
-            None => header.push(ui::badge("Your own set").key("dictionary-origin-label")),
-        }
         if self.conflicts.contains(name) && self.drafts.contains_key(name) {
             header.push(
                 ui::button("Discard draft", &Msg::Discard)
@@ -833,21 +650,10 @@ impl Module for Dictionary {
                 self.applied.clear();
                 Vec::new()
             }
-            Event::Storage { key } if key == LOCAL => vec![cmd::kv_get(LOCAL, LOCAL)],
             Event::Reply { tag, result } => match (tag.as_str(), result) {
                 (SOURCES, Ok(files)) => {
-                    self.base = Base::read(&files);
+                    self.saved = State::read(&files);
                     self.ready = true;
-                    self.merge();
-                    let mut commands = vec![self.contribution()];
-                    if !std::mem::replace(&mut self.loaded, true) {
-                        commands.push(cmd::status("Dictionary load · OK", "ok"));
-                    }
-                    commands.extend(self.start());
-                    commands
-                }
-                (LOCAL, Ok(local)) => {
-                    self.saved = State::read(&local);
                     self.merge();
                     // Text typed here stays unless another window saved the set differently.
                     let state = &self.state;
@@ -857,14 +663,19 @@ impl Module for Dictionary {
                             Err(_) => true,
                         }
                     });
-                    vec![self.contribution()]
+                    let mut commands = vec![self.contribution()];
+                    if !std::mem::replace(&mut self.loaded, true) {
+                        commands.push(cmd::status("Dictionary load · OK", "ok"));
+                    }
+                    commands.extend(self.start());
+                    commands
                 }
                 (DRAFTS, Ok(drafts)) => {
                     self.drafts = drafts["texts"].as_object().cloned().unwrap_or_default();
                     self.bases = drafts["bases"].as_object().cloned().unwrap_or_default();
                     Vec::new()
                 }
-                (LOCK, Ok(_)) => vec![cmd::kv_get(FRESH, LOCAL)],
+                (LOCK, Ok(_)) => vec![cmd::sources_read(FRESH, FILE)],
                 (LOCK, Err(failure)) => {
                     self.busy = false;
                     vec![cmd::status(
@@ -929,18 +740,6 @@ impl Module for Dictionary {
                 commands
             }
             Event::Ui {
-                msg: Msg::Reset(variable),
-                ..
-            } => {
-                let Some(name) = self.active().map(str::to_owned) else {
-                    return Vec::new();
-                };
-                self.forget(&name);
-                let mut commands = self.enqueue(Op::Reset(name, variable));
-                commands.push(self.put_drafts());
-                commands
-            }
-            Event::Ui {
                 msg: Msg::Rename(name),
                 value: Some(new),
             } => self.rename(name, &new),
@@ -956,7 +755,7 @@ impl Module for Dictionary {
                 };
                 self.forget(&name);
                 self.merge();
-                vec![self.put_drafts(), cmd::kv_get(LOCAL, LOCAL)]
+                vec![self.put_drafts(), cmd::sources_read(SOURCES, FILE)]
             }
             _ => Vec::new(),
         }
@@ -983,15 +782,11 @@ impl Module for Dictionary {
                 } else {
                     Vec::new()
                 };
-                let tab =
-                    ui::tab(format!("{TAB}{name}"), name.clone(), body).indicator(self.light(name));
-                if self.base.sets.contains_key(name) {
-                    tab
-                } else {
-                    tab.renamed(&Msg::Rename(name.clone()))
-                        .closable(&Msg::Delete)
-                        .confirm(format!("Delete profile \"{name}\"?"))
-                }
+                ui::tab(format!("{TAB}{name}"), name.clone(), body)
+                    .indicator(self.light(name))
+                    .renamed(&Msg::Rename(name.clone()))
+                    .closable(&Msg::Delete)
+                    .confirm(format!("Delete set \"{name}\"?"))
             })
             .collect();
         let tabs = add(
@@ -999,10 +794,13 @@ impl Module for Dictionary {
                 .on_reorder(&Msg::Reorder)
                 .key("dictionary-tabs"),
         );
-        Some(
-            ui::tabbed_panel(tabs, Vec::new(), Vec::new())
-                .actions(vec![ui::row(self.origin(active)).key("dictionary-origin")]),
-        )
+        let header = self.origin(active);
+        let panel = ui::tabbed_panel(tabs, Vec::new(), Vec::new());
+        Some(if header.is_empty() {
+            panel
+        } else {
+            panel.actions(vec![ui::row(header).key("dictionary-origin")])
+        })
     }
 
     fn resolve(&self, text: &str, json: bool, _last: bool) -> Option<Result<Resolution, String>> {

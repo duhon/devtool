@@ -3,7 +3,7 @@
   "kind": "panel",
   "name": "Hints",
   "version": "3.7.0",
-  "description": "Completion hints of each service: from sources, or your own for the session.",
+  "description": "Completion hints of each service, saved as you edit and synced with sources in Settings.",
   "abi": 2,
   "app": ">=3.7",
   "order": 3,
