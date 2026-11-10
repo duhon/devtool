@@ -193,19 +193,30 @@ impl Diff {
     }
 
     fn column(&self, side: Side) -> ui::Node {
-        let (title, text, key, msg) = match side {
-            Side::Left => (&self.left_title, &self.left, "diff-left", Msg::Left),
-            Side::Right => (&self.right_title, &self.right, "diff-right", Msg::Right),
+        let (title, default, text, key, msg) = match side {
+            Side::Left => (&self.left_title, LEFT, &self.left, "diff-left", Msg::Left),
+            Side::Right => (
+                &self.right_title,
+                RIGHT,
+                &self.right,
+                "diff-right",
+                Msg::Right,
+            ),
         };
         let line = self
             .comparison
             .chunks
             .get(self.current)
             .map_or(0, |chunk| chunk.rows.start);
-        ui::column(vec![
-            ui::text(title.clone())
-                .variant("muted")
-                .key(format!("{key}-title")),
+        let mut children = Vec::new();
+        if title != default {
+            children.push(
+                ui::text(title.clone())
+                    .variant("muted")
+                    .key(format!("{key}-title")),
+            );
+        }
+        children.push(
             ui::editor(
                 self.language.clone(),
                 self.comparison.aligned(side, text),
@@ -219,8 +230,8 @@ impl Diff {
             .marks(self.marks(side))
             .line_actions(self.actions(side))
             .reveal(line, self.reveal),
-        ])
-        .variant("diff-column")
+        );
+        ui::column(children).variant("diff-column")
     }
 }
 
@@ -353,7 +364,7 @@ impl Module for Diff {
         Some(ui::panel(
             "Diff",
             vec![
-                ui::row(toolbar).key("diff-toolbar"),
+                ui::row(toolbar).variant("bar").key("diff-toolbar"),
                 ui::row(vec![self.column(Side::Left), self.column(Side::Right)])
                     .variant("diff-columns")
                     .key("diff-columns"),

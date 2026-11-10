@@ -129,7 +129,7 @@ fixes column widths; `ui::field(label, control)`, `ui::anchor(label, url)`,
 `ui::combobox(options, value, &msg)` (`Choice::new(v, l).detail(d)`), `ui::slider(..).labels(..)
 .marker(i, tip)`, `ui::input(..).size(20)`, `ui::editor(..).placeholder(t).debounce(ms)`.
 Variants: panel `flush`/`padded`/`editor`; text `warning`, `bold`, `small`, `truncate`,
-`paragraph`, `pre`; button `tab`, `inline`; `grow`; row `nowrap`, `end`; column `ruled`,
+`paragraph`, `pre`; button `tab`, `inline`; `grow`; row `nowrap`, `end`, `bar` (a toolbar on the table-header background); column `ruled`,
 `loose`, `indent`, `inset`, `tight`, `quote`; list `dense`, `capped`; table `roomy`, row
 `current`, `muted`. A module's status line can carry Stop:
 `cmd::status_stoppable(text, "busy", &Msg::Stop, "my-stop")`; `cmd::workspace_retry(tag)`

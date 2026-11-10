@@ -38,7 +38,7 @@
   border-color: var(--accent);
 }
 
-.module-panel { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; min-width: 0; }
+.module-panel { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; min-width: 0; background: var(--bg-editor); }
 
 .ui-panel { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; gap: 4px; }
 
@@ -179,7 +179,7 @@
 
 .ui-table th, .ui-table td { border-bottom: 1px solid var(--bg-raised); padding: 2px 4px; text-align: left; vertical-align: middle; }
 
-.ui-table th { color: var(--fg-muted); font-weight: normal; }
+.ui-table th { background: var(--bg-header); color: var(--fg-muted); font-weight: normal; }
 
 .ui-table tr.is-active { background: var(--bg-active); }
 
@@ -197,6 +197,9 @@
 
 :is(.ui-panel-body, .ui-tab-body):has(> .ui-editor.is-flush) > :not(.ui-editor.is-flush) { margin: 4px 6px; }
 
+/* A list keeps that margin also while its editor is away, so its rows do not move when the editor comes and goes. */
+.ui-panel.is-flush > .ui-panel-body > .ui-list { margin: 4px 6px; }
+
 :is(.ui-panel-body, .ui-tab-body) > .ui-editor.is-flush > .editor { border: none; }
 
 .ui-tabs:has(> .ui-tab-body > .ui-editor.is-flush) > .ui-tab-strip { margin-bottom: 0; }
@@ -206,6 +209,8 @@
 .ui-editor > .editor { flex: 1 1 auto; min-height: 0; }
 
 .ui-editor:has(> .ui-editor-actions) { position: relative; }
+
+.ui-row.is-bar { padding: 4px 6px; background: var(--bg-header); }
 
 .ui-row.is-diff-columns { flex: 1 1 0; min-height: 0; align-items: stretch; flex-wrap: nowrap; }
 

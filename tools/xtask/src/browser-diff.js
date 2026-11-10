@@ -41,6 +41,12 @@
   await click(testid('diff-previous'));
   assert(counter() === '2 of 2', `Previous: ${counter()}`);
 
+  assert(!document.querySelector('[data-testid="diff-left-title"],[data-testid="diff-right-title"]'),
+    'Without titles from the opener the columns have no Left/Right labels');
+  const tint = element => getComputedStyle(element).backgroundColor;
+  assert(tint(testid('diff-toolbar')) !== tint(testid('diff-toolbar').closest('.module-panel')),
+    'The toolbar must stand out from the panel background');
+
   // Both columns scroll together.
   const many = Array.from({length: 200}, (_, index) => `line ${index}`).join('\n');
   set('left', many);

@@ -58,14 +58,21 @@
     await wait(()=>entries().length===count && idle(),
       ()=>`An open History must list each new execution: ${entries().length} of ${count}`);
   }
+  const geometry=()=>entries().map(entry=>{
+    const box=entry.getBoundingClientRect();
+    return [box.left,box.top,box.width,box.height].map(value=>Math.round(value*100)).join(':');
+  }).join(' ');
   const detail=async index=>{
     const id=entryId(entries()[index]);
+    const shape=geometry();
     await click(entries()[index]);
     await wait(()=>viewer()?.getValue().includes('#target') && idle());
     assert(entryId(entries()[index])===id,'Opening a snapshot must retain its execution identity');
     assert(entries()[index].classList.contains('is-primary')
       && list().querySelectorAll('.is-primary').length===1,
       'Exactly the displayed execution must be marked current');
+    assert(shape===geometry(),
+      `Selecting a record must not move or resize any row: ${shape} => ${geometry()}`);
     return viewer().getValue();
   };
   const sourceViewport=editor.getScrollInfo();

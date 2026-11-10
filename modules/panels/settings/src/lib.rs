@@ -1167,6 +1167,7 @@ impl Settings {
                     .to_vec(),
                 table,
             )
+            .widths(vec![26, 14, 11, 13, 0])
             .variant("roomy")
             .key("settings-modules"),
         );
@@ -1447,11 +1448,7 @@ impl Settings {
             ui::text("For private repositories and higher GitHub limits. Without a saved token, the token of a signed-in GitHub CLI (gh auth token) is used.")
                 .variant("muted"),
         );
-        vec![
-            ui::column(body)
-                .variant("ruled loose")
-                .key("source-settings"),
-        ]
+        vec![ui::column(body).variant("loose").key("source-settings")]
     }
 
     fn view_source(&self, index: usize, source: &Value, count: usize, busy: bool) -> ui::Node {
@@ -1726,11 +1723,7 @@ impl Settings {
                 .variant("muted")
                 .key("agent-models-loading"),
             );
-            return vec![
-                ui::column(body)
-                    .variant("ruled loose")
-                    .key("agent-settings"),
-            ];
+            return vec![ui::column(body).variant("loose").key("agent-settings")];
         };
         let current = self.model_id();
         let mut choices: Vec<ui::Choice> = catalog
@@ -1790,10 +1783,6 @@ impl Settings {
             slider = slider.marker(index as u32, "Model default");
         }
         body.push(slider);
-        vec![
-            ui::column(body)
-                .variant("ruled loose")
-                .key("agent-settings"),
-        ]
+        vec![ui::column(body).variant("loose").key("agent-settings")]
     }
 }
