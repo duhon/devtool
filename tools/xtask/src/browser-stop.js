@@ -332,9 +332,9 @@
   await wait(() => testid('agent-stop').disabled);
   await send('agent failure');
   await wait(() => agentStatus().classList.contains('is-error'));
-  assert(light(chatTab(firstChat)) === 'ready' && light(chatTab(secondChat)) === 'ready'
+  await wait(() => light(chatTab(firstChat)) === 'ready' && light(chatTab(secondChat)) === 'ready'
     && light(testid('console-agent-toggle')) === 'ready',
-  'A viewed Agent failure must keep its error status without relighting acknowledged chat signals');
+    'A viewed Agent failure must keep its error status without relighting acknowledged chat signals');
   const failedAgentStatus = agentStatus().textContent;
   await click(chatTab(secondChat));
   await wait(() => agentStatus().textContent.includes('Stopped'));

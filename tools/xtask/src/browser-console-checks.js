@@ -650,7 +650,7 @@
     const invalidDictionary = `${originalDictionary}\nmissing delimiter`;
     dictionary().setValue(invalidDictionary);
     // Left before it counts as seen, the error stays lit.
-    await wait(() => toolStatus().textContent.includes('ERROR') && toolLight('dictionary') === 'ready');
+    await wait(() => toolStatus().textContent.includes('ERROR') && toolLight('dictionary') === 'error');
     await openPanel('variables');
     await click(testid('variables-tab-var'));
     await wait(() => variables()?.getValue() === originalVars, 'Dictionary edits and drafts must not alter var');

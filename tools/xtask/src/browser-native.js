@@ -582,7 +582,8 @@
   await wait(() => transferStatus().includes('Import failed:'), 'Invalid clipboard command must show parser error in the Transfer status');
   assert(!transferStatus().includes('Grant clipboard access'), 'Explicit parser error');
   assert(!notice(), 'Transfer errors stay out of the top banner');
-  assert(importLight() === 'ready', 'An outcome on screen does not light Transfer');
+  assert(importLight() === 'error', 'A new error lights Transfer even with the panel open');
+  await wait(() => importLight() === 'ready', 'An outcome seen in the open panel goes out');
   assert(!doc.querySelector('.transfer-panel .indicator-light'), 'Buttons inside the Transfer panel have no lights');
   await click(testid('console-service-grpc', doc));
   assert(testid('console-export', doc).textContent.startsWith('Export grpcurl'), 'gRPC exports grpcurl');
@@ -591,7 +592,7 @@
   await wait(() => editorOf('console-editor', doc).getValue().includes('fixture.Echo/Call'));
   win.nativeProbe.clipboard = { error: 'Fixture clipboard reader failed' };
   await click(button(/^Import/, doc));
-  await wait(() => transferStatus().includes('Fixture clipboard reader failed') && importLight() === 'ready',
+  await wait(() => transferStatus().includes('Fixture clipboard reader failed') && importLight() === 'error',
     'Native clipboard reader error must be visible in the Transfer status');
   const transferToggle = testid('console-transfer-toggle', doc);
   await click(transferToggle);

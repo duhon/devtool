@@ -452,15 +452,14 @@ impl App {
         }
     }
 
-    /// The light of a panel's toolbar button: an outcome goes out once it has stayed on screen
-    /// with the panel open ([`Signal`](services_widgets::indicator::Signal)).
+    /// The light of a panel's toolbar button: an outcome lights it until it has stayed on screen
+    /// with the panel open for `SEEN_AFTER_MS` ([`Signal`](services_widgets::indicator::Signal)).
     fn panel_light(&self, id: &str) -> services_widgets::indicator::Indicator {
-        let visible = !self.hidden && self.side.as_deref() == Some(id);
         self.panel_signals
             .get(&panel_signal_key(id, &self.console_service))
             .copied()
             .unwrap_or_default()
-            .indicator(self.panel_state(id), visible)
+            .indicator(self.panel_state(id), false)
     }
 
     /// Counts the on-screen time of the open panel's outcome; the others start over when shown.
