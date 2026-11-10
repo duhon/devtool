@@ -96,6 +96,18 @@
   assert(testid('session-used-0').textContent==='Immutable','The temporary session has no last-used date');
   assert(testid(`session-name-${a}`).tagName==='INPUT'&&testid('session-name-0').tagName!=='INPUT',
     'Only the current named session is renamed in place');
+  const nameField=testid(`session-name-${a}`);
+  nameField.focus();
+  nameField.value='Session A renamed';
+  await key('Escape');
+  assert(document.activeElement!==nameField&&nameField.value==='Session A','Escape must put the name back and leave the field');
+  nameField.focus();
+  nameField.value='Session A renamed';
+  await key('Enter');
+  assert(document.activeElement!==nameField,'Enter must leave the name field');
+  await wait(()=>testid('console-session-name').textContent==='Session A renamed');
+  testDriver.fill(testid(`session-name-${a}`),'Session A');
+  await wait(()=>testid('console-session-name').textContent==='Session A');
   for(const service of ['mysql','rest','graphql','grpc','splunk','terminal']) {
     await click(testid(`console-service-${service}`));
     setSource(editorOf('console-editor'),service==='rest'

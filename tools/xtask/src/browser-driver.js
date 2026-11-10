@@ -296,8 +296,9 @@
     await wait(()=>testid('console-session-name',root).dataset.sessionId!==before,
       ()=>`A session must be created from ${source}: ${root.querySelector('[data-testid="sessions-panel"]')?.innerText.slice(0,300)}`);
     const id=testid('console-session-name',root).dataset.sessionId;
-    // The new session brings its own layout, which may have the panel closed.
-    await panel();
+    await wait(()=>testid('console-sessions-toggle',root).getAttribute('aria-pressed')==='true',
+      'The Sessions panel must stay open when the session changes');
+    await sessionsIdle(root);
     fill(await wait(()=>root.querySelector(`[data-testid="session-name-${id}"]`),
       ()=>`Session ${id} must be renamed in place: ${root.querySelector('[data-testid="sessions-panel"]')?.innerHTML.slice(0,600)}`),name);
     await wait(()=>testid('console-session-name',root).textContent===name,
@@ -315,6 +316,10 @@
     if(!sessionInitialized) {
       // Scenarios work in imported session 1 unless they pick another one via testDriver.session.
       await activateSession(globalThis.testDriver.session ?? 1);
+      // The panel stays open across the switch; scenarios start with the console alone.
+      const toggle=testid('console-sessions-toggle');
+      if(toggle.getAttribute('aria-pressed')==='true') await click(toggle);
+      await wait(()=>toggle.getAttribute('aria-pressed')!=='true');
       sessionInitialized=true;
     }
     await wait(() => [...document.querySelectorAll('.console-root .editor')].some(visible));

@@ -274,7 +274,8 @@ impl Component for App {
             module_history: BTreeMap::new(),
             hints: BTreeMap::new(),
             templates: Default::default(),
-            side: None,
+            // A session switch creates the App anew; the right panel stays open.
+            side: kernel_panel::OPEN_SIDE.with(|side| side.borrow().clone()),
             agent_workspace: services_kernel::agent::Workspace::new(Ok(
                 uuid::Uuid::now_v7().to_string()
             )),
@@ -808,6 +809,7 @@ impl Component for App {
                 self.close_side();
                 if open {
                     self.side = Some(id.clone());
+                    kernel_panel::remember_side(Some(&id));
                     self.kernel.modules(|modules| modules.show(&id));
                 }
             }

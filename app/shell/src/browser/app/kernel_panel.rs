@@ -508,6 +508,7 @@ impl App {
     /// Closes the panel module of the side panel: it stops until opened again.
     pub(super) fn close_side(&mut self) {
         if let Some(id) = self.side.take() {
+            remember_side(None);
             let mut effects = Vec::new();
             for (msg, value) in services_widgets::view::take_pending(&id) {
                 effects.extend(services_kernel::modules::registry::with(|modules| {
@@ -539,3 +540,12 @@ pub(super) const TRANSFER_PANEL: &str = "transfer";
 
 /// Where Transfer sits among the toolbar's panel buttons (a manifest's `toolbar`).
 const TRANSFER_POSITION: u32 = 2;
+
+thread_local! {
+    /// The right panel open in this window, kept for the App of the next session.
+    pub(super) static OPEN_SIDE: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+pub(super) fn remember_side(id: Option<&str>) {
+    OPEN_SIDE.with(|side| *side.borrow_mut() = id.map(str::to_owned));
+}

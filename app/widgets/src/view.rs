@@ -904,8 +904,24 @@ fn text_input(props: &InputProps) -> Html {
         })
     };
     let multiline = props.variant == "multiline";
+    // An inline field reads as text again after Enter; Escape also puts its text back.
+    let inline = props
+        .variant
+        .split_whitespace()
+        .any(|name| name == "inline");
+    let original = props.input.value.clone();
     let onkeydown = Callback::from(move |event: KeyboardEvent| {
-        if event.key() != "Enter" || event.is_composing() {
+        if event.is_composing() {
+            return;
+        }
+        let field = event.target_unchecked_into::<HtmlInputElement>();
+        if inline && event.key() == "Escape" {
+            event.prevent_default();
+            field.set_value(original.as_deref().unwrap_or_default());
+            let _ = field.blur();
+            return;
+        }
+        if event.key() != "Enter" {
             return;
         }
         // A multiline field sends with Enter and breaks lines with Shift+Enter.
@@ -919,7 +935,10 @@ fn text_input(props: &InputProps) -> Html {
                 return;
             }
         }
-        change(event.target_unchecked_into::<HtmlInputElement>().value());
+        change(field.value());
+        if inline {
+            let _ = field.blur();
+        }
     });
     let class = classes!("ui-input", variants(&props.variant));
     let placeholder = props.input.placeholder.clone();

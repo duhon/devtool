@@ -568,7 +568,8 @@ Kernel вызывает модуль напрямую и сразу получа
   `TableRow.detail` (содержимое под строкой), `TableRow::clickable(&msg)` (клик по строке вне
   кнопок и полей), `Table.widths` (проценты), варианты строк `current`/`muted`, таблицы `roomy`;
   `Button::confirm` (вопрос `window.confirm` перед `on_click`); `Input.size`, вариант поля
-  `inline` (выглядит как текст до наведения); `Editor`: `.placeholder`, `.debounce(мс)`,
+  `inline` (выглядит как текст до наведения; Enter сохраняет и выходит из поля, Escape
+  возвращает текст); `Editor`: `.placeholder`, `.debounce(мс)`,
   краевой режим `is-flush` (в теле панели и вкладки); `ui::field(метка, элемент)`,
   `ui::anchor(метка, url)` (только http/https), `ui::combobox` (поиск по списку,
   `Choice.detail`), `Slider` с `.labels`, `.marker`, `.disabled`. Варианты: панель `flush`/
