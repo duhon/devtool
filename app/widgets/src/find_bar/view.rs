@@ -973,9 +973,6 @@ fn resolve(shared: &Shared) -> Option<Element> {
     if let Some(editor) = closest(&anchor, ".editor") {
         return Some(editor);
     }
-    if let Some(overlay) = closest(&anchor, ".console-hints-overlay") {
-        return editor_in(&overlay);
-    }
     let pane = document()
         .query_selector(".console-tool-panel")
         .ok()

@@ -172,7 +172,7 @@ impl App {
 
     /// The console shows another service: the open panel hears of its document.
     pub(super) fn kernel_switched(&mut self, service: &str) {
-        let Some(id) = self.side.clone() else {
+        let Some(id) = self.side.clone().filter(|id| id != TRANSFER_PANEL) else {
             return;
         };
         let check = self
@@ -288,6 +288,11 @@ impl App {
         let Some(id) = self.side.clone() else {
             return Html::default();
         };
+        if id == TRANSFER_PANEL {
+            return html! {
+                <section class="module-panel" data-testid="transfer-panel" data-module={id}>{self.view_transfer(ctx)}</section>
+            };
+        }
         let node = services_kernel::modules::registry::with(|modules| modules.view(&id).cloned());
         let on = ctx
             .link()
@@ -306,7 +311,7 @@ impl App {
 
     /// The status line of the panel module in the side panel (`status.set`).
     pub(super) fn view_side_status(&self, ctx: &Context<Self>) -> Html {
-        let Some(id) = &self.side else {
+        let Some(id) = self.side.as_ref().filter(|id| *id != TRANSFER_PANEL) else {
             return Html::default();
         };
         let (status, debug) = services_kernel::activity::panel(id);
@@ -337,9 +342,9 @@ impl App {
         }
     }
 
-    /// The toolbar: a button for each panel module and the App's own Export and Import, in
-    /// one list by their `toolbar` position (a panel without one by its `order`).
-    pub(super) fn view_toolbar(&self, ctx: &Context<Self>, service: &str, supported: bool) -> Html {
+    /// The toolbar: a button for each panel module and the App's own Transfer, in one list by
+    /// their `toolbar` position (a panel without one by its `order`).
+    pub(super) fn view_toolbar(&self, ctx: &Context<Self>, service: &str) -> Html {
         let mut items: Vec<(u32, Html)> = services_kernel::modules::registry::panels()
             .into_iter()
             .map(|panel| {
@@ -349,38 +354,74 @@ impl App {
                 )
             })
             .collect();
-        let transfer = |label: &str,
-                        testid: &str,
-                        kind: Transfer,
-                        onclick: Callback<MouseEvent>| {
+        let active = self.side.as_deref() == Some(TRANSFER_PANEL);
+        let state = [Transfer::Export, Transfer::Import]
+            .into_iter()
+            .map(|kind| self.transfer_indicator(service, kind))
+            .find(|state| *state == services_widgets::indicator::Indicator::Error)
+            .unwrap_or_default();
+        items.push((
+            TRANSFER_POSITION,
             html! {
-                <button key={testid.to_owned()} class={classes!("console-import-toggle", (!supported).then_some("is-unavailable"))}
-                    data-testid={testid.to_owned()} disabled={!supported} {onclick}>
-                    {label.to_owned()}{indicator(self.transfer_indicator(service, kind), format!("{label} status"))}
+                <button key={TRANSFER_PANEL} class={classes!("console-hints-toggle", active.then_some("active"))}
+                    data-testid="console-transfer-toggle" aria-pressed={active.to_string()}
+                    onclick={ctx.link().callback(|_| Msg::TogglePanel(TRANSFER_PANEL.to_owned()))}>
+                    {"Transfer"}{indicator(state, "Transfer status".to_owned())}
                 </button>
-            }
-        };
-        items.push((
-            EXPORT_POSITION,
-            transfer(
-                "Export",
-                "console-export",
-                Transfer::Export,
-                ctx.link().callback(|_| Msg::Export),
-            ),
+            },
         ));
-        items.push((
-            EXPORT_POSITION,
-            transfer(
-                "Import",
-                "console-import",
-                Transfer::Import,
-                ctx.link().callback(|_| Msg::Import),
-            ),
-        ));
-        // Stable: Export stays before Import, and a panel keeps its place among equals.
+        // Stable: a panel keeps its place among equals.
         items.sort_by_key(|(position, _)| *position);
         items.into_iter().map(|(_, html)| html).collect()
+    }
+
+    /// The App's own Transfer panel: Export the current check as the service's command (copied
+    /// and shown to edit and copy again), Import one from the clipboard.
+    fn view_transfer(&self, ctx: &Context<Self>) -> Html {
+        let service = &self.console_service;
+        let name = services_kernel::modules::services::label(service);
+        let body = match services_kernel::requests::transfer(service) {
+            None => {
+                html! {<span class="ui-text is-muted">{format!("{name} has no command to export or import.")}</span>}
+            }
+            Some(format) => {
+                let ready = services_kernel::modules::registry::loaded(service);
+                let button = |label: String, testid: &str, kind: Transfer, msg: Msg| {
+                    let msg = std::cell::Cell::new(Some(msg));
+                    let onclick = ctx.link().batch_callback(move |_| msg.take());
+                    html! {
+                        <button type="button" class="ui-button" data-testid={testid.to_owned()} disabled={!ready} {onclick}>
+                            {label.clone()}{indicator(self.transfer_indicator(service, kind), format!("{label} status"))}
+                        </button>
+                    }
+                };
+                html! {<>
+                    <div class="ui-row">
+                        {button(format!("Export {format}"), "console-export", Transfer::Export, Msg::Export)}
+                        {button(format!("Import {format}"), "console-import", Transfer::Import, Msg::Import)}
+                    </div>
+                    if !ready {
+                        <span class="ui-text is-muted">{format!("The {name} module is still loading.")}</span>
+                    } else if self.export_text.is_none() {
+                        <span class="ui-text is-muted">{format!("Export copies the current check as {format}; Import adds a check from the {format} command in the clipboard.")}</span>
+                    }
+                    if let Some(command) = &self.export_text {
+                        <div class="transfer-command">
+                            <editor::View key="export" handle={self.export_editor(command)} on={ctx.link().callback(Msg::ExportEditor)} testid="transfer-export" label="Export"/>
+                        </div>
+                        <div class="ui-row">
+                            <button type="button" class="ui-button" data-testid="console-export-copy" onclick={ctx.link().callback(|_| Msg::CopyExport)}>{"Copy"}</button>
+                        </div>
+                    }
+                </>}
+            }
+        };
+        html! {
+            <section class="ui-panel transfer-panel">
+                <header class="ui-panel-title"><span class="tab-button active">{"Transfer"}</span></header>
+                <div class="ui-panel-body"><div class="ui-column">{body}</div></div>
+            </section>
+        }
     }
 
     fn view_panel_toggle(&self, ctx: &Context<Self>, panel: &services_sdk::Manifest) -> Html {
@@ -427,5 +468,8 @@ impl App {
 /// The built-in panel of the saved sessions.
 const SESSIONS_PANEL: &str = "sessions";
 
-/// Where Export and Import sit among the toolbar's panel buttons (a manifest's `toolbar`).
-const EXPORT_POSITION: u32 = 2;
+/// The App's own panel of Export and Import.
+pub(super) const TRANSFER_PANEL: &str = "transfer";
+
+/// Where Transfer sits among the toolbar's panel buttons (a manifest's `toolbar`).
+const TRANSFER_POSITION: u32 = 2;

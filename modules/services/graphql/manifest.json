@@ -7,5 +7,6 @@
   "abi": 2,
   "app": ">=3.7",
   "drivers": {"http": "1"},
-  "order": 3
+  "order": 3,
+  "transfer": "curl"
 }

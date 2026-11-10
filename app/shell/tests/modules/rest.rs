@@ -176,7 +176,7 @@ fn a_run_is_the_modules_http_call_with_the_console_options() {
 #[test]
 fn curl_export_and_import_go_through_the_module() {
     services_shell::link();
-    assert!(console::transfers("rest"));
+    assert_eq!(console::transfer("rest").as_deref(), Some("curl"));
     assert_eq!(
         console::export(
             "rest",

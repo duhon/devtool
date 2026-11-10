@@ -554,17 +554,19 @@
   // The toolbar keeps its slots while modules load: the panel buttons do not move.
   const toolbar = () => [...doc.querySelectorAll('.console-toolbar > button')]
     .map(el => `${el.dataset.testid}@${Math.round(el.getBoundingClientRect().left)}`).join(' ');
+  await click(testid('console-transfer-toggle', doc));
   const loadingToolbar = toolbar();
-  assert(doc.querySelector('[data-testid="console-import"]') && doc.querySelector('[data-testid="console-sessions-toggle"]'),
-    `The toolbar must reserve Import and the panel buttons before modules load: ${loadingToolbar}`);
+  assert(doc.querySelector('[data-testid="console-transfer-toggle"]') && doc.querySelector('[data-testid="console-sessions-toggle"]'),
+    `The toolbar must show Transfer and the panel buttons before modules load: ${loadingToolbar}`);
   assert(!doc.featurePolicy.allowsFeature('clipboard-read'), 'Iframe must deny clipboard access');
   let denied = false;
   try { await win.navigator.clipboard.readText(); }
   catch (error) { denied = /permissions policy/i.test(error.message); }
   assert(denied, 'Browser clipboard must fail under Permissions Policy');
   assert(win.nativeProbe.clipboardReads === 0, 'No automatic clipboard read');
-  // Import appears once the iframe's own Kernel runs the REST module.
-  await wait(() => doc.querySelector('[data-testid="console-import"]:not(:disabled)'), 'REST Import must appear once its module runs');
+  // Import is enabled once the iframe's own Kernel runs the REST module.
+  await wait(() => doc.querySelector('[data-testid="console-import"]:not(:disabled)'), 'REST Import must be enabled once its module runs');
+  assert(testid('console-import', doc).textContent.startsWith('Import curl'), 'REST imports curl');
   assert(toolbar() === loadingToolbar, `Loading modules must not shift the toolbar: ${loadingToolbar} → ${toolbar()}`);
   await click(button(/^Import/, doc));
   await wait(() => editorOf('console-editor', doc).getValue().includes('POST https://fixture.invalid/import'));
@@ -581,6 +583,7 @@
   await click(button('Dismiss', doc));
   await wait(() => !notice() && importLight() === 'ready', 'Dismiss must clear the banner and the Import light');
   await click(testid('console-service-grpc', doc));
+  assert(testid('console-export', doc).textContent.startsWith('Export grpcurl'), 'gRPC exports grpcurl');
   win.nativeProbe.clipboard = { text: "grpcurl -plaintext -d '{\"fixture\":\"ok\"}' grpc.fixture.invalid:9000 fixture.Echo/Call" };
   await click(button(/^Import/, doc));
   await wait(() => editorOf('console-editor', doc).getValue().includes('fixture.Echo/Call'));
@@ -590,6 +593,11 @@
     'Native clipboard reader error must be visible and light Import');
   await click(testid('console-service-rest', doc));
   assert(importLight() === 'ready', 'Only the service whose Import failed lights its Import button');
+  // Export shows the command in the panel, to edit and copy again.
+  await click(testid('console-export', doc));
+  await wait(() => win.testDriver.editorAt('transfer-export', doc)?.getValue().includes('https://fixture.invalid/import'),
+    'Export must show the curl command in the Transfer panel');
+  assert(win.testDriver.editorAt('transfer-export', doc).getValue().startsWith('curl'), 'The exported command is curl');
   frame.remove();
   return true;
 })()

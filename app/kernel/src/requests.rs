@@ -172,9 +172,9 @@ pub fn parse_run(service: &str, source: &str) -> Result<(Value, RunOptions), Str
     Ok((call_value(&call), options))
 }
 
-/// Whether `service` exports and imports checks now: a Kernel service once its module runs.
-pub fn transfers(service: &str) -> bool {
-    crate::modules::registry::loaded(service)
+/// The command `service` exports checks as and imports them from (`curl`, `grpcurl`), if any.
+pub fn transfer(service: &str) -> Option<String> {
+    crate::modules::registry::manifest(service).and_then(|manifest| manifest.transfer)
 }
 
 pub fn import(service: &str, command: &str) -> Result<String, String> {

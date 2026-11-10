@@ -79,8 +79,10 @@
   assert(localStorage.getItem('servicesConsole.sessions.v1')===null,
     'The quota-limited legacy key must be removed only after IndexedDB commit');
   migratedFrame.remove();
-  // The migrated library reaches this window: its console reloads (Export appears with it).
+  // The migrated library reaches this window: its console reloads (Export is enabled with it).
+  await click(testid('console-transfer-toggle'));
   await wait(()=>document.querySelector('[data-testid="console-export"]:not(:disabled)'),'This window must reload the migrated library');
+  await click(testid('console-transfer-toggle'));
   await activateSession(1);
   await activateSession(0);
   for(const service of ['mysql','rest','graphql','grpc','splunk','terminal']) {

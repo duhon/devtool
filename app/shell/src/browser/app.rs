@@ -149,7 +149,7 @@ pub enum Msg {
     Stop,
     Visibility(bool),
     ClearNotice,
-    CloseExport,
+    CopyExport,
     /// What the Kernel tells the console.
     Kernel(KernelEvent),
     /// Another window changed the kv key of a module: (module, key).
@@ -738,42 +738,8 @@ impl Component for App {
                     .and_then(|b| services_kernel::requests::export(&self.console_service, &b.text))
                 {
                     Ok(command) => {
-                        let link = ctx.link().clone();
-                        let service = self.console_service.clone();
-                        wasm_bindgen_futures::spawn_local(async move {
-                            if clipboard("writeText", &[command.clone().into()])
-                                .await
-                                .is_err()
-                            {
-                                let fallback = (|| -> Result<(), String> {
-                                    let doc = window().document().ok_or("No document")?;
-                                    let node = doc.create_element("textarea").map_err(error)?;
-                                    let area = node
-                                        .dyn_into::<web_sys::HtmlTextAreaElement>()
-                                        .map_err(|e| error(e.into()))?;
-                                    area.set_value(&command);
-                                    area.set_attribute("style", "position:fixed;opacity:0")
-                                        .map_err(error)?;
-                                    doc.body()
-                                        .ok_or("No document body")?
-                                        .append_child(&area)
-                                        .map_err(error)?;
-                                    area.select();
-                                    let result =
-                                        super::call(doc.as_ref(), "execCommand", &["copy".into()])
-                                            .map_err(error);
-                                    area.remove();
-                                    if result?.as_bool() == Some(true) {
-                                        Ok(())
-                                    } else {
-                                        Err("Clipboard copy failed; grant clipboard access and retry Export.".into())
-                                    }
-                                })();
-                                if let Err(e) = fallback {
-                                    link.send_message(Msg::ClipboardError(service, e));
-                                }
-                            }
-                        });
+                        self.export_text = Some(command.clone());
+                        self.copy_export(ctx, command);
                     }
                     Err(e) => {
                         let service = self.console_service.clone();
@@ -803,7 +769,11 @@ impl Component for App {
                 self.kernel.visibility(visible);
             }
             Msg::ClearNotice => self.notice = None,
-            Msg::CloseExport => self.export_text = None,
+            Msg::CopyExport => {
+                if let Some(command) = self.export_text.clone() {
+                    self.copy_export(ctx, command);
+                }
+            }
             Msg::Kernel(event) => return self.kernel_event(ctx, event),
             Msg::KernelStorage(module, key) => {
                 self.kernel.modules(|modules| modules.storage(&module, &key));
@@ -945,6 +915,47 @@ impl App {
             reasons.push(format!("agent {tag}"));
         }
         reasons
+    }
+    /// Copies the exported command; without the clipboard API, through a hidden text field.
+    fn copy_export(&self, ctx: &Context<Self>, command: String) {
+        let link = ctx.link().clone();
+        let service = self.console_service.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            if clipboard("writeText", &[command.clone().into()])
+                .await
+                .is_err()
+            {
+                let fallback = (|| -> Result<(), String> {
+                    let doc = window().document().ok_or("No document")?;
+                    let node = doc.create_element("textarea").map_err(error)?;
+                    let area = node
+                        .dyn_into::<web_sys::HtmlTextAreaElement>()
+                        .map_err(|e| error(e.into()))?;
+                    area.set_value(&command);
+                    area.set_attribute("style", "position:fixed;opacity:0")
+                        .map_err(error)?;
+                    doc.body()
+                        .ok_or("No document body")?
+                        .append_child(&area)
+                        .map_err(error)?;
+                    area.select();
+                    let result =
+                        super::call(doc.as_ref(), "execCommand", &["copy".into()]).map_err(error);
+                    area.remove();
+                    if result?.as_bool() == Some(true) {
+                        Ok(())
+                    } else {
+                        Err(
+                            "Clipboard copy failed; grant clipboard access and retry Export."
+                                .into(),
+                        )
+                    }
+                })();
+                if let Err(e) = fallback {
+                    link.send_message(Msg::ClipboardError(service, e));
+                }
+            }
+        });
     }
     fn transfer_failed(&mut self, service: String, transfer: Transfer, error: String) {
         let action = match transfer {

@@ -278,8 +278,7 @@
 }
 
 .console-tab-strip > .tab-button,
-.console-hints-toggle,
-.console-import-toggle {
+.console-hints-toggle {
   box-sizing: border-box;
   min-height: 22px;
   border: 1px solid var(--border);
@@ -293,8 +292,7 @@
 }
 
 .console-tab-strip > .tab-button,
-.console-hints-toggle,
-.console-import-toggle {
+.console-hints-toggle {
   padding: 2px 6px;
 }
 
@@ -310,70 +308,14 @@
 }
 
 .console-tab-strip > .tab-button:hover,
-.console-hints-toggle:hover,
-.console-import-toggle:hover {
+.console-hints-toggle:hover {
   background: var(--bg-hover);
   border-color: var(--accent);
 }
 
-.console-hints-overlay {
-  position: absolute;
-  inset: 0;
-  z-index: 10;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--shadow-strong);
-}
-
-.console-hints-overlay[hidden] {
-  display: none;
-}
-
-.console-hints-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  width: min(640px, 90%);
-  max-height: 80%;
-  padding: 14px;
+.transfer-command .editor {
+  height: 240px;
   border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg-raised);
-  box-shadow: 0 8px 24px var(--shadow);
-}
-
-.console-hints-panel-header {
-  color: var(--fg-control);
-  font-weight: 600;
-}
-
-.console-hints-panel .editor {
-  height: 320px;
-  border: 1px solid var(--border);
-}
-
-.console-hints-panel textarea {
-  width: 100%;
-  min-height: 120px;
-  box-sizing: border-box;
-  resize: vertical;
-  background: var(--bg);
-  color: var(--fg-control);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 8px;
-  font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-}
-
-.console-hints-panel-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.console-import-toggle.is-unavailable {
-  visibility: hidden;
 }
 
 body:has(.console-root:not([hidden])) { height: 100dvh; box-sizing: border-box; }

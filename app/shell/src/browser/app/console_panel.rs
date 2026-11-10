@@ -33,7 +33,7 @@ impl App {
         self.editors.borrow_mut().insert(key, editor.clone());
         editor
     }
-    fn export_editor(&self, text: &str) -> Handle {
+    pub(super) fn export_editor(&self, text: &str) -> Handle {
         self.export_editor
             .borrow_mut()
             .get_or_insert_with(|| {
@@ -596,7 +596,6 @@ impl App {
         let state = self
             .active_console_line(service)
             .map(|line| self.check_state(service, line));
-        let supported = services_kernel::requests::transfers(service);
         let busy = self.busy_reasons();
         let (status, debug, running, started) = if let Some(discovery) = check_discovery {
             (
@@ -689,15 +688,9 @@ impl App {
                 </div>
             <div class="console-session-name" data-testid="console-session-name" data-session-id={self.sessions.borrow().library.current.to_string()} data-storage-busy={self.sessions.borrow().saving().to_string()} data-busy={(!busy.is_empty()).to_string()} data-busy-reason={busy.join(", ")} title={self.sessions.borrow().library.name().to_owned()}>{self.sessions.borrow().library.name()}</div>
             <nav class="console-toolbar" aria-label="Console tools">
-                // Export and Import stay in place (unavailable) until the service can transfer, so the toolbar does not shift.
-                {self.view_toolbar(ctx,service,supported)}
+                {self.view_toolbar(ctx,service)}
             </nav>
             </div>
-            if let Some(command)=&self.export_text{<div class="console-hints-overlay"><div class="console-hints-panel">
-                <div class="console-hints-panel-header">{"Export - copy this command"}</div>
-                <editor::View key="export" handle={self.export_editor(command)} on={ctx.link().callback(Msg::ExportEditor)} label="Export"/>
-                <div class="console-hints-panel-actions"><button onclick={ctx.link().callback(|_|Msg::CloseExport)}>{"Close"}</button></div>
-            </div></div>}
         </div>}
     }
 }
