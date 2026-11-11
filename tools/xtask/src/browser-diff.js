@@ -57,7 +57,10 @@
   await wait(() => scroller('right').scrollTop === scroller('left').scrollTop && scroller('left').scrollTop > 0,
     () => `Scrolling must follow: ${scroller('left').scrollTop} ${scroller('right').scrollTop}`);
 
+  // The long texts also differ once: only a status that changed in between shows the new diff.
   set('left', 'a\nb\nc');
+  set('right', 'a\nb\nc');
+  await wait(() => status().includes('Identical'));
   set('right', 'a\nx\nc');
   await wait(() => status().includes('1 difference'));
   await click(testid('diff-take-left-0'));
