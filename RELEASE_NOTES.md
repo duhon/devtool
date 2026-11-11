@@ -1,5 +1,14 @@
 # Release notes
 
+## 4.1.0
+
+- The TCP driver (1.1) keeps a connection open as a session: a module writes to it step
+  by step and reads replies as they come, so it can wait for one reply before the next
+  command. `caPem` adds a CA to trust, and the server name is still checked.
+- A new MongoDB driver runs commands on a server from a `mongodb://` or
+  `mongodb+srv://` URI and reads cursors in batches. Server errors come back as
+  answers with their code; `timeoutMs` is sent to the server as `maxTimeMS`.
+
 ## 4.0.1
 
 - Settings → Sources is a table: name, last update, status and actions per source, the
