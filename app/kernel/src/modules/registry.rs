@@ -155,10 +155,16 @@ fn start(drivers: BTreeMap<String, String>) -> Modules {
 
 fn native_drivers() -> BTreeMap<String, String> {
     #[cfg(not(target_arch = "wasm32"))]
-    return ["grpc", "http", "mysql", "process", "tcp"]
-        .into_iter()
-        .map(|driver| (driver.into(), "1".into()))
-        .collect();
+    return [
+        ("grpc", "1"),
+        ("http", "1"),
+        ("mysql", "1"),
+        ("process", "1"),
+        ("tcp", "1.1"),
+    ]
+    .into_iter()
+    .map(|(driver, version)| (driver.into(), version.into()))
+    .collect();
     #[cfg(target_arch = "wasm32")]
     BTreeMap::new()
 }

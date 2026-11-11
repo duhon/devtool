@@ -16,11 +16,15 @@ use services_sdk::{
     tcp::{Closed, Request, Response, Timing},
 };
 use std::{
-    sync::{Arc, OnceLock},
+    convert::Infallible,
+    sync::{
+        Arc, OnceLock,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
 use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, WriteHalf},
     net::TcpStream,
     sync::mpsc,
 };
@@ -163,59 +167,70 @@ async fn converse(
     }
     let started = Instant::now();
     let first = data(&request)?;
-    let (mut stream, remote, mut timing) = open(&request, started).await?;
+    let (stream, remote, mut timing) = open(&request, started).await?;
     emit(events, json!({"connected": {"remote": remote}})).await?;
-    let mut written = 0u64;
-    if !first.is_empty() {
-        written += write(&mut stream, &first, events).await?;
-    }
-    let idle = request.idle_ms.map(millis);
-    let mut deadline = idle.map(|idle| tokio::time::Instant::now() + idle);
-    let mut inputs = true;
-    let mut bytes = 0u64;
-    let mut buf = vec![0u8; 16 * 1024];
-    let closed = loop {
-        let wanted = wanted(&request, bytes, buf.len());
-        if wanted == 0 {
-            break Closed::Limit;
+    // The halves run at once: a write the peer is slow to take never stops reading.
+    let (mut reader, mut writer) = tokio::io::split(stream);
+    let written = AtomicU64::new(0);
+    let writing = async {
+        if !first.is_empty() {
+            write(&mut writer, &first, events, &written).await?;
         }
-        tokio::select! {
-            read = stream.read(&mut buf[..wanted]) => {
-                let n = match read {
-                    Ok(0) => break Closed::Peer,
-                    Ok(n) => n,
-                    Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => {
-                        break Closed::Peer;
-                    }
-                    Err(error) => return Err(Failure::chain(Stage::Read, &error)),
-                };
-                if bytes == 0 {
-                    timing.first_byte_us = micros(started);
-                }
-                bytes += n as u64;
-                emit(events, json!({ "chunkBase64": B64.encode(&buf[..n]) })).await?;
-                deadline = idle.map(|idle| tokio::time::Instant::now() + idle);
+        while let Some(message) = input.recv().await {
+            let data = message["dataBase64"]
+                .as_str()
+                .ok_or("no dataBase64".to_owned())
+                .and_then(|data| B64.decode(data).map_err(|error| error.to_string()))
+                .map_err(|error| Failure::new(Stage::Write, format!("Invalid input: {error}")))?;
+            write(&mut writer, &data, events, &written).await?;
+        }
+        // No more input (overflow or the Host is closing); what ends the session follows.
+        std::future::pending::<Result<Infallible, Failure>>().await
+    };
+    let reading = async {
+        let idle = request.idle_ms.map(millis);
+        let mut bytes = 0u64;
+        let mut buf = vec![0u8; 16 * 1024];
+        let closed = loop {
+            let wanted = wanted(&request, bytes, buf.len());
+            if wanted == 0 {
+                break Closed::Limit;
             }
-            next = input.recv(), if inputs => match next {
-                Some(message) => {
-                    let data = message["dataBase64"]
-                        .as_str()
-                        .ok_or("no dataBase64".to_owned())
-                        .and_then(|data| B64.decode(data).map_err(|error| error.to_string()))
-                        .map_err(|error| Failure::new(Stage::Write, format!("Invalid input: {error}")))?;
-                    written += write(&mut stream, &data, events).await?;
+            let read = reader.read(&mut buf[..wanted]);
+            let read = match idle {
+                Some(idle) => match tokio::time::timeout(idle, read).await {
+                    Ok(read) => read,
+                    Err(_) => break Closed::Idle,
+                },
+                None => read.await,
+            };
+            let n = match read {
+                Ok(0) => break Closed::Peer,
+                Ok(n) => n,
+                Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => {
+                    break Closed::Peer;
                 }
-                // No more input (overflow or the Host is closing); what ends the session follows.
-                None => inputs = false,
-            },
-            () = tokio::time::sleep_until(deadline.unwrap_or_else(tokio::time::Instant::now)),
-                if deadline.is_some() => break Closed::Idle,
-        }
+                Err(error) => return Err(Failure::chain(Stage::Read, &error)),
+            };
+            if bytes == 0 {
+                timing.first_byte_us = micros(started);
+            }
+            bytes += n as u64;
+            emit(events, json!({ "chunkBase64": B64.encode(&buf[..n]) })).await?;
+        };
+        Ok((bytes, closed))
+    };
+    let (bytes, closed) = tokio::select! {
+        read = reading => read?,
+        failed = writing => match failed {
+            Err(failure) => return Err(failure),
+            Ok(never) => match never {},
+        },
     };
     timing.total_us = micros(started);
     Ok(json!(Response {
         bytes,
-        written,
+        written: written.load(Ordering::Relaxed),
         closed,
         remote,
         timing,
@@ -223,20 +238,21 @@ async fn converse(
     }))
 }
 
-/// Writes `data` whole, then says so.
+/// Writes `data` whole, counts it and says so.
 async fn write(
-    stream: &mut Box<dyn Io>,
+    writer: &mut WriteHalf<Box<dyn Io>>,
     data: &[u8],
     events: &mpsc::Sender<Value>,
-) -> Result<u64, Failure> {
+    written: &AtomicU64,
+) -> Result<(), Failure> {
     let sent = async {
-        stream.write_all(data).await?;
-        stream.flush().await
+        writer.write_all(data).await?;
+        writer.flush().await
     };
     sent.await
         .map_err(|error| Failure::chain(Stage::Write, &error))?;
-    emit(events, json!({"written": {"bytes": data.len()}})).await?;
-    Ok(data.len() as u64)
+    written.fetch_add(data.len() as u64, Ordering::Relaxed);
+    emit(events, json!({"written": {"bytes": data.len()}})).await
 }
 
 /// The request data: `data`, else `dataBase64`.

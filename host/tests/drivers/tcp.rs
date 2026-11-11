@@ -338,6 +338,45 @@ async fn tcp_session_ends_at_peer_close_and_fails_on_bad_requests_and_too_many_w
     );
 }
 
+#[tokio::test]
+async fn tcp_session_reads_while_a_write_waits_for_the_peer() {
+    const SIZE: usize = 4 * 1024 * 1024;
+    // Small buffers: the peer's answer and the writes outgrow them both ways.
+    let socket = tokio::net::TcpSocket::new_v4().unwrap();
+    socket.set_recv_buffer_size(16 * 1024).unwrap();
+    socket.set_send_buffer_size(16 * 1024).unwrap();
+    socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    let listener = socket.listen(1).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    // The peer answers whole before it reads anything.
+    tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        stream.write_all(&vec![1u8; SIZE]).await.unwrap();
+        let mut heard = vec![0u8; SIZE];
+        stream.read_exact(&mut heard).await.unwrap();
+        assert!(heard.iter().all(|byte| *byte == 2));
+    });
+    let data = DataDir::new();
+    let mut pipe = Pipe::start(data.runtime());
+    pipe.send(&call(1, "stream", &session(port))).await;
+    event(&mut pipe).await;
+    // Native messages stay under Chrome's 1 MiB.
+    for _ in 0..16 {
+        pipe.send(&input(1, &vec![2u8; SIZE / 16])).await;
+    }
+    let (events, exit) = super::events(&mut pipe).await;
+    let acks = events
+        .iter()
+        .filter(|event| event.get("written").is_some())
+        .count();
+    let response = tcp::Response::parse(&exit["info"]).unwrap();
+    assert_eq!(acks, 16, "{exit}");
+    assert_eq!(
+        (response.bytes, response.written, response.closed),
+        (SIZE as u64, SIZE as u64, Closed::Peer)
+    );
+}
+
 /// A server for `localhost` with a certificate of a test CA (`tls/`; made for these tests only).
 async fn tls_echo() -> u16 {
     use tokio_rustls::rustls::{
