@@ -3,11 +3,11 @@
   // Medians on the reference machine; testDriver.budget scales them to this one.
   const {TOKENIZE_MS, FOLD_MS, VERTICAL_FOLD_MS}=reference({
     local:{TOKENIZE_MS:31, FOLD_MS:27, VERTICAL_FOLD_MS:6.5},
-    ci:{TOKENIZE_MS:31, FOLD_MS:27, VERTICAL_FOLD_MS:6.5}});
+    ci:{TOKENIZE_MS:57, FOLD_MS:50, VERTICAL_FOLD_MS:9.5}});
   // Whole-table to one-screen cost ratios on the reference machine; they do not need scaling.
   const {SELECT_RATIO, PAINT_RATIO}=reference({
     local:{SELECT_RATIO:1.12, PAINT_RATIO:1},
-    ci:{SELECT_RATIO:1.12, PAINT_RATIO:1}});
+    ci:{SELECT_RATIO:1.02, PAINT_RATIO:1.11}});
   await wait(() => document.querySelector('.console-editor-host .editor'), 'Console editor shown');
   await click(testid('console-service-mysql'));
   const mysqlConsole = editorOf('console-editor'), previous = mysqlConsole.getValue();

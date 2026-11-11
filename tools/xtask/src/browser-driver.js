@@ -417,9 +417,10 @@
   // testTiming; with measure on, timings are only recorded, to take new references from.
   const timing = globalThis.testTiming ?? { environment: 'local', measure: false };
   const reference = references => references[timing.environment];
-  const SPEED_REFERENCE_MS = reference({ local: 8.7, ci: 8.7 });
-  // A measurement may exceed its reference median by this much.
-  const BUDGET_MARGIN = 1.1;
+  const SPEED_REFERENCE_MS = reference({ local: 8.7, ci: 15.4 });
+  // A measurement may exceed its reference median by this much. Shared CI runners vary by up
+  // to a third between runs even after calibration.
+  const BUDGET_MARGIN = reference({ local: 1.1, ci: 1.5 });
   const timings = globalThis.timings = { environment: timing.environment, calibrationMs: [] };
   const speedWorkload = () => {
     const text = JSON.stringify(Array.from({ length: 16000 }, (_, id) => ({ id, name: `row ${id} 😀`, enabled: id % 2 === 0 })));
