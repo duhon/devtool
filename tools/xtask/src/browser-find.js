@@ -104,7 +104,7 @@
   await type('pin');
   // Medians of replace-and-undo cycles; polling every millisecond keeps the wait out of the time.
   const {waitFor,timed,budget,within,reference}=testDriver;
-  const {REPLACE_ALL_MS, UNDO_MS}=reference({local:{REPLACE_ALL_MS:255, UNDO_MS:111}, ci:{REPLACE_ALL_MS:457, UNDO_MS:176}});
+  const {REPLACE_ALL_MS, UNDO_MS}=reference({local:{REPLACE_ALL_MS:255, UNDO_MS:111}, ci:{REPLACE_ALL_MS:470, UNDO_MS:185}});
   const undone=[];
   const elapsed=await timed(5,async()=>{
     await query('needle');

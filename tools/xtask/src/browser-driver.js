@@ -410,40 +410,16 @@
     await click(testid('source-add-save'));
     if (previous && previous !== 'sources') await settingsTab(previous);
   };
-  // Timing budgets scale with this machine: a fixed JSON, regex and sort workload is timed
-  // against its median on the reference machine, so a slow runner or a local regression both
-  // show up as the same ratio instead of against a fixed number of milliseconds. CI runners
-  // have their own references: their DOM and JS costs do not scale alike. xtask sets
-  // testTiming; with measure on, timings are only recorded, to take new references from.
+  // Timing checks compare a median with its median on the reference machine plus a margin.
+  // CI runners have their own references and a wider margin: shared runners vary by up to a
+  // third between runs. xtask sets testTiming; with measure on, timings are only recorded, to
+  // take new references from.
   const timing = globalThis.testTiming ?? { environment: 'local', measure: false };
   const reference = references => references[timing.environment];
-  const SPEED_REFERENCE_MS = reference({ local: 8.7, ci: 15.4 });
-  // A measurement may exceed its reference median by this much. Shared CI runners vary by up
-  // to a third between runs even after calibration.
   const BUDGET_MARGIN = reference({ local: 1.1, ci: 1.5 });
-  const timings = globalThis.timings = { environment: timing.environment, calibrationMs: [] };
-  const speedWorkload = () => {
-    const text = JSON.stringify(Array.from({ length: 16000 }, (_, id) => ({ id, name: `row ${id} 😀`, enabled: id % 2 === 0 })));
-    const rows = JSON.parse(text);
-    let tokens = 0;
-    for (const match of text.matchAll(/"(?:[^"\\]|\\.)*"|-?\d+|true|false/g)) tokens += match[0].length;
-    rows.sort((a, b) => b.name.localeCompare(a.name));
-    return tokens + rows[0].id;
-  };
+  const timings = globalThis.timings = { environment: timing.environment };
   const middle = values => values.sort((a, b) => a - b)[values.length >> 1];
-  // Load changes during a run, so every budget recalibrates next to its measurement.
-  const speed = () => {
-    for (let i = 0; i < 3; i++) speedWorkload();
-    const ms = middle(Array.from({ length: 9 }, () => {
-      const started = performance.now();
-      speedWorkload();
-      return performance.now() - started;
-    }));
-    timings.calibrationMs.push(ms);
-    return ms / SPEED_REFERENCE_MS;
-  };
-  // A reference median scaled to this machine, plus the margin.
-  const budget = ms => ms * speed() * BUDGET_MARGIN;
+  const budget = ms => ms * BUDGET_MARGIN;
   // Records a timing and checks it against its limit, unless only measuring.
   const within = (name, value, limit, message) => {
     timings[name] = value;
@@ -459,7 +435,7 @@
     }
     return middle(samples);
   };
-  globalThis.testDriver = { assert, sleep, seen, wait, waitFor, during, holds, settle, stable, frames, visible, find, testid, editorOf, editorAt, key, type, move, input, speed, budget, timed, within, reference, BUDGET_MARGIN,
+  globalThis.testDriver = { assert, sleep, seen, wait, waitFor, during, holds, settle, stable, frames, visible, find, testid, editorOf, editorAt, key, type, move, input, budget, timed, within, reference, BUDGET_MARGIN,
     click, doubleClick, button, openConsole, activateSession, sessionsIdle, createSession, deleteSession, setSource, commitRestUrl, candidates, suggest, pick, pickThenEnter,
     assertNativeScrollbars, nativeTrackPaint, sessionLibrary, nativeHold, settingsTab, addFolderSource, fill, choose, openPanel, closePanel, clearSessions: () => sessionRecord('delete') };
   globalThis.testNativeHealth = () => new Promise(resolve => {

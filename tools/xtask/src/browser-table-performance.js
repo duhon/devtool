@@ -1,10 +1,10 @@
 (async () => {
   const {assert, wait, click, testid, editorOf, setSource, budget, timed, within, reference, BUDGET_MARGIN} = testDriver;
-  // Medians on the reference machine; testDriver.budget scales them to this one.
+  // Medians on the reference machine; testDriver.budget adds its margin.
   const {TOKENIZE_MS, FOLD_MS, VERTICAL_FOLD_MS}=reference({
     local:{TOKENIZE_MS:31, FOLD_MS:27, VERTICAL_FOLD_MS:6.5},
-    ci:{TOKENIZE_MS:57, FOLD_MS:50, VERTICAL_FOLD_MS:9.5}});
-  // Whole-table to one-screen cost ratios on the reference machine; they do not need scaling.
+    ci:{TOKENIZE_MS:60, FOLD_MS:40, VERTICAL_FOLD_MS:10}});
+  // Whole-table to one-screen cost ratios on the reference machine.
   const {SELECT_RATIO, PAINT_RATIO}=reference({
     local:{SELECT_RATIO:1.12, PAINT_RATIO:1},
     ci:{SELECT_RATIO:1.02, PAINT_RATIO:1.11}});
