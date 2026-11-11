@@ -1,15 +1,17 @@
 //! Drivers: protocols the App cannot speak from the browser. They know no services; a module
 //! describes the call, a driver runs it.
 //!
-//! `{"service":"drivers","driver":"http"|"grpc"|"mysql"|"process"|"tcp","op":"call"|"stream",
-//! "request":{…}}`. A call answers `{"ok":true,"result":…}`; a stream sends `data` events and
-//! ends with `exit`. A failure is `{"ok":false,"error":…,"failure":{"stage":…,"causes":[…]}}`.
+//! `{"service":"drivers","driver":"http"|"grpc"|"mongodb"|"mysql"|"process"|"tcp",
+//! "op":"call"|"stream","request":{…}}`. A call answers `{"ok":true,"result":…}`; a stream sends
+//! `data` events and ends with `exit`. A failure is
+//! `{"ok":false,"error":…,"failure":{"stage":…,"causes":[…]}}`.
 //! `stop` cancels by id; the failure stage is then `cancelled`. `{"type":"input","id":…,
 //! "dataBase64":…}` writes to the tcp session (`"session":true`) streaming as `id`; input for any
 //! other id is dropped.
 
 mod grpc;
 mod http;
+mod mongodb;
 mod mysql;
 mod process;
 mod tcp;
@@ -38,6 +40,7 @@ pub fn versions() -> Value {
     json!({
         services_sdk::http::DRIVER: "1",
         services_sdk::grpc::DRIVER: "1",
+        services_sdk::mongodb::DRIVER: "1",
         services_sdk::mysql::DRIVER: "1",
         services_sdk::process::DRIVER: "1",
         services_sdk::tcp::DRIVER: "1.1",
@@ -119,6 +122,7 @@ fn stage(fallback: Stage, causes: &[String]) -> Stage {
 pub struct Drivers {
     http: http::Http,
     grpc: grpc::Grpc,
+    mongodb: mongodb::Mongodb,
     mysql: mysql::Mysql,
 }
 
@@ -127,19 +131,22 @@ impl Drivers {
         Ok(Self {
             http: http::Http::new().map_err(|failure| crate::Error::new(failure.message))?,
             grpc: grpc::Grpc::default(),
+            mongodb: mongodb::Mongodb::default(),
             mysql: mysql::Mysql::default(),
         })
     }
 
-    /// The process and mysql drivers handle `cancel` themselves: they stop the process group or
-    /// kill the query before they answer. The others drop the call.
+    /// The process, mysql and mongodb drivers handle `cancel` themselves: they stop the process
+    /// group, kill the query or drop the call with a note on what it leaves. The others drop the
+    /// call.
     pub async fn call(&self, message: &Value, cancel: CancellationToken) -> Result<Value, Failure> {
-        use services_sdk::{grpc, http, mysql, tcp};
+        use services_sdk::{grpc, http, mongodb, mysql, tcp};
         match driver(message)? {
             http::DRIVER => cancellable(self.http.call(request(message)?), cancel).await,
             grpc::DRIVER => cancellable(self.grpc.run(request(message)?, None), cancel).await,
             tcp::DRIVER => cancellable(self::tcp::run(request(message)?, None), cancel).await,
             mysql::DRIVER => self.mysql.run(request(message)?, cancel, None).await,
+            mongodb::DRIVER => self.mongodb.run(request(message)?, cancel, None).await,
             _ => self::process::run(request(message)?, cancel, None).await,
         }
     }
@@ -152,7 +159,7 @@ impl Drivers {
         events: mpsc::Sender<Value>,
         input: Input,
     ) -> Result<Value, Failure> {
-        use services_sdk::{grpc, http, mysql, tcp};
+        use services_sdk::{grpc, http, mongodb, mysql, tcp};
         match driver(message)? {
             http::DRIVER => cancellable(self.http.stream(request(message)?, events), cancel).await,
             grpc::DRIVER => {
@@ -171,16 +178,22 @@ impl Drivers {
                     .run(request(message)?, cancel, Some(&events))
                     .await
             }
+            mongodb::DRIVER => {
+                self.mongodb
+                    .run(request(message)?, cancel, Some(&events))
+                    .await
+            }
             _ => self::process::run(request(message)?, cancel, Some(&events)).await,
         }
     }
 }
 
 fn driver(message: &Value) -> Result<&'static str, Failure> {
-    use services_sdk::{grpc, http, mysql, tcp};
+    use services_sdk::{grpc, http, mongodb, mysql, tcp};
     [
         http::DRIVER,
         grpc::DRIVER,
+        mongodb::DRIVER,
         mysql::DRIVER,
         services_sdk::process::DRIVER,
         tcp::DRIVER,

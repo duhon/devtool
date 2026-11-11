@@ -33,7 +33,7 @@ fn every_manifest_is_valid_and_names_known_drivers() {
         assert!(!manifest.drivers.is_empty(), "{id}: no drivers");
         for driver in manifest.drivers.keys() {
             assert!(
-                ["http", "grpc", "mysql", "process", "tcp"].contains(&driver.as_str()),
+                ["http", "grpc", "mongodb", "mysql", "process", "tcp"].contains(&driver.as_str()),
                 "{id}: unknown driver {driver}"
             );
         }

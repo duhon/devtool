@@ -273,7 +273,7 @@ fn wanted(request: &Request, bytes: u64, buffer: usize) -> usize {
         .map_or(buffer, |max| buffer.min(max.saturating_sub(bytes) as usize))
 }
 
-/// Connects within `connectMs`, with the TLS handshake if asked.
+/// Connects within `connectMs`, with the TLS handshake if asked; the TLS config is built first, outside the budget.
 async fn open(
     request: &Request,
     started: Instant,
@@ -285,6 +285,11 @@ async fn open(
             format!("Invalid server name \"{server_name}\""),
         )
     })?;
+    let config = match request.tls {
+        true => Some(config(request, system_roots().await?)?),
+        false => None,
+    };
+    let budget_started = Instant::now();
     let connect_budget = millis(request.connect_ms.unwrap_or(CONNECT_MS));
     let (tcp, remote) = tokio::time::timeout(connect_budget, connect(request))
         .await
@@ -293,11 +298,11 @@ async fn open(
         connect_us: micros(started),
         ..Timing::default()
     };
-    if !request.tls {
+    let Some(config) = config else {
         return Ok((Box::new(tcp), remote, timing));
-    }
-    let connector = tokio_rustls::TlsConnector::from(config(request)?);
-    let left = connect_budget.saturating_sub(started.elapsed());
+    };
+    let connector = tokio_rustls::TlsConnector::from(config);
+    let left = connect_budget.saturating_sub(budget_started.elapsed());
     let tls = tokio::time::timeout(left, connector.connect(server_name, tcp))
         .await
         .map_err(|_| Failure::new(Stage::Timeout, "The TLS handshake timed out"))?
@@ -332,7 +337,7 @@ async fn connect(request: &Request) -> Result<(TcpStream, Option<Remote>), Failu
 }
 
 /// System roots plus `caPem`, or no checks for `insecure`; built once each without `caPem`.
-fn config(request: &Request) -> Result<Arc<ClientConfig>, Failure> {
+fn config(request: &Request, system: &RootCertStore) -> Result<Arc<ClientConfig>, Failure> {
     static VERIFIED: OnceLock<Arc<ClientConfig>> = OnceLock::new();
     static INSECURE: OnceLock<Arc<ClientConfig>> = OnceLock::new();
     let verified = |roots| {
@@ -358,15 +363,13 @@ fn config(request: &Request) -> Result<Arc<ClientConfig>, Failure> {
         if let Some(config) = VERIFIED.get() {
             return Ok(config.clone());
         }
-        if system_roots().is_empty() {
+        if system.is_empty() {
             return Err(Failure::new(Stage::Tls, "No system root certificates"));
         }
-        return Ok(VERIFIED
-            .get_or_init(|| verified(system_roots().clone()))
-            .clone());
+        return Ok(VERIFIED.get_or_init(|| verified(system.clone())).clone());
     };
     let invalid = |error: String| Failure::new(Stage::Tls, format!("Invalid caPem: {error}"));
-    let mut roots = system_roots().clone();
+    let mut roots = system.clone();
     let mut added = 0;
     for cert in CertificateDer::pem_slice_iter(pem.as_bytes()) {
         let cert = cert.map_err(|error| invalid(error.to_string()))?;
@@ -381,13 +384,21 @@ fn config(request: &Request) -> Result<Arc<ClientConfig>, Failure> {
     Ok(verified(roots))
 }
 
-fn system_roots() -> &'static RootCertStore {
+/// Loaded once, on a blocking thread: the OS store may take seconds (on macOS it even lists the binary's folder).
+async fn system_roots() -> Result<&'static RootCertStore, Failure> {
     static ROOTS: OnceLock<RootCertStore> = OnceLock::new();
-    ROOTS.get_or_init(|| {
-        let mut roots = RootCertStore::empty();
-        roots.add_parsable_certificates(rustls_native_certs::load_native_certs().certs);
-        roots
+    if let Some(roots) = ROOTS.get() {
+        return Ok(roots);
+    }
+    tokio::task::spawn_blocking(|| {
+        ROOTS.get_or_init(|| {
+            let mut roots = RootCertStore::empty();
+            roots.add_parsable_certificates(rustls_native_certs::load_native_certs().certs);
+            roots
+        })
     })
+    .await
+    .map_err(|error| Failure::at(Stage::Tls, &error))
 }
 
 #[derive(Debug)]
