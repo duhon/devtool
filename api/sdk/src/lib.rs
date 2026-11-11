@@ -14,6 +14,7 @@ pub mod grpc;
 pub mod http;
 pub mod lang;
 pub mod manifest;
+pub mod mongodb;
 pub mod mysql;
 pub mod process;
 pub mod refs;

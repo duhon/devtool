@@ -2,6 +2,7 @@
 //! covered with the Host transports).
 
 mod grpc;
+mod mongodb;
 mod mysql;
 mod process;
 mod tcp;

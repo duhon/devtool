@@ -13,7 +13,7 @@ kind: the host and the App make no difference between them and yours.
 A module is a Rust crate built for `wasm32-unknown-unknown` with `services-sdk`
 (`api/sdk`). The App runs its `module.wasm` in its **Kernel**, in the DevTools panel. A
 module never does I/O itself: it asks the Kernel for commands, and the Kernel runs
-driver calls (`http`, `grpc`, `mysql`, `process`, `tcp`) on the native host, which
+driver calls (`http`, `grpc`, `mongodb`, `mysql`, `process`, `tcp`) on the native host, which
 knows no services.
 
 Installed, a module is a **package**, a folder named by the module id with:
@@ -170,7 +170,8 @@ impl Module for Counter {
 
 A driver call is `DriverCall::new(driver, &request)` with the request type of its SDK
 module: `http::Request`, `grpc::Request` (raw protobuf; `.proto` and reflection stay in
-the module), `mysql::Request`, `process::Request` (a program in its own process group)
+the module), `mongodb::Request` (a database command, documents as Extended JSON),
+`mysql::Request`, `process::Request` (a program in its own process group)
 or `tcp::Request` (the fallback for protocols without a driver). A failed call answers
 with a `Failure` (`driver.rs`): where it failed and why. Drivers are minimal and know no
 services: anything service-specific (pagination, pacing, parsing) is the module's.

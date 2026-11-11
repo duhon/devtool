@@ -65,7 +65,7 @@ cargo run -p xtask -- test <type>   # one kind at a time
 
 ## Layout
 
-- `host` — the native host: drivers (`http`, `grpc`, `mysql`, `process`, `tcp`),
+- `host` — the native host: drivers (`http`, `grpc`, `mongodb`, `mysql`, `process`, `tcp`),
   history, the module registry and installer, sources, updates, the Agent companion,
   the native-messaging adapter. It knows no services.
 - `api/protocol` (`services-contracts`) — native-messaging protocol, package format,

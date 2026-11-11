@@ -2,7 +2,7 @@
 
 `services-native` (binary `services-devtools`) is the native host of Services DevTools.
 It knows no services: the modules run in the App's Kernel, and the host gives them
-the drivers they call (`http`, `grpc`, `mysql`, `process`, `tcp`) plus the shared
+the drivers they call (`http`, `grpc`, `mongodb`, `mysql`, `process`, `tcp`) plus the shared
 stores: execution history, the modules folder and its installer, sources and updates,
 the environment and the Agent companion. It needs neither Node.js, `grpcurl`, the
 MySQL CLI, nor `protoc`.
@@ -81,10 +81,11 @@ preserved. Retrying the connection or reopening the panel reloads shell settings
   `service`: `drivers`, `history`, `modules`, `sources`, `updates`, `env`,
   `agent_models`, `agent_sessions` (and `health`).
 - `drivers::Drivers::{call,stream}` run the minimal, service-agnostic drivers
-  (`drivers/{http,grpc,mysql,process,tcp}.rs`); `drivers::versions()` is what `health`
+  (`drivers/{http,grpc,mongodb,mysql,process,tcp}.rs`); `drivers::versions()` is what `health`
   reports and module manifests are checked against. gRPC uses in-memory `protox`,
   `prost-reflect` and `tonic`; all four RPC shapes, reflection v1/v1alpha and standard
-  protobuf imports are supported.
+  protobuf imports are supported. MongoDB uses the official `mongodb` crate (rustls,
+  hickory DNS for `mongodb+srv://`, zlib compression); documents are canonical Extended JSON.
 - `core::registry::Registry` loads the wasm module packages of the modules folder and
   keeps those that failed with their error; `core::install` installs and removes them.
 - `core::history`, `core::sources`, `core::updates` own the history database, the
@@ -157,7 +158,7 @@ Treat the database as private application data even with masking.
 
 `cargo test -p services-native` runs local, bounded fixtures for the drivers
 (`tests/drivers/`: actual MySQL wire protocol, dynamic gRPC/reflection and four stream
-shapes, process stop/EOF cleanup, TCP), history (`tests/core/`), the native protocol,
+shapes, process stop/EOF cleanup, TCP, MongoDB against `MONGODB_URL` when set), history (`tests/core/`), the native protocol,
 packages, shell environment and TLS (`tests/host/`) and the rules every module obeys
 (`tests/conformance.rs`). Fixtures create and remove data under this crate's
 `target/test-data`, never the user's real data. `cargo clippy -p services-native --all-targets --
