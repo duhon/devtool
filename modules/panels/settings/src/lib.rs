@@ -49,18 +49,18 @@ pub enum Msg {
     Reload,
     /// Opens a folder source.
     OpenSource(String),
-    Move(usize, bool),
-    Rename(Option<usize>),
-    RenameInput,
-    RenameSave,
+    /// Shows or hides what the check of a source found: its slug.
+    Status(String),
+    /// Opens or closes the form that edits a source's name and GitHub token.
+    Edit(Option<usize>),
+    EditField(EditField),
+    EditSave,
+    ClearToken,
     RemoveSource(Option<usize>),
     RemoveSourceConfirm,
     Adding(bool),
     Field(Field),
     Add,
-    TokenInput,
-    /// Saves the entered token, or clears the saved one.
-    Token(bool),
     Apply(String),
     /// Syncs a shared source with Local, opening Diff for each conflict.
     Sync(String),
@@ -82,6 +82,21 @@ pub enum Field {
     Repository,
     Branch,
     Path,
+    Token,
+}
+
+#[derive(Clone, Copy, Serialize, Deserialize)]
+pub enum EditField {
+    Name,
+    Token,
+}
+
+/// A source being edited.
+#[derive(Clone)]
+struct Edit {
+    index: usize,
+    name: String,
+    token: String,
 }
 
 /// A source being added.
@@ -93,6 +108,7 @@ struct Draft {
     repository: String,
     branch: String,
     path: String,
+    token: String,
 }
 
 #[derive(Default)]
@@ -124,14 +140,14 @@ pub struct Settings {
     installed: Option<String>,
     sources: Vec<Value>,
     sources_loaded: bool,
-    token_set: bool,
     warning: Option<String>,
-    renaming: Option<(usize, String)>,
+    editing: Option<Edit>,
+    /// The sources whose check findings are shown.
+    statuses: BTreeSet<String>,
     removing: Option<usize>,
     /// The conflicts of a sync still to resolve in Diff.
     resolving: Option<Resolving>,
     draft: Option<Draft>,
-    token: String,
     catalog: Option<Catalog>,
     options: Options,
     loading_models: bool,
@@ -291,6 +307,8 @@ fn rows(check: &Value) -> Vec<Row<'_>> {
     rows.sort_by(|a, b| (!a.app(), a.id).cmp(&(!b.app(), b.id)));
     rows
 }
+
+const TOKEN_HINT: &str = "For private repositories and higher GitHub limits. Without a token, the token of a signed-in GitHub CLI (gh auth token) is used.";
 
 fn location(source: &Value) -> String {
     if source["kind"] == "github" {
@@ -474,7 +492,6 @@ impl Settings {
 
     fn load_sources(&mut self, value: &Value) {
         self.sources = value["sources"].as_array().cloned().unwrap_or_default();
-        self.token_set = value["tokenSet"] == true;
         self.warning = value["warning"].as_str().map(str::to_owned);
         self.sources_loaded = true;
     }
@@ -518,9 +535,8 @@ impl Settings {
                     self.load_sources(value);
                     match operation.as_str() {
                         "Add source" => self.draft = None,
-                        "Rename source" => self.renaming = None,
+                        "Edit source" | "Clear GitHub token" => self.editing = None,
                         "Remove source" => self.removing = None,
-                        "Save GitHub token" | "Clear GitHub token" => self.token.clear(),
                         _ => {}
                     }
                 }
@@ -983,40 +999,50 @@ impl Settings {
             }
             Msg::Reload => vec![cmd::app_reload()],
             Msg::OpenSource(slug) => vec![cmd::sources_open(OPEN, &slug)],
-            Msg::Move(index, up) => {
-                let other = if up {
-                    index.checked_sub(1)
-                } else {
-                    Some(index + 1)
-                };
-                let Some(other) = other.filter(|other| *other < self.sources.len()) else {
-                    return Vec::new();
-                };
-                let mut list = self.sources.clone();
-                list.swap(index, other);
-                self.save("Reorder sources", list)
-            }
-            Msg::Rename(index) => {
-                self.renaming =
-                    index.and_then(|index| Some((index, text(self.sources.get(index)?, "name"))));
-                Vec::new()
-            }
-            Msg::RenameInput => {
-                if let Some((_, name)) = &mut self.renaming {
-                    *name = value;
+            Msg::Status(slug) => {
+                if !self.statuses.remove(&slug) {
+                    self.statuses.insert(slug);
                 }
                 Vec::new()
             }
-            Msg::RenameSave => {
-                let Some((index, name)) = self.renaming.clone() else {
+            Msg::Edit(index) => {
+                self.editing = index.and_then(|index| {
+                    Some(Edit {
+                        index,
+                        name: text(self.sources.get(index)?, "name"),
+                        token: String::new(),
+                    })
+                });
+                Vec::new()
+            }
+            Msg::EditField(field) => {
+                if let Some(edit) = &mut self.editing {
+                    match field {
+                        EditField::Name => edit.name = value,
+                        EditField::Token => edit.token = value,
+                    }
+                }
+                Vec::new()
+            }
+            msg @ (Msg::EditSave | Msg::ClearToken) => {
+                let Some(edit) = self.editing.clone() else {
                     return Vec::new();
                 };
                 let mut list = self.sources.clone();
-                let Some(source) = list.get_mut(index) else {
+                let Some(source) = list.get_mut(edit.index) else {
                     return Vec::new();
                 };
-                source["name"] = json!(name);
-                self.save("Rename source", list)
+                let operation = if matches!(msg, Msg::ClearToken) {
+                    source["token"] = Value::Null;
+                    "Clear GitHub token"
+                } else {
+                    source["name"] = json!(edit.name);
+                    if !edit.token.trim().is_empty() {
+                        source["token"] = json!(edit.token.trim());
+                    }
+                    "Edit source"
+                };
+                self.save(operation, list)
             }
             Msg::RemoveSource(index) => {
                 self.removing = index;
@@ -1032,7 +1058,7 @@ impl Settings {
             }
             Msg::Adding(adding) => {
                 self.draft = adding.then(|| Draft {
-                    kind: "github".into(),
+                    kind: "folder".into(),
                     ..Draft::default()
                 });
                 Vec::new()
@@ -1045,6 +1071,7 @@ impl Settings {
                         Field::Repository => draft.repository = value,
                         Field::Branch => draft.branch = value,
                         Field::Path => draft.path = value,
+                        Field::Token => draft.token = value,
                     }
                 }
                 Vec::new()
@@ -1056,29 +1083,16 @@ impl Settings {
                 let entry = if draft.kind == "folder" {
                     json!({"name":draft.name,"kind":"folder","path":draft.path})
                 } else {
-                    json!({"name":draft.name,"kind":"github","repository":draft.repository,
-                        "branch":draft.branch,"path":draft.path})
+                    let mut entry = json!({"name":draft.name,"kind":"github",
+                        "repository":draft.repository,"branch":draft.branch,"path":draft.path});
+                    if !draft.token.trim().is_empty() {
+                        entry["token"] = json!(draft.token.trim());
+                    }
+                    entry
                 };
                 let mut list = self.sources.clone();
                 list.push(entry);
                 self.save("Add source", list)
-            }
-            Msg::TokenInput => {
-                self.token = value;
-                Vec::new()
-            }
-            Msg::Token(save) => {
-                let token = save.then(|| self.token.trim().to_owned());
-                let operation = if save {
-                    "Save GitHub token"
-                } else {
-                    "Clear GitHub token"
-                };
-                self.change(
-                    operation,
-                    cmd::sources_token(CHANGE, token.as_deref()),
-                    None,
-                )
             }
             Msg::Apply(slug) => self.change(
                 "Apply source skills",
@@ -1365,10 +1379,7 @@ impl Settings {
 
     fn view_sources(&self) -> Vec<ui::Node> {
         let busy = self.busy.is_some();
-        let mut body = vec![ui::heading("Sources"), ui::text(
-            "Modules and skills come from these sources. Dictionary, Templates and Hints are kept in Local, saved as you edit, and synced with each shared source: sync copies changes both ways, and conflicts open in Diff.",
-        )
-        .variant("muted")];
+        let mut body = vec![ui::heading("Sources")];
         if let Some(warning) = &self.warning {
             body.push(
                 ui::text(warning.clone())
@@ -1376,20 +1387,44 @@ impl Settings {
                     .key("sources-warning"),
             );
         }
-        body.push(
-            ui::column(vec![
+        let mut rows = vec![ui::TableRow::new(
+            "source-local",
+            vec![
                 ui::text("Local").variant("bold").key("source-local-name"),
-                ui::text(
-                    "Your own Dictionary, Templates and Hints; it can't be removed or configured.",
-                )
-                .variant("muted"),
-            ])
-            .key("source-local"),
+                ui::text("—").variant("muted"),
+                ui::text("Saved as you edit").variant("muted"),
+                ui::row(vec![
+                    ui::button("Edit", &Msg::Edit(None))
+                        .variant("tab")
+                        .title("Local can't be configured")
+                        .key("source-edit-local")
+                        .disabled(true),
+                    ui::button("Remove", &Msg::RemoveSource(None))
+                        .variant("tab")
+                        .title("Local can't be removed")
+                        .key("source-remove-local")
+                        .disabled(true),
+                ])
+                .variant("end nowrap"),
+            ],
+        )];
+        rows.extend(
+            self.sources
+                .iter()
+                .enumerate()
+                .map(|(index, source)| self.view_source(index, source, busy)),
         );
-        let count = self.sources.len();
-        for (index, source) in self.sources.iter().enumerate() {
-            body.push(self.view_source(index, source, count, busy));
-        }
+        body.push(
+            ui::table(
+                ["Name", "Updated", "Status", "Action"]
+                    .map(str::to_owned)
+                    .to_vec(),
+                rows,
+            )
+            .widths(vec![26, 18, 26, 0])
+            .variant("roomy")
+            .key("sources"),
+        );
         if let Some(draft) = &self.draft {
             body.push(self.view_draft(draft, busy));
         }
@@ -1415,92 +1450,134 @@ impl Settings {
             .key("sources-check")
             .disabled(self.checking),
         );
-        body.push(ui::row(actions));
-        body.push(ui::text("GitHub token"));
-        let mut token = vec![
-            ui::input(
-                Some(self.token.clone()),
-                if self.token_set {
-                    "Saved; enter another to replace it"
-                } else {
-                    "Optional"
-                },
-                &Msg::TokenInput,
-            )
-            .on_input(&Msg::TokenInput)
-            .variant("secret")
-            .key("sources-token"),
-            ui::button("Save", &Msg::Token(true))
-                .variant("tab")
-                .key("sources-token-save")
-                .disabled(busy || self.token.trim().is_empty()),
-        ];
-        if self.token_set {
-            token.push(
-                ui::button("Clear", &Msg::Token(false))
-                    .variant("tab")
-                    .key("sources-token-clear")
-                    .disabled(busy),
+        let checked_at = self
+            .check
+            .as_ref()
+            .and_then(|check| check["sources"].as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|source| source["checkedAt"].as_f64())
+            .reduce(f64::max);
+        if let Some(at) = checked_at {
+            actions.push(
+                ui::text(format!("Checked {}", self.date(&json!(at))))
+                    .variant("muted")
+                    .key("sources-checked"),
             );
         }
-        body.push(ui::row(token));
-        body.push(
-            ui::text("For private repositories and higher GitHub limits. Without a saved token, the token of a signed-in GitHub CLI (gh auth token) is used.")
-                .variant("muted"),
-        );
+        body.push(ui::row(actions));
         vec![ui::column(body).variant("loose").key("source-settings")]
     }
 
-    fn view_source(&self, index: usize, source: &Value, count: usize, busy: bool) -> ui::Node {
+    /// The last check of source `slug`.
+    fn source_check(&self, slug: &str) -> Option<&Value> {
+        self.check
+            .as_ref()
+            .and_then(|check| check["sources"].as_array())
+            .and_then(|sources| sources.iter().find(|source| source["slug"] == slug))
+    }
+
+    /// A source's row: name, when it last synced with Local or applied its skills, its state
+    /// and the actions; its place and what needs attention go under it.
+    fn view_source(&self, index: usize, source: &Value, busy: bool) -> ui::TableRow {
         let slug = text(source, "slug");
         let name = text(source, "name");
         let id = |part: &str| format!("source-{part}-{slug}");
-        let mut lines = Vec::new();
-        match self.renaming.as_ref().filter(|(at, _)| *at == index) {
-            Some((_, input)) => lines.push(ui::row(vec![
-                ui::input(Some(input.clone()), "Name", &Msg::RenameSave)
-                    .on_input(&Msg::RenameInput)
-                    .key(id("name-input")),
-                ui::button("Save", &Msg::RenameSave)
+        let checked = self.source_check(&slug);
+        let updated = [
+            &source["syncedAt"],
+            &source["applied"]["at"],
+            checked.map_or(&Value::Null, |checked| &checked["syncedAt"]),
+            checked.map_or(&Value::Null, |checked| &checked["appliedAt"]),
+        ]
+        .into_iter()
+        .filter_map(Value::as_f64)
+        .reduce(f64::max);
+        let skills_pending = checked.is_some_and(|checked| {
+            checked["skills"] == true
+                && (checked["applied"] != true
+                    || checked["changes"].as_array().is_some_and(|c| !c.is_empty()))
+        });
+        let sync_state = checked
+            .and_then(|checked| checked["sync"]["state"].as_str())
+            .unwrap_or("same");
+        let (mut status, variant) = match checked {
+            None if self.checking => ("Checking…".to_owned(), "muted"),
+            None => ("Not checked yet".to_owned(), "muted"),
+            Some(checked) if checked["error"].is_string() => ("Error".to_owned(), "danger"),
+            Some(_) => match sync_state {
+                "local" => ("Local changed".to_owned(), ""),
+                "source" => ("Source changed".to_owned(), ""),
+                "both" => ("Both changed".to_owned(), ""),
+                "conflict" => ("Conflicts".to_owned(), "danger"),
+                _ => ("In sync".to_owned(), "muted"),
+            },
+        };
+        if skills_pending {
+            status.push_str(" · skills to apply");
+        }
+        let mut actions = Vec::new();
+        if checked.is_some() && sync_state != "same" {
+            let label = if sync_state == "conflict" {
+                "Resolve conflicts…"
+            } else {
+                "Sync"
+            };
+            actions.push(
+                ui::button(label, &Msg::Sync(slug.clone()))
                     .variant("tab")
-                    .key(id("rename-save"))
+                    .key(id("sync"))
                     .disabled(busy),
-                ui::button("Cancel", &Msg::Rename(None))
+            );
+        }
+        if skills_pending {
+            actions.push(
+                ui::button("Apply", &Msg::Apply(slug.clone()))
                     .variant("tab")
-                    .key(id("rename-cancel")),
-            ])),
-            None => lines.push(ui::row(vec![
-                ui::column(vec![
-                    ui::text(name.clone()).variant("bold").key(id("name")),
-                    ui::text(location(source))
-                        .variant("muted truncate")
-                        .title(location(source)),
-                ])
-                .variant("grow"),
-                ui::button("↑", &Msg::Move(index, true))
-                    .variant("tab")
-                    .title("Move up")
-                    .label(format!("Move {name} up"))
-                    .key(id("up"))
-                    .disabled(busy || index == 0),
-                ui::button("↓", &Msg::Move(index, false))
-                    .variant("tab")
-                    .title("Move down")
-                    .label(format!("Move {name} down"))
-                    .key(id("down"))
-                    .disabled(busy || index + 1 == count),
-                ui::button("Rename", &Msg::Rename(Some(index)))
-                    .variant("tab")
-                    .key(id("rename"))
+                    .title("Apply the source's skills")
+                    .key(id("apply"))
                     .disabled(busy),
-                ui::button("Remove", &Msg::RemoveSource(Some(index)))
-                    .variant("tab")
-                    .key(id("remove"))
-                    .disabled(busy || self.removing == Some(index)),
-            ])),
+            );
+        }
+        actions.extend([
+            ui::button("Edit", &Msg::Edit(Some(index)))
+                .variant("tab")
+                .key(id("edit"))
+                .disabled(busy),
+            ui::button("Remove", &Msg::RemoveSource(Some(index)))
+                .variant("tab")
+                .key(id("remove"))
+                .disabled(busy || self.removing == Some(index)),
+        ]);
+        let findings = checked
+            .map(|checked| self.view_check(checked, sync_state, skills_pending, &id))
+            .unwrap_or_default();
+        let status = if findings.is_empty() {
+            ui::text(status).variant(variant)
+        } else {
+            ui::link(status, &Msg::Status(slug.clone()))
+                .variant(format!("link {variant}"))
+                .title("What changed")
+        };
+        let cells = vec![
+            ui::text(name.clone()).variant("bold").key(id("name")),
+            ui::text(updated.map_or_else(|| "—".to_owned(), |at| self.date(&json!(at))))
+                .variant("muted")
+                .key(id("updated")),
+            status.key(id("status")),
+            ui::row(actions).variant("end nowrap"),
+        ];
+        let mut detail = vec![
+            ui::text(location(source))
+                .variant("muted truncate")
+                .title(location(source))
+                .key(id("location")),
+        ];
+        if let Some(edit) = self.editing.as_ref().filter(|edit| edit.index == index) {
+            detail.push(self.view_edit(edit, source, busy, &id));
         }
         if self.removing == Some(index) {
-            lines.push(ui::column(vec![
+            detail.push(ui::column(vec![
                 ui::text(format!("Remove source \"{name}\"? Its applied settings and skills are removed; modules installed from it stay."))
                     .variant("muted"),
                 ui::row(vec![
@@ -1514,120 +1591,131 @@ impl Settings {
                 ]),
             ]));
         }
-        let applied = &source["applied"];
-        if applied.is_object() {
-            let mut text = format!("Skills applied {}", self.date(&applied["at"]));
-            if let Some(revision) = applied["revision"]
-                .as_str()
-                .filter(|revision| !revision.is_empty())
-            {
-                text.push_str(&format!(
-                    " · {}",
-                    revision.chars().take(7).collect::<String>()
-                ));
-            }
-            lines.push(ui::text(text).variant("muted").key(id("applied")));
+        if !findings.is_empty() && self.statuses.contains(&slug) {
+            detail.push(ui::column(findings).variant("well").key(id("findings")));
         }
-        lines.extend(self.view_check(&slug, busy));
-        ui::column(lines).key(format!("source-{slug}"))
+        ui::TableRow::new(format!("source-{slug}"), cells).detail(detail)
     }
 
-    fn view_check(&self, slug: &str, busy: bool) -> Vec<ui::Node> {
-        let id = |part: &str| format!("source-{part}-{slug}");
-        let checked = self
-            .check
-            .as_ref()
-            .and_then(|check| check["sources"].as_array())
-            .and_then(|sources| sources.iter().find(|source| source["slug"] == slug));
-        let Some(checked) = checked else {
-            let state = if self.checking {
-                "Checking…"
-            } else {
-                "Not checked yet"
-            };
-            return vec![ui::text(state).variant("muted")];
-        };
+    fn view_edit(
+        &self,
+        edit: &Edit,
+        source: &Value,
+        busy: bool,
+        id: &dyn Fn(&str) -> String,
+    ) -> ui::Node {
         let mut lines = vec![
-            ui::text(format!("Checked {}", self.date(&checked["checkedAt"])))
-                .variant("muted")
-                .key(id("checked")),
+            ui::field(
+                "Name",
+                ui::input(Some(edit.name.clone()), "Name", &Msg::EditSave)
+                    .on_input(&Msg::EditField(EditField::Name))
+                    .key(id("name-input")),
+            )
+            .variant("grid"),
         ];
+        let token_set = source["tokenSet"] == true;
+        if source["kind"] == "github" {
+            lines.push(
+                ui::field(
+                    "GitHub token",
+                    ui::input(
+                        Some(edit.token.clone()),
+                        if token_set {
+                            "Saved; enter another to replace it"
+                        } else {
+                            "Optional"
+                        },
+                        &Msg::EditSave,
+                    )
+                    .on_input(&Msg::EditField(EditField::Token))
+                    .variant("secret")
+                    .key(id("token")),
+                )
+                .variant("grid"),
+            );
+            lines.push(ui::text(TOKEN_HINT).variant("muted"));
+        }
+        let mut buttons = vec![
+            ui::button("Save", &Msg::EditSave)
+                .variant("tab")
+                .key(id("edit-save"))
+                .disabled(busy),
+        ];
+        if token_set {
+            buttons.push(
+                ui::button("Clear token", &Msg::ClearToken)
+                    .variant("tab")
+                    .key(id("token-clear"))
+                    .disabled(busy),
+            );
+        }
+        buttons.push(
+            ui::button("Cancel", &Msg::Edit(None))
+                .variant("tab")
+                .key(id("edit-cancel")),
+        );
+        lines.push(ui::row(buttons));
+        ui::column(lines).variant("loose").key(id("edit-form"))
+    }
+
+    /// What the last check of a source found that needs attention.
+    fn view_check(
+        &self,
+        checked: &Value,
+        sync_state: &str,
+        skills_pending: bool,
+        id: &dyn Fn(&str) -> String,
+    ) -> Vec<ui::Node> {
+        let mut lines = Vec::new();
         if let Some(error) = checked["error"].as_str() {
             lines.push(ui::text(error).variant("danger").key(id("error")));
         }
-        let changes = checked["changes"].as_array().cloned().unwrap_or_default();
-        let applied = checked["applied"] == true;
-        let sync = &checked["sync"];
-        let state = sync["state"].as_str().unwrap_or("same");
         let name = text(checked, "name");
-        let (note, button) = match state {
-            "local" => (format!("Changes in Local not in {name} yet"), "Sync"),
-            "source" => (format!("Changes in {name} not in Local yet"), "Sync"),
-            "both" => (format!("Changes in Local and in {name}"), "Sync"),
-            "conflict" => (
-                format!("Conflicts between Local and {name}"),
-                "Resolve conflicts…",
-            ),
-            _ => (String::new(), ""),
+        let note = match sync_state {
+            "local" => format!("Changes in Local not in {name} yet"),
+            "source" => format!("Changes in {name} not in Local yet"),
+            "both" => format!("Changes in Local and in {name}"),
+            "conflict" => format!("Conflicts between Local and {name}"),
+            _ => String::new(),
         };
-        if button.is_empty() {
-            lines.push(
-                ui::text("Local and this source are in sync")
-                    .variant("muted")
-                    .key(id("in-sync")),
-            );
-        } else {
-            let files: Vec<String> = sync["files"]
+        if !note.is_empty() {
+            let files: Vec<String> = checked["sync"]["files"]
                 .as_array()
                 .into_iter()
                 .flatten()
                 .map(|file| text(file, "file"))
                 .collect();
             lines.push(
-                ui::row(vec![
-                    ui::text(format!("{note}: {}", files.join(", ")))
-                        .variant(if state == "conflict" {
-                            "danger"
-                        } else {
-                            "muted"
-                        })
-                        .key(id("sync-state")),
-                    ui::button(button, &Msg::Sync(slug.to_owned()))
-                        .variant("tab")
-                        .key(id("sync"))
-                        .disabled(busy),
-                ])
-                .key(id("sync-row")),
+                ui::text(format!("{note}: {}", files.join(", ")))
+                    .variant(if sync_state == "conflict" {
+                        "danger"
+                    } else {
+                        "muted"
+                    })
+                    .key(id("sync-state")),
             );
         }
-        if checked["skills"] == true && (!applied || !changes.is_empty()) {
-            let mut list = vec![ui::text(if applied {
-                "Skills changed:"
-            } else {
-                "Skills not applied yet:"
-            })];
-            for change in &changes {
-                let line = vec![ui::text(format!(
-                    "{} {} {}",
-                    text(change, "kind"),
-                    text(change, "key"),
-                    text(change, "change")
-                ))];
-                list.push(ui::column(vec![ui::row(line)]).variant("indent"));
+        if skills_pending {
+            let mut list = vec![
+                ui::text(if checked["applied"] == true {
+                    "Skills changed:"
+                } else {
+                    "Skills not applied yet:"
+                })
+                .variant("muted"),
+            ];
+            for change in checked["changes"].as_array().into_iter().flatten() {
+                list.push(
+                    ui::column(vec![ui::text(format!(
+                        "{} {} {}",
+                        text(change, "kind"),
+                        text(change, "key"),
+                        text(change, "change")
+                    ))])
+                    .variant("indent"),
+                );
             }
-            list.push(ui::row(vec![
-                ui::button("Apply", &Msg::Apply(slug.to_owned()))
-                    .variant("tab")
-                    .key(id("apply"))
-                    .disabled(busy),
-            ]));
             lines.push(ui::column(list).key(id("changes")));
-        } else if checked["skills"] == true {
-            lines.push(
-                ui::text("Skills up to date")
-                    .variant("muted")
-                    .key(id("up-to-date")),
-            );
         }
         let problems: Vec<ui::Node> = checked["problems"]
             .as_array()
@@ -1690,6 +1778,21 @@ impl Settings {
                 &draft.path,
                 "repository root",
             ));
+            lines.push(
+                ui::field(
+                    "GitHub token",
+                    ui::input(
+                        Some(draft.token.clone()),
+                        "Optional",
+                        &Msg::Field(Field::Token),
+                    )
+                    .on_input(&Msg::Field(Field::Token))
+                    .variant("secret")
+                    .key("source-add-token"),
+                )
+                .variant("grid"),
+            );
+            lines.push(ui::text(TOKEN_HINT).variant("muted"));
         } else {
             lines.push(field(
                 Field::Path,

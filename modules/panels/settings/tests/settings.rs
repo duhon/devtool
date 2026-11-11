@@ -25,7 +25,7 @@ fn the_check_reports_errors_and_newer_versions() {
 }
 
 #[test]
-fn the_sources_tab_loads_and_reorders_sources() {
+fn the_sources_tab_loads_and_removes_a_source() {
     let mut settings = Settings::default();
     let cmds = settings.update(Event::Init {
         settings: json!({}),
@@ -48,8 +48,12 @@ fn the_sources_tab_loads_and_reorders_sources() {
         view.contains("source-name-a") && view.contains("source-name-b"),
         "{view}"
     );
+    settings.update(Event::Ui {
+        msg: Msg::RemoveSource(Some(0)),
+        value: None,
+    });
     let cmds = settings.update(Event::Ui {
-        msg: Msg::Move(0, false),
+        msg: Msg::RemoveSourceConfirm,
         value: None,
     });
     assert_eq!(cmds[0].name, "sources.save");
@@ -59,7 +63,7 @@ fn the_sources_tab_loads_and_reorders_sources() {
         .iter()
         .map(|source| source["id"].clone())
         .collect();
-    assert_eq!(order, [json!("b"), json!("a")]);
+    assert_eq!(order, [json!("b")]);
 }
 
 #[test]

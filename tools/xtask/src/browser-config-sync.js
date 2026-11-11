@@ -6,7 +6,7 @@
     await fetch(url, {method: 'POST', body: text});
   };
   const sources = () => document.querySelector('[data-testid="source-sync"]')?.textContent ?? '';
-  const state = () => document.querySelector('[data-testid="source-sync-state-sync"]')?.textContent ?? '';
+  const state = () => document.querySelector('[data-testid="source-status-sync"]')?.textContent ?? '';
   const check = async () => {
     await settingsTab('sources');
     await wait(() => !testid('sources-check').disabled);
@@ -35,16 +35,16 @@
     await wait(() => [...document.querySelectorAll('.console-right-status .status-bar')].find(visible)?.textContent.includes('Dictionary save · OK'), 'Dictionary saved');
     await testDriver.sleep(1500);
   };
-  const synced = () => wait(() => document.querySelector('[data-testid="source-in-sync-sync"]'),
+  const synced = () => wait(() => document.querySelector('[data-testid="source-status-sync"]')?.textContent === 'In sync',
     () => `Sync must end in sync: ${sources()} ${state()}`);
 
   await testDriver.openConsole();
   await addFolderSource('Sync', fixtureSync);
   await settingsTab('sources');
-  assert(testid('source-local-name').textContent === 'Local' && !document.querySelector('[data-testid="source-remove-local"]'),
+  assert(testid('source-local-name').textContent === 'Local' && testid('source-remove-local').disabled,
     'Local is always listed and cannot be removed');
   await click(await wait(() => document.querySelector('[data-testid="source-sync-sync"]'),
-    () => `A new source waits to be synced: ${testid('source-sync-row-sync')?.textContent}`));
+    () => `A new source waits to be synced: ${testid('source-status-sync').textContent}`));
   // Local already has a Dictionary and a new source has no cache: the difference is a conflict.
   await click(await wait(() => document.querySelector('[data-testid="diff-done"]'), 'A new source conflicts with the Local file'));
   await settingsTab('sources');
@@ -54,7 +54,7 @@
 
   // Local edit: pushed to the folder.
   await edit('a.invalid', 'local.invalid');
-  await checkUntil('Changes in Local', 'Local change expected');
+  await checkUntil('Local changed', 'Local change expected');
   await click(testid('source-sync-sync'));
   await synced();
   await wait(async () => (await file('dictionary.json')).includes('local.invalid'), 'The folder must get the Local edit');
@@ -63,7 +63,7 @@
   const pushed = JSON.parse(await file('dictionary.json'));
   pushed.sets.sync.PORT = '2';
   await file('dictionary.json', JSON.stringify(pushed));
-  await checkUntil('not in Local', 'Source change expected');
+  await checkUntil('Source changed', 'Source change expected');
   await click(testid('source-sync-sync'));
   await synced();
   await showSet();

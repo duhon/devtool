@@ -57,8 +57,8 @@ archive). A newer version from the source the application came from turns the
 Settings indicator green. Checks never install automatically: **Update** saves
 the workspace, has the native runtime download the archive (or take it from the
 folder), verifies the SHA-256 and package identity, installs transactionally
-and reloads the extension. Private repositories use the token saved in
-Settings → Sources, else `gh auth token`; browser credentials are not copied
+and reloads the extension. A private repository uses the token saved on its
+source in Settings → Sources, else `gh auth token`; browser credentials are not copied
 into the native process.
 
 Downloads use private temporary files, a five-minute deadline and a 2 GiB

@@ -468,7 +468,6 @@ pub fn hosted(name: &str, mut args: Value, native: bool) -> Option<Hosted> {
             json!({"service":"sources","op":"save","sources":args["sources"]}),
             After::Sources,
         )),
-        "sources.token" => request(json!({"service":"sources","op":"token","token":args["token"]})),
         "sources.apply" => Some(Hosted::Request(
             json!({"service":"sources","op":"apply","source":args["source"]}),
             After::Sources,

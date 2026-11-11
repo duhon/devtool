@@ -112,11 +112,13 @@
     await testDriver.settingsTab('sources');
     await wait(() => document.querySelector('[data-testid="source-apply-team"]'),
       () => `The added source must be checked and offer its settings: ${testid('settings-tab-sources-body').textContent}; ${status()}`);
-    const changes = testid('source-changes-team').textContent;
+    await click(await wait(() => document.querySelector('button[data-testid="source-status-team"]'), 'The checked status opens what changed'), 4);
+    const changes = (await wait(() => document.querySelector('[data-testid="source-changes-team"]'), 'The status must show what changed')).textContent;
     assert(changes.includes('skill team-shop-deploy added') && !changes.includes('dictionary'),
       `The check must list the skills applying changes: ${changes}`);
     await click(testid('source-apply-team'));
-    await wait(() => document.querySelector('[data-testid="source-up-to-date-team"]'),
+    await wait(() => !document.querySelector('[data-testid="source-apply-team"]')
+      && !testid('source-status-team').textContent.includes('skills'),
       () => `Applying must bring the source's skills: ${document.body.innerText.slice(0,600)}`);
     await agent();
     await newChat();
@@ -132,7 +134,7 @@
     // Local has its own Dictionary and the new source no cache: the difference is a conflict; Done takes the source's.
     await click(await wait(() => document.querySelector('[data-testid="diff-done"]'), 'The Dictionary conflict must open in Diff'));
     await testDriver.settingsTab('sources');
-    await wait(() => document.querySelector('[data-testid="source-in-sync-team"]'),
+    await wait(() => document.querySelector('[data-testid="source-status-team"]')?.textContent === 'In sync',
       () => `Syncing must bring the source's settings to Local: ${document.body.innerText.slice(0,700)}`);
     await openPanel('dictionary');
     const set = await wait(() => document.querySelector('[data-testid="dictionary-set-team"]'),

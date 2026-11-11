@@ -52,7 +52,6 @@ pub const NAMES: &[&str] = &[
     "modules.remove",
     "sources.list",
     "sources.save",
-    "sources.token",
     "sources.apply",
     "sources.open",
     "sources.sync",
@@ -267,7 +266,6 @@ pub const PRIVILEGED: &[&str] = &[
     "modules.remove",
     "sources.list",
     "sources.save",
-    "sources.token",
     "sources.apply",
     "sources.open",
     "sources.sync",
@@ -357,20 +355,15 @@ pub fn modules_remove(tag: impl Into<String>, module: &str, forget: bool) -> Cmd
     )
 }
 
-/// The configured sources: `{sources, tokenSet, warning}`.
+/// The configured sources: `{sources:[{…, syncedAt, tokenSet}], warning}`.
 pub fn sources_list(tag: impl Into<String>) -> Cmd {
     Cmd::new(tag, "sources.list", &json!({}))
 }
 
-/// Saves the list of sources (order, names, new and removed ones); replies like
-/// [`sources_list`].
+/// Saves the list of sources (order, names, new and removed ones, and a GitHub source's
+/// `token`: a text saves it, `null` clears it); replies like [`sources_list`].
 pub fn sources_save(tag: impl Into<String>, sources: &[Value]) -> Cmd {
     Cmd::new(tag, "sources.save", &json!({"sources": sources}))
-}
-
-/// Saves the GitHub token, or clears it with `None`.
-pub fn sources_token(tag: impl Into<String>, token: Option<&str>) -> Cmd {
-    Cmd::new(tag, "sources.token", &json!({"token": token}))
 }
 
 /// Applies the settings of source `source`; every module gets `Workspace`.

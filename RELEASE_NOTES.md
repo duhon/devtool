@@ -1,5 +1,15 @@
 # Release notes
 
+## 4.0.1
+
+- Settings → Sources is a table: name, last update, status and actions per source, the
+  location under the name. Click a status to see what changed.
+- Each GitHub source has its own token: enter it when adding the source, change or clear
+  it with **Edit**. The shared token of 4.0.0 is gone; enter it again on each GitHub
+  source.
+- **Edit** renames a source; the ↑/↓ order buttons are gone, the order changed nothing.
+- A new source is a folder by default.
+
 ## 4.0.0
 
 - Every service and side panel is now a WebAssembly module. After the update, open

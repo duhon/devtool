@@ -70,8 +70,9 @@
   // A folder source offering modules; its invalid file is a problem of the source, not a module.
   await addFolderSource('Modules', fixtureModules);
   await testDriver.settingsTab('sources');
-  const problems = await wait(() => document.querySelector('[data-testid="source-problems-modules"]'),
-    () => `The folder source must be checked: ${testid('source-settings').textContent}`);
+  await click(await wait(() => document.querySelector('button[data-testid="source-status-modules"]'),
+    () => `The folder source must be checked: ${testid('source-settings').textContent}`), 4);
+  const problems = await wait(() => document.querySelector('[data-testid="source-problems-modules"]'), 'The status must show the problems');
   assert(problems.textContent.includes('broken.module.tgz'),
     () => `An invalid package file must be a source problem: ${problems.textContent}`);
   await testDriver.settingsTab('modules');

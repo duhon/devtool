@@ -44,10 +44,13 @@ use std::{
 };
 
 const SETTINGS_FILE: &str = ".sources.json";
-const TOKEN_FILE: &str = ".sources-token";
 /// The folder of applied sources in the data folder.
 pub const DIR: &str = "sources";
 const META_FILE: &str = ".source.json";
+/// A source's GitHub token, in its folder.
+const TOKEN_FILE: &str = ".token";
+/// When a source was last synced with Local, in its folder.
+const SYNCED_FILE: &str = ".synced";
 const CHECK_FILE: &str = ".check.json";
 const LOCK_FILE: &str = ".lock";
 const MODULES_FILE: &str = ".module-sources.json";
@@ -352,6 +355,14 @@ struct Meta {
     revision: String,
     applied_at: u64,
     files: BTreeMap<String, String>,
+}
+
+/// When the source in `dir` was last synced with Local: seconds, or null.
+fn synced_at(dir: &Path) -> Value {
+    fs::read_to_string(dir.join(SYNCED_FILE))
+        .ok()
+        .and_then(|at| at.trim().parse::<u64>().ok())
+        .map_or(Value::Null, |at| json!(at))
 }
 
 fn read_meta(dir: &Path) -> Option<Meta> {
@@ -975,9 +986,9 @@ fn http() -> Result<reqwest::Client> {
         .map_err(Error::from)
 }
 
-/// The GitHub token: the one saved in Settings → Sources, else the GitHub CLI's.
-async fn token(data: &Path) -> Option<String> {
-    if let Ok(token) = fs::read_to_string(data.join(TOKEN_FILE))
+/// The GitHub token of source `slug`: its own, else the GitHub CLI's.
+async fn token(data: &Path, slug: &str) -> Option<String> {
+    if let Ok(token) = fs::read_to_string(data.join(DIR).join(slug).join(TOKEN_FILE))
         && !token.trim().is_empty()
     {
         return Some(token.trim().to_owned());
@@ -1071,13 +1082,13 @@ impl GitHub {
         let repository = &self.repository;
         Err(Error::new(match status.as_u16() {
             401 => format!(
-                "GitHub rejected the token for {repository}; change it in Settings → Sources"
+                "GitHub rejected the token for {repository}; change it with Edit in Settings → Sources"
             ),
             403 | 429 if limited => {
-                "GitHub's rate limit is reached; add a GitHub token in Settings → Sources or sign in with gh auth login".into()
+                "GitHub's rate limit is reached; add a token to the source with Edit in Settings → Sources or sign in with gh auth login".into()
             }
             404 if self.token.is_none() => format!(
-                "{repository}: not found. A private repository needs a GitHub token: add one in Settings → Sources or sign in with gh auth login"
+                "{repository}: not found. A private repository needs a GitHub token: add one to the source with Edit in Settings → Sources or sign in with gh auth login"
             ),
             404 => format!("{repository}: not found; check the repository, branch and folder"),
             _ => format!("GitHub {repository}: HTTP {status}"),
@@ -1337,10 +1348,10 @@ impl GitHub {
     }
 }
 
-async fn github(data: &Path, repository: &str) -> Result<GitHub> {
+async fn github(data: &Path, slug: &str, repository: &str) -> Result<GitHub> {
     Ok(GitHub {
         client: http()?,
-        token: token(data).await,
+        token: token(data, slug).await,
         repository: repository.to_owned(),
     })
 }
@@ -1354,7 +1365,7 @@ async fn fetch(data: &Path, source: &Source, need: impl Fn(&str, &str) -> bool) 
             branch,
             path,
         } => {
-            github(data, repository)
+            github(data, &source.slug(), repository)
                 .await?
                 .fetch(branch.as_deref(), path.as_deref(), need)
                 .await
@@ -1526,6 +1537,11 @@ fn apply_snapshot(data: &Path, source: &Source, fetched: &Fetched) -> Result<()>
     for name in [DICTIONARY, TEMPLATES] {
         if let Ok(bytes) = fs::read(current.join(name)) {
             fs::write(stage.join(name), bytes)?;
+        }
+    }
+    for name in [TOKEN_FILE, SYNCED_FILE] {
+        if current.join(name).is_file() {
+            fs::copy(current.join(name), stage.join(name))?;
         }
     }
     if current.join(HINTS).is_dir() {
@@ -1911,7 +1927,7 @@ async fn check_source(
         checked.problems.extend(problems);
         checked.modules = match &source.location {
             Location::Github { repository, .. } => {
-                let github = github(data, repository).await?;
+                let github = github(data, &slug, repository).await?;
                 let mut offers: Vec<Offer> =
                     github.application(platform).await?.into_iter().collect();
                 if let Some(tree) = &fetched.modules {
@@ -1949,7 +1965,7 @@ async fn check_source(
 }
 
 /// The sources service: the configured sources, their checks, applying them and the
-/// GitHub token. Installing a module from a source is in the runtime (it loads the module).
+/// GitHub tokens. Installing a module from a source is in the runtime (it loads the module).
 #[derive(Clone)]
 pub struct Sources {
     data: PathBuf,
@@ -1972,40 +1988,56 @@ impl Sources {
         &self.data
     }
 
-    /// `{sources:[{name, slug, kind, …, applied}], tokenSet, warning?}`.
+    /// `{sources:[{name, slug, kind, …, applied, syncedAt, tokenSet}], warning?}`.
     pub fn get(&self) -> Result<Value> {
         let sources = sources(&self.data)?;
         let described: Vec<Value> = sources
             .iter()
             .map(|source| {
                 let mut value = source.describe();
-                value["applied"] = read_meta(&self.data.join(DIR).join(source.slug()))
+                let dir = self.data.join(DIR).join(source.slug());
+                value["applied"] = read_meta(&dir)
                     .map(|meta| json!({"at": meta.applied_at, "revision": meta.revision}))
                     .unwrap_or(Value::Null);
+                value["syncedAt"] = synced_at(&dir);
+                value["tokenSet"] = json!(dir.join(TOKEN_FILE).is_file());
                 value
             })
             .collect();
-        let mut reply = json!({
-            "sources": described,
-            "tokenSet": self.data.join(TOKEN_FILE).is_file(),
-        });
+        let mut reply = json!({"sources": described});
         if let Some(warning) = migration_warning(&self.data) {
             reply["warning"] = json!(warning);
         }
         Ok(reply)
     }
 
-    /// Saves the list: `{sources:[{id?, name, kind, …}]}`, where `id` is the slug of a
-    /// configured source. A source keeps its place but may be renamed; one left out is
-    /// removed with its applied copy.
+    /// Saves the list: `{sources:[{id?, name, kind, …, token?}]}`, where `id` is the slug of
+    /// a configured source. A source keeps its place but may be renamed; one left out is
+    /// removed with its applied copy. A GitHub source's `token` is saved, `null` clears it.
     pub fn save(&self, message: &Value) -> Result<Value> {
         let entries = message["sources"]
             .as_array()
             .ok_or_else(|| Error::new("sources must be a list"))?;
         let mut sources = Vec::new();
         let mut kept = BTreeMap::new();
+        let mut tokens = Vec::new();
         for entry in entries {
             let source = parse(entry)?;
+            if let Some(token) = entry.get("token") {
+                let token = token
+                    .as_str()
+                    .map(str::trim)
+                    .filter(|token| !token.is_empty());
+                if !matches!(source.location, Location::Github { .. }) && token.is_some() {
+                    return Err(Error::new("Only a GitHub source has a token"));
+                }
+                if token
+                    .is_some_and(|token| token.chars().any(|c| c.is_whitespace() || c.is_control()))
+                {
+                    return Err(Error::new("A GitHub token is one word"));
+                }
+                tokens.push((source.slug(), token.map(str::to_owned)));
+            }
             if let Some(id) = entry["id"].as_str() {
                 kept.insert(id.to_owned(), source.clone());
             }
@@ -2063,6 +2095,17 @@ impl Sources {
                 }
             }
         }
+        for (slug, token) in tokens {
+            let path = root.join(slug).join(TOKEN_FILE);
+            match token {
+                Some(token) => write_atomic(&path, token.as_bytes(), true)?,
+                None => match fs::remove_file(&path) {
+                    Ok(()) => {}
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(e) => return Err(e.into()),
+                },
+            }
+        }
         write_module_sources(&self.data, &records)?;
         write_sources(&self.data, &sources)?;
         let _ = fs::remove_file(root.join(CHECK_FILE));
@@ -2070,29 +2113,10 @@ impl Sources {
         self.get()
     }
 
-    /// `{token}` saves the GitHub token for sources, `{token:null}` clears it.
-    pub fn set_token(&self, message: &Value) -> Result<Value> {
-        let path = self.data.join(TOKEN_FILE);
-        match message["token"].as_str().map(str::trim) {
-            Some(token) if !token.is_empty() => {
-                if token.chars().any(|c| c.is_whitespace() || c.is_control()) {
-                    return Err(Error::new("A GitHub token is one word"));
-                }
-                write_atomic(&path, token.as_bytes(), true)?;
-            }
-            _ => match fs::remove_file(&path) {
-                Ok(()) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => return Err(e.into()),
-            },
-        }
-        let _ = fs::remove_file(self.data.join(DIR).join(CHECK_FILE));
-        self.get()
-    }
-
     /// Checks every source not checked since this host process started (`force` checks
     /// anyway), so DevTools checks once each time it opens the application:
     /// `{sources:[{name, slug, kind, repository?|path, checkedAt, error?, skills, sync, applied,
+    /// appliedAt, syncedAt,
     /// changes:[{kind, key, change}], problems, modules:[offers]}],
     /// installed:{"<module>": {version, source?, notes, error?, name?, description?}}}`, where
     /// `installed` has the
@@ -2138,7 +2162,8 @@ impl Sources {
             .filter_map(|source| {
                 let slug = source.slug();
                 let checked = checks.get(&slug)?;
-                let applied = self.data.join(DIR).join(&slug).join(META_FILE).is_file();
+                let dir = self.data.join(DIR).join(&slug);
+                let meta = read_meta(&dir);
                 let changes: Vec<Value> = checked
                     .changes
                     .iter()
@@ -2150,7 +2175,9 @@ impl Sources {
                     ("error", json!(checked.error)),
                     ("skills", json!(checked.skills)),
                     ("sync", json!(checked.sync)),
-                    ("applied", json!(applied)),
+                    ("applied", json!(meta.is_some())),
+                    ("appliedAt", json!(meta.map(|meta| meta.applied_at))),
+                    ("syncedAt", synced_at(&dir)),
                     ("changes", json!(changes)),
                     ("problems", json!(checked.problems)),
                     ("modules", json!(checked.modules)),
@@ -2234,7 +2261,7 @@ impl Sources {
                     Some(path) => format!("{}/{file}", path.trim_matches('/')),
                     None => file.to_owned(),
                 };
-                github(&self.data, repository)
+                github(&self.data, &source.slug(), repository)
                     .await?
                     .put(
                         &remote,
@@ -2299,7 +2326,20 @@ impl Sources {
                 Err(error) => errors.push(format!("{file}: {}", error.message)),
             }
         }
+        if errors.is_empty() && conflicts.is_empty() {
+            self.synced(slug)?;
+        }
         Ok(json!({"applied": applied, "conflicts": conflicts, "errors": errors}))
+    }
+
+    /// Notes that source `slug` and Local are now in sync.
+    fn synced(&self, slug: &str) -> Result<()> {
+        let _lock = lock(&self.data)?;
+        write_atomic(
+            &self.data.join(DIR).join(slug).join(SYNCED_FILE),
+            now().to_string().as_bytes(),
+            false,
+        )
     }
 
     async fn execute(
@@ -2374,6 +2414,15 @@ impl Sources {
                 &pending.bytes
             },
         )?;
+        let settled = !self
+            .pending
+            .lock()
+            .unwrap()
+            .keys()
+            .any(|(pending, _)| pending == slug);
+        if settled {
+            self.synced(slug)?;
+        }
         Ok(json!({"written": written}))
     }
 
@@ -2446,7 +2495,7 @@ impl Sources {
         let (source, offer) = self.offer(slug, id, version)?;
         match (&source.location, &offer.download) {
             (Location::Github { repository, .. }, Download::Blob { sha, .. }) => {
-                github(&self.data, repository).await?.blob(sha).await
+                github(&self.data, slug, repository).await?.blob(sha).await
             }
             (Location::Folder { path: root }, Download::File { path })
                 if path.starts_with(root.join(MODULES)) =>
@@ -2490,7 +2539,7 @@ impl Sources {
                     metadata,
                 },
             ) => {
-                let github = github(&self.data, repository).await?;
+                let github = github(&self.data, slug, repository).await?;
                 let bytes = github
                     .bytes(
                         &format!("releases/assets/{metadata}"),
@@ -2641,7 +2690,7 @@ pub fn migrate_team_folder(data: &Path) -> Result<()> {
     Ok(())
 }
 
-/// The sources service with `op`: get, save, token, check, apply, open, write, sync, resolve. Install is in the
+/// The sources service with `op`: get, save, check, apply, open, write, sync, resolve. Install is in the
 /// runtime.
 pub async fn dispatch(
     sources: &Sources,
@@ -2657,7 +2706,6 @@ pub async fn dispatch(
             }
             result
         }
-        "token" => sources.set_token(message),
         "check" => sources.check(message["force"] == true, installed).await,
         "apply" => {
             let slug = message["source"]
@@ -3239,6 +3287,44 @@ mod tests {
 
     async fn state_of(sources: &Sources) -> Value {
         sources.check(true, &[]).await.unwrap()["sources"][0]["sync"].clone()
+    }
+
+    #[tokio::test]
+    async fn a_github_source_keeps_its_own_token_through_a_rename() {
+        let data = tempfile::tempdir().unwrap();
+        let sources = Sources::new(data.path());
+        let hub = |id: Option<&str>, name: &str, token: Value| {
+            let mut entry =
+                json!({"name": name, "kind": "github", "repository": "a/b", "token": token});
+            if let Some(id) = id {
+                entry["id"] = json!(id);
+            }
+            json!({"sources": [entry]})
+        };
+        let saved = sources.save(&hub(None, "Hub", json!("t1"))).unwrap();
+        assert_eq!(saved["sources"][0]["tokenSet"], true);
+        assert_eq!(token(data.path(), "hub").await.as_deref(), Some("t1"));
+        sources.save(&hub(Some("hub"), "Lab", json!("t2"))).unwrap();
+        assert_eq!(token(data.path(), "lab").await.as_deref(), Some("t2"));
+        assert!(!data.path().join("sources/hub").exists());
+        let cleared = sources.save(&hub(Some("lab"), "Lab", Value::Null)).unwrap();
+        assert_eq!(cleared["sources"][0]["tokenSet"], false);
+        let folder = sources
+            .save(&json!({"sources": [{"name":"F","kind":"folder","path":"/x","token":"t"}]}));
+        assert!(folder.unwrap_err().message.contains("Only a GitHub source"));
+    }
+
+    #[tokio::test]
+    async fn a_sync_is_dated_and_the_date_outlives_applying_skills() {
+        let (_data, _team, sources) = synced().await;
+        let at = sources.get().unwrap()["sources"][0]["syncedAt"].clone();
+        assert!(at.is_u64(), "{at}");
+        sources.apply("team").await.unwrap();
+        assert_eq!(sources.get().unwrap()["sources"][0]["syncedAt"], at);
+        assert_eq!(
+            sources.check(true, &[]).await.unwrap()["sources"][0]["syncedAt"],
+            at
+        );
     }
 
     #[tokio::test]

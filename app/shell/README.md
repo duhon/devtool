@@ -347,8 +347,9 @@ checked against its published sha256) and installs it, replacing a module with
 the same id from any source; Remove asks first. The first row, `app`, is the
 application: any source can offer it (GitHub releases `devtool-v<version>`,
 `distribution/` of a folder); Update saves the workspace, has the native updater
-install it and reloads the extension; it can't be removed. Private repositories
-use the token saved in Settings, else `gh auth token`.
+install it and reloads the extension; it can't be removed. A private repository
+uses the token saved on its source (Add source or Edit in Settings → Sources),
+else `gh auth token`.
 
 Each message automatically provides Console request context; the Agent can read
 selected response pages and cached schema without a separate sharing toggle.

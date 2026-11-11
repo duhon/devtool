@@ -141,6 +141,8 @@
 
 .ui-button.is-link.is-danger { color: var(--error); }
 
+.ui-button.is-link.is-muted { color: var(--fg-muted); }
+
 .ui-text.is-danger { color: var(--error); }
 
 .ui-text.is-primary { color: var(--accent); font-weight: bold; }
@@ -287,6 +289,8 @@ span.editor-diff-removed-text { background: var(--diff-removed-text); }
 
 .ui-column:is(.is-tight, .is-primary) > .is-quote { margin-bottom: 6px; }
 
+.ui-column.is-well { padding: 6px 8px; border-radius: 3px; background: var(--bg-sunken); }
+
 .ui-column.is-quote { padding: 6px; border-left: 2px solid var(--border); }
 
 .ui-list.is-dense { gap: 0; }
@@ -336,6 +340,8 @@ textarea.ui-input { resize: vertical; min-height: 56px; max-height: 30vh; }
 .ui-table.is-roomy th { padding: 5px; color: var(--fg); font-weight: bold; border-bottom: 1px solid var(--border); }
 
 .ui-table.is-roomy td { padding: 5px; border-bottom: 0; border-top: 1px solid var(--bg-band); }
+
+.ui-table.is-roomy { border-bottom: 1px solid var(--bg-band); }
 
 .ui-table.is-roomy td > .ui-button { margin: 2px; }
 
