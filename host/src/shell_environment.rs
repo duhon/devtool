@@ -95,7 +95,8 @@ fn account_shell() -> Result<PathBuf> {
                 "Could not determine the user login shell; set SHELL to its absolute path",
             ));
         }
-        let shell = unsafe { (*found).pw_shell };
+        // On success `found` points at `entry`, whose strings live in `buffer`.
+        let shell = unsafe { entry.assume_init() }.pw_shell;
         if shell.is_null() {
             return Err(Error::new("The user account has no login shell"));
         }
