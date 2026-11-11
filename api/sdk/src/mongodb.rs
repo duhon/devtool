@@ -8,13 +8,16 @@
 //!
 //! Cursor commands (`find`, `aggregate`, `listCollections`, `listIndexes`, see [`Request::cursor`])
 //! are iterated with `getMore` until the cursor ends or `maxDocuments` is reached; other commands
-//! answer their reply. A server error (`ok: 0`) fails with stage `status` and `codeName (code)` in
-//! the message; `writeErrors` of an `ok: 1` reply are part of the answer.
+//! answer their reply. A server error (`ok: 0`, also on a `getMore`) is the answer's `error`, with
+//! the documents read before it; `writeErrors` of an `ok: 1` reply are in the `reply`. Failing to
+//! resolve, connect, authenticate or select a server fails the call.
 //!
-//! A timeout or cancel closes the connection and kills an open cursor (`killCursors`). Reads stop
-//! on the server when their client goes away; a write the server received is not rolled back, and
-//! no write is retried beyond the official driver's retryable writes. Put `maxTimeMS` in the
-//! command for a server-side limit. Credentials of the connection string never appear in errors.
+//! `timeoutMs` is also sent as the command's `maxTimeMS` (what is left of it), unless the command
+//! sets its own, so the server stops the command too; the server applies it across the cursor's
+//! `getMore`s. A timeout or cancel closes the connection and kills an open cursor (`killCursors`).
+//! Reads stop on the server when their client goes away; a write the server received is not rolled
+//! back, and no write is retried beyond the official driver's retryable writes. Credentials of the
+//! connection string never appear in errors.
 
 use crate::{http::Timing, wire::DriverCall};
 use serde::{Deserialize, Serialize};
@@ -46,7 +49,8 @@ pub struct Request {
     /// Documents per `getMore`; the first batch size is the command's own.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub batch_size: Option<u32>,
-    /// The whole call, including server selection and every `getMore`.
+    /// The whole call, including server selection and every `getMore`; also the command's
+    /// `maxTimeMS` unless it has one. The server stopping it there fails the call as a timeout.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_ms: Option<u64>,
     /// Server selection and connect timeout; defaults to the connection string's, else 10 s.
@@ -84,6 +88,17 @@ impl Request {
     }
 }
 
+/// An error the server answered with (`ok: 0`): the command ran and failed.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerError {
+    pub code: i32,
+    /// `BadValue`, `Unauthorized`, `NamespaceNotFound`…
+    #[serde(default)]
+    pub code_name: String,
+    pub message: String,
+}
+
 /// A call answer, or the end of a stream (then `documents` is empty: they came as [`Event`]s).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -100,6 +115,8 @@ pub struct Response {
     /// The cursor had documents past `maxDocuments`.
     #[serde(default)]
     pub truncated: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<ServerError>,
     /// `firstByteUs` is when the command's reply (the first batch) arrived.
     #[serde(default)]
     pub timing: Timing,
@@ -145,6 +162,14 @@ mod tests {
         let value = forced.call().request();
         assert_eq!(value["database"], "db");
         assert_eq!(Request::deserialize(&value).unwrap(), forced);
+        let answer = json!({
+            "documents": [{"n": {"$numberInt": "1"}}], "count": 1, "truncated": false,
+            "error": {"code": 2, "codeName": "BadValue", "message": "unknown operator"},
+            "timing": {"firstByteUs": 1, "totalUs": 2}
+        });
+        let response = Response::parse(&answer).unwrap();
+        assert_eq!(response.error.as_ref().unwrap().code_name, "BadValue");
+        assert_eq!(serde_json::to_value(&response).unwrap(), answer);
         assert_eq!(
             Event::parse(&json!({"documents": [{"a": {"$numberInt": "1"}}]})).unwrap(),
             Event::Documents(vec![json!({"a": {"$numberInt": "1"}})])

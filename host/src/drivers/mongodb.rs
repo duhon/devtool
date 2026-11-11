@@ -1,7 +1,9 @@
 //! The mongodb driver: the official driver's `Client` per connection string, reused across calls;
 //! one database command, its cursor iterated batch by batch. Documents become canonical Extended
-//! JSON. A timeout or cancel drops the call: the connection is closed and the driver kills an open
-//! cursor with `killCursors`. Credentials of the connection string are scrubbed from failures.
+//! JSON; a server error is the answer's `error`. `timeoutMs` also becomes the command's
+//! `maxTimeMS`. A timeout or cancel drops the call: the connection is closed and the driver kills
+//! an open cursor with `killCursors`. Credentials of the connection string are scrubbed from
+//! failures.
 
 use super::{CONNECT_MS, Failure, emit, micros, millis};
 use bson::{Bson, Document, RawDocument};
@@ -15,16 +17,18 @@ use mongodb::{
 use serde_json::{Value, json};
 use services_sdk::{
     driver::Stage,
-    mongodb::{Request, Response},
+    mongodb::{Request, Response, ServerError},
 };
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
-    time::Instant,
+    time::{Duration, Instant},
 };
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
+/// The server's `MaxTimeMSExpired` code.
+const MAX_TIME_EXPIRED: i32 = 50;
 const STOPPED: &str = "The connection was closed and an open cursor killed; a write the server \
                        received is not rolled back.";
 
@@ -45,6 +49,7 @@ impl Mongodb {
         cancel: CancellationToken,
         events: Option<&mpsc::Sender<Value>>,
     ) -> Result<Value, Failure> {
+        let budget = request.timeout_ms.map(|ms| (Instant::now(), millis(ms)));
         let deadline = async {
             match request.timeout_ms {
                 Some(ms) => tokio::time::sleep(millis(ms)).await,
@@ -52,7 +57,7 @@ impl Mongodb {
             }
         };
         let result = tokio::select! {
-            result = self.execute(&request, events) => result.map(|answer| json!(answer)),
+            result = self.execute(&request, budget, events) => result.map(|answer| json!(answer)),
             () = deadline => Err(stopped(Stage::Timeout, "The command timed out")),
             () = cancel.cancelled() => Err(stopped(Stage::Cancelled, "Cancelled")),
         };
@@ -102,10 +107,11 @@ impl Mongodb {
     async fn execute(
         &self,
         request: &Request,
+        budget: Option<(Instant, Duration)>,
         events: Option<&mpsc::Sender<Value>>,
     ) -> Result<Response, Failure> {
         let started = Instant::now();
-        let command = match &request.command {
+        let mut command = match &request.command {
             Value::Object(command) if !command.is_empty() => Document::try_from(command.clone())
                 .map_err(|error| Failure::new(Stage::Send, format!("Invalid command: {error}")))?,
             _ => {
@@ -129,11 +135,14 @@ impl Mongodb {
             })?,
         };
         let mut answer = Response::default();
+        let injected = budget.is_some_and(|(since, timeout)| {
+            max_time(&mut command, timeout.saturating_sub(since.elapsed()))
+        });
         if !request.is_cursor() {
-            let reply = database
-                .run_command(command)
-                .await
-                .map_err(|error| failure(Stage::Send, error))?;
+            let reply = match database.run_command(command).await {
+                Ok(reply) => reply,
+                Err(error) => return answered(answer, error, injected, started),
+            };
             answer.timing.first_byte_us = micros(started);
             let reply = Bson::Document(reply).into_canonical_extjson();
             match events {
@@ -151,14 +160,17 @@ impl Mongodb {
         if let Some(criteria) = client.selection_criteria() {
             run = run.selection_criteria(criteria.clone());
         }
-        let mut cursor = run
-            .batch()
-            .await
-            .map_err(|error| failure(Stage::Send, error))?;
+        let mut cursor = match run.batch().await {
+            Ok(cursor) => cursor,
+            Err(error) => return answered(answer, error, injected, started),
+        };
         answer.timing.first_byte_us = micros(started);
         let limit = request.max_documents.unwrap_or(u64::MAX);
         while let Some(batch) = cursor.next().await {
-            let batch = batch.map_err(|error| failure(Stage::Send, error))?;
+            let batch = match batch {
+                Ok(batch) => batch,
+                Err(error) => return answered(answer, error, injected, started),
+            };
             let open = cursor_id(&batch) != 0;
             let mut slices = batch
                 .doc_slices()
@@ -193,6 +205,43 @@ impl Mongodb {
         answer.timing.total_us = micros(started);
         Ok(answer)
     }
+}
+
+/// Sets the command's `maxTimeMS` to what is left of `timeoutMs` unless the command has its own,
+/// so the server stops it too. The server applies a cursor command's limit to its `getMore`s.
+fn max_time(command: &mut Document, left: Duration) -> bool {
+    if command.contains_key("maxTimeMS") {
+        return false;
+    }
+    let ms = i64::try_from(left.as_millis()).unwrap_or(i64::MAX).max(1);
+    command.insert("maxTimeMS", Bson::Int64(ms));
+    true
+}
+
+/// A server error is the command's answer, with the documents read before it; the server stopping
+/// the command at the injected `maxTimeMS` is the call's timeout.
+fn answered(
+    mut answer: Response,
+    error: Error,
+    injected: bool,
+    started: Instant,
+) -> Result<Response, Failure> {
+    let ErrorKind::Command(command) = error.kind.as_ref() else {
+        return Err(failure(Stage::Send, error));
+    };
+    if injected && command.code == MAX_TIME_EXPIRED {
+        return Err(stopped(
+            Stage::Timeout,
+            "The command timed out: the server stopped it at maxTimeMS",
+        ));
+    }
+    answer.error = Some(ServerError {
+        code: command.code,
+        code_name: command.code_name.clone(),
+        message: command.message.clone(),
+    });
+    answer.timing.total_us = micros(started);
+    Ok(answer)
 }
 
 /// Names MongoDB refuses for a database.
@@ -236,13 +285,6 @@ fn stopped(stage: Stage, message: &str) -> Failure {
 fn failure(fallback: Stage, error: Error) -> Failure {
     let mut failure = Failure::chain(fallback, &error);
     let (stage, message) = match error.kind.as_ref() {
-        ErrorKind::Command(command) => (
-            Stage::Status,
-            format!(
-                "MongoDB command failed: {} ({}): {}",
-                command.code_name, command.code, command.message
-            ),
-        ),
         ErrorKind::DnsResolve { .. } => (Stage::Dns, format!("MongoDB DNS lookup failed: {error}")),
         ErrorKind::Authentication { .. } => (
             Stage::Connect,
@@ -344,6 +386,19 @@ mod tests {
         assert_eq!(failure.failure.causes[1], "auth **** rejected");
         assert!(secrets("mongodb://admin@db/app").is_empty());
         assert!(secrets("mongodb+srv://db/app?x=a:b@c").is_empty());
+    }
+
+    #[test]
+    fn max_time_is_the_budget_left_unless_the_command_sets_it() {
+        let mut command = bson::doc! {"find": "c"};
+        assert!(max_time(&mut command, Duration::from_millis(250)));
+        assert_eq!(command, bson::doc! {"find": "c", "maxTimeMS": 250_i64});
+        let mut spent = bson::doc! {"ping": 1};
+        assert!(max_time(&mut spent, Duration::ZERO));
+        assert_eq!(spent.get_i64("maxTimeMS").ok(), Some(1));
+        let mut own = bson::doc! {"find": "c", "maxTimeMS": 5};
+        assert!(!max_time(&mut own, Duration::from_millis(250)));
+        assert_eq!(own, bson::doc! {"find": "c", "maxTimeMS": 5});
     }
 
     #[test]

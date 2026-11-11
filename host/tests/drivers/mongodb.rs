@@ -118,9 +118,13 @@ async fn mongodb_call_iterates_cursors_and_keeps_bson_types() {
     let reply = database
         .run(&data, json!({"find": "pets", "filter": {"$bogus": 1}}))
         .await;
-    assert_eq!(reply["failure"]["stage"], "status", "{reply}");
-    let error = reply["error"].as_str().unwrap();
-    assert!(error.contains("BadValue (2)"), "{error}");
+    assert_eq!(reply["ok"], true, "a server error is an answer: {reply}");
+    let error = mongodb::Response::parse(&reply["result"])
+        .unwrap()
+        .error
+        .unwrap();
+    assert_eq!((error.code, error.code_name.as_str()), (2, "BadValue"));
+    assert!(error.message.contains("$bogus"), "{}", error.message);
 
     database.drop(&data).await;
 }
@@ -172,13 +176,52 @@ async fn mongodb_cancel_and_timeout_drop_the_command() {
     let causes = reply["failure"]["causes"].to_string();
     assert!(causes.contains("not rolled back"), "{causes}");
 
-    let mut timed = database.request(slow);
+    let mut timed = database.request(slow.clone());
     timed.timeout_ms = Some(300);
     let started = Instant::now();
     let reply = data.runtime().dispatch(&call(2, "call", &timed)).await;
     assert_eq!(reply["failure"]["stage"], "timeout", "{reply}");
     assert!(started.elapsed() < Duration::from_secs(3));
 
+    let mut own = slow.clone();
+    own["maxTimeMS"] = json!(100);
+    let reply = database.run(&data, own).await;
+    assert_eq!(reply["ok"], true, "{reply}");
+    let error = mongodb::Response::parse(&reply["result"])
+        .unwrap()
+        .error
+        .unwrap();
+    assert_eq!(error.code_name, "MaxTimeMSExpired", "{reply}");
+
+    database.drop(&data).await;
+}
+
+#[tokio::test]
+async fn mongodb_timeout_is_sent_as_max_time_ms() {
+    let Some(url) = server() else { return };
+    let data = DataDir::new();
+    let database = Database::new(&url, &data, "maxtime").await;
+    database.run(&data, json!({"profile": 2})).await;
+    let mut find = database.request(json!({"find": "pets", "filter": {"n": 7}}));
+    find.timeout_ms = Some(5_000);
+    let reply = data.runtime().dispatch(&call(1, "call", &find)).await;
+    assert_eq!(reply["ok"], true, "{reply}");
+    let reply = database
+        .run(
+            &data,
+            json!({"find": "system.profile", "filter": {"command.filter.n": 7}}),
+        )
+        .await;
+    let profiled = mongodb::Response::parse(&reply["result"])
+        .unwrap()
+        .documents;
+    let sent: i64 = profiled[0]["command"]["maxTimeMS"]["$numberLong"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!((4_000..=5_000).contains(&sent), "{sent}");
+    database.run(&data, json!({"profile": 0})).await;
     database.drop(&data).await;
 }
 
