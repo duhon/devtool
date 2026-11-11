@@ -567,7 +567,7 @@
     assert(hints.getLine(2) === '#payload', 'Picking a Hints section must insert its header');
     const changedHints = `${originalHints.trimEnd()}\n#headers\nX-Console-Panel-Fixture: saved\n`;
     hints.setValue(changedHints);
-    await wait(() => toolStatus()?.textContent.includes('Hints save · OK'), 'Edited hints must be saved to Local');
+    await wait(() => toolStatus()?.textContent.includes('Hints save · OK'), () => `Edited hints must be saved to Local: ${toolStatus()?.textContent}`);
     await closePanel('hints');
     await openPanel('hints');
     await wait(() => testDriver.editorAt('console-hints')?.getValue() === changedHints);

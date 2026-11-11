@@ -49,10 +49,31 @@ fn hints_are_read_from_and_saved_to_the_local_source() {
             command.name == "status.set" && command.args()["text"] == "Hints save · OK"
         })
     };
-    assert!(!saved(&reply(&mut hints, "save", json!(null))));
+    let tags = |commands: &[services_sdk::Cmd]| -> Vec<String> {
+        commands
+            .iter()
+            .filter(|command| {
+                ["sources.write", "kv.delete", "kv.put"].contains(&command.name.as_str())
+            })
+            .map(|command| command.tag.clone())
+            .collect()
+    };
+    let first = tags(&commands);
+    let second = tags(&hints.update(Event::Ui {
+        msg: Msg::Edit,
+        value: Some("# Mine\n/me\n/you".into()),
+    }));
+    assert_eq!(first.len() + second.len(), 4);
     assert!(
-        saved(&reply(&mut hints, "save-drafts", json!(null))),
-        "OK shows once the session has the save too"
+        first.iter().all(|tag| !second.contains(tag)),
+        "Saves in flight together must not share tags, or one's answers are lost"
+    );
+    for tag in first.iter().chain(&second[..1]) {
+        assert!(!saved(&reply(&mut hints, tag, json!(null))));
+    }
+    assert!(
+        saved(&reply(&mut hints, &second[1], json!(null))),
+        "OK shows once the files and the session have every save"
     );
 
     let commands = hints.update(Event::Ui {
@@ -64,7 +85,7 @@ fn hints_are_read_from_and_saved_to_the_local_source() {
             .iter()
             .all(|command| command.name != "editor.contribute")
     );
-    assert_eq!(hints.effective("rest"), "# Mine\n/me");
+    assert_eq!(hints.effective("rest"), "# Mine\n/me\n/you");
 }
 
 #[test]

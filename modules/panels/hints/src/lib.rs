@@ -6,15 +6,15 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use services_sdk::{Cmd, Event, Module, Subscriptions, cmd, ui};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// The session kv key of the edits that are not valid yet, by service.
 pub const DRAFTS: &str = "drafts";
 const DOCUMENT: &str = "document";
 const SOURCE: &str = "source:";
-/// The tags of a valid save: the file, and the session without the service's draft.
-const SAVE: &str = "save";
-const SAVE_DRAFTS: &str = "save-drafts";
+/// The tag prefix of a valid save's answers: its file, and the session without the service's
+/// draft. Each save has its own tags: answers to calls with the same tag in flight are lost.
+const SAVE: &str = "save:";
 
 #[derive(Serialize, Deserialize)]
 pub enum Msg {
@@ -32,7 +32,8 @@ pub struct Hints {
     /// The level of the last status by service, shown as the title's light.
     light: BTreeMap<String, String>,
     /// Answers still due for valid saves: OK shows once the file and the session have them.
-    saving: usize,
+    saving: BTreeSet<String>,
+    saves: u64,
 }
 
 /// Checks hints the way completion reads them.
@@ -109,10 +110,16 @@ impl Hints {
             Ok(()) => {
                 self.drafts.remove(&service);
                 let file = format!("hints/{service}.md");
-                let save = cmd::sources_write(SAVE, &file, &text);
+                self.saves += 1;
+                let (file_tag, drafts_tag) = (
+                    format!("{SAVE}file:{}", self.saves),
+                    format!("{SAVE}drafts:{}", self.saves),
+                );
+                let save = cmd::sources_write(file_tag.clone(), &file, &text);
                 self.saved.insert(service, text);
-                self.saving += 2;
-                vec![save, self.put_drafts(SAVE_DRAFTS), self.contribution()]
+                let drafts = self.put_drafts(&drafts_tag);
+                self.saving.extend([file_tag, drafts_tag]);
+                vec![save, drafts, self.contribution()]
             }
             Err(error) => {
                 self.drafts.insert(service, json!(text));
@@ -149,7 +156,7 @@ impl Module for Hints {
             Event::Init { .. } | Event::Workspace => self.load(),
             Event::Shown => {
                 // A hidden panel's answers are dropped, so they may never come.
-                self.saving = 0;
+                self.saving.clear();
                 vec![cmd::document_read(DOCUMENT)]
             }
             Event::Document(check) if check.service != self.service => {
@@ -189,16 +196,16 @@ impl Module for Hints {
                     }
                     vec![self.contribution()]
                 }
-                (SAVE | SAVE_DRAFTS, Ok(_)) => {
-                    self.saving = self.saving.saturating_sub(1);
-                    if self.saving == 0 {
+                (tag, Ok(_)) if tag.starts_with(SAVE) => {
+                    self.saving.remove(tag);
+                    if self.saving.is_empty() {
                         vec![self.status("Hints save · OK", "ok")]
                     } else {
                         Vec::new()
                     }
                 }
-                (SAVE | SAVE_DRAFTS, Err(failure)) => {
-                    self.saving = self.saving.saturating_sub(1);
+                (tag, Err(failure)) if tag.starts_with(SAVE) => {
+                    self.saving.remove(tag);
                     vec![self.status(
                         &format!("Hints save · ERROR · {}", failure.message),
                         "error",
