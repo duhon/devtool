@@ -136,14 +136,18 @@
   setSource(terminalEditor,"#check Terminal history\n#target\nsh -c\n#payload\nprintf '+----+-------+\\n| ID | Title |\\n+----+-------+\\n| 1  | Ready |\\n+----+-------+\\n'; printf 'warning\\n' >&2");
   terminalEditor.setCursor(terminalEditor.lastLine(),terminalEditor.getLine(terminalEditor.lastLine()).length);
   await key('Shift+Enter');
-  await wait(()=>terminalEditor.getValue().includes(terminalOutput+'warning\n')
+  // stdout and stderr are read concurrently, so either may arrive first.
+  const terminalRendered=()=>[terminalOutput+'warning\n','warning\n'+terminalOutput]
+    .find(output=>terminalEditor.getValue().includes(output));
+  await wait(()=>terminalRendered()
     && !testid('console-main-status').classList.contains('is-running'),
     ()=>`Terminal execution did not render plain output: ${terminalEditor.getValue()}`);
+  const terminalPlain=terminalRendered();
   assert(testid('console-main-status').textContent.includes('WARNING · warning'),
     `A Terminal command that exits 0 after writing to stderr must be a WARNING showing that line: ${testid('console-main-status').textContent}`);
   await wait(()=>entries().length===1 && idle());
   const terminalSnapshot=await detail(0);
-  assert(terminalSnapshot.endsWith(terminalOutput+'warning\n'),
+  assert(terminalSnapshot.endsWith(terminalPlain),
     'Terminal History must match the main check output, joining stdout/stderr without added text');
   assert(!terminalSnapshot.includes('#terminal-output') && !terminalSnapshot.includes('"type":"stdout"')
     && !terminalSnapshot.includes('"durationMs"'),
