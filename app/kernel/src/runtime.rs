@@ -33,6 +33,8 @@ pub trait Platform {
     /// Sends `message` to the Host; `reply` hears every answer. Returns the request id.
     fn request(&self, message: Value, stream: bool, reply: Callback<Reply>) -> u32;
     fn stop(&self, id: u32) -> Result<(), String>;
+    /// Writes `data` (base64) to the session stream running as request `id`.
+    fn write(&self, id: u32, data: &str) -> Result<(), String>;
     fn stop_all(&self) -> Result<(), String>;
     /// Answers the tool call `call` of the Agent turn streaming as request `id`.
     fn agent_reply(&self, id: u32, call: &str, result: Value) -> Result<(), String>;
@@ -566,6 +568,15 @@ impl Core {
                 Effect::Cancel { module, tag } => {
                     if let Some(id) = self.calls.remove(&(module, tag)) {
                         let _ = self.platform.stop(id);
+                    }
+                }
+                Effect::Write { module, tag, data } => {
+                    let written = match self.calls.get(&(module.clone(), tag.clone())) {
+                        Some(id) => self.platform.write(*id, &data),
+                        None => Err("No session stream with this tag is running".into()),
+                    };
+                    if let Err(error) = written {
+                        queue.extend(refuse(&module, &tag, &error));
                     }
                 }
                 Effect::Timer { module, tag, ms } => {

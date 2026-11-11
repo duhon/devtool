@@ -82,7 +82,11 @@ preserved. Retrying the connection or reopening the panel reloads shell settings
   `agent_models`, `agent_sessions` (and `health`).
 - `drivers::Drivers::{call,stream}` run the minimal, service-agnostic drivers
   (`drivers/{http,grpc,mysql,process,tcp}.rs`); `drivers::versions()` is what `health`
-  reports and module manifests are checked against. gRPC uses in-memory `protox`,
+  reports and module manifests are checked against (`major.minor`: a module needing
+  tcp `1.1` refuses a host with `1`). A tcp session (`session: true`, a stream) keeps one
+  connection open: the App sends `{"id","type":"input","dataBase64"}` for its stream id,
+  `adapters::native` queues it (bounded) to that stream, and the driver writes it and
+  answers `written`. gRPC uses in-memory `protox`,
   `prost-reflect` and `tonic`; all four RPC shapes, reflection v1/v1alpha and standard
   protobuf imports are supported.
 - `core::registry::Registry` loads the wasm module packages of the modules folder and

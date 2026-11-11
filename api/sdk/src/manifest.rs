@@ -23,7 +23,8 @@ pub struct Manifest {
     /// The App versions the module runs in, e.g. `>=4.0`.
     #[serde(default)]
     pub app: String,
-    /// Host drivers the module calls and their major versions.
+    /// Host drivers the module calls and the versions it needs: `major[.minor]`, met by the same
+    /// major with at least that minor.
     #[serde(default)]
     pub drivers: BTreeMap<String, String>,
     /// Tab or button position and the order of request hooks.
@@ -72,7 +73,7 @@ impl Manifest {
         }
         for (driver, wanted) in &self.drivers {
             match drivers.get(driver) {
-                Some(offered) if major(offered) == major(wanted) => {}
+                Some(offered) if offers(offered, wanted) => {}
                 Some(offered) => {
                     return Err(format!(
                         "{} needs the {driver} driver {wanted}, the Host has {offered}",
@@ -91,8 +92,15 @@ impl Manifest {
     }
 }
 
-fn major(version: &str) -> &str {
-    version.split('.').next().unwrap_or("")
+fn offers(offered: &str, wanted: &str) -> bool {
+    let parts = |version: &str| -> Option<(u64, u64)> {
+        let mut parts = version.trim().split('.');
+        let major = parts.next()?.parse().ok()?;
+        let minor = parts.next().map_or(Some(0), |minor| minor.parse().ok())?;
+        Some((major, minor))
+    };
+    matches!((parts(offered), parts(wanted)),
+        (Some((major, minor)), Some((needed, least))) if major == needed && minor >= least)
 }
 
 fn numbers(version: &str) -> Result<Vec<u64>, String> {
@@ -151,6 +159,22 @@ mod tests {
                 .check("3.7.0", &drivers)
                 .unwrap_err()
                 .contains("Host has 1")
+        );
+        let tcp = BTreeMap::from([("tcp".to_owned(), "1.1".to_owned())]);
+        let session = manifest(r#","drivers":{"tcp":"1.1"}"#).unwrap();
+        assert_eq!(session.check("3.7.0", &tcp), Ok(()));
+        assert_eq!(
+            manifest(r#","drivers":{"tcp":"1"}"#)
+                .unwrap()
+                .check("3.7.0", &tcp),
+            Ok(())
+        );
+        let older = BTreeMap::from([("tcp".to_owned(), "1".to_owned())]);
+        assert!(
+            session
+                .check("3.7.0", &older)
+                .unwrap_err()
+                .contains("needs the tcp driver 1.1, the Host has 1")
         );
         let mut old = ok.clone();
         old.abi += 1;

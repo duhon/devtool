@@ -10,6 +10,7 @@ pub const NAMES: &[&str] = &[
     "driver.call",
     "driver.stream",
     "driver.cancel",
+    "driver.write",
     "kv.get",
     "kv.put",
     "kv.delete",
@@ -96,6 +97,17 @@ pub fn driver(tag: impl Into<String>, call: &DriverCall) -> Cmd {
 /// Cancels the driver call or stream started with `target`.
 pub fn cancel(target: &str) -> Cmd {
     Cmd::new(target, "driver.cancel", &json!({}))
+}
+
+/// Writes `data` to the session stream `target` (a [`crate::tcp::Request::session`]); writes go
+/// out in order, each acknowledged by a `written` event. A `target` that is not a running
+/// session of the module is answered with an error reply on that tag.
+pub fn write(target: &str, data: &[u8]) -> Cmd {
+    Cmd::new(
+        target,
+        "driver.write",
+        &json!({"dataBase64": crate::driver::encode(data)}),
+    )
 }
 
 /// Resolves the `{{…}}` variables in `text`; the reply is the resolved text as a string.

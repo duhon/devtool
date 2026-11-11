@@ -5,7 +5,7 @@ use services_kernel::modules::{Effect, Instance, Modules};
 use services_sdk::wire::{self, event};
 use services_sdk::{
     Check, Chunk, Cmd, DriverCall, Event, Failure, Linked, Manifest, Module, Rendered,
-    Subscriptions, cmd, http, ui,
+    Subscriptions, cmd, http, tcp, ui,
 };
 use std::cell::Cell;
 use std::collections::BTreeMap;
@@ -848,4 +848,78 @@ fn a_service_module_answers_for_the_schema_it_discovered() {
     );
     assert_eq!(modules.schema("found", check("other")).unwrap(), None);
     assert!(modules.schema("missing", check("known")).is_err());
+}
+
+/// Opens a session and a plain stream when shown, writes to the tag a `Ui` value names and
+/// logs the errors it hears.
+#[derive(Default)]
+struct Sessions;
+
+impl Module for Sessions {
+    type Msg = ();
+    fn update(&mut self, event: Event<()>) -> Vec<Cmd> {
+        match event {
+            Event::Shown => vec![
+                cmd::driver("s", &tcp::Request::session("db", 6379).call()),
+                cmd::driver("plain", &tcp::Request::new("db", 6379).call().streaming()),
+            ],
+            Event::Ui { value, .. } => vec![cmd::write(&value.unwrap(), b"PING\r\n")],
+            Event::Reply {
+                tag,
+                result: Err(failure),
+            } => vec![cmd::log("error", &format!("{tag}: {}", failure.message))],
+            _ => Vec::new(),
+        }
+    }
+}
+
+#[test]
+fn a_module_writes_only_to_its_own_running_sessions() {
+    let mut modules = modules();
+    // `other` is a service, never shown: it opens no session of its own.
+    for (id, kind) in [("mine", "panel"), ("other", "service")] {
+        modules
+            .load(
+                manifest(id, kind, 1),
+                Box::new(Linked::<Sessions>::default()),
+                json!({}),
+            )
+            .unwrap();
+    }
+    modules.show("mine");
+    let write = |modules: &mut Modules, id: &str, tag: &str| {
+        let msg = serde_json::to_vec(&()).unwrap();
+        let effects = modules.ui(id, msg, Some(tag.into()));
+        effects
+            .into_iter()
+            .filter(|effect| matches!(effect, Effect::Write { .. }))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        write(&mut modules, "mine", "s"),
+        [Effect::Write {
+            module: "mine".into(),
+            tag: "s".into(),
+            data: "UElORw0K".into()
+        }]
+    );
+    for (id, tag) in [("mine", "plain"), ("mine", "none"), ("other", "s")] {
+        assert!(write(&mut modules, id, tag).is_empty(), "{id} {tag}");
+    }
+    modules.end("mine", "s");
+    assert!(write(&mut modules, "mine", "s").is_empty());
+    let errors = |id: &str| -> Vec<String> {
+        let log = &modules.get(id).unwrap().log;
+        log.iter().map(|(_, text)| text.clone()).collect()
+    };
+    let refused = "No session stream with this tag is running";
+    assert_eq!(
+        errors("mine"),
+        [
+            format!("plain: {refused}"),
+            format!("none: {refused}"),
+            format!("s: {refused}")
+        ]
+    );
+    assert_eq!(errors("other"), [format!("s: {refused}")]);
 }

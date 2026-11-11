@@ -48,6 +48,10 @@ impl Platform for Browser {
         self.transport.stop(id)
     }
 
+    fn write(&self, id: u32, data: &str) -> Result<(), String> {
+        self.transport.input(id, data)
+    }
+
     fn stop_all(&self) -> Result<(), String> {
         self.transport.stop_all()
     }

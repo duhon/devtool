@@ -11,7 +11,7 @@ use services_kernel::runtime::{
 };
 use services_sdk::{
     Check, Chunk, Cmd, DriverCall, Event as ModuleEvent, Failure, Linked, Manifest, Module,
-    Rendered, Subscriptions, cmd, http,
+    Rendered, Subscriptions, cmd, http, tcp,
 };
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
@@ -99,6 +99,45 @@ impl Module for Runner {
     }
 }
 
+/// A service that runs its checks over a tcp session: PING once connected, the reply is the
+/// result.
+#[derive(Default)]
+struct Pinger;
+
+impl Module for Pinger {
+    type Msg = ();
+    fn update(&mut self, event: ModuleEvent<()>) -> Vec<Cmd> {
+        match event {
+            ModuleEvent::Run { tag, .. } => vec![cmd::driver(
+                format!("{tag}:s"),
+                &tcp::Request::session("db", 6379).call(),
+            )],
+            ModuleEvent::Reply { tag, result } => {
+                let run = tag.trim_end_matches(":s");
+                match tcp::Event::parse(&result.unwrap()) {
+                    Ok(tcp::Event::Connected { .. }) => vec![cmd::write(&tag, b"PING\r\n")],
+                    Ok(tcp::Event::ChunkBase64(chunk)) => {
+                        let text = String::from_utf8(services_sdk::driver::decode(&chunk).unwrap());
+                        let rendered = Rendered {
+                            text: text.unwrap(),
+                            ..Rendered::default()
+                        };
+                        vec![cmd::result(run, &rendered, &json!({}))]
+                    }
+                    _ => Vec::new(),
+                }
+            }
+            _ => Vec::new(),
+        }
+    }
+    fn subscriptions(&self) -> Subscriptions {
+        Subscriptions {
+            run: true,
+            ..Subscriptions::default()
+        }
+    }
+}
+
 /// History: saves every response (`after_response`).
 #[derive(Default)]
 struct History;
@@ -135,6 +174,10 @@ fn linked() -> Vec<registry::Module> {
             Box::new(Linked::<Runner>::default()),
         ),
         (
+            manifest("pinger", "service", 3),
+            Box::new(Linked::<Pinger>::default()),
+        ),
+        (
             manifest("history", "panel", 1),
             Box::new(Linked::<History>::default()),
         ),
@@ -153,6 +196,7 @@ struct Sent {
 struct Fake {
     sent: RefCell<Vec<Sent>>,
     stopped: RefCell<Vec<u32>>,
+    written: RefCell<Vec<(u32, String)>>,
     timers: RefCell<BTreeMap<i32, Callback<()>>>,
     cleared: RefCell<Vec<i32>>,
     serial: Cell<i32>,
@@ -168,6 +212,10 @@ impl Platform for Fake {
     }
     fn stop(&self, id: u32) -> Result<(), String> {
         self.stopped.borrow_mut().push(id);
+        Ok(())
+    }
+    fn write(&self, id: u32, data: &str) -> Result<(), String> {
+        self.written.borrow_mut().push((id, data.to_owned()));
         Ok(())
     }
     fn stop_all(&self) -> Result<(), String> {
@@ -497,6 +545,34 @@ fn a_module_runs_its_check_with_a_lock_streams_output_and_finishes() {
     assert!(!end.running);
     assert!(end.status.ends_with(" · OK · 1 row"), "{}", end.status);
     assert!(window.fake.locks.borrow().is_empty());
+}
+
+#[test]
+fn a_module_writes_to_its_session_and_the_finished_run_closes_it() {
+    let window = Window::new();
+    window.kernel.set_service("pinger");
+    window.run("pinger", "x", "p").unwrap();
+    let id = window.fake.last();
+    let message = window.fake.message(id);
+    assert_eq!(
+        (message["driver"].clone(), message["op"].clone()),
+        (json!("tcp"), json!("stream"))
+    );
+    assert_eq!(message["request"]["session"], true);
+    window
+        .fake
+        .answer(id, Reply::Data(json!({"connected": {"remote": null}})));
+    assert_eq!(*window.fake.written.borrow(), [(id, "UElORw0K".to_owned())]);
+
+    window
+        .fake
+        .answer(id, Reply::Data(json!({"chunkBase64": "K1BPTkcNCg=="})));
+    assert_eq!(*window.fake.stopped.borrow(), [id]);
+    let (_, responses) = window.heard();
+    assert!(
+        responses.last().unwrap().1.contains("+PONG"),
+        "{responses:?}"
+    );
 }
 
 #[test]

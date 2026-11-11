@@ -10,6 +10,10 @@ pub enum Stage {
     Connect,
     Tls,
     Send,
+    /// Writing to an open connection (a tcp session).
+    Write,
+    /// Reading from an open connection (a tcp session).
+    Read,
     Timeout,
     Status,
     Decode,

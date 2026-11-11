@@ -1,5 +1,5 @@
 use super::framing::{FrameReader, encode, response_frames};
-use crate::{Result, Runtime};
+use crate::{Result, Runtime, drivers};
 use serde_json::{Value, json};
 use std::{
     collections::HashMap,
@@ -63,6 +63,7 @@ pub async fn run(
     let root_cancel = CancellationToken::new();
     let mut active = HashMap::new();
     let mut agent_replies: HashMap<String, mpsc::Sender<Value>> = HashMap::new();
+    let mut inputs: HashMap<String, (mpsc::Sender<Value>, CancellationToken)> = HashMap::new();
     let mut tasks = JoinSet::new();
     let mut failure = None;
     let mut writer_finished = false;
@@ -86,6 +87,7 @@ pub async fn run(
                     }
                     active.retain(|_,token:&mut CancellationToken|!token.is_cancelled());
                     agent_replies.retain(|_,sender|!sender.is_closed());
+                    inputs.retain(|_,(sender,_)|!sender.is_closed());
                     let id=message.get("id").cloned().unwrap_or(Value::Null);
                     let key=id.to_string();
                     if message["type"]=="stop"{
@@ -97,6 +99,14 @@ pub async fn run(
                             && sender.try_send(message).is_err()
                             && let Some(token)=active.get(&key) {
                             token.cancel();
+                        }
+                        continue;
+                    }
+                    if message["type"]=="input" {
+                        if let Some((sender,overflow))=inputs.get(&key)
+                            && let Err(mpsc::error::TrySendError::Full(_))=sender.try_send(message) {
+                            overflow.cancel();
+                            inputs.remove(&key);
                         }
                         continue;
                     }
@@ -139,10 +149,14 @@ pub async fn run(
                     }else if message["service"]=="drivers" && message["op"]=="stream" {
                         let token=root_cancel.child_token();
                         let cleanup=token.clone();
-                        if let Some(previous)=active.insert(key,token.clone()){previous.cancel();}
+                        if let Some(previous)=active.insert(key.clone(),token.clone()){previous.cancel();}
+                        let (input_tx,messages)=mpsc::channel(drivers::INPUT_QUEUE);
+                        let overflow=CancellationToken::new();
+                        inputs.insert(key,(input_tx,overflow.clone()));
+                        let input=drivers::Input{messages,overflow};
                         tasks.spawn(async move {
                             let (event_tx,mut event_rx)=mpsc::channel(128);
-                            let run=runtime.drivers.stream(&message,token,event_tx);
+                            let run=runtime.drivers.stream(&message,token,event_tx,input);
                             tokio::pin!(run);
                             let result=loop {
                                 tokio::select! {

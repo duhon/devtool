@@ -413,23 +413,31 @@ impl Transport {
         }
     }
     pub fn agent_reply(&self, id: u32, call_id: &str, result: Value) -> Result<(), String> {
-        let message = json!({"id":id,"type":"agentToolResult","callId":call_id,"result":result});
-        if self.native {
-            if !self.pending.borrow().contains_key(&id) {
-                return Err("Agent turn is no longer connected".into());
-            }
-            self.port
-                .borrow()
-                .as_ref()
-                .ok_or("Native host is disconnected".into())
-                .and_then(|port| {
-                    call(port, "postMessage", &[js(&message)])
-                        .map(|_| ())
-                        .map_err(error)
-                })
-        } else {
-            Err("The native host is unavailable.".into())
+        if self.native && !self.pending.borrow().contains_key(&id) {
+            return Err("Agent turn is no longer connected".into());
         }
+        self.post(&json!({"id":id,"type":"agentToolResult","callId":call_id,"result":result}))
+    }
+    /// Writes `data` (base64) to the session stream running as request `id`.
+    pub fn input(&self, id: u32, data: &str) -> Result<(), String> {
+        if self.native && !self.pending.borrow().get(&id).is_some_and(|p| p.stream) {
+            return Err("The stream is no longer running".into());
+        }
+        self.post(&json!({"id":id,"type":"input","dataBase64":data}))
+    }
+    fn post(&self, message: &Value) -> Result<(), String> {
+        if !self.native {
+            return Err("The native host is unavailable.".into());
+        }
+        self.port
+            .borrow()
+            .as_ref()
+            .ok_or("Native host is disconnected".into())
+            .and_then(|port| {
+                call(port, "postMessage", &[js(message)])
+                    .map(|_| ())
+                    .map_err(error)
+            })
     }
     pub fn stop(&self, id: u32) -> Result<(), String> {
         if self.native {

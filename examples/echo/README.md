@@ -47,8 +47,9 @@ examples/echo/
 - `name`, `description` — shown in the tab and in Settings → Modules.
 - `abi` — the SDK ABI version (`services_sdk::ABI`, `2`); `app` — the application
   versions it works with (`">=4.0"`).
-- `drivers` — the drivers it calls and their versions (`{"http": "1"}`); the Kernel
-  refuses a module whose drivers the host lacks.
+- `drivers` — the drivers it calls and their versions (`{"http": "1"}`, or
+  `major.minor` such as `{"tcp": "1.1"}` for tcp sessions); the Kernel refuses a module
+  whose drivers the host lacks or has in an older minor version.
 - Optional: `order`, the tab or tool position and the order of the hooks; `toolbar`, the
   position of a panel's toolbar button when it differs from `order` (Export and Import sit
   at 2).
@@ -78,6 +79,7 @@ then `End`). The common ones:
 | Command | Does |
 | --- | --- |
 | `cmd::driver(tag, &DriverCall)` / `cmd::cancel(tag)` | Runs (cancels) a driver call on the host |
+| `cmd::write(tag, bytes)` | Writes to the module's own running tcp session `tag` |
 | `cmd::resolve(tag, text)`, `run::resolve_value` | Resolves `{{…}}` variables |
 | `cmd::output`, `cmd::run_status`, `cmd::result`, `cmd::fail` | Show and finish a run |
 | `cmd::kv_get/kv_put/kv_delete/kv_watch` | The module's own storage; `session` keys go with the Console session |
@@ -174,6 +176,14 @@ the module), `mysql::Request`, `process::Request` (a program in its own process 
 or `tcp::Request` (the fallback for protocols without a driver). A failed call answers
 with a `Failure` (`driver.rs`): where it failed and why. Drivers are minimal and know no
 services: anything service-specific (pagination, pacing, parsing) is the module's.
+
+A tcp session (`tcp::Request::session(host, port)`, driver `tcp` `1.1`) is a stream that
+keeps one connection open for a step-by-step protocol: it answers `connected`, then
+`chunkBase64` for whatever the peer sends (any boundaries), `written` for each
+`cmd::write(tag, bytes)` in order, and ends with the close reason (`closed`: peer, idle,
+limit) or a failure (stage `dns`, `connect`, `tls`, `read`, `write`…). `cmd::cancel(tag)`,
+Stop and unloading close it; it has no overall timeout and no idle limit unless `idleMs`
+is set. `caPem` adds a CA to the system roots for TLS.
 
 ## Tests
 

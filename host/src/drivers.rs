@@ -4,7 +4,9 @@
 //! `{"service":"drivers","driver":"http"|"grpc"|"mysql"|"process"|"tcp","op":"call"|"stream",
 //! "request":{…}}`. A call answers `{"ok":true,"result":…}`; a stream sends `data` events and
 //! ends with `exit`. A failure is `{"ok":false,"error":…,"failure":{"stage":…,"causes":[…]}}`.
-//! `stop` cancels by id; the failure stage is then `cancelled`.
+//! `stop` cancels by id; the failure stage is then `cancelled`. `{"type":"input","id":…,
+//! "dataBase64":…}` writes to the tcp session (`"session":true`) streaming as `id`; input for any
+//! other id is dropped.
 
 mod grpc;
 mod http;
@@ -21,6 +23,16 @@ use tokio_util::sync::CancellationToken;
 /// Connect timeout when the call sets none.
 pub const CONNECT_MS: u64 = 10_000;
 
+/// Input messages a stream holds before it fails.
+pub const INPUT_QUEUE: usize = 64;
+
+/// What the App sends a running stream: its `input` messages in order, and `overflow` once
+/// more than [`INPUT_QUEUE`] of them were waiting (none follow then).
+pub struct Input {
+    pub messages: mpsc::Receiver<Value>,
+    pub overflow: CancellationToken,
+}
+
 /// The drivers and their versions, for `health`.
 pub fn versions() -> Value {
     json!({
@@ -28,7 +40,7 @@ pub fn versions() -> Value {
         services_sdk::grpc::DRIVER: "1",
         services_sdk::mysql::DRIVER: "1",
         services_sdk::process::DRIVER: "1",
-        services_sdk::tcp::DRIVER: "1",
+        services_sdk::tcp::DRIVER: "1.1",
     })
 }
 
@@ -132,11 +144,13 @@ impl Drivers {
         }
     }
 
+    /// Only a tcp session takes `input`.
     pub async fn stream(
         &self,
         message: &Value,
         cancel: CancellationToken,
         events: mpsc::Sender<Value>,
+        input: Input,
     ) -> Result<Value, Failure> {
         use services_sdk::{grpc, http, mysql, tcp};
         match driver(message)? {
@@ -145,7 +159,12 @@ impl Drivers {
                 cancellable(self.grpc.run(request(message)?, Some(&events)), cancel).await
             }
             tcp::DRIVER => {
-                cancellable(self::tcp::run(request(message)?, Some(&events)), cancel).await
+                let request: tcp::Request = request(message)?;
+                if request.session {
+                    cancellable(self::tcp::session(request, &events, input), cancel).await
+                } else {
+                    cancellable(self::tcp::run(request, Some(&events)), cancel).await
+                }
             }
             mysql::DRIVER => {
                 self.mysql

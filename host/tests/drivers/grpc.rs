@@ -140,7 +140,7 @@ async fn grpc_call_moves_bytes_metadata_and_status() {
     let health = runtime.dispatch(&json!({"id": 0, "type": "health"})).await;
     assert_eq!(
         health["result"]["drivers"],
-        json!({"http": "1", "grpc": "1", "mysql": "1", "process": "1", "tcp": "1"})
+        json!({"http": "1", "grpc": "1", "mysql": "1", "process": "1", "tcp": "1.1"})
     );
 
     let request = grpc::Request::new(&format!("grpc://{target}"), "test.Echo", "Say")

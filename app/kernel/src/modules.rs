@@ -45,6 +45,12 @@ pub enum Effect {
         module: String,
         tag: String,
     },
+    /// Data (base64) for the session stream `tag` of the module.
+    Write {
+        module: String,
+        tag: String,
+        data: String,
+    },
     Timer {
         module: String,
         tag: String,
@@ -135,6 +141,9 @@ pub struct Loaded {
     view: Option<Node>,
     /// Tags of driver calls, timers and lock requests still running; `true` for streams.
     pending: BTreeMap<String, bool>,
+    /// Tags of the streams started as sessions (`session: true`): `driver.write` reaches
+    /// them while they are pending.
+    sessions: BTreeSet<String>,
     watched: BTreeSet<String>,
     held: BTreeSet<String>,
     /// Running checks and the lock names each holds.
@@ -245,6 +254,7 @@ impl Modules {
                 subscriptions: Subscriptions::default(),
                 view: None,
                 pending: BTreeMap::new(),
+                sessions: BTreeSet::new(),
                 watched: BTreeSet::new(),
                 held: BTreeSet::new(),
                 runs: BTreeMap::new(),
@@ -664,6 +674,11 @@ impl Modules {
                 }
                 let module = self.loaded.get_mut(id).expect("loaded");
                 module.pending.insert(cmd.tag.clone(), stream);
+                if stream && request["session"] == true {
+                    module.sessions.insert(cmd.tag.clone());
+                } else {
+                    module.sessions.remove(&cmd.tag);
+                }
                 vec![Effect::Driver {
                     module: owner,
                     tag: cmd.tag,
@@ -680,6 +695,18 @@ impl Modules {
                     }]
                 } else {
                     Vec::new()
+                }
+            }
+            "driver.write" => {
+                if module.pending.get(&cmd.tag) == Some(&true) && module.sessions.contains(&cmd.tag)
+                {
+                    vec![Effect::Write {
+                        module: owner,
+                        tag: cmd.tag,
+                        data: text("dataBase64"),
+                    }]
+                } else {
+                    self.refuse(id, &cmd.tag, "No session stream with this tag is running")
                 }
             }
             "vars.resolve" => {
