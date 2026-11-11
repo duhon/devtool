@@ -119,7 +119,11 @@ impl Module for Sessions {
                 self.offset = settings["timezoneOffset"].as_f64().unwrap_or_default();
                 Vec::new()
             }
-            Event::Shown | Event::Workspace => vec![cmd::workspace_list(LIST)],
+            Event::Shown | Event::Workspace => {
+                // A hidden panel's timer reply is dropped, so a poll may never have answered.
+                self.polling = false;
+                vec![cmd::workspace_list(LIST)]
+            }
             Event::Reply { tag, result } if tag == SAVING => {
                 self.polling = false;
                 let _ = result;

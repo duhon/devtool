@@ -293,7 +293,12 @@
   await testDriver.sessionsIdle();
   await activateSession(a);
   await open('hints');
-  await wait(()=>editorOf('console-hints').getValue().includes('other-window.invalid'),()=>`Explicitly switching back must load the saved winner: session ${testid('console-session-name').textContent} ${testid('console-session-name').dataset.sessionId}, hints ${JSON.stringify(editorOf('console-hints').getValue())}, status ${testid('console-hints-status')?.textContent}`);
+  try {
+    await wait(()=>editorOf('console-hints').getValue().includes('other-window.invalid'));
+  } catch (error) {
+    const saved=(await library()).sessions.find(session=>session.id===a)?.snapshot?.modules;
+    throw new Error(`Explicitly switching back must load the saved winner: session ${testid('console-session-name').dataset.sessionId}, hints ${JSON.stringify(editorOf('console-hints').getValue())}, status ${testid('console-hints-status')?.textContent}, saved ${JSON.stringify(saved)}`);
+  }
   await activateSession(b);
   await click(testid('console-service-terminal'));
   setSource(editorOf('console-editor'),"#check session-busy\n#target\nsh -c\n#payload\nprintf session-running; sleep 30");
@@ -301,7 +306,8 @@
   await wait(()=>testid('console-main-status').classList.contains('is-running'));
   await open('sessions');
   await click(testid(`session-${a}`));
-  await wait(()=>testid('console-sessions-status').textContent.includes('ERROR'));
+  await wait(()=>testid('console-sessions-status').textContent.includes('ERROR'),
+    ()=>`Switching while running must fail: status ${testid('console-sessions-status').textContent}, session ${current()}, running ${testid('console-main-status').className} ${testid('console-main-status').textContent}, busy ${testid('console-session-name').dataset.busyReason}`);
   assert(current()===b,'Switching must be rejected while any service request is running');
   assert(testid('console-main-status').classList.contains('is-running'),'Rejected switching must not cancel work implicitly');
   await click(testid('console-stop'));
