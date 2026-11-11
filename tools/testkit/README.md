@@ -36,5 +36,8 @@ installations, environment files and Variables are disposable.
 
 Timing checks have no fixed millisecond limits: each compares a median of
 several runs with its median on the reference machine, scaled by a fixed
-workload timed next to the check, plus 10%. `SERVICES_BROWSER_CPU_THROTTLE=4`
-slows every page's CPU fourfold to reproduce slow runners.
+workload timed next to the check, plus 10%. CI runners (`CI` set) use their own
+references. `SERVICES_BROWSER_TIMING=measure` records timings in the scenario
+receipts without checking them; running the release workflow by hand does this
+on the CI runner and never publishes. `SERVICES_BROWSER_CPU_THROTTLE=4` slows
+every page's CPU fourfold to reproduce slow runners.

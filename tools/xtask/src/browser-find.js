@@ -103,8 +103,8 @@
   testid('find-replacement').select();
   await type('pin');
   // Medians of replace-and-undo cycles; polling every millisecond keeps the wait out of the time.
-  const {waitFor,timed,budget}=testDriver;
-  const REPLACE_ALL_MS=255, UNDO_MS=111;
+  const {waitFor,timed,budget,within,reference}=testDriver;
+  const {REPLACE_ALL_MS, UNDO_MS}=reference({local:{REPLACE_ALL_MS:255, UNDO_MS:111}, ci:{REPLACE_ALL_MS:255, UNDO_MS:111}});
   const undone=[];
   const elapsed=await timed(5,async()=>{
     await query('needle');
@@ -125,8 +125,8 @@
   });
   const undoMs=undone.sort((a,b)=>a-b)[undone.length>>1];
   const replaceBudget=budget(REPLACE_ALL_MS), undoBudget=budget(UNDO_MS);
-  assert(elapsed<replaceBudget,`Replace All of ${lines} matches took ${Math.round(elapsed)} ms, budget ${Math.round(replaceBudget)} ms`);
-  assert(undoMs<undoBudget,`Undo of ${lines} replacements took ${Math.round(undoMs)} ms, budget ${Math.round(undoBudget)} ms`);
+  within('replaceAllMs',elapsed,replaceBudget,`Replace All of ${lines} matches took ${Math.round(elapsed)} ms, budget ${Math.round(replaceBudget)} ms`);
+  within('undoMs',undoMs,undoBudget,`Undo of ${lines} replacements took ${Math.round(undoMs)} ms, budget ${Math.round(undoBudget)} ms`);
   await key('Escape');
   await wait(()=>!bar());
   return true;

@@ -131,7 +131,7 @@ impl Cdp {
                         .await?;
                         Box::pin(self.call(
                             "Page.addScriptToEvaluateOnNewDocument",
-                            json!({"source":INIT,"runImmediately":true}),
+                            json!({"source":format!("{}\n{INIT}", timing()),"runImmediately":true}),
                             Some(&target),
                         ))
                         .await?;
@@ -265,7 +265,7 @@ impl Cdp {
         throttle(self, &session).await?;
         self.call(
             "Page.addScriptToEvaluateOnNewDocument",
-            json!({"source":init}),
+            json!({"source":format!("{}\n{init}", timing())}),
             Some(&session),
         )
         .await?;
@@ -313,6 +313,17 @@ impl Cdp {
         }
         Ok(())
     }
+}
+
+/// The timing references the test driver checks against: CI runners (`CI` is set) have their
+/// own. `SERVICES_BROWSER_TIMING=measure` records timings in receipts without checking them.
+fn timing() -> String {
+    let ci = std::env::var("CI").is_ok_and(|ci| !ci.is_empty() && ci != "false");
+    let measure = std::env::var("SERVICES_BROWSER_TIMING").is_ok_and(|mode| mode == "measure");
+    format!(
+        "globalThis.testTiming={};",
+        json!({"environment": if ci { "ci" } else { "local" }, "measure": measure})
+    )
 }
 
 /// `SERVICES_BROWSER_CPU_THROTTLE=4` slows a page's CPU fourfold to reproduce slow runners.
@@ -832,9 +843,14 @@ fn scenarios() -> Vec<Scenario> {
             "find",
             Core,
             60,
-            "Find and Replace in the focused editor: scope, navigation, options, Replace All outside responses, one undo, large documents",
-            script(include_str!("browser-find.js")),
-        ),
+            "Find and Replace in the focused editor: scope, navigation, options, Replace All outside responses, one undo, large documents (prints a receipt)",
+            Kind::Script {
+                setup: Setup::Fresh,
+                script: include_str!("browser-find.js"),
+                receipt: Some("globalThis.timings"),
+            },
+        )
+        .exclusive(),
         scenario(
             "layout",
             Core,
@@ -2454,6 +2470,7 @@ mod tests {
             exclusive,
             [
                 "close-window",
+                "find",
                 "layout",
                 "page-tools",
                 "perf-baseline",

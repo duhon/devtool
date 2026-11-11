@@ -412,10 +412,15 @@
   };
   // Timing budgets scale with this machine: a fixed JSON, regex and sort workload is timed
   // against its median on the reference machine, so a slow runner or a local regression both
-  // show up as the same ratio instead of against a fixed number of milliseconds.
-  const SPEED_REFERENCE_MS = 8.7;
-  // A measurement may exceed its reference-machine median by this much.
+  // show up as the same ratio instead of against a fixed number of milliseconds. CI runners
+  // have their own references: their DOM and JS costs do not scale alike. xtask sets
+  // testTiming; with measure on, timings are only recorded, to take new references from.
+  const timing = globalThis.testTiming ?? { environment: 'local', measure: false };
+  const reference = references => references[timing.environment];
+  const SPEED_REFERENCE_MS = reference({ local: 8.7, ci: 8.7 });
+  // A measurement may exceed its reference median by this much.
   const BUDGET_MARGIN = 1.1;
+  const timings = globalThis.timings = { environment: timing.environment, calibrationMs: [] };
   const speedWorkload = () => {
     const text = JSON.stringify(Array.from({ length: 16000 }, (_, id) => ({ id, name: `row ${id} 😀`, enabled: id % 2 === 0 })));
     const rows = JSON.parse(text);
@@ -428,14 +433,21 @@
   // Load changes during a run, so every budget recalibrates next to its measurement.
   const speed = () => {
     for (let i = 0; i < 3; i++) speedWorkload();
-    return middle(Array.from({ length: 9 }, () => {
+    const ms = middle(Array.from({ length: 9 }, () => {
       const started = performance.now();
       speedWorkload();
       return performance.now() - started;
-    })) / SPEED_REFERENCE_MS;
+    }));
+    timings.calibrationMs.push(ms);
+    return ms / SPEED_REFERENCE_MS;
   };
-  // A median measured on the reference machine, scaled to this one, plus the margin.
+  // A reference median scaled to this machine, plus the margin.
   const budget = ms => ms * speed() * BUDGET_MARGIN;
+  // Records a timing and checks it against its limit, unless only measuring.
+  const within = (name, value, limit, message) => {
+    timings[name] = value;
+    if (!timing.measure) assert(value < limit, typeof message === 'function' ? message() : message);
+  };
   // The median duration of several runs; a run returns its own duration or is timed whole.
   const timed = async (runs, run) => {
     const samples = [];
@@ -446,7 +458,7 @@
     }
     return middle(samples);
   };
-  globalThis.testDriver = { assert, sleep, seen, wait, waitFor, during, holds, settle, stable, frames, visible, find, testid, editorOf, editorAt, key, type, move, input, speed, budget, timed, BUDGET_MARGIN,
+  globalThis.testDriver = { assert, sleep, seen, wait, waitFor, during, holds, settle, stable, frames, visible, find, testid, editorOf, editorAt, key, type, move, input, speed, budget, timed, within, reference, BUDGET_MARGIN,
     click, doubleClick, button, openConsole, activateSession, sessionsIdle, createSession, deleteSession, setSource, commitRestUrl, candidates, suggest, pick, pickThenEnter,
     assertNativeScrollbars, nativeTrackPaint, sessionLibrary, nativeHold, settingsTab, addFolderSource, fill, choose, openPanel, closePanel, clearSessions: () => sessionRecord('delete') };
   globalThis.testNativeHealth = () => new Promise(resolve => {

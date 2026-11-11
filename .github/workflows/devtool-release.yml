@@ -3,6 +3,8 @@ name: Services DevTools release
 on:
   push:
     branches: [main]
+  # Takes the CI timing references of the browser scenarios: builds and measures, never publishes.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -31,7 +33,7 @@ jobs:
 
   build:
     needs: plan
-    if: needs.plan.outputs.publish == 'true'
+    if: needs.plan.outputs.publish == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: macos-15
     timeout-minutes: 45
     env:
@@ -78,7 +80,17 @@ jobs:
           # Channel installs on macOS drop the .app bundle name and break Chrome's child processes
           # (browser-actions/setup-chrome#658), so pin a version number.
           chrome-version: "156"
+      - name: Measure browser timing references
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
+          SERVICES_BROWSER_TIMING: measure
+        run: |
+          for run in 1 2 3; do
+            cargo run --locked -p xtask -- test browser --scenario table-performance --scenario find
+          done
       - name: Browser acceptance scenarios
+        if: github.event_name == 'push'
         env:
           CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
         # The macOS arm64 runner has 3 vCPU and 7 GB; each job runs its own Chrome, host and fixtures.
@@ -97,6 +109,7 @@ jobs:
 
   publish:
     needs: build
+    if: github.event_name == 'push'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

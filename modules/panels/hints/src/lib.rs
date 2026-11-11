@@ -12,6 +12,9 @@ use std::collections::BTreeMap;
 pub const DRAFTS: &str = "drafts";
 const DOCUMENT: &str = "document";
 const SOURCE: &str = "source:";
+/// The tags of a valid save: the file, and the session without the service's draft.
+const SAVE: &str = "save";
+const SAVE_DRAFTS: &str = "save-drafts";
 
 #[derive(Serialize, Deserialize)]
 pub enum Msg {
@@ -28,6 +31,8 @@ pub struct Hints {
     drafts: Map<String, Value>,
     /// The level of the last status by service, shown as the title's light.
     light: BTreeMap<String, String>,
+    /// Answers still due for valid saves: OK shows once the file and the session have them.
+    saving: usize,
 }
 
 /// Checks hints the way completion reads them.
@@ -104,25 +109,26 @@ impl Hints {
             Ok(()) => {
                 self.drafts.remove(&service);
                 let file = format!("hints/{service}.md");
-                let save = cmd::sources_write("save", &file, &text);
+                let save = cmd::sources_write(SAVE, &file, &text);
                 self.saved.insert(service, text);
-                vec![save, self.put_drafts(), self.contribution()]
+                self.saving += 2;
+                vec![save, self.put_drafts(SAVE_DRAFTS), self.contribution()]
             }
             Err(error) => {
                 self.drafts.insert(service, json!(text));
                 vec![
-                    self.put_drafts(),
+                    self.put_drafts(""),
                     self.status(&format!("ERROR: Hints validation: {error}"), "error"),
                 ]
             }
         }
     }
 
-    fn put_drafts(&self) -> Cmd {
+    fn put_drafts(&self, tag: &str) -> Cmd {
         if self.drafts.is_empty() {
-            cmd::kv_delete("", DRAFTS)
+            cmd::kv_delete(tag, DRAFTS)
         } else {
-            cmd::kv_put("", DRAFTS, &Value::Object(self.drafts.clone()), true)
+            cmd::kv_put(tag, DRAFTS, &Value::Object(self.drafts.clone()), true)
         }
     }
 }
@@ -141,7 +147,11 @@ impl Module for Hints {
     fn update(&mut self, event: Event<Msg>) -> Vec<Cmd> {
         match event {
             Event::Init { .. } | Event::Workspace => self.load(),
-            Event::Shown => vec![cmd::document_read(DOCUMENT)],
+            Event::Shown => {
+                // A hidden panel's answers are dropped, so they may never come.
+                self.saving = 0;
+                vec![cmd::document_read(DOCUMENT)]
+            }
             Event::Document(check) if check.service != self.service => {
                 self.service = check.service;
                 Vec::new()
@@ -179,11 +189,21 @@ impl Module for Hints {
                     }
                     vec![self.contribution()]
                 }
-                ("save", Ok(_)) => vec![self.status("Hints save · OK", "ok")],
-                ("save", Err(failure)) => vec![self.status(
-                    &format!("Hints save · ERROR · {}", failure.message),
-                    "error",
-                )],
+                (SAVE | SAVE_DRAFTS, Ok(_)) => {
+                    self.saving = self.saving.saturating_sub(1);
+                    if self.saving == 0 {
+                        vec![self.status("Hints save · OK", "ok")]
+                    } else {
+                        Vec::new()
+                    }
+                }
+                (SAVE | SAVE_DRAFTS, Err(failure)) => {
+                    self.saving = self.saving.saturating_sub(1);
+                    vec![self.status(
+                        &format!("Hints save · ERROR · {}", failure.message),
+                        "error",
+                    )]
+                }
                 (_, Err(failure)) => {
                     vec![self.status(&format!("ERROR: {}", failure.message), "error")]
                 }

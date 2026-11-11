@@ -44,6 +44,16 @@ fn hints_are_read_from_and_saved_to_the_local_source() {
     assert_eq!(save.args()["name"], "hints/rest.md");
     assert_eq!(save.args()["text"], "# Mine\n/me");
     assert_eq!(contributed(&commands), json!({"rest": "# Mine\n/me"}));
+    let saved = |commands: &[services_sdk::Cmd]| {
+        commands.iter().any(|command| {
+            command.name == "status.set" && command.args()["text"] == "Hints save · OK"
+        })
+    };
+    assert!(!saved(&reply(&mut hints, "save", json!(null))));
+    assert!(
+        saved(&reply(&mut hints, "save-drafts", json!(null))),
+        "OK shows once the session has the save too"
+    );
 
     let commands = hints.update(Event::Ui {
         msg: Msg::Edit,

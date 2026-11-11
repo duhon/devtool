@@ -1,9 +1,13 @@
 (async () => {
+  const {assert, wait, click, testid, editorOf, setSource, budget, timed, within, reference, BUDGET_MARGIN} = testDriver;
   // Medians on the reference machine; testDriver.budget scales them to this one.
-  const TOKENIZE_MS=31, FOLD_MS=27, VERTICAL_FOLD_MS=6.5;
+  const {TOKENIZE_MS, FOLD_MS, VERTICAL_FOLD_MS}=reference({
+    local:{TOKENIZE_MS:31, FOLD_MS:27, VERTICAL_FOLD_MS:6.5},
+    ci:{TOKENIZE_MS:31, FOLD_MS:27, VERTICAL_FOLD_MS:6.5}});
   // Whole-table to one-screen cost ratios on the reference machine; they do not need scaling.
-  const SELECT_RATIO=1.12, PAINT_RATIO=1;
-  const {assert, wait, click, testid, editorOf, setSource, budget, timed, BUDGET_MARGIN} = testDriver;
+  const {SELECT_RATIO, PAINT_RATIO}=reference({
+    local:{SELECT_RATIO:1.12, PAINT_RATIO:1},
+    ci:{SELECT_RATIO:1.12, PAINT_RATIO:1}});
   await wait(() => document.querySelector('.console-editor-host .editor'), 'Console editor shown');
   await click(testid('console-service-mysql'));
   const mysqlConsole = editorOf('console-editor'), previous = mysqlConsole.getValue();
@@ -40,7 +44,7 @@
       return ms;
     });
     const tokenizeBudget=budget(TOKENIZE_MS);
-    assert(tokenizeMs<tokenizeBudget,`30 dense JSON rows must tokenize within ${tokenizeBudget}ms, got ${tokenizeMs}ms`);
+    within('tokenizeMs',tokenizeMs,tokenizeBudget,`30 dense JSON rows must tokenize within ${tokenizeBudget}ms, got ${tokenizeMs}ms`);
     await new Promise(resolve=>requestAnimationFrame(resolve));
     editor.setSize(1000,400);
     // One pass takes under a millisecond, so a run repeats it to rise above timer resolution.
@@ -50,7 +54,7 @@
           assert(!editor.foldRange({line,ch:0}),'Data rows must never fold');
     });
     const foldBudget=budget(FOLD_MS);
-    assert(foldMs<foldBudget,`Owned output fold checks must not re-tokenize rows: ${foldMs}ms, budget ${foldBudget}ms`);
+    within('foldMs',foldMs,foldBudget,`Owned output fold checks must not re-tokenize rows: ${foldMs}ms, budget ${foldBudget}ms`);
     editor.scrollTo(0,editor.heightAtLine(9000,'local'));
     await wait(()=>editor.getViewport().from>8900,'A large document must scroll to distant rows');
     await wait(()=>[...host.querySelectorAll('pre.editor-line')].some(line=>line.textContent.startsWith('| 899')),
@@ -87,9 +91,9 @@
     const selectMs=await selectRuns(lastLine), selectionPaintMs=await paintRuns(lastLine);
     editor.setSelection({line:0,ch:0},lastLine,{scroll:false});
     await new Promise(resolve=>setTimeout(resolve,0));
-    assert(selectionPaintMs<screen.paintMs*PAINT_RATIO*BUDGET_MARGIN,
+    within('paintRatio',selectionPaintMs/screen.paintMs,PAINT_RATIO*BUDGET_MARGIN,
       `Painting a 10,000-row selection must cost about one screen: ${selectionPaintMs}ms vs ${screen.paintMs}ms`);
-    assert(selectMs<screen.selectMs*SELECT_RATIO*BUDGET_MARGIN,
+    within('selectRatio',selectMs/screen.selectMs,SELECT_RATIO*BUDGET_MARGIN,
       `Selecting 10,000 rows must cost about one screen: ${selectMs}ms vs ${screen.selectMs}ms`);
     assert(host.querySelectorAll('.editor-selected').length>0
       &&host.querySelectorAll('.editor-selected').length<100
@@ -124,7 +128,7 @@
       return performance.now()-started;
     });
     const verticalFoldBudget=budget(VERTICAL_FOLD_MS);
-    assert(verticalFoldMs<verticalFoldBudget,
+    within('verticalFoldMs',verticalFoldMs,verticalFoldBudget,
       `10,000 nested JSON objects and cached fold checks must stay within ${verticalFoldBudget}ms: ${verticalFoldMs}ms`);
     editor.replaceRange('  ',{line:coldFold.to.line,ch:0});
     const changedFold=editor.foldRange({line:coldLine,ch:0});
@@ -134,7 +138,7 @@
     assert(!editor.foldRange({line:coldLine,ch:0}),
       'A JSON fold must never consume a closing bracket outside its record');
     globalThis.tablePerformanceReceipt={rows:10000,characters:source.length,
-      tokenizeMs,foldMs,verticalFoldMs,selectMs,selectionPaintMs,screen,selectRatio:selectMs/screen.selectMs,paintRatio:selectionPaintMs/screen.paintMs,speed:testDriver.speed()};
+      tokenizeMs,foldMs,verticalFoldMs,selectMs,selectionPaintMs,screen,timings:globalThis.timings};
   } finally {
     editor?.destroy();
     host.remove();
