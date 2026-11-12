@@ -18,7 +18,7 @@ percent-encoding = "2"
 
 [dev-dependencies]
 prost = "0.13"
-wasmi = "0.46"
+wasmi = "0.47"
 services-native = { path = "../../../host" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
 tokio-util = "0.7"
