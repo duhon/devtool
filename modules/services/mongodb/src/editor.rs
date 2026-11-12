@@ -191,15 +191,42 @@ const RESPONSE_UNKNOWN: u8 = 0;
 const RESPONSE_ROWS: u8 = 1;
 const RESPONSE_JSON: u8 = 2;
 
-/// Payload tokens of a line: the JSON lexer with `$operators` styled.
+/// Payload tokens of a line: the JSON lexer, with the names of the language set apart.
+/// Keys are `property`; `$operators` and stages are `keyword`; the wrappers of Extended
+/// JSON are `type`; the fixed fields of a command (`pipeline`, `from`, …) are `attribute`;
+/// strings that name a field (`"$storeId"`, `"$$sid"`) are `variable-3`.
 fn payload_tokens(line: &str, state: &mut json::State) -> Vec<Token> {
     let mut tokens = json::tokens(line, state);
     for token in &mut tokens {
         let start = token.start as usize;
         let text = &line[start..start + token.len as usize];
-        if token.kind == "property" && text.trim_matches(['"', '\'']).starts_with('$') {
-            token.kind = "keyword".into();
-        }
+        let name = text.trim_matches(['"', '\'']);
+        let (key, quoted) = match token.kind.as_str() {
+            "string property" => (true, true),
+            "property" => (true, false),
+            "string" => (false, true),
+            _ => continue,
+        };
+        let style = if key {
+            if payload::wrapper(name) {
+                "type"
+            } else if name.starts_with('$') {
+                "keyword"
+            } else if payload::field(name) {
+                "attribute"
+            } else {
+                continue;
+            }
+        } else if text.starts_with(['"', '\'']) && name.starts_with('$') && name.len() > 1 {
+            "variable-3"
+        } else {
+            continue;
+        };
+        token.kind = if quoted {
+            format!("string {style}")
+        } else {
+            style.into()
+        };
     }
     tokens
 }

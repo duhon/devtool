@@ -13,6 +13,9 @@
 - Discovery starts on its own once the target is complete and samples the collections the
   check names; completion proposes keys, values (collections, field paths, `$$variables`,
   finite sets), operators with descriptions and stage skeletons, scoped to the collection
-  of nested `$lookup`/`$unionWith` pipelines. Discovery only reads.
+  of nested `$lookup`/`$unionWith` pipelines. Objects and arrays are inserted as indented
+  blocks. Discovery only reads.
+- The payload is highlighted by token: keys, `$operators`, command fields, Extended JSON
+  wrappers, field paths, strings, numbers and atoms.
 - `#options`: Timeout, Connect-Timeout, Database, Max-Documents, Batch-Size, Format,
   Columns-Type. The Agent can load the `module-mongodb` skill.

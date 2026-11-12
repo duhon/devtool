@@ -219,19 +219,28 @@ fn picking_a_stage_inserts_its_skeleton() {
     let stages = offer(&mut module, r#"{"pipeline": [|]}"#);
     assert_eq!(
         insert_of(&stages, "$lookup"),
-        r#"{"$lookup": {"from": "$0", "localField": "", "foreignField": "", "as": ""}}"#
+        "{\n  \"$lookup\": {\n    \"from\": \"$0\",\n    \"localField\": \"\",\n    \"foreignField\": \"\",\n    \"as\": \"\"\n  }\n}"
     );
     assert_eq!(
         insert_of(&stages, "$lookup (pipeline)"),
-        r#"{"$lookup": {"from": "$0", "let": {}, "pipeline": [], "as": ""}}"#
+        "{\n  \"$lookup\": {\n    \"from\": \"$0\",\n    \"let\": {},\n    \"pipeline\": [],\n    \"as\": \"\"\n  }\n}"
     );
-    assert_eq!(insert_of(&stages, "$group"), r#"{"$group": {"_id": "$0"}}"#);
-    assert_eq!(insert_of(&stages, "$match"), r#"{"$match": {$0}}"#);
-    assert_eq!(insert_of(&stages, "$unwind"), r#"{"$unwind": "$$0"}"#);
-    let inside = offer(&mut module, r#"{"pipeline": [{"$lo|"}]}"#);
     assert_eq!(
-        insert_of(&inside, "$lookup"),
-        r#"$lookup": {"from": "$0", "localField": "", "foreignField": "", "as": ""}"#
+        insert_of(&stages, "$group"),
+        "{\n  \"$group\": {\n    \"_id\": \"$0\"\n  }\n}"
+    );
+    assert_eq!(
+        insert_of(&stages, "$match"),
+        "{\n  \"$match\": {\n    $0\n  }\n}"
+    );
+    assert_eq!(
+        insert_of(&stages, "$unwind"),
+        "{\n  \"$unwind\": \"$$0\"\n}"
+    );
+    let inside = offer(&mut module, r#"{"pipeline": [{"$gr|"}]}"#);
+    assert_eq!(
+        insert_of(&inside, "$group"),
+        "$group\": {\n  \"_id\": \"$0\"\n}"
     );
     let keyed = offer(&mut module, r#"{"pipeline": [{"|": {}}]}"#);
     assert_eq!(insert_of(&keyed, "$lookup"), "$lookup");
@@ -240,22 +249,53 @@ fn picking_a_stage_inserts_its_skeleton() {
 }
 
 #[test]
+fn blocks_follow_the_indentation_of_the_line() {
+    let mut module = seeded("");
+    let nested = offer(&mut module, "{\n  \"pipeline\": [\n    |\n  ]\n}");
+    assert_eq!(
+        insert_of(&nested, "$match"),
+        "{\n      \"$match\": {\n        $0\n      }\n    }"
+    );
+    let key = offer(
+        &mut module,
+        "{\n  \"pipeline\": [\n    {\n      \"|\"\n    }\n  ]\n}",
+    );
+    assert_eq!(
+        insert_of(&key, "$match"),
+        "$match\": {\n        $0\n      }"
+    );
+    let filter = offer(&mut module, "{\n  |\n}");
+    assert_eq!(
+        insert_of(&filter, "pipeline"),
+        "\"pipeline\": [\n    $0\n  ]"
+    );
+}
+
+#[test]
 fn an_empty_payload_starts_with_the_shape_of_the_action() {
     let mut module = seeded("");
     for (action, label, insert) in [
-        ("aggregate", r#"{"pipeline": []}"#, r#"{"pipeline": [$0]}"#),
-        ("find", r#"{"filter": {}}"#, r#"{"filter": {$0}}"#),
+        (
+            "aggregate",
+            r#"{"pipeline": []}"#,
+            "{\n  \"pipeline\": [\n    $0\n  ]\n}",
+        ),
+        (
+            "find",
+            r#"{"filter": {}}"#,
+            "{\n  \"filter\": {\n    $0\n  }\n}",
+        ),
         (
             "update",
             r#"{"filter": {}, "update": {"$set": {}}}"#,
-            r#"{"filter": {$0}, "update": {"$set": {}}}"#,
+            "{\n  \"filter\": {\n    $0\n  },\n  \"update\": {\n    \"$set\": {}\n  }\n}",
         ),
         (
             "insert",
             r#"{"documents": [{}]}"#,
-            r#"{"documents": [{$0}]}"#,
+            "{\n  \"documents\": [\n    {\n      $0\n    }\n  ]\n}",
         ),
-        ("distinct", r#"{"key": ""}"#, r#"{"key": "$0"}"#),
+        ("distinct", r#"{"key": ""}"#, "{\n  \"key\": \"$0\"\n}"),
     ] {
         let text = format!(
             "#target\nmongodb://h/gamelib\n#collection\nstores\n#action\n{action}\n#payload\n"

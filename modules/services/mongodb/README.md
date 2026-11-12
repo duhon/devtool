@@ -88,7 +88,14 @@ Completion knows the structure of the payload, like GraphQL's:
 - scope: stages inside `$lookup`/`$unionWith` pipelines complete the fields of their own
   collection; `$facet` and `$graphLookup` are followed too;
 - skeletons: picking `$lookup`, `$group`, `$match`, … inserts the stage with the cursor in
-  the first value; an empty payload offers the starter of the action.
+  the first value; an empty payload offers the starter of the action. Objects and arrays
+  are inserted as blocks laid out like JSON completion: the cursor on its own line, indented
+  two spaces deeper than the line, the closing bracket at the indentation of the line.
+
+Highlighting tells apart data keys (`property`), `$operators` and stages (`keyword`), the
+fixed fields of a command (`pipeline`, `from`, … as `attribute`), Extended JSON wrappers
+(`type`), field paths such as `"$storeId"` and `"$$sid"` (`variable-3`), strings, numbers,
+`true`/`false`/`null` and comments.
 
 Discovery only reads, uses short timeouts, is cached per target, database and collection,
 and fails softly with a status note.

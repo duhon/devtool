@@ -7,6 +7,7 @@ pub mod action;
 pub mod config;
 pub mod discovery;
 pub mod editor;
+pub mod layout;
 pub mod mql;
 pub mod payload;
 pub mod render;

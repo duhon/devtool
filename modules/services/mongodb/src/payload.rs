@@ -4,6 +4,7 @@
 //! what comes next: a key, a value, an element or a skeleton of a whole stage.
 
 use crate::editor::Catalog;
+use crate::layout;
 use crate::mql::{self, Snippets, Table};
 use services_sdk::Item;
 use services_sdk::lang::label;
@@ -676,6 +677,104 @@ fn mask(text: &str) -> String {
     out
 }
 
+/// Whether `name` is a wrapper of Extended JSON: `$oid`, `$date`, `$numberLong`, …
+pub fn wrapper(name: &str) -> bool {
+    matches!(
+        name,
+        "$oid"
+            | "$date"
+            | "$numberInt"
+            | "$numberLong"
+            | "$numberDouble"
+            | "$numberDecimal"
+            | "$regularExpression"
+            | "$timestamp"
+            | "$binary"
+            | "$uuid"
+            | "$minKey"
+            | "$maxKey"
+            | "$symbol"
+            | "$code"
+            | "$undefined"
+            | "$dbPointer"
+    )
+}
+
+/// Whether `name` is a fixed field of a command or of a stage, not a field of the data.
+pub fn field(name: &str) -> bool {
+    const FIELDS: &[&str] = &[
+        "filter",
+        "q",
+        "u",
+        "query",
+        "projection",
+        "sort",
+        "limit",
+        "skip",
+        "hint",
+        "collation",
+        "batchSize",
+        "singleBatch",
+        "maxTimeMS",
+        "allowDiskUse",
+        "comment",
+        "pipeline",
+        "let",
+        "key",
+        "documents",
+        "ordered",
+        "update",
+        "upsert",
+        "multi",
+        "arrayFilters",
+        "remove",
+        "new",
+        "indexes",
+        "index",
+        "unique",
+        "sparse",
+        "expireAfterSeconds",
+        "from",
+        "localField",
+        "foreignField",
+        "as",
+        "startWith",
+        "connectFromField",
+        "connectToField",
+        "maxDepth",
+        "depthField",
+        "restrictSearchWithMatch",
+        "coll",
+        "into",
+        "on",
+        "whenMatched",
+        "whenNotMatched",
+        "groupBy",
+        "boundaries",
+        "default",
+        "output",
+        "buckets",
+        "path",
+        "includeArrayIndex",
+        "preserveNullAndEmptyArrays",
+        "newRoot",
+        "size",
+        "if",
+        "then",
+        "else",
+        "vars",
+        "in",
+        "input",
+        "cond",
+        "branches",
+        "case",
+        "nameOnly",
+        "writeConcern",
+        "bypassDocumentValidation",
+    ];
+    FIELDS.contains(&name)
+}
+
 /// Where the cursor is in the payload.
 #[derive(Debug, PartialEq)]
 pub enum Want {
@@ -712,6 +811,8 @@ pub struct Analysis {
     pub closed: bool,
     /// A colon follows the cursor and its key.
     pub colon: bool,
+    /// The indentation of the line the cursor is on.
+    indent: String,
     frames: Vec<Frame>,
     scopes: Vec<Option<String>>,
     action: String,
@@ -722,6 +823,8 @@ pub struct Analysis {
 pub fn analyze(before: &str, after: &str, action: &str, collection: &str) -> Analysis {
     let before = mask(before);
     let after = mask(after);
+    let line = before.rsplit('\n').next().unwrap_or("");
+    let indent = line[..line.len() - line.trim_start_matches([' ', '\t']).len()].to_owned();
     let (_, open) = lex(&before);
     let quote = open.map(|start| before.as_bytes()[start]);
     let (fragment_start, quoted) = match open {
@@ -771,6 +874,7 @@ pub fn analyze(before: &str, after: &str, action: &str, collection: &str) -> Ana
         tail,
         closed,
         colon,
+        indent,
         frames,
         scopes,
         action: action.to_owned(),
@@ -1397,8 +1501,16 @@ fn starters(action: &str) -> Vec<(&'static str, &'static str)> {
     starter.to_vec()
 }
 
-/// The items for the cursor and how many characters of the word after it they replace.
+/// The items for the cursor, objects and arrays laid out for the line the cursor is on.
 pub fn items(analysis: &Analysis, known: &Catalog) -> Vec<Item> {
+    let mut items = candidates(analysis, known);
+    for item in &mut items {
+        item.insert = layout::lay_out(&item.insert, &analysis.indent);
+    }
+    items
+}
+
+fn candidates(analysis: &Analysis, known: &Catalog) -> Vec<Item> {
     let action = analysis.action.as_str();
     match &analysis.want {
         Want::Nothing => vec![],
