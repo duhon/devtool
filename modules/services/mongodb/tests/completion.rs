@@ -196,7 +196,7 @@ fn expressions_and_finite_values_are_offered() {
     );
     assert!(cond.contains("\"if\"") && cond.contains("\"then\"") && cond.contains("\"else\""));
     let sort = labels(&mut module, r#"{"pipeline": [{"$sort": {"name": |}}]}"#);
-    assert_eq!(sort, ["1", "-1"]);
+    assert_eq!(sort[..2], ["1", "-1"]);
     let types = labels(
         &mut module,
         r#"{"pipeline": [{"$match": {"name": {"$type": "|"}}}]}"#,
@@ -206,11 +206,11 @@ fn expressions_and_finite_values_are_offered() {
         &mut module,
         r#"{"pipeline": [{"$match": {"name": {"$exists": |}}}]}"#,
     );
-    assert_eq!(exists, ["true", "false"]);
+    assert_eq!(exists[..2], ["true", "false"]);
     let project = labels(&mut module, r#"{"pipeline": [{"$project": {"name": |}}]}"#);
     assert!(project.contains(&"1".into()) && project.contains(&"false".into()));
     let upsert = labels(&mut module, "{\"upsert\": |}");
-    assert_eq!(upsert, ["true", "false"]);
+    assert_eq!(upsert[..2], ["true", "false"]);
 }
 
 #[test]
@@ -348,4 +348,142 @@ fn only_listed_collections_are_sampled_and_at_most_four() {
         .map(|cmd| cmd.args()["request"]["command"]["find"].clone())
         .collect();
     assert_eq!(sampled, [json!("stores"), json!("inventory"), json!("a")]);
+}
+
+const BLOCK: &str = "{\n  $0\n}";
+
+#[test]
+fn stage_values_offer_their_skeleton_and_the_fallbacks() {
+    let mut module = seeded("");
+    for stage in ["$addFields", "$set", "$facet", "$replaceRoot", "$match"] {
+        let items = offer(
+            &mut module,
+            &format!(r#"{{"pipeline": [{{"{stage}": |}}]}}"#),
+        );
+        assert!(!items.is_empty(), "{stage}");
+        let labels: Vec<&str> = items.iter().map(|(label, _)| label.as_str()).collect();
+        for fallback in ["{}", "[]", "\"\""] {
+            assert!(labels.contains(&fallback), "{stage}: {labels:?}");
+        }
+    }
+    let lookup = offer(&mut module, "{\"pipeline\": [{\"$lookup\": |}]}");
+    assert_eq!(
+        insert_of(
+            &lookup,
+            "{\"from\": \"\", \"localField\": \"\", \"foreignField\": \"\", \"as\": \"\"}"
+        ),
+        "{\n  \"from\": \"$0\",\n  \"localField\": \"\",\n  \"foreignField\": \"\",\n  \"as\": \"\"\n}"
+    );
+    assert!(lookup.iter().any(
+        |(label, insert)| label == "$lookup (pipeline)" && insert.contains("\"pipeline\": []")
+    ));
+    let facet = offer(
+        &mut module,
+        "{\n  \"pipeline\": [\n    {\n      \"$facet\": |\n    }\n  ]\n}",
+    );
+    assert_eq!(
+        facet.iter().find(|(label, _)| label == "{}").unwrap().1,
+        "{\n        $0\n      }"
+    );
+    let count = offer(&mut module, r#"{"pipeline": [{"$count": |}]}"#);
+    assert_eq!(count[0], ("\"\"".to_owned(), "\"$0\"".to_owned()));
+}
+
+#[test]
+fn filter_values_offer_blocks_and_literals() {
+    let mut module = seeded("");
+    let items = offer(&mut module, r#"{"pipeline": [{"$match": {"rating": |}}]}"#);
+    assert_eq!(insert_of(&items, "{}"), BLOCK);
+    assert_eq!(insert_of(&items, "[]"), "[\n  $0\n]");
+    assert_eq!(insert_of(&items, "\"\""), "\"$0\"");
+    for literal in ["true", "false", "null"] {
+        insert_of(&items, literal);
+    }
+}
+
+#[test]
+fn array_operators_offer_an_array_block() {
+    let mut module = seeded("");
+    for key in ["$in", "$nin", "$all"] {
+        let items = offer(
+            &mut module,
+            &format!(r#"{{"filter": {{"x": {{"{key}": |}}}}}}"#),
+        );
+        assert_eq!(items[0].1, "[\n  $0\n]", "{key}");
+    }
+    for key in ["$and", "$or", "$nor"] {
+        let items = offer(&mut module, &format!(r#"{{"filter": {{"{key}": |}}}}"#));
+        assert_eq!(items[0].1, "[\n  $0\n]", "{key}");
+    }
+}
+
+#[test]
+fn expression_operators_offer_their_container_before_paths() {
+    let mut module = seeded("");
+    let stage = |op: &str| format!(r#"{{"pipeline": [{{"$addFields": {{"n": {{"{op}": |}}}}}}]}}"#);
+    let round = offer(&mut module, &stage("$round"));
+    assert_eq!(round[0].1, "[\"$0\", 2]");
+    assert!(round.iter().any(|(label, _)| label == "{}"));
+    let divide = offer(&mut module, &stage("$divide"));
+    assert_eq!(divide[0].1, "[\n  $0\n]");
+    let cond = offer(&mut module, &stage("$cond"));
+    assert!(cond[0].1.starts_with("{\n  \"if\": $0"), "{:?}", cond[0]);
+    let size = offer(&mut module, &stage("$size"));
+    assert_eq!(size[0].1, "\"$0\"");
+    assert!(size.iter().any(|(label, _)| label == "$storeId"));
+    assert_eq!(insert_of(&size, "{}"), BLOCK);
+    let sum = offer(&mut module, &stage("$sum"));
+    assert!(sum.iter().any(|(label, _)| label == "$region"));
+    assert_eq!(insert_of(&sum, "[]"), "[\n  $0\n]");
+}
+
+#[test]
+fn array_elements_offer_expression_blocks() {
+    let mut module = seeded("");
+    let items = offer(
+        &mut module,
+        r#"{"pipeline": [{"$addFields": {"n": {"$round": [|]}}}]}"#,
+    );
+    assert_eq!(insert_of(&items, "{}"), BLOCK);
+    assert_eq!(insert_of(&items, "\"\""), "\"$0\"");
+    assert!(items.iter().any(|(label, _)| label == "$region"));
+}
+
+#[test]
+fn update_and_group_values_are_objects() {
+    let mut module = seeded("");
+    let set = offer(&mut module, r#"{"update": {"$set": |}}"#);
+    assert_eq!(set[0].1, BLOCK);
+    let group = offer(
+        &mut module,
+        r#"{"pipeline": [{"$group": {"_id": "$region", "total": |}}]}"#,
+    );
+    assert_eq!(group[0].1, BLOCK);
+}
+
+#[test]
+fn typed_words_are_replaced_without_doubling_quotes_or_brackets() {
+    let mut module = seeded("");
+    let text = format!("{HEAD}{{\"pipeline\": [{{\"$mat\"}}]}}");
+    let pos = text.find("$mat").unwrap() + 4;
+    let reply = module.complete(&text, pos);
+    let item = reply
+        .items
+        .iter()
+        .find(|item| item.label == "$match")
+        .unwrap();
+    assert_eq!(item.insert, "$match\": {\n  $0\n}");
+    assert_eq!((reply.from, reply.to), (pos as u32 - 4, pos as u32 + 1));
+
+    let items = offer(&mut module, r#"{"pipeline": [{"$match": {"pi|"}}]}"#);
+    assert!(items.iter().all(|(_, insert)| !insert.ends_with("\"\"")));
+
+    let closed = offer(&mut module, r#"{"filter": {"x": {"$in": [|]}}}"#);
+    assert_eq!(insert_of(&closed, "{}"), BLOCK);
+    let value = offer(&mut module, r#"{"filter": {"x": "|"}}"#);
+    assert!(
+        value
+            .iter()
+            .all(|(_, insert)| !insert.starts_with(['{', '[']))
+    );
 }

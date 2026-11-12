@@ -91,6 +91,9 @@ Completion knows the structure of the payload, like GraphQL's:
   the first value; an empty payload offers the starter of the action. Objects and arrays
   are inserted as blocks laid out like JSON completion: the cursor on its own line, indented
   two spaces deeper than the line, the closing bracket at the indentation of the line.
+- every value position (after `"key": ` or inside an array) also offers `{}`, `[]`, `""` and
+  `true`/`false`/`null`; the shape the key expects comes first (stage skeletons, `[` for
+  `$in`/`$and`/`$round`, `{` for `$set`/`$cond`/accumulators).
 
 Highlighting tells apart data keys (`property`), `$operators` and stages (`keyword`), the
 fixed fields of a command (`pipeline`, `from`, … as `attribute`), Extended JSON wrappers

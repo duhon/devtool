@@ -14,7 +14,9 @@
   check names; completion proposes keys, values (collections, field paths, `$$variables`,
   finite sets), operators with descriptions and stage skeletons, scoped to the collection
   of nested `$lookup`/`$unionWith` pipelines. Objects and arrays are inserted as indented
-  blocks. Discovery only reads.
+  blocks, and every value position also offers `{}`, `[]`, `""` and the literals, led by the
+  container the key expects (stage skeleton, `[` for `$in`/`$and`/`$round`, `{` for `$set`/`$cond`).
+  Discovery only reads.
 - The payload is highlighted by token: keys, `$operators`, command fields, Extended JSON
   wrappers, field paths, strings, numbers and atoms.
 - `#options`: Timeout, Connect-Timeout, Database, Max-Documents, Batch-Size, Format,

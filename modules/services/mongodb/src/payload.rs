@@ -1525,7 +1525,8 @@ fn candidates(analysis: &Analysis, known: &Catalog) -> Vec<Item> {
         } => key_items(analysis, known, *role, *quoted, *first),
         Want::Value { role, key, quoted } => {
             let val = value_of(*role, key, action);
-            let mut items = value_items(analysis, known, val, *quoted);
+            let mut items = if *quoted { vec![] } else { shaped(*role, key) };
+            items.extend(value_items(analysis, known, val, *quoted));
             if items.is_empty()
                 && *quoted
                 && analysis.fragment.starts_with('$')
@@ -1533,7 +1534,10 @@ fn candidates(analysis: &Analysis, known: &Catalog) -> Vec<Item> {
             {
                 items = paths(analysis, known, true);
             }
-            items
+            if !*quoted {
+                items.extend(generic(shaped_first(*role, key), true));
+            }
+            unique(items)
         }
         Want::Element { role, quoted } => {
             let mut items = match role {
@@ -1571,9 +1575,110 @@ fn candidates(analysis: &Analysis, known: &Catalog) -> Vec<Item> {
             {
                 items = paths(analysis, known, true);
             }
-            items
+            if !*quoted {
+                items.extend(generic(Body::Object, false));
+            }
+            unique(items)
         }
     }
+}
+
+/// What the text after a key starts with.
+#[derive(Clone, Copy, PartialEq)]
+enum Body {
+    Object,
+    Array,
+    Text,
+    Any,
+}
+
+fn body_kind(body: &str) -> Body {
+    match body.chars().next() {
+        Some('{') => Body::Object,
+        Some('[') => Body::Array,
+        Some('"') => Body::Text,
+        _ => Body::Any,
+    }
+}
+
+/// The shapes `key` takes in an object of `role`: label, description and body.
+fn shapes(role: Role, key: &str) -> Vec<(String, &'static str, &'static str)> {
+    let named = |list: &'static Snippets| {
+        list.iter()
+            .filter(|(name, _, _)| *name == key)
+            .map(|(_, detail, body)| (String::new(), *detail, *body))
+            .collect::<Vec<_>>()
+    };
+    match role {
+        Role::Stage => {
+            let mut list = named(mql::STAGES);
+            for (stage, label, body) in mql::STAGE_VARIANTS {
+                if *stage == key {
+                    list.push(((*label).to_owned(), "Variant", *body));
+                }
+            }
+            list
+        }
+        Role::Update => vec![(String::new(), "Update operator", "{$0}")],
+        Role::Group if key != "_id" => vec![(String::new(), "Accumulator", "{$0}")],
+        Role::Filter | Role::FieldQuery => {
+            let mut list = named(mql::QUERY_OPERATORS);
+            list.extend(named(mql::LOGICAL));
+            list.into_iter()
+                .map(|(label, detail, body)| {
+                    let body = if body.starts_with("[{") { "[$0]" } else { body };
+                    (label, detail, body)
+                })
+                .collect()
+        }
+        _ if key.starts_with('$') => named(mql::EXPRESSIONS),
+        _ => vec![],
+    }
+}
+
+fn shaped(role: Role, key: &str) -> Vec<Item> {
+    shapes(role, key)
+        .into_iter()
+        .filter(|(_, _, body)| body_kind(body) != Body::Any)
+        .map(|(name, detail, body)| {
+            let name = if name.is_empty() { label(body) } else { name };
+            make(&name, body.to_owned(), detail, "snippet", false)
+        })
+        .collect()
+}
+
+/// The kind of body the key expects first.
+fn shaped_first(role: Role, key: &str) -> Body {
+    shapes(role, key)
+        .first()
+        .map_or(Body::Object, |(_, _, body)| body_kind(body))
+}
+
+/// What any value can be: a block, an array, a string, and the literals.
+fn generic(first: Body, literals_too: bool) -> Vec<Item> {
+    let mut list = vec![
+        (Body::Object, "{}", "Object", "{$0}"),
+        (Body::Array, "[]", "Array", "[$0]"),
+        (Body::Text, "\"\"", "String", "\"$0\""),
+    ];
+    list.sort_by_key(|(body, ..)| *body != first);
+    let mut items: Vec<Item> = list
+        .into_iter()
+        .map(|(_, name, detail, body)| make(name, body.to_owned(), detail, "snippet", false))
+        .collect();
+    if literals_too {
+        items.extend(literals(&["true", "false", "null"], "Literal"));
+    }
+    items
+}
+
+/// The items without a label twice, the first one kept.
+fn unique(items: Vec<Item>) -> Vec<Item> {
+    let mut seen = std::collections::HashSet::new();
+    items
+        .into_iter()
+        .filter(|item| seen.insert(item.label.clone()))
+        .collect()
 }
 
 /// The collections a payload names besides its own: `from`, `coll` and `$unionWith`.
