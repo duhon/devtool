@@ -95,10 +95,11 @@ pub fn complete(check: &Check, pos: usize, known: &Catalog) -> Completions {
             let action = check.text_of("action").trim();
             let after = &at.text[at.pos..];
             let after = after.split('\n').next().unwrap_or("");
-            let analysis = payload::analyze(at.body(), after, action, collection);
+            let later = at.whole().get(at.body().len()..).unwrap_or("");
+            let analysis = payload::analyze(at.body(), after, later, action, collection);
             let items = payload::items(&analysis, known);
             finish(
-                at.pos - analysis.fragment.len(),
+                at.pos - analysis.fragment.len() - analysis.back,
                 at.pos + analysis.replaced(),
                 &analysis.fragment,
                 items,

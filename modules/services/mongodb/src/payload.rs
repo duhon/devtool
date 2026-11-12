@@ -813,6 +813,14 @@ pub struct Analysis {
     pub colon: bool,
     /// The indentation of the line the cursor is on.
     indent: String,
+    /// The indentation of the members of the container when the cursor follows a complete
+    /// value with no comma: what is inserted then starts with one.
+    lead: Option<String>,
+    /// A member follows the cursor: what is inserted ends with a comma.
+    trail: bool,
+    /// Characters before the fragment the pick replaces: the quote of a member typed after
+    /// a value.
+    pub back: usize,
     frames: Vec<Frame>,
     scopes: Vec<Option<String>>,
     action: String,
@@ -820,9 +828,10 @@ pub struct Analysis {
 
 /// The analysis of a payload at the cursor: `before` is the text up to it and `after` the
 /// text from it on.
-pub fn analyze(before: &str, after: &str, action: &str, collection: &str) -> Analysis {
+pub fn analyze(before: &str, after: &str, later: &str, action: &str, collection: &str) -> Analysis {
     let before = mask(before);
     let after = mask(after);
+    let later = mask(later);
     let line = before.rsplit('\n').next().unwrap_or("");
     let indent = line[..line.len() - line.trim_start_matches([' ', '\t']).len()].to_owned();
     let (_, open) = lex(&before);
@@ -833,7 +842,12 @@ pub fn analyze(before: &str, after: &str, action: &str, collection: &str) -> Ana
             let start = before.rfind(|c: char| !word(c)).map_or(0, |n| {
                 n + before[n..].chars().next().map_or(1, char::len_utf8)
             });
-            (start, false)
+            let typed = &before[start..];
+            // A finished literal is a value, not a word to complete.
+            let done = matches!(typed, "true" | "false" | "null")
+                || typed.starts_with(|c: char| c.is_ascii_digit() || c == '-')
+                    && typed.parse::<f64>().is_ok();
+            (if done { before.len() } else { start }, false)
         }
     };
     let fragment = before[fragment_start..].to_owned();
@@ -844,7 +858,6 @@ pub fn analyze(before: &str, after: &str, action: &str, collection: &str) -> Ana
     }];
     let (tokens, _) = lex(head);
     let mut frames = walk(&tokens, action);
-    let want = classify(&frames, tokens.is_empty(), quoted);
 
     let (tail, closed, rest) = match quote {
         Some(quote) => {
@@ -864,8 +877,40 @@ pub fn analyze(before: &str, after: &str, action: &str, collection: &str) -> Ana
             (tail, false, &after[tail..])
         }
     };
-    let trail = rest.trim_start();
-    let colon = trail.starts_with(':');
+    let colon = rest.trim_start().starts_with(':');
+    let consumed = tail + usize::from(closed);
+    let follow = later
+        .get(consumed..)
+        .and_then(|text| text.trim_start().chars().next());
+    let mut lead = None;
+    let mut back = 0;
+    let mut quoted = quoted;
+    let mut nothing = false;
+    if frames.last().is_some_and(after_value) {
+        if follow == Some(',') {
+            nothing = true;
+        } else {
+            let top = frames.last_mut().expect("a frame");
+            top.expect_key = top.open == '{';
+            top.key = None;
+            top.first = false;
+            top.start = top.open == '[';
+            lead = Some(member_indent(head));
+            back = head.len() - head.trim_end_matches([' ', '\t']).len();
+            if quoted {
+                back += 1;
+                quoted = false;
+            }
+        }
+    }
+    let want = if nothing {
+        Want::Nothing
+    } else {
+        classify(&frames, tokens.is_empty(), quoted)
+    };
+    let trail = matches!(want, Want::Keys { .. } | Want::Element { .. })
+        && !colon
+        && follow.is_some_and(|next| !matches!(next, '}' | ']' | ','));
     siblings(&mut frames, &tokens_of(rest), &want);
     let scopes = scopes(&frames, collection);
     Analysis {
@@ -875,10 +920,56 @@ pub fn analyze(before: &str, after: &str, action: &str, collection: &str) -> Ana
         closed,
         colon,
         indent,
+        lead,
+        trail,
+        back,
         frames,
         scopes,
         action: action.to_owned(),
     }
+}
+
+/// Whether the frame has just got a complete value, with no comma after it.
+fn after_value(top: &Frame) -> bool {
+    if top.open == '{' {
+        !top.expect_key && !top.start && top.key.is_some()
+    } else {
+        !top.start
+    }
+}
+
+/// The indentation of the members of the innermost open container of `head`: two spaces
+/// past the line that opened it.
+fn member_indent(head: &str) -> String {
+    let bytes = head.as_bytes();
+    let mut open: Vec<usize> = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'{' | b'[' => open.push(i),
+            b'}' | b']' => {
+                open.pop();
+            }
+            quote @ (b'"' | b'\'') => {
+                i += 1;
+                while i < bytes.len() && bytes[i] != quote {
+                    i += if bytes[i] == b'\\' { 2 } else { 1 };
+                }
+            }
+            b'/' if bytes.get(i + 1) == Some(&b'/') => {
+                i = head[i..].find('\n').map_or(bytes.len(), |n| i + n);
+            }
+            b'/' if bytes.get(i + 1) == Some(&b'*') => {
+                i = head[i + 2..].find("*/").map_or(bytes.len(), |n| i + n + 3);
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    let at = open.last().copied().unwrap_or(0);
+    let line = &head[head[..at].rfind('\n').map_or(0, |n| n + 1)..at];
+    let indent = &line[..line.len() - line.trim_start_matches([' ', '\t']).len()];
+    format!("{indent}  ")
 }
 
 fn tokens_of(text: &str) -> Vec<Lex<'_>> {
@@ -1052,7 +1143,8 @@ impl Analysis {
     /// closing quote of a key that gets its own.
     pub fn replaced(&self) -> usize {
         let key = matches!(self.want, Want::Keys { .. });
-        self.tail + usize::from(key && self.closed && !self.colon)
+        let closing = self.closed && (self.back > 0 || key && !self.colon);
+        self.tail + usize::from(closing)
     }
 
     fn top(&self) -> Option<&Frame> {
@@ -1579,8 +1671,24 @@ fn starters(action: &str) -> Vec<(&'static str, &'static str)> {
 /// The items for the cursor, objects and arrays laid out for the line the cursor is on.
 pub fn items(analysis: &Analysis, known: &Catalog) -> Vec<Item> {
     let mut items = candidates(analysis, known);
+    let indent = analysis.lead.as_deref().unwrap_or(&analysis.indent);
     for item in &mut items {
-        item.insert = layout::lay_out(&item.insert, &analysis.indent);
+        item.insert = layout::lay_out(&item.insert, indent);
+        if analysis.trail {
+            item.insert.push(',');
+        }
+    }
+    if let Some(lead) = &analysis.lead {
+        let mut separator = match analysis.want {
+            Want::Keys { .. } => vec![make(",", "\"$0\"".into(), "Next field", "snippet", true)],
+            Want::Element { .. } => vec![make(",", "$0".into(), "Next element", "snippet", true)],
+            _ => vec![],
+        };
+        separator.append(&mut items);
+        items = separator;
+        for item in &mut items {
+            item.insert = format!(",\n{lead}{}", item.insert);
+        }
     }
     items
 }

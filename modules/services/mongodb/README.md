@@ -96,6 +96,12 @@ Completion knows the structure of the payload, like GraphQL's:
   documents and at most 10 distinct scalar values (strings up to 40 characters, numbers,
   booleans; array fields contribute their elements; `_id`, dates and ids never). No extra
   query is made.
+- commas come only from completion, so the payload stays strict JSON: after a complete value
+  (string, number, literal, closed object or array) the next members are offered with the
+  leading `,` and the members' indentation (plus a `,` item for a free-typed member); a pick
+  placed before an existing member ends with a comma; nothing is offered between a value and
+  a comma that is already there. A payload that is not valid is rejected on run with its line
+  and column.
 - every value position (after `"key": ` or inside an array) also offers `{}`, `[]`, `""` and
   `true`/`false`/`null`; the shape the key expects comes first (stage skeletons, `[` for
   `$in`/`$and`/`$round`, `{` for `$set`/`$cond`/accumulators).

@@ -550,3 +550,144 @@ fn typed_sampled_strings_keep_their_quotes() {
     let element = offer(&mut module, r#"{"filter": {"tags": {"$in": ["op|"]}}}"#);
     assert_eq!(element[0], ("open".into(), "open".into()));
 }
+
+/// The payload after each item is picked at `|`, with the cursor mark filled by `filler`.
+fn picked(module: &mut Harness, payload: &str) -> Vec<(String, String, String)> {
+    let text = format!("{HEAD}{payload}");
+    let pos = text.find('|').unwrap();
+    let text = text.replacen('|', "", 1);
+    let reply = module.complete(&text, pos);
+    reply
+        .items
+        .into_iter()
+        .map(|item| {
+            let result = format!(
+                "{}{}{}",
+                &text[..reply.from as usize],
+                item.insert,
+                &text[reply.to as usize..]
+            );
+            (item.label, item.insert, result[HEAD.len()..].to_owned())
+        })
+        .collect()
+}
+
+/// Every offered item but the bare separator leaves strict JSON, whatever fills the cursor.
+fn all_valid(module: &mut Harness, payload: &str) -> Vec<(String, String, String)> {
+    let items = picked(module, payload);
+    assert!(!items.is_empty(), "{payload}");
+    for (label, _, text) in items.iter().filter(|(label, ..)| label != ",") {
+        let valid = ["", "0"]
+            .iter()
+            .any(|filler| serde_json::from_str::<Value>(&text.replace("$0", filler)).is_ok());
+        assert!(valid, "{label} gives invalid JSON:\n{text}");
+    }
+    items
+}
+
+#[test]
+fn a_value_followed_by_nothing_gets_the_comma_with_the_next_member() {
+    let mut module = seeded("");
+    let after_string = all_valid(&mut module, r#"{"filter": {"tags": {"$in": ["big"|]}}}"#);
+    let open = after_string
+        .iter()
+        .find(|(label, ..)| label == "\"open\"")
+        .unwrap();
+    assert_eq!(open.1, ",\n  \"open\"");
+    let separator = after_string
+        .iter()
+        .find(|(label, ..)| label == ",")
+        .unwrap();
+    assert_eq!(separator.1, ",\n  $0");
+    assert!(after_string.iter().any(|(label, ..)| label == "{}"));
+
+    let after_number = all_valid(&mut module, r#"{"filter": {"stars": 5|}}"#);
+    let key = after_number
+        .iter()
+        .find(|(label, ..)| label == "$or")
+        .unwrap();
+    assert_eq!(key.1, ",\n  \"$or\": [\n    {\n      $0\n    }\n  ]");
+    let separator = after_number
+        .iter()
+        .find(|(label, ..)| label == ",")
+        .unwrap();
+    assert_eq!(separator.1, ",\n  \"$0\"");
+
+    let after_object = all_valid(&mut module, "{\n  \"filter\": {\n    \"a\": {}\n  }|\n}");
+    assert!(
+        after_object
+            .iter()
+            .all(|(_, insert, _)| insert.starts_with(",\n  "))
+    );
+
+    let after_stage = all_valid(&mut module, "{\"pipeline\": [\n  {\"$match\": {}}|\n]}");
+    let stage = after_stage
+        .iter()
+        .find(|(label, ..)| label == "$sort")
+        .unwrap();
+    assert_eq!(
+        stage.1,
+        ",\n  {\n    \"$sort\": {\n      \"$0\": 1\n    }\n  }"
+    );
+}
+
+#[test]
+fn a_member_typed_after_a_value_replaces_its_quotes() {
+    let mut module = seeded("");
+    let items = all_valid(&mut module, r#"{"filter": {"a": 1 "$o|"}}"#);
+    let or = items.iter().find(|(label, ..)| label == "$or").unwrap();
+    assert_eq!(
+        or.2,
+        "{\"filter\": {\"a\": 1,\n  \"$or\": [\n    {\n      $0\n    }\n  ]}}"
+    );
+    let open = picked(&mut module, "{\"filter\": {\"a\": 1 \"$o|");
+    assert!(open.iter().any(|(label, ..)| label == "$or"));
+}
+
+#[test]
+fn picks_before_an_existing_sibling_end_with_a_comma() {
+    let mut module = seeded("");
+    let stages = all_valid(
+        &mut module,
+        "{\"pipeline\": [\n  {\"$match\": {}},\n  |\n  {\"$sort\": {}}\n]}",
+    );
+    let (_, insert, _) = stages.iter().find(|(label, ..)| label == "$limit").unwrap();
+    assert!(insert.ends_with("},"), "{insert}");
+    let keys = all_valid(&mut module, "{\n  \"filter\": {},\n  |\n  \"limit\": 1\n}");
+    assert!(keys.iter().all(|(_, insert, _)| insert.ends_with(',')));
+    let last = all_valid(&mut module, "{\n  \"filter\": {},\n  |\n}");
+    assert!(last.iter().all(|(_, insert, _)| !insert.ends_with(',')));
+}
+
+#[test]
+fn an_existing_comma_or_an_empty_container_needs_none() {
+    let mut module = seeded("");
+    let before_comma = picked(
+        &mut module,
+        r#"{"filter": {"tags": {"$in": ["big"| , "open"]}}}"#,
+    );
+    assert!(before_comma.is_empty());
+    for payload in [
+        r#"{"filter": {"tags": {"$in": [|]}}}"#,
+        "{\n  \"filter\": {|}\n}",
+        "{\"filter\": {\"a\": 1, |}}",
+    ] {
+        let items = all_valid(&mut module, payload);
+        assert!(
+            items.iter().all(|(_, insert, _)| !insert.starts_with(',')),
+            "{payload}"
+        );
+    }
+}
+
+#[test]
+fn blanks_between_a_value_and_the_comma_are_replaced() {
+    let mut module = seeded("");
+    let items = all_valid(&mut module, r#"{"filter": {"stars": 5 |}}"#);
+    let or = items.iter().find(|(label, ..)| label == "$or").unwrap();
+    assert!(
+        or.2.starts_with("{\"filter\": {\"stars\": 5,\n"),
+        "{}",
+        or.2
+    );
+}
