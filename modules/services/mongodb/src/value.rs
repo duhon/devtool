@@ -1,7 +1,7 @@
-//! A tolerant parser of the `#payload` JSON into canonical Extended JSON v2: comments,
-//! trailing commas, unquoted keys and single quotes are accepted; numbers become
-//! `$numberInt`, `$numberLong` or `$numberDouble`; Extended JSON (`{"$oid": "…"}`) passes
-//! through as written.
+//! A strict parser of the `#payload` JSON into canonical Extended JSON v2: comments,
+//! trailing commas, unquoted keys and single quotes are errors, so the text can be shared
+//! with any JSON tool; numbers become `$numberInt`, `$numberLong` or `$numberDouble`;
+//! Extended JSON (`{"$oid": "…"}`) passes through as written.
 
 use serde_json::{Map, Value, json};
 use std::fmt;
@@ -89,26 +89,18 @@ impl<'a> Parser<'a> {
         &self.src[self.pos..]
     }
 
-    /// Skips whitespace and comments.
+    /// Skips whitespace; a comment is an error.
     fn skip(&mut self) -> Result<(), Error> {
-        loop {
-            let rest = self.rest();
-            let trimmed = rest.trim_start();
-            self.pos += rest.len() - trimmed.len();
-            if trimmed.starts_with("//") {
-                self.pos += trimmed.find('\n').unwrap_or(trimmed.len());
-            } else if trimmed.starts_with("/*") {
-                let end = trimmed
-                    .find("*/")
-                    .ok_or_else(|| self.error(self.pos, "Unterminated comment"))?;
-                self.pos += end + 2;
-            } else {
-                return Ok(());
-            }
+        let rest = self.rest();
+        let trimmed = rest.trim_start();
+        self.pos += rest.len() - trimmed.len();
+        if trimmed.starts_with("//") || trimmed.starts_with("/*") {
+            return Err(self.error(self.pos, "Comments are not allowed in JSON"));
         }
+        Ok(())
     }
 
-    /// The next character after whitespace and comments.
+    /// The next character after whitespace.
     fn peek(&mut self) -> Result<Option<char>, Error> {
         self.skip()?;
         Ok(self.rest().chars().next())
@@ -168,8 +160,9 @@ impl<'a> Parser<'a> {
         match c {
             '{' => self.object(),
             '[' => self.array(),
-            '"' | '\'' => self.string().map(Value::String),
-            '-' | '+' | '.' | '0'..='9' => self.number(),
+            '"' => self.string().map(Value::String),
+            '\'' => Err(self.error(self.pos, "Strings use double quotes in JSON")),
+            '-' | '0'..='9' => self.number(),
             c if c.is_alphabetic() || c == '_' => self.word(),
             c => Err(self.error(self.pos, format!("Unexpected '{c}'"))),
         }
@@ -178,10 +171,10 @@ impl<'a> Parser<'a> {
     fn object(&mut self) -> Result<Value, Error> {
         self.pos += 1;
         let mut map = Map::new();
+        if self.eat('}')? {
+            return Ok(Value::Object(map));
+        }
         loop {
-            if self.eat('}')? {
-                return Ok(Value::Object(map));
-            }
             let key = self.key()?;
             self.expect(':', "after a key")?;
             let extended = EXTENDED.contains(&key.as_str());
@@ -195,7 +188,13 @@ impl<'a> Parser<'a> {
                 value = json!({"$numberLong": ms.to_string()});
             }
             map.insert(key, value);
-            if !self.eat(',')? && self.peek()? != Some('}') {
+            if self.eat(',')? {
+                if self.peek()? == Some('}') {
+                    return Err(self.error(self.pos, "A trailing comma is not allowed in JSON"));
+                }
+            } else if self.eat('}')? {
+                return Ok(Value::Object(map));
+            } else {
                 return Err(self.unexpected("Expected ',' or '}'"));
             }
         }
@@ -203,31 +202,26 @@ impl<'a> Parser<'a> {
 
     fn key(&mut self) -> Result<String, Error> {
         match self.peek()? {
-            Some('"' | '\'') => self.string(),
-            Some('0'..='9') => {
-                let rest = self.rest();
-                let len = rest
-                    .find(|c: char| !c.is_ascii_digit())
-                    .unwrap_or(rest.len());
-                self.pos += len;
-                Ok(rest[..len].into())
-            }
-            _ => match self.ident()? {
-                Some((_, name)) => Ok(name.into()),
-                None => Err(self.unexpected("Expected a key")),
-            },
+            Some('"') => self.string(),
+            _ => Err(self.unexpected("Expected a key in double quotes")),
         }
     }
 
     fn array(&mut self) -> Result<Value, Error> {
         self.pos += 1;
         let mut items = Vec::new();
+        if self.eat(']')? {
+            return Ok(Value::Array(items));
+        }
         loop {
-            if self.eat(']')? {
-                return Ok(Value::Array(items));
-            }
             items.push(self.value()?);
-            if !self.eat(',')? && self.peek()? != Some(']') {
+            if self.eat(',')? {
+                if self.peek()? == Some(']') {
+                    return Err(self.error(self.pos, "A trailing comma is not allowed in JSON"));
+                }
+            } else if self.eat(']')? {
+                return Ok(Value::Array(items));
+            } else {
                 return Err(self.unexpected("Expected ',' or ']'"));
             }
         }
@@ -237,14 +231,16 @@ impl<'a> Parser<'a> {
     fn string(&mut self) -> Result<String, Error> {
         self.skip()?;
         let start = self.pos;
-        let quote = self.rest().chars().next().unwrap_or('"');
         self.pos += 1;
         let mut out = String::new();
         let mut chars = self.rest().char_indices();
         while let Some((at, c)) = chars.next() {
-            if c == quote {
+            if c == '"' {
                 self.pos += at + 1;
                 return Ok(out);
+            }
+            if c < ' ' {
+                return Err(self.error(self.pos + at, "A control character must be escaped"));
             }
             if c != '\\' {
                 out.push(c);
@@ -254,24 +250,21 @@ impl<'a> Parser<'a> {
                 break;
             };
             match escape {
+                '"' | '\\' | '/' => out.push(escape),
                 'n' => out.push('\n'),
                 'r' => out.push('\r'),
                 't' => out.push('\t'),
                 'b' => out.push('\u{8}'),
                 'f' => out.push('\u{c}'),
-                'v' => out.push('\u{b}'),
-                '0' => out.push('\0'),
-                '\n' => {}
-                'x' | 'u' => {
-                    let width = if escape == 'x' { 2 } else { 4 };
-                    let digits: String = chars.by_ref().take(width).map(|(_, c)| c).collect();
+                'u' => {
+                    let digits: String = chars.by_ref().take(4).map(|(_, c)| c).collect();
                     let code = u32::from_str_radix(&digits, 16)
                         .ok()
-                        .filter(|_| digits.len() == width)
+                        .filter(|_| digits.len() == 4)
                         .ok_or_else(|| self.error(self.pos + at, "Invalid escape sequence"))?;
                     out.push(self.character(code, &mut chars, at)?);
                 }
-                other => out.push(other),
+                _ => return Err(self.error(self.pos + at, "Invalid escape sequence")),
             }
         }
         Err(self.error(start, "Unterminated string"))
@@ -306,7 +299,7 @@ impl<'a> Parser<'a> {
         let start = self.pos;
         let rest = self.rest();
         let negative = rest.starts_with('-');
-        let sign = usize::from(rest.starts_with(['-', '+']));
+        let sign = usize::from(negative);
         let len = number_len(&rest[sign..]);
         let text = &rest[sign..sign + len];
         let end = start + sign + len;
@@ -318,7 +311,13 @@ impl<'a> Parser<'a> {
             .parse::<f64>()
             .ok()
             .map(|n| if negative { -n } else { n });
-        if float.is_none() || self.src[end..].starts_with(|c: char| c.is_alphanumeric() || c == '_')
+        let bytes = text.as_bytes();
+        let loose = text.starts_with('.')
+            || bytes.first() == Some(&b'0') && bytes.get(1).is_some_and(u8::is_ascii_digit);
+        if float.is_none()
+            || text.ends_with('.')
+            || loose
+            || self.src[end..].starts_with(|c: char| c.is_alphanumeric() || c == '_')
         {
             return Err(self.error(start, "Invalid number"));
         }
@@ -473,14 +472,32 @@ mod tests {
     }
 
     #[test]
-    fn relaxed_syntax_is_tolerated() {
-        let source =
-            "{\n  // a comment\n  unquoted: 'single',\n  /* block */ \"list\": [1, 2,],\n}";
+    fn only_strict_json_is_accepted() {
         assert_eq!(
-            parse(source).unwrap(),
-            json!({"unquoted": "single", "list": [{"$numberInt": "1"}, {"$numberInt": "2"}]})
+            parse("{\n  \"list\": [1, 2], \"s\": \"a\\n\\u00e9\\/\"\n}").unwrap(),
+            json!({"list": [{"$numberInt": "1"}, {"$numberInt": "2"}], "s": "a\né/"})
         );
-        assert_eq!(parse(r#""a\n\u00e9""#).unwrap(), json!("a\né"));
+        for (source, message, at) in [
+            (
+                "{\n  // note\n  \"a\": 1\n}",
+                "Comments are not allowed",
+                (2, 3),
+            ),
+            ("{\"a\": 1 /* x */}", "Comments are not allowed", (1, 9)),
+            ("{\"a\": 1,}", "A trailing comma", (1, 9)),
+            ("[1, 2,\n]", "A trailing comma", (2, 1)),
+            ("{a: 1}", "Expected a key in double quotes", (1, 2)),
+            ("{'a': 1}", "Expected a key in double quotes", (1, 2)),
+            ("{\"a\": 'x'}", "Strings use double quotes", (1, 7)),
+            ("{\"a\": +1}", "Unexpected '+'", (1, 7)),
+            ("{\"a\": .5}", "Unexpected '.'", (1, 7)),
+            ("{\"a\": 01}", "Invalid number", (1, 7)),
+            ("\"\\x41\"", "Invalid escape sequence", (1, 2)),
+        ] {
+            let error = fails(source);
+            assert!(error.message.starts_with(message), "{source}: {error}");
+            assert_eq!((error.line, error.column), at, "{source}");
+        }
     }
 
     #[test]
@@ -499,16 +516,15 @@ mod tests {
 
     #[test]
     fn errors_have_lines_and_columns() {
-        let error = fails("{\n  a: 1,\n  b: foo\n}");
-        assert_eq!((error.line, error.column), (3, 6));
+        let error = fails("{\n  \"a\": 1,\n  \"b\": foo\n}");
+        assert_eq!((error.line, error.column), (3, 8));
         assert!(error.message.starts_with("Unknown word 'foo'"));
-        assert_eq!((fails("{a 1}").line, fails("{a 1}").column), (1, 4));
+        assert_eq!((fails("{\"a\" 1}").line, fails("{\"a\" 1}").column), (1, 6));
         assert_eq!(
-            fails("{a: 1").message,
+            fails("{\"a\": 1").message,
             "Expected ',' or '}', reached the end"
         );
         assert_eq!(fails("1 2").message, "Unexpected '2' after the payload");
-        assert_eq!(fails("/* open").message, "Unterminated comment");
         assert_eq!(fails("\"open").message, "Unterminated string");
         assert!(fails("ObjectId(\"x\")").message.contains("Unknown word"));
         assert!(

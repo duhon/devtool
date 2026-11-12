@@ -26,8 +26,9 @@ Max-Documents: 200
 
 One check runs one command. `#action` is the command name, `#collection` its collection
 (not needed for database-level actions) and `#payload` a JSON object with the command's
-own fields. Relaxed JSON is accepted (comments, trailing commas, unquoted keys, single
-quotes); values use Extended JSON (`{"$oid": "…"}`, `{"$date": "…"}`,
+own fields. The payload must be strict JSON (no comments, trailing commas, unquoted keys or
+single quotes), so a check can be shared with any JSON tool; a run with invalid JSON fails
+with `Invalid payload: … (line N, column M)`. Values use Extended JSON (`{"$oid": "…"}`, `{"$date": "…"}`,
 `{"$numberLong": "…"}`). The module builds `{<action>: <collection>, …payload}` for the
 driver. Unknown actions list the supported ones; `runCommand` sends any command.
 

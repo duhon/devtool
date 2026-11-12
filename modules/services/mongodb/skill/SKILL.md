@@ -36,8 +36,8 @@ skeletons from them.
   `{<action>: <collection>, ...payload}` (`1` instead of the collection for database
   actions). An unknown action answers with the supported list; `runCommand` sends any
   command.
-- `#payload`: a JSON object with the command's fields. Relaxed JSON is accepted
-  (comments, trailing commas, unquoted keys, single quotes). Use Extended JSON for typed
+- `#payload`: a JSON object with the command's fields. It must be strict JSON:
+  comments, trailing commas, unquoted keys and single quotes fail the run. Use Extended JSON for typed
   values: `{"$oid": "…"}`, `{"$date": "2024-01-01T00:00:00Z"}`, `{"$numberLong": "5"}`,
   `{"$numberDecimal": "1.5"}`, `{"$regularExpression": {"pattern": "^a", "options": "i"}}`.
   Plain integers become int32/int64, fractions double. Errors name line and column.

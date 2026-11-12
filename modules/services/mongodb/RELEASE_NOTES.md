@@ -6,7 +6,7 @@
   the host `mongodb` driver.
 - Sections in the REST style: `#target` is a `mongodb://` or `mongodb+srv://` URI,
   `#collection` and `#action` name the command (`find`, `aggregate`, `insert`, `update`,
-  `delete`, `listCollections`, `runCommand`, …) and `#payload` is a relaxed JSON object
+  `delete`, `listCollections`, `runCommand`, …) and `#payload` is a strict JSON object
   with the command's fields in Extended JSON.
 - Documents come back as a table (ObjectId, dates and numbers readable) or as JSON;
   server errors show their code and name after the documents already read.
