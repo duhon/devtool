@@ -1250,6 +1250,7 @@ fn seed_data(data: &Path) -> Result<Vec<(PathBuf, String)>> {
         ("splunk", "https://splunk.fixture.invalid"),
         ("artemis", "http://artemis.fixture.invalid:8161"),
         ("opensearch", "http://opensearch.fixture.invalid:9200"),
+        ("valkey", "redis://valkey.fixture.invalid:6379"),
     ] {
         seeds.push((
             local.join(format!("hints/{service}.md")),

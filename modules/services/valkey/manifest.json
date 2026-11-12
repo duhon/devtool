@@ -1,0 +1,11 @@
+{
+  "id": "valkey",
+  "kind": "service",
+  "name": "Valkey",
+  "version": "1.0.0",
+  "description": "Valkey commands, live Pub/Sub and contextual command completion.",
+  "abi": 2,
+  "app": ">=4.1.0",
+  "drivers": {"tcp": "1.1"},
+  "order": 9
+}

@@ -58,6 +58,7 @@ pub const MODULES: &[ModuleSpec] = &[
     service("terminal", "Terminal"),
     service("artemis", "Artemis"),
     service("opensearch", "OpenSearch"),
+    service("valkey", "Valkey"),
     panel(
         "history",
         "History",

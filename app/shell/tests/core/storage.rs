@@ -9,7 +9,7 @@ use services_kernel::storage::{console_order, keep_unloaded, reorder};
 fn console_order_restores_deduplicates_and_completes() {
     services_shell::link();
     let mut order = console_order(&serde_json::json!(["terminal", "rest", "rest", "unknown"]));
-    assert_eq!(order.len(), 8);
+    assert_eq!(order.len(), 9);
     assert_eq!(&order[..2], ["terminal", "rest"]);
     reorder(&mut order, "rest", "terminal");
     assert_eq!(&order[..2], ["rest", "terminal"]);

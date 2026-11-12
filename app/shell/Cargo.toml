@@ -23,6 +23,7 @@ uuid = { version = "1.29.0", features = ["v7", "js"] }
 services-module-rest = { path = "../../modules/services/rest" }
 services-module-graphql = { path = "../../modules/services/graphql" }
 services-module-opensearch = { path = "../../modules/services/opensearch" }
+services-module-valkey = { path = "../../modules/services/valkey" }
 services-module-mysql = { path = "../../modules/services/mysql" }
 services-module-grpc = { path = "../../modules/services/grpc" }
 services-module-splunk = { path = "../../modules/services/splunk" }

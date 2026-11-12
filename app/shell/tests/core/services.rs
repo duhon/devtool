@@ -18,7 +18,8 @@ fn the_linked_modules_give_the_tabs_labels_and_order() {
             "splunk",
             "terminal",
             "artemis",
-            "opensearch"
+            "opensearch",
+            "valkey"
         ]
     );
     let labels: Vec<_> = services::ids()
@@ -35,7 +36,8 @@ fn the_linked_modules_give_the_tabs_labels_and_order() {
             "Splunk",
             "Terminal",
             "Artemis",
-            "OpenSearch"
+            "OpenSearch",
+            "Valkey"
         ]
     );
     assert_eq!(services::label("unknown"), "unknown");
