@@ -770,3 +770,43 @@ fn a_new_stage_after_a_closed_one_is_a_whole_element_with_the_comma_glued() {
         assert!(serde_json::from_str::<Value>(&stage.2.replace("$0", "")).is_ok());
     }
 }
+
+#[test]
+fn literals_are_offered_in_every_element_and_expression_position() {
+    let mut module = seeded("");
+    for payload in [
+        r#"{"pipeline": [{"$match": {"$expr": {"$eq": [|]}}}]}"#,
+        r#"{"pipeline": [{"$match": {"$expr": {"$and": [|]}}}]}"#,
+        r#"{"pipeline": [{"$project": {"a": {"$ifNull": ["$x", |]}}}]}"#,
+        r#"{"pipeline": [{"$project": {"a": {"$gt": |}}}]}"#,
+        r#"{"pipeline": [{"$project": {"a": {"$cond": [|]}}}]}"#,
+        r#"{"filter": {"a": {"$in": [|]}}}"#,
+    ] {
+        let found = labels(&mut module, payload);
+        for literal in ["true", "false", "null"] {
+            assert!(
+                found.contains(&literal.to_owned()),
+                "{literal} in {payload}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_literal_after_a_value_carries_the_comma_and_replaces_the_typed_word() {
+    let mut module = seeded("");
+    let base = "{\"pipeline\": [{\"$match\": {\"$expr\": {\"$eq\": [\n  \"$storeId\"";
+    for typed in ["|", "\n  |", " tr|", "\n  tr|", "\n  |  "] {
+        let items = picked(&mut module, &format!("{base}{typed}\n]}}}}}}]}}"));
+        let item = items
+            .iter()
+            .find(|(label, ..)| label == "true")
+            .unwrap_or_else(|| panic!("true for {typed:?}"));
+        assert!(
+            item.2.contains("\"$storeId\",\n  true\n]"),
+            "{typed:?}: {}",
+            item.2
+        );
+        assert!(serde_json::from_str::<Value>(&item.2).is_ok());
+    }
+}

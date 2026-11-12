@@ -1807,7 +1807,7 @@ fn candidates(analysis: &Analysis, known: &Catalog) -> Vec<Item> {
                 items = paths(analysis, known, true);
             }
             if !*quoted {
-                items.extend(generic(Body::Object, false));
+                items.extend(generic(Body::Object, true));
             }
             unique(items)
         }
