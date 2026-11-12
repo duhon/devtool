@@ -9,7 +9,8 @@ discovered schema for the active check in the current application instance. Fals
 target/authentication changed, discovery is pending, or a previous attempt
 failed. It does not prove the remote service lacks a specification.
 `console_schema` asks the module for that schema (GraphQL introspection, REST
-OpenAPI summary, OpenSearch mappings, MySQL tables and columns, Artemis broker
+OpenAPI summary, OpenSearch mappings, MySQL tables and columns, MongoDB collections and
+sampled fields, Artemis broker
 names, gRPC services and message fields) and reads it with offset/limit paging. The Agent has
 no tool to start or force discovery and cannot dispatch editor keystrokes or
 click interface controls. Editing through workspace tools is not a substitute
@@ -59,11 +60,12 @@ representative response rather than inventing required fields or API behavior.
 ## Other services
 
 Every service with discovery supports Alt+Space in its editor to request it.
-GraphQL and OpenSearch discover like REST: on Ctrl+Space hints for a check
+GraphQL, OpenSearch and MongoDB discover like REST: on Ctrl+Space hints for a check
 whose address has no cached schema yet. MySQL and gRPC also discover
 automatically when the cursor leaves their connection sections. Use the
 relevant check's connection and headers and watch the same bottom status strip.
 MySQL discovery supplies database tables/columns; GraphQL uses introspection;
-OpenSearch reads the cluster, its mappings and aliases; gRPC discovers
+OpenSearch reads the cluster, its mappings and aliases; MongoDB lists the database's
+collections and samples a few documents of the collection being edited; gRPC discovers
 services, methods and message fields using its reflection/proto support. Authentication or server capabilities can limit what is available.
 Splunk and Terminal do not have this schema discovery flow.

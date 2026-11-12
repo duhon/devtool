@@ -48,6 +48,7 @@ fn linked() -> Vec<Module> {
         "services/artemis" => services_module_artemis::Artemis,
         "services/opensearch" => services_module_opensearch::OpenSearch,
         "services/valkey" => services_module_valkey::Valkey,
+        "services/mongodb" => services_module_mongodb::Mongodb,
         "panels/variables" => services_module_variables::Variables,
         "panels/history" => services_module_history::History,
         "panels/templates" => services_module_templates::Templates,

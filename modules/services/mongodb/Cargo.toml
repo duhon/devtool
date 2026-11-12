@@ -1,0 +1,24 @@
+[package]
+name = "services-module-mongodb"
+version = "1.0.0"
+edition.workspace = true
+publish.workspace = true
+description = "MongoDB service module (mongosh syntax over the Host mongodb driver)"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+services-sdk = { path = "../../../api/sdk" }
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+prost = "0.13"
+wasmi = "0.46"
+services-native = { path = "../../../host" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
+tokio-util = "0.7"
+
+[package.metadata.services]
+min-core = "4.1.0"

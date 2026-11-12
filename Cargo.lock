@@ -3534,6 +3534,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "services-module-mongodb"
+version = "1.0.0"
+dependencies = [
+ "prost",
+ "serde",
+ "serde_json",
+ "services-native",
+ "services-sdk",
+ "tokio",
+ "tokio-util",
+ "wasmi",
+]
+
+[[package]]
 name = "services-module-mysql"
 version = "4.0.0"
 dependencies = [
@@ -3701,6 +3715,7 @@ dependencies = [
  "services-module-grpc",
  "services-module-hints",
  "services-module-history",
+ "services-module-mongodb",
  "services-module-mysql",
  "services-module-opensearch",
  "services-module-rest",
