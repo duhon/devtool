@@ -10,7 +10,9 @@
   with the command's fields in Extended JSON.
 - Documents come back as a table (ObjectId, dates and numbers readable) or as JSON;
   server errors show their code and name after the documents already read.
-- Ctrl+Space completes collections, actions, payload keys, query, update and aggregation
-  operators and the fields of a collection sampled from a few documents. Discovery only reads.
+- Discovery starts on its own once the target is complete and samples the collections the
+  check names; completion proposes keys, values (collections, field paths, `$$variables`,
+  finite sets), operators with descriptions and stage skeletons, scoped to the collection
+  of nested `$lookup`/`$unionWith` pipelines. Discovery only reads.
 - `#options`: Timeout, Connect-Timeout, Database, Max-Documents, Batch-Size, Format,
   Columns-Type. The Agent can load the `module-mongodb` skill.

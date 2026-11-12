@@ -252,30 +252,30 @@ fn static_completion_follows_the_sections() {
     assert!(database.contains(&"ping".into()) && !database.contains(&"find".into()));
     let keys = labels(&mut module, &statement("users", "find", "{\"|}"));
     assert!(
-        keys.contains(&"filter\": ".into()) && keys.contains(&"limit\": ".into()),
+        keys.contains(&"filter".into()) && keys.contains(&"limit".into()),
         "{keys:?}"
     );
     let update = labels(&mut module, &statement("users", "update", "{|}"));
-    assert!(update.contains(&"\"upsert\": ".into()), "{update:?}");
+    assert!(update.contains(&"upsert".into()), "{update:?}");
     let operators = labels(
         &mut module,
         &statement("users", "find", "{\"filter\": {\"age\": {$|}}}"),
     );
-    assert!(operators.contains(&"\"$gt\": ".into()), "{operators:?}");
+    assert!(operators.contains(&"$gt".into()), "{operators:?}");
     let stages = labels(
         &mut module,
         &statement("users", "aggregate", "{\"pipeline\": [{$gr|}]}"),
     );
-    assert!(stages.contains(&"\"$group\": ".into()), "{stages:?}");
+    assert!(stages.contains(&"$group".into()), "{stages:?}");
     let shorthand = labels(&mut module, &statement("users", "aggregate", "[{\"|\"}]"));
     assert!(shorthand.contains(&"$match".into()), "{shorthand:?}");
     let set = labels(
         &mut module,
         &statement("users", "update", "{\"update\": {$|}}"),
     );
-    assert!(set.contains(&"\"$set\": ".into()), "{set:?}");
+    assert!(set.contains(&"$set".into()), "{set:?}");
     let command = labels(&mut module, &statement("", "runCommand", "{|}"));
-    assert!(command.contains(&"\"dbStats\": ".into()), "{command:?}");
+    assert!(command.contains(&"dbStats".into()), "{command:?}");
     let options = labels(
         &mut module,
         "#target\nmongodb://h/app\n#options\nTi|\n#payload\n{}",

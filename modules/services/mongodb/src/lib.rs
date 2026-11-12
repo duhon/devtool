@@ -7,6 +7,8 @@ pub mod action;
 pub mod config;
 pub mod discovery;
 pub mod editor;
+pub mod mql;
+pub mod payload;
 pub mod render;
 pub mod value;
 
@@ -32,7 +34,7 @@ const DISCOVER: &str = "discover:";
 #[derive(Clone, Debug, Default, PartialEq)]
 struct Need {
     collections: bool,
-    fields: Option<String>,
+    fields: Vec<String>,
     force: bool,
 }
 
@@ -46,6 +48,8 @@ struct Job {
     uri: String,
     database: String,
     scope: Scope,
+    /// Collections to sample once the list shows they exist.
+    then: Vec<String>,
 }
 
 /// The raw text discovery resolves: the target and the options.
@@ -116,18 +120,18 @@ impl Mongodb {
         known.unwrap_or_default()
     }
 
-    fn hints(&mut self, check: &Check, pos: usize, force: bool) -> Vec<Cmd> {
+    fn hints(&mut self, check: &Check, pos: Option<usize>, force: bool) -> Vec<Cmd> {
         let need = if force {
             Need {
                 collections: true,
-                fields: None,
+                fields: editor::wanted(check),
                 force,
             }
         } else {
             match editor::needs(check, pos) {
-                Some((collections, fields)) => Need {
-                    collections,
-                    fields,
+                Some(plan) => Need {
+                    collections: plan.collections,
+                    fields: plan.fields,
                     force,
                 },
                 None => return vec![],
@@ -150,54 +154,83 @@ impl Mongodb {
     fn discover(&mut self, text: &str, need: Need) -> Vec<Cmd> {
         let connection = match connection_of(text) {
             Ok(connection) => connection,
-            Err(message) => {
+            Err(message) if need.force => {
                 return vec![cmd::status(
                     &format!("Discovery · WARNING · {message}"),
                     "warning",
                 )];
             }
+            Err(_) => return vec![],
         };
-        let now = services_sdk::now();
-        let mut scopes = Vec::new();
-        if need.collections {
-            scopes.push(Scope::Collections);
-        }
-        if let Some(name) = need.fields {
-            scopes.push(Scope::Fields(name));
+        let (uri, database) = (connection.uri.as_str(), connection.database.as_str());
+        let listed = self
+            .entry(uri, database)
+            .and_then(|entry| entry.collections.as_ref())
+            .map(|(_, names)| names.clone());
+        let mut waiting = Vec::new();
+        let mut sampled = Vec::new();
+        for name in need.fields {
+            match &listed {
+                Some(names) if names.contains(&name) => sampled.push(name),
+                Some(_) => {}
+                None => waiting.push(name),
+            }
         }
         let mut cmds = Vec::new();
-        for scope in scopes {
-            if self.jobs.values().any(|job| {
-                job.uri == connection.uri
-                    && job.database == connection.database
-                    && job.scope == scope
-            }) {
-                continue;
-            }
-            let entry = self.entry_mut(&connection.uri, &connection.database);
-            if need.force {
-                entry.failed = None;
-                entry.fields.clear();
-            } else if entry.fresh(&scope, now) || entry.cooling(now) {
-                continue;
-            }
-            self.count += 1;
-            let request = discovery::request(&scope, &connection.uri, &connection.database);
-            cmds.push(cmd::status("Discovery…", "busy"));
-            cmds.push(cmd::driver(
-                format!("{DISCOVER}{}", self.count),
-                &DriverCall::new(DRIVER, &request),
-            ));
-            self.jobs.insert(
-                self.count,
-                Job {
-                    uri: connection.uri.clone(),
-                    database: connection.database.clone(),
-                    scope,
-                },
-            );
+        if need.collections {
+            cmds.extend(self.start_job(uri, database, Scope::Collections, need.force, waiting));
+        }
+        for name in sampled {
+            cmds.extend(self.start_job(uri, database, Scope::Fields(name), need.force, vec![]));
         }
         cmds
+    }
+
+    fn start_job(
+        &mut self,
+        uri: &str,
+        database: &str,
+        scope: Scope,
+        force: bool,
+        then: Vec<String>,
+    ) -> Vec<Cmd> {
+        if let Some(job) = self
+            .jobs
+            .values_mut()
+            .find(|job| job.uri == uri && job.database == database && job.scope == scope)
+        {
+            for name in then {
+                if !job.then.contains(&name) {
+                    job.then.push(name);
+                }
+            }
+            return vec![];
+        }
+        let now = services_sdk::now();
+        let entry = self.entry_mut(uri, database);
+        if force {
+            entry.failed = None;
+        } else if entry.fresh(&scope, now) || entry.cooling(now) {
+            return vec![];
+        }
+        self.count += 1;
+        let request = discovery::request(&scope, uri, database);
+        self.jobs.insert(
+            self.count,
+            Job {
+                uri: uri.into(),
+                database: database.into(),
+                scope,
+                then,
+            },
+        );
+        vec![
+            cmd::status("Discovery…", "busy"),
+            cmd::driver(
+                format!("{DISCOVER}{}", self.count),
+                &DriverCall::new(DRIVER, &request),
+            ),
+        ]
     }
 
     fn discovered(&mut self, id: u64, result: Result<Value, Failure>) -> Vec<Cmd> {
@@ -212,16 +245,28 @@ impl Mongodb {
         match found {
             Ok(names) => {
                 let count = names.len();
-                entry.store(&job.scope, now, names);
+                entry.store(&job.scope, now, names.clone());
                 let what = match &job.scope {
                     Scope::Collections => "collections".to_owned(),
                     Scope::Fields(name) => format!("fields of {name}"),
                 };
-                vec![
+                let mut cmds = vec![
                     cmd::status_with("Discovery · OK", "ok", &json!({what.clone(): count})),
                     cmd::log("info", &format!("MongoDB discovery found {count} {what}")),
                     cmd::relight(),
-                ]
+                ];
+                if job.scope == Scope::Collections {
+                    for name in job.then.into_iter().filter(|name| names.contains(name)) {
+                        cmds.extend(self.start_job(
+                            &job.uri,
+                            &job.database,
+                            Scope::Fields(name),
+                            false,
+                            vec![],
+                        ));
+                    }
+                }
+                cmds
             }
             Err(message) => {
                 entry.failed = Some(now);
@@ -371,8 +416,9 @@ impl Module for Mongodb {
 
     fn update(&mut self, event: Event<()>) -> Vec<Cmd> {
         match event {
-            Event::Hints { check, pos } => self.hints(&check, pos as usize, false),
-            Event::Discover(check) => self.hints(&check, 0, true),
+            Event::Hints { check, pos } => self.hints(&check, Some(pos as usize), false),
+            Event::Document(check) => self.hints(&check, None, false),
+            Event::Discover(check) => self.hints(&check, None, true),
             Event::Reply { tag, result } => self.reply(&tag, result),
             Event::Run { tag, check } => self.run(tag, check),
             Event::Cancel { tag } => {
@@ -393,6 +439,7 @@ impl Module for Mongodb {
     fn subscriptions(&self) -> Subscriptions {
         Subscriptions {
             hints: true,
+            document: true,
             discover: true,
             run: true,
             workspace: true,

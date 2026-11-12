@@ -165,8 +165,33 @@ async fn packaged_wasm_runs_statements_through_the_actual_host_driver() {
         )
         .await;
     assert!(
-        fields.contains(&"title\": ".into()) && fields.contains(&"tags\": ".into()),
+        fields.contains(&"title".into()) && fields.contains(&"tags".into()),
         "{fields:?}"
     );
+    runner
+        .ok(&uri, "stores insert", r#"[{"name": "Main", "storeId": 7}]"#)
+        .await;
+    runner
+        .ok(
+            &uri,
+            "inventory insert",
+            r#"[{"sku": "a", "storeId": 7, "price": 3}]"#,
+        )
+        .await;
+    let nested = Runner::new()
+        .hint(
+            &uri,
+            concat!(
+                "#collection\nstores\n#action\naggregate\n#payload\n",
+                r#"{"pipeline": [{"$lookup": {"from": "inventory", "let": {"sid": "$storeId"}, "#,
+                r#""pipeline": [{"$match": {"$expr": {"$eq": ["$storeId", "$$sid"]}}}, {"$match": {""#,
+            ),
+        )
+        .await;
+    assert!(
+        nested.contains(&"sku".into()) && nested.contains(&"price".into()),
+        "The inventory is sampled: {nested:?}"
+    );
+    assert!(!nested.contains(&"name".into()), "{nested:?}");
     runner.ok(&uri, "dropDatabase", "").await;
 }

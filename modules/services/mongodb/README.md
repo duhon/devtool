@@ -71,12 +71,27 @@ documents read before it. The result is one plain driver call, not a stream.
 
 ## Completion
 
-Ctrl+Space completes saved targets in `#target`, collections in `#collection`, actions
-in `#action`, option names, the payload keys valid for the action, query, update and
-aggregation operators in operator positions, and the fields of the collection (sampled
-from 20 documents, dotted paths up to three levels) as keys of filters, projections,
-sorts and updates. Discovery only reads, uses short timeouts, is cached per target and
-database, and fails softly with a status note.
+Discovery starts by itself: once the target is complete (the cursor left its line, or
+another section began) the collections are listed, and the collections the check names
+(`#collection`, and `from`/`coll` in the payload, at most four, only if they exist) are
+sampled from 20 documents. A target with `{{variables}}` is resolved first. Partial or
+invalid targets stay quiet; Discover forces a refresh.
+
+Completion knows the structure of the payload, like GraphQL's:
+
+- keys valid for the action, query, update, aggregation and expression operators, and the
+  fields of the scope as keys of filters, projections, sorts and updates;
+- values: collections after `from`/`coll`/`$out`/`into`, `localField` of the collection and
+  `foreignField` of `from`, field paths `"$field"` of the stages before the cursor (including
+  fields added by `$addFields`, `$group`, `$project`, `$lookup` `as`), `$$let` variables,
+  `$$ROOT`, `$$NOW`, sort directions, booleans and BSON `$type` names;
+- scope: stages inside `$lookup`/`$unionWith` pipelines complete the fields of their own
+  collection; `$facet` and `$graphLookup` are followed too;
+- skeletons: picking `$lookup`, `$group`, `$match`, … inserts the stage with the cursor in
+  the first value; an empty payload offers the starter of the action.
+
+Discovery only reads, uses short timeouts, is cached per target, database and collection,
+and fails softly with a status note.
 
 ## Safety
 

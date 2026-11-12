@@ -21,7 +21,9 @@ Max-Documents: 200
 ```
 
 One check runs one command. Confirm collections and fields through the discovered
-schema (or `listCollections`, a `find` with `"limit": 1`) before using them.
+schema (or `listCollections`, a `find` with `"limit": 1`) before using them. The editor
+discovers collections once the target is complete and completes keys, values and stage
+skeletons from them.
 
 ## Sections
 
