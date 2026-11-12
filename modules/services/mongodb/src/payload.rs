@@ -455,6 +455,8 @@ struct Frame {
     values: Vec<(String, String)>,
     kids: Vec<Closed>,
     ops: Vec<Op>,
+    /// The scalars an array already holds, as JSON.
+    present: Vec<String>,
 }
 
 impl Frame {
@@ -470,6 +472,7 @@ impl Frame {
             values: Vec::new(),
             kids: Vec::new(),
             ops: Vec::new(),
+            present: Vec::new(),
         }
     }
 
@@ -485,7 +488,14 @@ impl Frame {
         self.kids.iter().find(|kid| kid.key == key)
     }
 
-    fn scalar(&mut self, text: &str) {
+    fn scalar(&mut self, text: &str, string: bool) {
+        if self.open == '[' {
+            self.present.push(if string {
+                serde_json::Value::from(text).to_string()
+            } else {
+                text.to_owned()
+            });
+        }
         if self.open == '{' {
             if self.expect_key && self.key.is_none() {
                 self.key = Some(text.to_owned());
@@ -821,6 +831,8 @@ pub struct Analysis {
     /// Characters before the fragment the pick replaces: the quote of a member typed after
     /// a value.
     pub back: usize,
+    /// The blanks after the cursor a pick after a value replaces.
+    blanks: usize,
     frames: Vec<Frame>,
     scopes: Vec<Option<String>>,
     action: String,
@@ -858,6 +870,23 @@ pub fn analyze(before: &str, after: &str, later: &str, action: &str, collection:
     }];
     let (tokens, _) = lex(head);
     let mut frames = walk(&tokens, action);
+    let typed_len = head.len();
+    // An object just begun after a complete element is that element typed by hand.
+    let mut head = head;
+    let mut unwrapped = false;
+    if let [.., parent, top] = &frames[..]
+        && top.open == '{'
+        && top.keys.is_empty()
+        && parent.open == '['
+        && let Some(at) = open_at(head)
+        && head[..at]
+            .trim_end()
+            .ends_with(|c: char| !matches!(c, '[' | ',' | '{' | ':'))
+    {
+        frames.pop();
+        head = &head[..at];
+        unwrapped = true;
+    }
 
     let (tail, closed, rest) = match quote {
         Some(quote) => {
@@ -879,11 +908,17 @@ pub fn analyze(before: &str, after: &str, later: &str, action: &str, collection:
     };
     let colon = rest.trim_start().starts_with(':');
     let consumed = tail + usize::from(closed);
-    let follow = later
-        .get(consumed..)
-        .and_then(|text| text.trim_start().chars().next());
+    let mut follow_text = later.get(consumed..).unwrap_or("").trim_start();
+    if unwrapped {
+        follow_text = follow_text
+            .strip_prefix('}')
+            .unwrap_or(follow_text)
+            .trim_start();
+    }
+    let follow = follow_text.chars().next();
     let mut lead = None;
     let mut back = 0;
+    let mut blanks = 0;
     let mut quoted = quoted;
     let mut nothing = false;
     if frames.last().is_some_and(after_value) {
@@ -896,7 +931,12 @@ pub fn analyze(before: &str, after: &str, later: &str, action: &str, collection:
             top.first = false;
             top.start = top.open == '[';
             lead = Some(member_indent(head));
-            back = head.len() - head.trim_end_matches([' ', '\t']).len();
+            back = typed_len - head.trim_end().len();
+            let rest = after.get(consumed..).unwrap_or("");
+            blanks = rest.len() - rest.trim_start_matches([' ', '\t']).len();
+            if unwrapped && rest[blanks..].starts_with('}') {
+                blanks += 1;
+            }
             if quoted {
                 back += 1;
                 quoted = false;
@@ -923,6 +963,7 @@ pub fn analyze(before: &str, after: &str, later: &str, action: &str, collection:
         lead,
         trail,
         back,
+        blanks,
         frames,
         scopes,
         action: action.to_owned(),
@@ -941,6 +982,14 @@ fn after_value(top: &Frame) -> bool {
 /// The indentation of the members of the innermost open container of `head`: two spaces
 /// past the line that opened it.
 fn member_indent(head: &str) -> String {
+    let at = open_at(head).unwrap_or(0);
+    let line = &head[head[..at].rfind('\n').map_or(0, |n| n + 1)..at];
+    let indent = &line[..line.len() - line.trim_start_matches([' ', '\t']).len()];
+    format!("{indent}  ")
+}
+
+/// Where the innermost bracket of `head` still open is.
+fn open_at(head: &str) -> Option<usize> {
     let bytes = head.as_bytes();
     let mut open: Vec<usize> = Vec::new();
     let mut i = 0;
@@ -966,10 +1015,7 @@ fn member_indent(head: &str) -> String {
         }
         i += 1;
     }
-    let at = open.last().copied().unwrap_or(0);
-    let line = &head[head[..at].rfind('\n').map_or(0, |n| n + 1)..at];
-    let indent = &line[..line.len() - line.trim_start_matches([' ', '\t']).len()];
-    format!("{indent}  ")
+    open.last().copied()
 }
 
 fn tokens_of(text: &str) -> Vec<Lex<'_>> {
@@ -1025,7 +1071,7 @@ fn walk(tokens: &[Lex], action: &str) -> Vec<Frame> {
             }
             Lex::Word(text) | Lex::Text(text) => {
                 if let Some(frame) = stack.last_mut() {
-                    frame.scalar(text);
+                    frame.scalar(text, matches!(token, Lex::Text(_)));
                 }
             }
             _ => {
@@ -1144,7 +1190,7 @@ impl Analysis {
     pub fn replaced(&self) -> usize {
         let key = matches!(self.want, Want::Keys { .. });
         let closing = self.closed && (self.back > 0 || key && !self.colon);
-        self.tail + usize::from(closing)
+        self.tail + usize::from(closing) + self.blanks
     }
 
     fn top(&self) -> Option<&Frame> {
@@ -1256,8 +1302,13 @@ impl Analysis {
         else {
             return vec![];
         };
+        let present = match &self.want {
+            Want::Element { .. } => self.top().map_or(&[][..], |top| &top.present[..]),
+            _ => &[],
+        };
         values
             .iter()
+            .filter(|text| !present.contains(text))
             .filter_map(|text| {
                 if !quoted {
                     return Some(make(text, text.clone(), "Sampled value", "value", false));
@@ -1679,13 +1730,6 @@ pub fn items(analysis: &Analysis, known: &Catalog) -> Vec<Item> {
         }
     }
     if let Some(lead) = &analysis.lead {
-        let mut separator = match analysis.want {
-            Want::Keys { .. } => vec![make(",", "\"$0\"".into(), "Next field", "snippet", true)],
-            Want::Element { .. } => vec![make(",", "$0".into(), "Next element", "snippet", true)],
-            _ => vec![],
-        };
-        separator.append(&mut items);
-        items = separator;
         for item in &mut items {
             item.insert = format!(",\n{lead}{}", item.insert);
         }

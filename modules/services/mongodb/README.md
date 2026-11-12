@@ -99,7 +99,9 @@ Completion knows the structure of the payload, like GraphQL's:
   query is made.
 - commas come only from completion, so the payload stays strict JSON: after a complete value
   (string, number, literal, closed object or array) the next members are offered with the
-  leading `,` and the members' indentation (plus a `,` item for a free-typed member); a pick
+  leading `,` glued to the value (the pick replaces the blanks and newline back to it, also
+  when a `{` or `"` was already typed for the new member) and the members' indentation;
+  there is no comma item; sampled values already in a `$in` list are not offered again; a pick
   placed before an existing member ends with a comma; nothing is offered between a value and
   a comma that is already there. A payload that is not valid is rejected on run with its line
   and column.
