@@ -134,6 +134,12 @@ pub trait Extension {
         None
     }
 
+    /// Whether `line` resets the tokenizer state to [`Extension::start`], so highlighting
+    /// can restart there exactly.
+    fn restarts(&self, _line: &str) -> bool {
+        false
+    }
+
     /// The tokenizer state the first line starts in.
     fn start(&self) -> Vec<u8> {
         Vec::new()

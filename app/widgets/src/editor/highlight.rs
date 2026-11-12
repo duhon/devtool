@@ -15,6 +15,8 @@ pub type Style = Option<&'static str>;
 pub const MAX_HIGHLIGHT: usize = 10_000;
 /// How far back a line looks for a cached state before restarting from a fresh one.
 const RESTART: usize = 100;
+/// How much further back than [`RESTART`] a line the extension restarts at is looked for.
+const FAR: usize = 2000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Span {
@@ -148,10 +150,21 @@ impl Highlighter {
             if let Some(Some(state)) = self.states.get(search) {
                 return (search, (**state).clone());
             }
+            if self.extension.restarts(&lines[search - 1]) {
+                return (search - 1, self.start());
+            }
             let indent = indentation(&lines[search - 1]);
             if least.is_none_or(|(_, least)| indent < least) {
                 least = Some((search - 1, indent));
             }
+        }
+        let far = line.saturating_sub(RESTART - 1).max(1);
+        let floor = far.saturating_sub(FAR).max(1);
+        if let Some(restart) = (floor..far)
+            .rev()
+            .find(|&search| self.extension.restarts(&lines[search - 1]))
+        {
+            return (restart - 1, self.start());
         }
         (least.map_or(line, |(line, _)| line), self.start())
     }

@@ -3,6 +3,7 @@
 //! `cargo test -p services-shell --test modules -- rest::`.
 
 mod agent;
+mod mongodb;
 mod rest;
 mod sessions;
 mod templates;

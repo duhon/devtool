@@ -467,6 +467,10 @@ impl Extension for Language {
         })
     }
 
+    fn restarts(&self, line: &str) -> bool {
+        self.module.is_some() && self.section.is_none() && document::is_check(line)
+    }
+
     fn highlight(&self, state: &[u8], lines: &[String], line: usize) -> Option<Tokens> {
         let service = self.module.as_deref()?;
         let text = lines[line].as_str();
