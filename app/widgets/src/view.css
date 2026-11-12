@@ -168,7 +168,7 @@
 
 .ui-tab-strip { display: flex; flex-wrap: wrap; border-bottom: 1px solid var(--border); }
 
-.ui-tab-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; gap: 6px; padding-top: 6px; overflow: auto; }
+.ui-tab-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; gap: 6px; padding-top: 6px; overflow: auto; scrollbar-gutter: stable; }
 
 .ui-list { display: flex; flex-direction: column; flex: 0 1 auto; min-height: 0; overflow: auto; gap: 2px; }
 
