@@ -19,6 +19,8 @@ pub const SECTIONS: [&str; 5] = ["target", "collection", "action", "payload", "o
 pub struct Catalog {
     pub collections: Vec<String>,
     pub fields: BTreeMap<String, Vec<String>>,
+    /// Per collection and field: the values the sample showed, as JSON text.
+    pub values: BTreeMap<String, BTreeMap<String, Vec<String>>>,
 }
 
 /// Completion in a MongoDB check: markers, the connection string, collection, action,

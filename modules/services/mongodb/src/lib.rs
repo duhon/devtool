@@ -244,9 +244,10 @@ impl Mongodb {
             .and_then(|value| discovery::found(&job.scope, &Response::parse(&value)?));
         let entry = self.entry_mut(&job.uri, &job.database);
         match found {
-            Ok(names) => {
-                let count = names.len();
-                entry.store(&job.scope, now, names.clone());
+            Ok(found) => {
+                let count = found.names.len();
+                let names = found.names.clone();
+                entry.store(&job.scope, now, found);
                 let what = match &job.scope {
                     Scope::Collections => "collections".to_owned(),
                     Scope::Fields(name) => format!("fields of {name}"),

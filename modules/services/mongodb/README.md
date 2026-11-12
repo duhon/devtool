@@ -91,6 +91,11 @@ Completion knows the structure of the payload, like GraphQL's:
   the first value; an empty payload offers the starter of the action. Objects and arrays
   are inserted as blocks laid out like JSON completion: the cursor on its own line, indented
   two spaces deeper than the line, the closing bracket at the indentation of the line.
+- comparisons offer sampled values: after `"field": `, after `$eq`/`$ne`/`$gt`/`$gte`/`$lt`/`$lte`
+  and inside `$in`/`$nin`/`$all` arrays. A field qualifies when the sample has at least two
+  documents and at most 10 distinct scalar values (strings up to 40 characters, numbers,
+  booleans; array fields contribute their elements; `_id`, dates and ids never). No extra
+  query is made.
 - every value position (after `"key": ` or inside an array) also offers `{}`, `[]`, `""` and
   `true`/`false`/`null`; the shape the key expects comes first (stage skeletons, `[` for
   `$in`/`$and`/`$round`, `{` for `$set`/`$cond`/accumulators).

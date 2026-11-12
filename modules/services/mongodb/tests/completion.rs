@@ -34,7 +34,9 @@ fn seeded(payload: &str) -> Harness {
     for cmd in cmds.iter().filter(|cmd| cmd.name == "driver.call") {
         let request = &cmd.args()["request"];
         let documents = match request["command"]["find"].as_str() {
-            Some("stores") => json!([{"_id": 1, "name": "Main", "storeId": 7, "region": "eu"}]),
+            Some("stores") => json!([
+                {"_id": 1, "name": "Main", "storeId": 7, "region": "eu", "tags": ["big", "open"], "stars": {"$numberInt": "5"}},
+                {"_id": 2, "name": "Side", "storeId": 8, "region": "us", "tags": ["open"], "stars": {"$numberInt": "3"}}]),
             Some("inventory") => json!([{"sku": "a", "storeId": 7, "price": 3, "stock": 2}]),
             other => panic!("unexpected sample {other:?}"),
         };
@@ -486,4 +488,65 @@ fn typed_words_are_replaced_without_doubling_quotes_or_brackets() {
             .iter()
             .all(|(_, insert)| !insert.starts_with(['{', '[']))
     );
+}
+
+#[test]
+fn comparisons_offer_the_sampled_values() {
+    let mut module = seeded("");
+    let equality = offer(&mut module, r#"{"filter": {"region": |}}"#);
+    assert_eq!(
+        equality[..2],
+        [
+            ("\"eu\"".to_owned(), "\"eu\"".to_owned()),
+            ("\"us\"".to_owned(), "\"us\"".to_owned())
+        ]
+    );
+    assert!(equality.iter().any(|(label, _)| label == "{}"));
+    let numbers = offer(&mut module, r#"{"filter": {"stars": {"$gte": |}}}"#);
+    assert_eq!(
+        numbers[..2],
+        [("5".into(), "5".into()), ("3".into(), "3".into())]
+    );
+    let in_match = offer(
+        &mut module,
+        r#"{"pipeline": [{"$match": {"region": {"$ne": |}}}]}"#,
+    );
+    assert_eq!(in_match[0].1, "\"eu\"");
+    let many = labels(&mut module, r#"{"filter": {"name": |}}"#);
+    assert_eq!(many[..2], ["\"Main\"", "\"Side\""]);
+    for skipped in ["_id", "unknown"] {
+        let none = labels(&mut module, &format!(r#"{{"filter": {{"{skipped}": |}}}}"#));
+        assert_eq!(none[0], "{}", "{skipped}");
+    }
+}
+
+#[test]
+fn lists_offer_the_sampled_values_of_the_field() {
+    let mut module = seeded("");
+    let tags = offer(&mut module, r#"{"filter": {"tags": {"$in": [|]}}}"#);
+    assert_eq!(
+        tags[..2],
+        [
+            ("\"big\"".into(), "\"big\"".into()),
+            ("\"open\"".into(), "\"open\"".into())
+        ]
+    );
+    assert!(tags.iter().any(|(label, _)| label == "{}"));
+    let all = labels(&mut module, r#"{"filter": {"tags": {"$all": [|]}}}"#);
+    assert_eq!(all[0], "\"big\"");
+    let stars = labels(&mut module, r#"{"filter": {"stars": {"$nin": [|]}}}"#);
+    assert_eq!(stars[..2], ["5", "3"]);
+    let plain = labels(&mut module, r#"{"filter": {"tags": {"$size": |}}}"#);
+    assert!(!plain.contains(&"\"big\"".to_owned()));
+}
+
+#[test]
+fn typed_sampled_strings_keep_their_quotes() {
+    let mut module = seeded("");
+    let open = offer(&mut module, r#"{"filter": {"region": "e|"}}"#);
+    assert_eq!(open[0], ("eu".into(), "eu".into()));
+    let unclosed = offer(&mut module, "{\"filter\": {\"region\": \"e|");
+    assert_eq!(unclosed[0], ("eu".into(), "eu\"".into()));
+    let element = offer(&mut module, r#"{"filter": {"tags": {"$in": ["op|"]}}}"#);
+    assert_eq!(element[0], ("open".into(), "open".into()));
 }

@@ -1109,6 +1109,81 @@ impl Analysis {
             .unwrap_or_default()
     }
 
+    /// The field a value or an array element at the cursor is compared with.
+    fn compared(&self) -> Option<String> {
+        const COMPARISONS: &[&str] = &["$eq", "$ne", "$gt", "$gte", "$lt", "$lte"];
+        const LISTS: &[&str] = &["$in", "$nin", "$all"];
+        let frames = &self.frames;
+        let key_at = |back: usize| {
+            frames
+                .len()
+                .checked_sub(back)
+                .and_then(|at| frames[at].key.clone())
+        };
+        match &self.want {
+            Want::Value { role, key, .. } => match role {
+                Role::Filter if !key.starts_with('$') => Some(key.clone()),
+                Role::FieldQuery if COMPARISONS.contains(&key.as_str()) => key_at(2),
+                _ => None,
+            },
+            Want::Element { .. } if self.top()?.open == '[' => {
+                let list = key_at(2)?;
+                (LISTS.contains(&list.as_str())
+                    && frames.get(frames.len().checked_sub(2)?)?.role == Role::FieldQuery)
+                    .then(|| key_at(3))
+                    .flatten()
+            }
+            _ => None,
+        }
+    }
+
+    /// The values the sample shows for the field the cursor compares with.
+    fn sampled(&self, known: &Catalog, quoted: bool) -> Vec<Item> {
+        let Some(field) = self.compared() else {
+            return vec![];
+        };
+        let pipeline = self
+            .frames
+            .iter()
+            .rposition(|frame| frame.role == Role::Pipeline);
+        if pipeline.is_some_and(|at| {
+            self.frames[at]
+                .ops
+                .iter()
+                .any(|op| matches!(op, Op::Reset(_)))
+        }) {
+            return vec![];
+        }
+        let scope = match pipeline {
+            Some(at) => self.scopes[at].clone(),
+            None => self.scopes.last().cloned().flatten(),
+        };
+        let Some(values) = scope
+            .and_then(|name| known.values.get(&name))
+            .and_then(|fields| fields.get(&field))
+        else {
+            return vec![];
+        };
+        values
+            .iter()
+            .filter_map(|text| {
+                if !quoted {
+                    return Some(make(text, text.clone(), "Sampled value", "value", false));
+                }
+                match serde_json::from_str::<serde_json::Value>(text) {
+                    Ok(serde_json::Value::String(raw)) => Some(make(
+                        &raw,
+                        quote(&raw, true, self.closed),
+                        "Sampled value",
+                        "value",
+                        false,
+                    )),
+                    _ => None,
+                }
+            })
+            .collect()
+    }
+
     /// The `$$names` the cursor can read.
     fn variables(&self) -> Vec<String> {
         let mut names = Vec::new();
@@ -1525,7 +1600,10 @@ fn candidates(analysis: &Analysis, known: &Catalog) -> Vec<Item> {
         } => key_items(analysis, known, *role, *quoted, *first),
         Want::Value { role, key, quoted } => {
             let val = value_of(*role, key, action);
-            let mut items = if *quoted { vec![] } else { shaped(*role, key) };
+            let mut items = analysis.sampled(known, *quoted);
+            if !*quoted {
+                items.extend(shaped(*role, key));
+            }
             items.extend(value_items(analysis, known, val, *quoted));
             if items.is_empty()
                 && *quoted
@@ -1540,7 +1618,8 @@ fn candidates(analysis: &Analysis, known: &Catalog) -> Vec<Item> {
             unique(items)
         }
         Want::Element { role, quoted } => {
-            let mut items = match role {
+            let mut items = analysis.sampled(known, *quoted);
+            items.extend(match role {
                 Role::Pipeline if !quoted => {
                     let keys = Keys {
                         quoted: false,
@@ -1567,7 +1646,7 @@ fn candidates(analysis: &Analysis, known: &Catalog) -> Vec<Item> {
                 )],
                 Role::ExprList => paths(analysis, known, *quoted),
                 _ => vec![],
-            };
+            });
             if items.is_empty()
                 && *quoted
                 && analysis.fragment.starts_with('$')

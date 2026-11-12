@@ -16,7 +16,8 @@
   of nested `$lookup`/`$unionWith` pipelines. Objects and arrays are inserted as indented
   blocks, and every value position also offers `{}`, `[]`, `""` and the literals, led by the
   container the key expects (stage skeleton, `[` for `$in`/`$and`/`$round`, `{` for `$set`/`$cond`).
-  Discovery only reads.
+  Comparisons (`"field": |`, `$eq`…`$lte`, and inside `$in`/`$nin`/`$all`) offer the values
+  the sampled documents show for fields with few distinct scalar values. Discovery only reads.
 - The payload is highlighted by token: keys, `$operators`, command fields, Extended JSON
   wrappers, field paths, strings, numbers and atoms.
 - `#options`: Timeout, Connect-Timeout, Database, Max-Documents, Batch-Size, Format,
