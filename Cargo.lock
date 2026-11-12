@@ -3402,7 +3402,7 @@ dependencies = [
 
 [[package]]
 name = "services-contracts"
-version = "4.1.0"
+version = "4.2.0"
 dependencies = [
  "flate2",
  "serde",
@@ -3413,7 +3413,7 @@ dependencies = [
 
 [[package]]
 name = "services-installer"
-version = "4.1.0"
+version = "4.2.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3430,7 +3430,7 @@ dependencies = [
 
 [[package]]
 name = "services-kernel"
-version = "4.1.0"
+version = "4.2.0"
 dependencies = [
  "base64 0.22.1",
  "js-sys",
@@ -3652,7 +3652,7 @@ dependencies = [
 
 [[package]]
 name = "services-native"
-version = "4.1.0"
+version = "4.2.0"
 dependencies = [
  "async-trait",
  "axum 0.8.9",
@@ -3690,7 +3690,7 @@ dependencies = [
 
 [[package]]
 name = "services-sdk"
-version = "4.1.0"
+version = "4.2.0"
 dependencies = [
  "base64 0.22.1",
  "prost",
@@ -3701,7 +3701,7 @@ dependencies = [
 
 [[package]]
 name = "services-shell"
-version = "4.1.0"
+version = "4.2.0"
 dependencies = [
  "js-sys",
  "serde_json",
@@ -3738,7 +3738,7 @@ dependencies = [
 
 [[package]]
 name = "services-testkit"
-version = "4.1.0"
+version = "4.2.0"
 dependencies = [
  "axum 0.8.9",
  "serde_json",
@@ -3750,7 +3750,7 @@ dependencies = [
 
 [[package]]
 name = "services-widgets"
-version = "4.1.0"
+version = "4.2.0"
 dependencies = [
  "js-sys",
  "pulldown-cmark",
@@ -4987,7 +4987,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "4.1.0"
+version = "4.2.0"
 dependencies = [
  "anyhow",
  "axum 0.8.9",

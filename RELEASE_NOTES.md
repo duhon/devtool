@@ -1,5 +1,16 @@
 # Release notes
 
+## 4.2.0
+
+- New MongoDB service module (1.0.0): checks with `#target`, `#collection`, `#action`
+  and `#payload`. The payload is strict JSON; completion works while you type: commands,
+  stages, operators, field names and values sampled from the collection, with commas
+  inserted for you. Discovery reads collections and fields from the server. Add it in
+  Settings → Modules.
+- New Valkey service module (1.0.0) over a TCP session.
+- The editor colors checks the same after scrolling or reloading as after a full pass.
+- The hints list returns under the caret when filtering shortens it.
+
 ## 4.1.0
 
 - The TCP driver (1.1) keeps a connection open as a session: a module writes to it step
