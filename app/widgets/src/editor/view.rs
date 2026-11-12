@@ -285,6 +285,9 @@ impl View {
             .and_then(|value| value.as_f64())
             .unwrap_or_default();
         let style = list.style();
+        // A list moved above the caret returns under it once filtering makes it fit.
+        let _ = style.set_property("left", &format!("{left}px"));
+        let _ = style.set_property("top", &format!("{bottom}px"));
         let _ = style.set_property("max-height", "");
         let rect = list.get_bounding_client_rect();
         if rect.bottom() > height && height > 0.0 {
