@@ -1,4 +1,5 @@
-//! The `#target` connection string and the `#options` of a check.
+//! The `#target` connection string, the `#headers` (client certificate) and the `#options`
+//! of a check.
 
 use services_sdk::lang::headers;
 use services_sdk::lang::table::{Format, Options};
@@ -18,6 +19,8 @@ pub const OPTIONS: [&str; 7] = [
     "Format",
     "Columns-Type",
 ];
+
+pub const HEADERS: [&str; 3] = ["Auth", "Certificate", "CertificatePassword"];
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Connection {
@@ -59,6 +62,19 @@ fn split(uri: &str) -> Option<Split<'_>> {
         database,
         query,
     })
+}
+
+/// `text` percent-encoded for a connection string value.
+fn encode(text: &str) -> String {
+    let mut out = String::new();
+    for byte in text.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~' | b'/') {
+            out.push(byte as char);
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
 }
 
 fn decode(text: &str) -> String {
@@ -161,9 +177,92 @@ fn number(name: &str, value: &str, min: u64, max: u64, unit: &str) -> Result<u64
         .ok_or_else(|| format!("{name} must be {min}-{max}{unit}"))
 }
 
+/// The target with the client certificate of `#headers` put into its query.
+fn with_certificate(target: &str, parts: &Split, headers: &str) -> Result<String, String> {
+    let mut auth = None;
+    let mut certificate = None;
+    let mut password = None;
+    let mut seen = Vec::new();
+    for (name, value) in headers::pairs(headers) {
+        let key = name.to_ascii_lowercase();
+        if seen.contains(&key) {
+            return Err(format!("Duplicate header {name}"));
+        }
+        seen.push(key.clone());
+        let value = value.trim().to_owned();
+        match key.as_str() {
+            "auth" => auth = Some(value),
+            "certificate" => certificate = Some(value),
+            "certificatepassword" => password = Some(value),
+            _ => {
+                return Err(format!(
+                    "Unknown header {name:?}; MongoDB takes {}",
+                    HEADERS.join(", ")
+                ));
+            }
+        }
+    }
+    let x509 = match auth.as_deref().map(str::to_ascii_lowercase).as_deref() {
+        Some("x509") => true,
+        Some("scram") => false,
+        Some(_) => return Err("Auth takes x509 or scram".into()),
+        None => false,
+    };
+    if !x509 {
+        return match (certificate, password) {
+            (None, None) => Ok(target.to_owned()),
+            _ => Err("Certificate needs Auth: x509".into()),
+        };
+    }
+    let Some(certificate) = certificate.filter(|path| !path.is_empty()) else {
+        return Err("Auth: x509 needs a Certificate: the path of a PEM file with the client certificate and key".into());
+    };
+    if parts.userinfo.is_some_and(|info| info.contains(':')) {
+        return Err("Auth: x509 does not take a password in the #target".into());
+    }
+    for pair in parts.query.split('&') {
+        let name = pair.split_once('=').map_or(pair, |(name, _)| name);
+        if matches!(
+            name.to_ascii_lowercase().as_str(),
+            "authmechanism"
+                | "authsource"
+                | "tlscertificatekeyfile"
+                | "tlscertificatekeyfilepassword"
+        ) {
+            return Err(format!(
+                "Auth: x509 sets {name} itself; remove it from the #target"
+            ));
+        }
+    }
+    let mut query = format!(
+        "authMechanism=MONGODB-X509&authSource=%24external&tlsCertificateKeyFile={}",
+        encode(&certificate)
+    );
+    if let Some(password) = password.filter(|password| !password.is_empty()) {
+        query.push_str(&format!(
+            "&tlsCertificateKeyFilePassword={}",
+            encode(&password)
+        ));
+    }
+    let mut uri = target.to_owned();
+    if parts.query.is_empty() {
+        if !uri.ends_with('?') {
+            let rest = uri.split_once("://").map_or("", |(_, rest)| rest);
+            if !rest.contains('/') {
+                uri.push('/');
+            }
+            uri.push('?');
+        }
+    } else {
+        uri.push('&');
+    }
+    uri.push_str(&query);
+    Ok(uri)
+}
+
 impl Connection {
-    /// The target and options of a check, `{{…}}` variables resolved.
-    pub fn parse(target: &str, options: &str) -> Result<Self, String> {
+    /// The target, headers and options of a check, `{{…}}` variables resolved.
+    pub fn parse(target: &str, headers: &str, options: &str) -> Result<Self, String> {
         let target = target.trim();
         if target.is_empty() {
             return Err(
@@ -174,7 +273,7 @@ impl Connection {
             return Err("#target must be a mongodb:// or mongodb+srv:// connection string".into());
         };
         let mut connection = Self {
-            uri: target.to_owned(),
+            uri: with_certificate(target, &parts, headers)?,
             database: decode(parts.database),
             timeout_ms: DEFAULT_TIMEOUT_S * 1000,
             connect_ms: None,
@@ -241,17 +340,21 @@ mod tests {
 
     #[test]
     fn the_database_comes_from_the_uri_or_the_option() {
-        let uri = Connection::parse("mongodb://h1:27017,h2/app?replicaSet=rs", "").unwrap();
+        let uri = Connection::parse("mongodb://h1:27017,h2/app?replicaSet=rs", "", "").unwrap();
         assert_eq!(uri.database, "app");
         assert_eq!(uri.timeout_ms, 30_000);
         assert_eq!(uri.max_documents, 1000);
-        let option =
-            Connection::parse("mongodb+srv://u:p@cluster.example.net", "Database: shop").unwrap();
+        let option = Connection::parse(
+            "mongodb+srv://u:p@cluster.example.net",
+            "",
+            "Database: shop",
+        )
+        .unwrap();
         assert_eq!(option.database, "shop");
-        let both = Connection::parse("mongodb://h/app", "Database: shop").unwrap();
+        let both = Connection::parse("mongodb://h/app", "", "Database: shop").unwrap();
         assert_eq!(both.database, "app");
         assert!(
-            Connection::parse("mongodb://h", "")
+            Connection::parse("mongodb://h", "", "")
                 .unwrap_err()
                 .starts_with("A database is required")
         );
@@ -261,6 +364,7 @@ mod tests {
     fn options_are_validated() {
         let c = Connection::parse(
             "mongodb://h/app",
+            "",
             "Timeout: 5\nConnect-Timeout: 2\nMax-Documents: 50\nbatch-size: 7\nFormat: json\nColumns-Type: a=json",
         )
         .unwrap();
@@ -270,7 +374,7 @@ mod tests {
         );
         assert_eq!(c.format, Some(Format::Json));
         assert_eq!(c.columns_type.as_deref(), Some("a=json"));
-        let error = |options: &str| Connection::parse("mongodb://h/app", options).unwrap_err();
+        let error = |options: &str| Connection::parse("mongodb://h/app", "", options).unwrap_err();
         assert_eq!(error("Timeout: 0"), "Timeout must be 1-3600 seconds");
         assert_eq!(error("Max-Documents: x"), "Max-Documents must be 1-10000");
         assert_eq!(error("Timeout: 1\ntimeout: 2"), "Duplicate option timeout");
@@ -284,7 +388,7 @@ mod tests {
             "",
             "mongodb://,h/a",
         ] {
-            assert!(Connection::parse(target, "").is_err(), "{target}");
+            assert!(Connection::parse(target, "", "").is_err(), "{target}");
         }
     }
 
@@ -300,5 +404,106 @@ mod tests {
         assert!(text.contains("admin:***@"));
         assert_eq!(redact("mongodb://user@h"), "mongodb://user@h");
         assert_eq!(redact("nonsense"), "mongodb://…");
+    }
+}
+
+#[cfg(test)]
+mod certificate_tests {
+    use super::*;
+
+    const X509: &str = "Auth: x509\nCertificate: /keys/my client.pem";
+
+    fn uri(target: &str, headers: &str) -> String {
+        Connection::parse(target, headers, "").unwrap().uri
+    }
+
+    fn error(target: &str, headers: &str) -> String {
+        Connection::parse(target, headers, "").unwrap_err()
+    }
+
+    #[test]
+    fn x509_is_appended_to_the_query_of_the_target() {
+        let tail = "authMechanism=MONGODB-X509&authSource=%24external&tlsCertificateKeyFile=/keys/my%20client.pem";
+        assert_eq!(
+            uri("mongodb+srv://c0.example.net/app", X509),
+            format!("mongodb+srv://c0.example.net/app?{tail}")
+        );
+        assert_eq!(
+            uri("mongodb://h:1/app?retryWrites=true", X509),
+            format!("mongodb://h:1/app?retryWrites=true&{tail}")
+        );
+        assert_eq!(
+            uri("mongodb://h/app?", X509),
+            format!("mongodb://h/app?{tail}")
+        );
+        assert_eq!(
+            Connection::parse("mongodb://h", X509, "Database: d")
+                .unwrap()
+                .uri,
+            format!("mongodb://h/?{tail}")
+        );
+        assert_eq!(
+            uri(
+                "mongodb://CN=me@h/app",
+                "Auth: X509\nCertificate: C:\\k.pem"
+            )
+            .split_once('?')
+            .unwrap()
+            .1,
+            "authMechanism=MONGODB-X509&authSource=%24external&tlsCertificateKeyFile=C%3A%5Ck.pem"
+        );
+        assert_eq!(uri("mongodb://h/app", ""), "mongodb://h/app");
+        assert_eq!(uri("mongodb://h/app", "Auth: scram"), "mongodb://h/app");
+    }
+
+    #[test]
+    fn the_certificate_password_is_a_secret() {
+        let built = uri(
+            "mongodb://h/app",
+            &format!("{X509}\nCertificatePassword: p@ss w"),
+        );
+        assert!(built.ends_with("&tlsCertificateKeyFilePassword=p%40ss%20w"));
+        assert!(redact(&built).ends_with("tlsCertificateKeyFilePassword=***"));
+        let text = scrub(&format!("failed {built}: p@ss w"), &built);
+        assert!(!text.contains("p@ss") && !text.contains("p%40ss"));
+        assert!(text.contains("/keys/my%20client.pem"));
+    }
+
+    #[test]
+    fn headers_are_validated() {
+        let target = "mongodb://h/app";
+        assert!(error(target, "Auth: x509").starts_with("Auth: x509 needs a Certificate"));
+        assert_eq!(
+            error(target, "Certificate: /k.pem"),
+            "Certificate needs Auth: x509"
+        );
+        assert_eq!(
+            error(target, "Auth: scram\nCertificate: /k.pem"),
+            "Certificate needs Auth: x509"
+        );
+        assert_eq!(error(target, "Auth: kerberos"), "Auth takes x509 or scram");
+        assert_eq!(
+            error(target, "Auth: x509\nauth: x509"),
+            "Duplicate header auth"
+        );
+        assert_eq!(
+            error(target, "Cert: /k.pem"),
+            "Unknown header \"Cert\"; MongoDB takes Auth, Certificate, CertificatePassword"
+        );
+        assert_eq!(
+            error("mongodb://u:pw@h/app", X509),
+            "Auth: x509 does not take a password in the #target"
+        );
+        for name in [
+            "authMechanism=PLAIN",
+            "authSource=admin",
+            "tlsCertificateKeyFile=/a",
+        ] {
+            let message = error(&format!("mongodb://h/app?{name}"), X509);
+            assert!(
+                message.contains("sets") && !message.contains("PLAIN"),
+                "{message}"
+            );
+        }
     }
 }

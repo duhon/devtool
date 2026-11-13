@@ -31,6 +31,10 @@ skeletons from them.
   is the URI path, else `Database:` in `#options`. Credentials belong in the URI (or in
   variables); they are never shown in results, hints or errors. Read preference, TLS and
   replica set come from the URI query.
+- `#headers` (optional): `Auth: x509` with `Certificate: <path to a PEM file with the client
+  certificate and key>` authenticates by client certificate (no password in the URI);
+  `CertificatePassword` decrypts the key. `Auth` takes `x509` or `scram` (default). Both
+  `Auth: x509` and `Certificate` are required together.
 - `#collection`: the collection; not needed for database-level actions.
 - `#action`: the command name (case-insensitive). The module sends
   `{<action>: <collection>, ...payload}` (`1` instead of the collection for database

@@ -1,5 +1,12 @@
 # MongoDB module release notes
 
+## 1.1.0
+
+- X.509 client-certificate authentication through a new `#headers` section
+  (`Auth: x509`, `Certificate: <PEM file>`, optional `CertificatePassword`); the module
+  adds `authMechanism=MONGODB-X509`, `authSource=$external` and `tlsCertificateKeyFile`
+  to the `#target`.
+
 ## 1.0.0
 
 - A WebAssembly module for Services DevTools 4.1 that runs MongoDB statements through

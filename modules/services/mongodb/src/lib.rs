@@ -53,18 +53,20 @@ struct Job {
     then: Vec<String>,
 }
 
-/// The raw text discovery resolves: the target and the options.
+/// The raw text discovery resolves: the target, the headers and the options.
 fn raw_of(check: &Check) -> String {
     format!(
-        "{}\n{}",
+        "{}\n#headers\n{}\n#options\n{}",
         check.text_of("target").trim(),
+        check.text_of("headers"),
         check.text_of("options")
     )
 }
 
 fn connection_of(text: &str) -> Result<Connection, String> {
-    let (target, options) = text.split_once('\n').unwrap_or((text, ""));
-    Connection::parse(target, options)
+    let (target, rest) = text.split_once("\n#headers\n").unwrap_or((text, ""));
+    let (headers, options) = rest.split_once("\n#options\n").unwrap_or((rest, ""));
+    Connection::parse(target, headers, options)
 }
 
 #[derive(Default)]
@@ -282,14 +284,19 @@ impl Mongodb {
     }
 
     fn run(&mut self, run: String, check: Check) -> Vec<Cmd> {
-        let (target, options) = (check.text_of("target"), check.text_of("options"));
+        let (target, headers, options) = (
+            check.text_of("target"),
+            check.text_of("headers"),
+            check.text_of("options"),
+        );
         if !target.contains("{{")
+            && !headers.contains("{{")
             && !options.contains("{{")
-            && let Err(error) = Connection::parse(target, options)
+            && let Err(error) = Connection::parse(target, headers, options)
         {
             return vec![cmd::fail(&run, &error, &Value::Null)];
         }
-        let sections = json!({"target": target.trim(), "options": options,
+        let sections = json!({"target": target.trim(), "headers": headers, "options": options,
             "collection": check.text_of("collection"), "action": check.text_of("action"),
             "payload": check.text_of("payload")});
         self.resolving.insert(run.clone(), check);
@@ -305,11 +312,14 @@ impl Mongodb {
             Ok(sections) => run::with_sections(&check, &sections),
             Err(error) => return fail(error),
         };
-        let connection =
-            match Connection::parse(sections.text_of("target"), sections.text_of("options")) {
-                Ok(connection) => connection,
-                Err(error) => return fail(error),
-            };
+        let connection = match Connection::parse(
+            sections.text_of("target"),
+            sections.text_of("headers"),
+            sections.text_of("options"),
+        ) {
+            Ok(connection) => connection,
+            Err(error) => return fail(error),
+        };
         let statement = match action::build(
             sections.text_of("collection").trim(),
             sections.text_of("action").trim(),

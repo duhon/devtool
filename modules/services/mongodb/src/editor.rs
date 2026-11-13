@@ -3,7 +3,7 @@
 //! discovery found.
 
 use crate::action;
-use crate::config::OPTIONS;
+use crate::config::{HEADERS, OPTIONS};
 use crate::payload;
 use serde_json::Value;
 use services_sdk::lang::check::At;
@@ -12,7 +12,14 @@ use services_sdk::lang::{endpoint, finish, headers, item, json, marker};
 use services_sdk::{Check, Completions, Item, Line, LineColumns, Token};
 use std::collections::BTreeMap;
 
-pub const SECTIONS: [&str; 5] = ["target", "collection", "action", "payload", "options"];
+pub const SECTIONS: [&str; 6] = [
+    "target",
+    "headers",
+    "collection",
+    "action",
+    "payload",
+    "options",
+];
 
 /// What discovery found about a connection.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -71,6 +78,19 @@ pub fn complete(check: &Check, pos: usize, known: &Catalog) -> Completions {
                     .map(|(name, detail)| item(name, detail, "keyword"))
                     .collect(),
             )
+        }
+        Some("headers") => {
+            let used = headers::used(at.other_lines());
+            let hints = ["Auth: x509", "Certificate: "];
+            let extra: Vec<(&str, &str)> = HEADERS.iter().map(|name| (*name, "Header")).collect();
+            let items = headers::items(&hints, &extra, &used);
+            let mut result = finish(line_start, at.pos, at.before.trim(), items);
+            if at.before.trim().is_empty() && !used.is_empty() {
+                let mut items = finish(line_start, at.pos, "", at.unused(&SECTIONS)).items;
+                items.append(&mut result.items);
+                result.items = items;
+            }
+            result
         }
         Some("options") => {
             let used = headers::used(at.other_lines());
@@ -170,6 +190,7 @@ enum Area {
     Prelude,
     Endpoint,
     Options,
+    Headers,
     Payload,
     Other,
     Response,
@@ -178,10 +199,11 @@ enum Area {
 }
 
 impl Area {
-    const ALL: [Area; 8] = [
+    const ALL: [Area; 9] = [
         Area::Prelude,
         Area::Endpoint,
         Area::Options,
+        Area::Headers,
         Area::Payload,
         Area::Other,
         Area::Response,
@@ -270,6 +292,7 @@ pub fn highlight(state: &[u8], lines: &[String], columns: &[LineColumns]) -> Vec
                 area = match named.as_deref() {
                     Some("target") => Area::Endpoint,
                     Some("options") => Area::Options,
+                    Some("headers") => Area::Headers,
                     Some("collection") => Area::Collection,
                     Some("action") => Area::Action,
                     Some("payload") => Area::Payload,
@@ -290,6 +313,7 @@ pub fn highlight(state: &[u8], lines: &[String], columns: &[LineColumns]) -> Vec
                         response.declare(line);
                         headers::tokens(line)
                     }
+                    Area::Headers => headers::tokens(line),
                     Area::Collection => endpoint::tokens(line, false),
                     Area::Action => whole(line.trim_end(), "keyword"),
                     Area::Payload => payload_tokens(line, &mut payload),

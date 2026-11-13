@@ -54,6 +54,26 @@ Syntax errors name the line and column.
 The database is the URI path, else `Database:` in `#options`. Credentials are never
 shown in results, hints, debug data or errors.
 
+### Client certificate (X.509)
+
+For passwordless authentication (for example Atlas) add a `#headers` section:
+
+```text
+#target
+mongodb+srv://cluster0.xxxxx.mongodb.net/mydb
+#headers
+Auth: x509
+Certificate: {{env:MONGO_CERT}}
+```
+
+`Certificate` is the path of a PEM file with the client certificate and key. The module
+appends `authMechanism=MONGODB-X509&authSource=$external&tlsCertificateKeyFile=…` to the
+`#target` query. `Auth` takes `x509` or `scram` (the default); `CertificatePassword` is the
+password of an encrypted key and is treated as a secret. `Auth: x509` needs `Certificate`
+and the other way round; a `#target` with a password or its own `authMechanism`,
+`authSource` or `tlsCertificateKeyFile` is rejected. Put `tlsCAFile` in the URI for a
+private CA.
+
 | Option | Meaning |
 | --- | --- |
 | `Timeout` | Seconds for the whole call (1-3600, default 30) |

@@ -89,3 +89,29 @@ fn a_find_shows_numbers_and_strings() {
         assert_eq!(kind(&found, text), expected, "{text}");
     }
 }
+
+#[test]
+fn headers_are_highlighted_as_key_value_lines() {
+    let lines: Vec<String> = ["#headers", "Auth: x509", "Certificate: /keys/c.pem"]
+        .map(String::from)
+        .to_vec();
+    let out = Mongodb::default().highlight(&[], &lines, &[]);
+    let kinds = |line: usize| -> Vec<(String, String)> {
+        out[line]
+            .tokens
+            .iter()
+            .map(|token| {
+                let start = token.start as usize;
+                (
+                    lines[line][start..start + token.len as usize].to_owned(),
+                    token.kind.clone(),
+                )
+            })
+            .collect()
+    };
+    assert_eq!(kinds(0), [("#headers".to_owned(), "comment".to_owned())]);
+    let auth = kinds(1);
+    assert_eq!(auth[0].0, "Auth");
+    assert_ne!(auth[0].1, auth[1].1, "{auth:?}");
+    assert!(kinds(2).iter().any(|(text, _)| text == "Certificate"));
+}

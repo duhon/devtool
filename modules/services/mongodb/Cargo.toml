@@ -1,6 +1,6 @@
 [package]
 name = "services-module-mongodb"
-version = "1.0.0"
+version = "1.1.0"
 edition.workspace = true
 publish.workspace = true
 description = "MongoDB service module (mongosh syntax over the Host mongodb driver)"
@@ -15,6 +15,7 @@ serde_json.workspace = true
 
 [dev-dependencies]
 prost = "0.13"
+mongodb = { version = "3.10", default-features = false, features = ["compat-3-3-0", "bson-3", "rustls-tls", "dns-resolver"] }
 wasmi = "0.47"
 services-native = { path = "../../../host" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }

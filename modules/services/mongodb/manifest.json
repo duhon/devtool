@@ -2,7 +2,7 @@
   "id": "mongodb",
   "kind": "service",
   "name": "MongoDB",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "MongoDB commands in mongosh syntax with collection and field completion.",
   "abi": 2,
   "app": ">=4.1.0",

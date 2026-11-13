@@ -810,3 +810,47 @@ fn a_literal_after_a_value_carries_the_comma_and_replaces_the_typed_word() {
         assert!(serde_json::from_str::<Value>(&item.2).is_ok());
     }
 }
+
+fn complete_at(module: &mut Harness, text: &str) -> Vec<(String, String)> {
+    let pos = text.find('|').unwrap();
+    module
+        .complete(&text.replacen('|', "", 1), pos)
+        .items
+        .into_iter()
+        .map(|item| (item.label, item.insert))
+        .collect()
+}
+
+#[test]
+fn headers_have_a_marker_names_and_values() {
+    let mut module = Harness::default();
+    let marker = complete_at(&mut module, "#target\nmongodb://h/app\n#h|");
+    assert!(
+        marker.iter().any(|(label, _)| label == "#headers"),
+        "{marker:?}"
+    );
+    let next = complete_at(&mut module, "#target\nmongodb://h/app\n|");
+    assert!(
+        next.iter().any(|(label, _)| label == "#headers"),
+        "{next:?}"
+    );
+
+    let names = complete_at(&mut module, "#target\nmongodb://h/app\n#headers\n|");
+    let found: Vec<&str> = names.iter().map(|(label, _)| label.as_str()).collect();
+    assert_eq!(
+        found,
+        ["Auth: x509", "Certificate: ", "CertificatePassword: "]
+    );
+    let used = complete_at(
+        &mut module,
+        "#target\nmongodb://h/app\n#headers\nAuth: x509\n|",
+    );
+    assert!(
+        !used.iter().any(|(label, _)| label.starts_with("Auth")),
+        "{used:?}"
+    );
+    assert!(
+        used.iter().any(|(label, _)| label == "Certificate: "),
+        "{used:?}"
+    );
+}

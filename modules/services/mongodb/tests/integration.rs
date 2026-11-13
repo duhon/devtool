@@ -50,10 +50,19 @@ impl Runner {
     }
 
     async fn run(&mut self, uri: &str, action: &str, payload: &str) -> Value {
+        self.run_with(uri, "", action, payload).await
+    }
+
+    async fn run_with(&mut self, uri: &str, headers: &str, action: &str, payload: &str) -> Value {
         self.result = None;
         let (collection, action) = action.split_once(' ').unwrap_or(("", action));
+        let headers = if headers.is_empty() {
+            String::new()
+        } else {
+            format!("#headers\n{headers}\n")
+        };
         let cmds = self.module.run(&format!(
-            "#target\n{uri}\n#collection\n{collection}\n#action\n{action}\n#payload\n{payload}"
+            "#target\n{uri}\n{headers}#collection\n{collection}\n#action\n{action}\n#payload\n{payload}"
         ));
         self.apply(cmds).await;
         self.result.take().expect("The run did not finish")
@@ -194,4 +203,46 @@ async fn packaged_wasm_runs_statements_through_the_actual_host_driver() {
     );
     assert!(!nested.contains(&"name".into()), "{nested:?}");
     runner.ok(&uri, "dropDatabase", "").await;
+}
+
+#[tokio::test]
+#[ignore = "requires scripts/test-x509.sh"]
+async fn x509_client_certificate_authenticates_against_a_real_tls_server() {
+    let uri = std::env::var("MONGODB_X509_URL").expect("Use scripts/test-x509.sh");
+    let certificate = std::env::var("MONGODB_X509_CERT").expect("Use scripts/test-x509.sh");
+    let headers = format!("Auth: x509\nCertificate: {certificate}");
+    let mut runner = Runner::new();
+
+    let status = runner
+        .run_with(&uri, &headers, "connectionStatus", "")
+        .await;
+    assert_eq!(status["outcome"], "OK", "{status}");
+    assert!(
+        status["body"].as_str().unwrap().contains("CN=client"),
+        "The client is authenticated by its certificate: {status}"
+    );
+    let inserted = runner
+        .run_with(&uri, &headers, "notes insert", r#"{"text": "hello"}"#)
+        .await;
+    assert_eq!(inserted["outcome"], "OK", "{inserted}");
+    let found = runner
+        .run_with(&uri, &headers, "notes find", r#"{"filter": {}}"#)
+        .await;
+    assert!(found["body"].as_str().unwrap().contains("hello"), "{found}");
+
+    let anonymous = runner.run(&uri, "notes find", r#"{"filter": {}}"#).await;
+    assert_eq!(
+        anonymous["outcome"], "ERROR",
+        "Access control is on: {anonymous}"
+    );
+
+    let rejected = runner
+        .run_with(
+            &uri,
+            "Auth: x509\nCertificate: /nonexistent/client.pem",
+            "ping",
+            "",
+        )
+        .await;
+    assert_eq!(rejected["outcome"], "ERROR", "{rejected}");
 }

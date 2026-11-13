@@ -13,4 +13,4 @@ until docker exec "$container" mongosh --quiet --eval 'db.runCommand({ping: 1}).
 done
 port=$(docker port "$container" 27017/tcp | head -1 | sed 's/.*://')
 export MONGODB_URL="mongodb://127.0.0.1:$port"
-cargo test --locked --test integration -- --ignored --test-threads=1
+cargo test --locked --test integration -- --ignored --test-threads=1 --skip x509
