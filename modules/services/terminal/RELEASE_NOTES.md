@@ -1,5 +1,10 @@
 # Terminal module release notes
 
+## 5.0.0
+
+- `#env` is `#metadata`: the variables a command runs with travel with it. Saved
+  checks, templates and hints are not converted: rename the section by hand.
+
 ## 4.0.0
 
 - A WebAssembly module for Services DevTools 4.0; it needs that version or newer.

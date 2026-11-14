@@ -59,7 +59,7 @@ fn section_markers_come_from_the_modules() {
             &["target", "metadata", "proto", "payload", "options"],
         ),
         ("splunk", &["target", "metadata", "options", "payload"]),
-        ("terminal", &["target", "payload", "env", "options"]),
+        ("terminal", &["target", "payload", "metadata", "options"]),
         (
             "artemis",
             &["target", "metadata", "action", "options", "payload"],

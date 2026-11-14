@@ -4,7 +4,7 @@
 
 - The `#headers` section is `#metadata`: everything that travels with the request (HTTP
   headers, gRPC metadata, authentication, certificates, a Splunk search's `Search-*`
-  parameters, Artemis `Message-Persistent`, Valkey `CA-PEM`). HTTP services still accept
+  parameters, Artemis `Message-Persistent`, Valkey `CA-PEM`, Terminal's former `#env`). HTTP services still accept
   `#headers` without listing it. `#options` is for the check itself: `Timeout`,
   `Repeat`, limits, `Format` and `Columns-*`. Saved checks of the other services are not
   converted.

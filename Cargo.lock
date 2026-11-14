@@ -3610,7 +3610,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-terminal"
-version = "4.0.0"
+version = "5.0.0"
 dependencies = [
  "prost",
  "serde",

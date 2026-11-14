@@ -78,7 +78,7 @@ fn argv_quotes_and_env_match_the_shell_contract() {
 #[test]
 fn checks_become_process_driver_calls() {
     let call = request(&check(
-        "#check indexer\n#target\ndocker exec fixture bash -c\n#payload\nbin/magento indexer:status\n#env\nA: 1\nB: {{store:B}}",
+        "#check indexer\n#target\ndocker exec fixture bash -c\n#payload\nbin/magento indexer:status\n#metadata\nA: 1\nB: {{store:B}}",
     ))
     .unwrap()
     .call();
@@ -156,12 +156,12 @@ fn endpoints_env_names_and_markers_complete() {
     assert_eq!(inserts("#target\n|"), vec!["bash -c", "zsh -c", "ssh "]);
     assert_eq!(inserts("#target\nss|"), vec!["ssh "]);
     assert_eq!(
-        inserts("#target\nbash -c\n#env\nPATH: /bin\nNO|"),
+        inserts("#target\nbash -c\n#metadata\nPATH: /bin\nNO|"),
         vec!["NODE_ENV: production"]
     );
     assert_eq!(
         inserts("#target\nbash -c\n#|"),
-        vec!["#payload\n", "#env\n"]
+        vec!["#payload\n", "#metadata\n"]
     );
     assert!(inserts("#target\nbash -c\n#payload\nls |").is_empty());
 }
@@ -194,7 +194,7 @@ fn shell_commands_variables_and_flags_highlight() {
         "#payload",
         "echo \"$HOME\" --flag && printf {{:NAME}} 'a",
         "b'",
-        "#env",
+        "#metadata",
         "LANG: en_US.UTF-8",
         "#responce 6:00:14 PM · OK",
         "echo out",

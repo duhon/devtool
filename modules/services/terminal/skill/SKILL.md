@@ -1,12 +1,12 @@
 ---
 name: module-terminal
-description: "Terminal checks in the Services DevTools Console: #target, #payload, #env and how exit codes and stderr set the status. Load before writing, editing or explaining Terminal requests."
+description: "Terminal checks in the Services DevTools Console: #target, #payload, #metadata and how exit codes and stderr set the status. Load before writing, editing or explaining Terminal requests."
 ---
 
 # Terminal service
 
 Use `#target` with the configured shell or ssh command line, `#payload` for the
-command text and optional `#env` for Name: value entries. This is an application
+command text and optional `#metadata` for Name: value entries. This is an application
 service, not general shell permission for the Agent. Running a Terminal check
 still requires the user's explicit request and the separate one-time approval.
 Never use it to read credentials, browser storage or application data files.

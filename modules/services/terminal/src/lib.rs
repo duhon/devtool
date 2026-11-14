@@ -1,6 +1,6 @@
 //! The Terminal service: a `#target` command line (a local shell or an ssh connection)
 //! runs the `#payload` text as its last argument through the Host `process` driver, with
-//! `#env` exported first.
+//! `#metadata` exported first.
 
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -12,7 +12,7 @@ use services_sdk::{
 };
 use std::collections::BTreeMap;
 
-pub const SECTIONS: [&str; 3] = ["target", "payload", "env"];
+pub const SECTIONS: [&str; 3] = ["target", "payload", "metadata"];
 
 const ENDPOINTS: [&str; 3] = ["bash -c", "zsh -c", "ssh "];
 const ENV: [&str; 6] = [
@@ -89,13 +89,13 @@ fn parts(check: &Check) -> (&str, &str) {
 }
 
 /// The `process` driver request of a check: the endpoint's program and arguments, then the
-/// command with `#env` exported.
+/// command with `#metadata` exported.
 pub fn request(check: &Check) -> Result<Request, String> {
     plan(check).and_then(|plan| resolved(&plan))
 }
 
 /// What a run resolves before it builds its request: the endpoint's words, the command and
-/// the `#env` pairs. Words are split first, so a value with spaces stays one argument.
+/// the `#metadata` pairs. Words are split first, so a value with spaces stays one argument.
 pub fn plan(check: &Check) -> Result<Value, String> {
     run::no_options(check, "Terminal")?;
     let (endpoint, command) = parts(check);
@@ -106,11 +106,11 @@ pub fn plan(check: &Check) -> Result<Value, String> {
     if command.trim().is_empty() {
         return Err("command is required".into());
     }
-    let env = key_value::pairs(check.text_of("env"));
+    let env = key_value::pairs(check.text_of("metadata"));
     Ok(json!({"argv": argv, "command": command, "env": env}))
 }
 
-/// The request of a [`plan`] whose variables are resolved: `#env` values are quoted only
+/// The request of a [`plan`] whose variables are resolved: `#metadata` values are quoted only
 /// now, so a value is never resolved inside the quotes.
 pub fn resolved(plan: &Value) -> Result<Request, String> {
     #[derive(Deserialize)]
@@ -227,7 +227,7 @@ fn marker_tokens(line: &str, name: &str, rest: &str, quote: &mut shell::State) -
     tokens
 }
 
-/// Highlighting of a Terminal check: the endpoint and command as shell, `#env` as pairs.
+/// Highlighting of a Terminal check: the endpoint and command as shell, `#metadata` as pairs.
 /// The output stays plain.
 pub fn highlight(state: &[u8], lines: &[String]) -> Vec<Line> {
     let mut area = Area::of(state.first());
@@ -243,7 +243,7 @@ pub fn highlight(state: &[u8], lines: &[String]) -> Vec<Line> {
                     quote = shell::State::default();
                     area = match name.as_str() {
                         "target" | "payload" => Area::Shell,
-                        "env" => Area::Env,
+                        "metadata" => Area::Env,
                         "responce" | "response" => Area::Response,
                         _ => Area::Other,
                     };
@@ -262,7 +262,7 @@ pub fn highlight(state: &[u8], lines: &[String]) -> Vec<Line> {
         .collect()
 }
 
-/// Completion in a Terminal check: markers, endpoint shells and `#env` names.
+/// Completion in a Terminal check: markers, endpoint shells and `#metadata` names.
 pub fn complete(check: &Check, pos: usize) -> Completions {
     let at = At::new(&check.text, pos);
     if at.in_placeholder() || at.in_response() {
@@ -284,7 +284,7 @@ pub fn complete(check: &Check, pos: usize) -> Completions {
             finish(from, at.pos, value, items)
         }
         Some("target") => at.next_section(&SECTIONS).unwrap_or_else(|| at.none()),
-        Some("env") => {
+        Some("metadata") => {
             let used = key_value::used(at.other_lines());
             let items = key_value::items(&ENV, &[], &used);
             let mut result = finish(line_start, at.pos, at.before.trim(), items);

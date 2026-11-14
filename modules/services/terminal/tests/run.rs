@@ -1,4 +1,4 @@
-//! Terminal runs through the module's wire: variables resolved before `#env` is quoted, the
+//! Terminal runs through the module's wire: variables resolved before `#metadata` is quoted, the
 //! output streamed as it comes, the exit status in the run's status.
 
 use prost::Message;
@@ -102,7 +102,7 @@ fn names(cmds: &Cmds) -> Vec<(&str, &str)> {
 fn env_values_are_resolved_then_quoted_and_output_streams() {
     let module = Module::default();
     let cmds = module
-        .run("#target\nssh {{host}}\n#payload\necho \"$V\"; echo {{word}}\n#env\nV: {{value}}");
+        .run("#target\nssh {{host}}\n#payload\necho \"$V\"; echo {{word}}\n#metadata\nV: {{value}}");
     let (tag, text) = resolve(
         &cmds,
         &[("host", "a b"), ("value", "it's \"x\""), ("word", "w")],
