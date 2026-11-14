@@ -66,6 +66,7 @@ pub fn suggest(
                 text,
                 label: Some(format!("@{}", entry.name)),
                 detail: entry.description,
+                badge: None,
                 literal: true,
                 continue_hint: false,
             }

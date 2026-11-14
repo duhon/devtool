@@ -490,7 +490,11 @@ pub(super) fn hints(
             onmousedown={|event: MouseEvent| event.prevent_default()} {onclick}>
             { for popup.items.iter().enumerate().map(|(index, item)| html! {
                 <li class={classes!("editor-hint", (index == popup.selected).then_some("editor-hint-active"))}
-                    role="option" data-index={index.to_string()}>{&item.display}</li>
+                    role="option" data-index={index.to_string()}><span>
+                    { item.badge.map(|badge| html! {
+                        <span class={classes!("editor-hint-badge", format!("editor-hint-badge-{badge}"))}>{badge}</span>
+                    }) }
+                    {&item.display}</span></li>
             }) }
         </ul>
     }

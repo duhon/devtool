@@ -302,6 +302,19 @@ li.editor-hint-active {
   cursor: pointer;
 }
 
+.editor-hint-badge {
+  display: inline-block;
+  width: 1.2em;
+  margin-right: 4px;
+  font-size: 0.8em;
+  font-weight: bold;
+  text-align: center;
+}
+.editor-hint-badge-g { color: var(--running); }
+.editor-hint-badge-m { color: var(--warning); }
+.editor-hint-badge-u { color: var(--error); }
+li.editor-hint-active .editor-hint-badge { filter: brightness(1.4); }
+
 .tok-header, .tok-strong { font-weight: bold; }
 
 .tok-em { font-style: italic; }
@@ -316,11 +329,11 @@ li.editor-hint-active {
 
 .theme-dracula span.tok-number { color: var(--editor-purple); }
 
-.theme-dracula span.tok-variable { color: var(--editor-green); }
+.theme-dracula span.tok-variable { color: var(--running); }
 
 .theme-dracula span.tok-variable-2 { color: var(--editor-white); }
 
-.theme-dracula span.tok-def { color: var(--editor-green); }
+.theme-dracula span.tok-def { color: var(--running); }
 
 .theme-dracula span.tok-operator { color: var(--editor-pink); }
 
@@ -332,13 +345,13 @@ li.editor-hint-active {
 
 .theme-dracula span.tok-tag { color: var(--editor-pink); }
 
-.theme-dracula span.tok-attribute { color: var(--editor-green); }
+.theme-dracula span.tok-attribute { color: var(--running); }
 
-.theme-dracula span.tok-qualifier { color: var(--editor-green); }
+.theme-dracula span.tok-qualifier { color: var(--running); }
 
 .theme-dracula span.tok-property { color: var(--editor-cyan); }
 
-.theme-dracula span.tok-builtin { color: var(--editor-green); }
+.theme-dracula span.tok-builtin { color: var(--running); }
 
 .theme-dracula span.tok-variable-3, .theme-dracula span.tok-type { color: var(--editor-orange); }
 

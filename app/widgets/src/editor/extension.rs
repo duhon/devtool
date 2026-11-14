@@ -43,6 +43,8 @@ pub struct Candidate {
     pub text: String,
     pub label: Option<String>,
     pub detail: String,
+    /// A letter in front of the item that tells where it comes from.
+    pub badge: Option<char>,
     /// Completing it opens the hints again.
     pub continue_hint: bool,
     /// It inserts exactly its text.

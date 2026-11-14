@@ -542,6 +542,7 @@ impl Extension for Language {
                     text: candidate.text,
                     label: candidate.label,
                     detail: candidate.detail,
+                    badge: candidate.badge,
                     literal: candidate.literal,
                 })
                 .collect(),

@@ -78,13 +78,30 @@ fn options_offer_the_console_then_the_module_and_a_saved_hint_is_the_default() {
             .collect()
     };
     let saved = [("Repeat: 10s".to_owned(), "Saved hint #options".to_owned())];
-    let labels = details("", &saved);
-    assert!(labels.contains(&("Repeat: 10s".into(), "Saved hint".into())));
-    assert!(labels.contains(&("Format: json".into(), "Module".into())));
-    assert!(details("", &[]).contains(&("Repeat: 5s".into(), "App".into())));
+    let badges = |lines: &str, hints: &[(String, String)]| -> Vec<(String, Option<char>)> {
+        let source = format!("#check\n#target mongodb://localhost/shop\n#options\n{lines}");
+        let line = source.lines().count() - 1 + usize::from(lines.is_empty());
+        services_kernel::editor::completion::suggest(
+            &services_shell::language::Modules,
+            "mongodb",
+            "",
+            &source,
+            line,
+            lines.len(),
+            hints,
+        )
+        .candidates
+        .into_iter()
+        .map(|candidate| (candidate.text, candidate.badge))
+        .collect()
+    };
+    let labels = badges("", &saved);
+    assert!(labels.contains(&("Repeat: 10s".into(), Some('u'))));
+    assert!(labels.contains(&("Format: ".into(), Some('m'))));
+    assert!(badges("", &[]).contains(&("Repeat: 5s".into(), Some('g'))));
     let plain = options("", &[]);
     assert_eq!(plain[0], "Repeat: 5s");
-    assert!(plain.contains(&"Format: json".to_owned()), "{plain:?}");
+    assert!(plain.contains(&"Format: ".to_owned()), "{plain:?}");
     let with = options("", &saved);
     assert_eq!(with[0], "Repeat: 10s");
     assert!(!with.contains(&"Repeat: 5s".to_owned()));
@@ -92,5 +109,41 @@ fn options_offer_the_console_then_the_module_and_a_saved_hint_is_the_default() {
         !options("Repeat: 1m", &saved)
             .iter()
             .any(|t| t.starts_with("Repeat:"))
+    );
+
+    let grouped = |lines: &str| -> Vec<(String, Option<String>, bool)> {
+        let source = format!("#check\n#target mongodb://localhost/shop\n#options\n{lines}");
+        let line = source.split('\n').count() - 1;
+        services_kernel::editor::completion::suggest(
+            &services_shell::language::Modules,
+            "mongodb",
+            "",
+            &source,
+            line,
+            lines.len(),
+            &[],
+        )
+        .candidates
+        .into_iter()
+        .map(|candidate| (candidate.text, candidate.label, candidate.continue_hint))
+        .collect()
+    };
+    let all = grouped("");
+    assert!(
+        all.contains(&(
+            "Format: ".into(),
+            Some("Format: json | table | vertical".into()),
+            true
+        )),
+        "{all:?}"
+    );
+    let values = grouped("Format: ");
+    assert!(
+        values.iter().any(|(text, ..)| text == "Format: table"),
+        "{values:?}"
+    );
+    assert!(
+        !values.iter().any(|(text, ..)| text == "Format: "),
+        "{values:?}"
     );
 }

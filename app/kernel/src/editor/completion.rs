@@ -29,6 +29,7 @@ fn finish(from: usize, to: usize, query: &str, candidates: Vec<(String, String)>
                 text,
                 label: None,
                 detail,
+                badge: None,
                 continue_hint: false,
                 literal: false,
             })
@@ -313,6 +314,7 @@ fn kernel_suggest(
                 literal: !text.contains("$0") && !text.starts_with('#'),
                 text,
                 detail: item.detail,
+                badge: None,
                 continue_hint: item.next,
             }
         })
@@ -332,12 +334,14 @@ fn kernel_suggest(
         );
         for candidate in &mut candidates {
             candidate.text.insert_str(0, &head);
-            candidate.detail = "Module".into();
+            candidate.detail.clear();
+            candidate.badge = Some('m');
         }
         let global = OPTION_HINTS.iter().map(|text| Candidate {
             text: (*text).to_owned(),
             label: None,
-            detail: "App".into(),
+            detail: String::new(),
+            badge: Some('g'),
             continue_hint: false,
             literal: false,
         });
@@ -351,24 +355,72 @@ fn kernel_suggest(
                 .trim()
                 .to_ascii_lowercase()
         };
-        let mut defaults: Vec<(String, String)> = own.clone();
+        let default_of = |key: &str| own.iter().find(|(text, _)| key_of(text) == key);
+        let mut replaced = BTreeSet::new();
         for candidate in &mut ordered {
             let key = key_of(&candidate.text);
-            if let Some(at) = defaults.iter().position(|(text, _)| key_of(text) == key) {
-                let (text, detail) = defaults.remove(at);
+            if let Some((text, _)) = default_of(&key) {
+                replaced.insert(key);
                 candidate.label = None;
-                candidate.text = text;
-                candidate.detail = detail;
+                candidate.text = text.clone();
+                candidate.detail = String::new();
+                candidate.badge = Some('u');
                 candidate.literal = false;
             }
         }
-        ordered.extend(defaults.into_iter().map(|(text, detail)| Candidate {
-            text,
-            label: None,
-            detail,
-            continue_hint: false,
-            literal: false,
-        }));
+        ordered.extend(
+            own.iter()
+                .filter(|(text, _)| !replaced.contains(&key_of(text)))
+                .map(|(text, _)| Candidate {
+                    text: text.clone(),
+                    label: None,
+                    detail: String::new(),
+                    badge: Some('u'),
+                    continue_hint: false,
+                    literal: false,
+                }),
+        );
+        if !before.contains(':') {
+            // Several values of one option make one item that asks for the value next.
+            let value_of = |candidate: &Candidate| {
+                (candidate.badge == Some('m'))
+                    .then(|| candidate.text.split_once(':'))
+                    .flatten()
+                    .map(|(key, value)| (key.trim().to_owned(), value.trim().to_owned()))
+                    .filter(|(_, value)| !value.is_empty())
+            };
+            let mut grouped: Vec<Candidate> = Vec::new();
+            let mut values: Vec<(String, Vec<String>)> = Vec::new();
+            for candidate in std::mem::take(&mut ordered) {
+                match value_of(&candidate) {
+                    Some((key, value)) => match values.iter_mut().find(|(name, _)| *name == key) {
+                        Some((_, list)) => list.push(value),
+                        None => {
+                            values.push((key, vec![value]));
+                            grouped.push(candidate);
+                        }
+                    },
+                    None => grouped.push(candidate),
+                }
+            }
+            for candidate in &mut grouped {
+                let Some((key, _)) = value_of(candidate) else {
+                    continue;
+                };
+                let list = values
+                    .iter()
+                    .find(|(name, _)| *name == key)
+                    .map(|(_, list)| list.clone())
+                    .unwrap_or_default();
+                if list.len() > 1 {
+                    candidate.label = Some(format!("{key}: {}", list.join(" | ")));
+                    candidate.text = format!("{key}: ");
+                    candidate.continue_hint = true;
+                    candidate.literal = true;
+                }
+            }
+            ordered = grouped;
+        }
         let mut seen = BTreeSet::new();
         let query = before.trim();
         ordered.retain(|candidate| {

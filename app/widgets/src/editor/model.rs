@@ -185,6 +185,7 @@ pub enum Effect {
 pub struct Item {
     pub text: String,
     pub display: String,
+    pub badge: Option<char>,
     pub continue_hint: bool,
     pub literal: bool,
     pub comma: Option<Position>,
@@ -1468,6 +1469,7 @@ impl Session {
                     } else {
                         format!("{label} — {}", candidate.detail)
                     },
+                    badge: candidate.badge,
                     continue_hint: candidate.continue_hint,
                     literal: candidate.literal,
                     comma,
