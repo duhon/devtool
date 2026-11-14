@@ -356,10 +356,16 @@ fn kernel_suggest(
                 .to_ascii_lowercase()
         };
         let default_of = |key: &str| own.iter().find(|(text, _)| key_of(text) == key);
+        // Before the value, a saved hint stands for its option. Once the value is being
+        // typed, the option's other values come back and the saved one only leads them.
+        let valued = before.contains(':');
         let mut replaced = BTreeSet::new();
         for candidate in &mut ordered {
             let key = key_of(&candidate.text);
             if let Some((text, _)) = default_of(&key) {
+                if valued && *text != candidate.text {
+                    continue;
+                }
                 replaced.insert(key);
                 candidate.label = None;
                 candidate.text = text.clone();
@@ -380,6 +386,9 @@ fn kernel_suggest(
                     literal: false,
                 }),
         );
+        if valued {
+            ordered.sort_by_key(|candidate| candidate.badge != Some('u'));
+        }
         if !before.contains(':') {
             // Several values of one option make one item that asks for the value next.
             let value_of = |candidate: &Candidate| {

@@ -146,4 +146,12 @@ fn options_offer_the_console_then_the_module_and_a_saved_hint_is_the_default() {
         !values.iter().any(|(text, ..)| text == "Format: "),
         "{values:?}"
     );
+
+    let saved = [("Format: json".to_owned(), "Saved hint #options".to_owned())];
+    let typed = badges("Format: ", &saved);
+    assert_eq!(typed[0], ("Format: json".into(), Some('u')), "{typed:?}");
+    assert!(
+        typed.contains(&("Format: table".into(), Some('m'))),
+        "{typed:?}"
+    );
 }
