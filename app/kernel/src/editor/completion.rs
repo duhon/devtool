@@ -268,23 +268,6 @@ fn kernel_suggest(
             .collect::<Vec<_>>()
     };
     let (own, _) = scoped(hints, &section);
-    if section == "options" && !typed.starts_with('#') {
-        let keys: BTreeSet<String> = (block.start + 1..block.end)
-            .filter(|at| *at != line)
-            .filter_map(|at| lines[at].split_once(':'))
-            .map(|(key, _)| key.trim().to_ascii_lowercase())
-            .collect();
-        let candidates = OPTION_HINTS
-            .iter()
-            .map(|(text, detail)| ((*text).to_owned(), (*detail).to_owned()))
-            .chain(own)
-            .filter(|(text, _)| {
-                let key = text.split(':').next().unwrap_or("").to_ascii_lowercase();
-                !keys.contains(&key) && (key != "repeat-until" || keys.contains("repeat"))
-            })
-            .collect();
-        return finish(0, ch, before.trim(), candidates);
-    }
     let line_start: usize = lines[block.start + 1..line]
         .iter()
         .map(|text| text.len() + 1)
@@ -343,6 +326,76 @@ fn kernel_suggest(
             }
         })
         .collect();
+    if section == "options" && !typed.starts_with('#') {
+        let keys: BTreeSet<String> = (block.start + 1..block.end)
+            .filter(|at| *at != line)
+            .filter_map(|at| lines[at].split_once(':'))
+            .map(|(key, _)| key.trim().to_ascii_lowercase())
+            .collect();
+        // The module's items complete from its own word; options are whole lines.
+        let head = String::from_utf16_lossy(
+            &utf16_prefix(full, from)
+                .encode_utf16()
+                .skip(marker_range.0)
+                .collect::<Vec<_>>(),
+        );
+        for candidate in &mut candidates {
+            candidate.text.insert_str(0, &head);
+        }
+        let global = OPTION_HINTS.iter().map(|(text, detail)| Candidate {
+            text: (*text).to_owned(),
+            label: None,
+            detail: (*detail).to_owned(),
+            continue_hint: false,
+            literal: false,
+        });
+        let mut ordered: Vec<Candidate> = global.chain(candidates).collect();
+        // A saved hint is the user's default value of its option: it takes the place of the
+        // console's and the module's items for that option.
+        let key_of = |text: &str| {
+            text.split(':')
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_ascii_lowercase()
+        };
+        let mut defaults: Vec<(String, String)> = own.clone();
+        for candidate in &mut ordered {
+            let key = key_of(&candidate.text);
+            if let Some(at) = defaults.iter().position(|(text, _)| key_of(text) == key) {
+                let (text, detail) = defaults.remove(at);
+                candidate.label = None;
+                candidate.text = text;
+                candidate.detail = detail;
+                candidate.literal = false;
+            }
+        }
+        ordered.extend(defaults.into_iter().map(|(text, detail)| Candidate {
+            text,
+            label: None,
+            detail,
+            continue_hint: false,
+            literal: false,
+        }));
+        let mut seen = BTreeSet::new();
+        let query = before.trim();
+        ordered.retain(|candidate| {
+            let key = key_of(&candidate.text);
+            !keys.contains(&key)
+                && (key != "repeat-until" || keys.contains("repeat"))
+                && candidate.text.trim() != query
+                && fuzzy_match(&candidate.text, query)
+                && seen.insert(candidate.text.clone())
+        });
+        ordered.truncate(100);
+        return Completion {
+            from: marker_range.0,
+            to: ch,
+            candidates: ordered,
+            comma: None,
+            automatic: true,
+        };
+    }
     let mut extra = Vec::new();
     if sections || typed.starts_with('#') || (candidates.is_empty() && full.trim().is_empty()) {
         extra.extend(console_markers());
