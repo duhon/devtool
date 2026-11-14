@@ -184,7 +184,7 @@ pub fn complete(check: &Check, pos: u32, snapshot: Option<&Value>) -> Completion
                 at.line_start(at.line),
                 at.pos,
                 at.before.trim(),
-                key_value::items(&["CA-PEM: {{VALKEY_CA}}"], &[], &used),
+                key_value::items(&["CA-Certificate: {{VALKEY_CA}}"], &[], &used),
             )
         }
         Some("action") => {

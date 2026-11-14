@@ -48,12 +48,12 @@ Prefer storing the entire endpoint in `{{VALKEY_URL}}`.
 #target
 {{VALKEY_URL}}
 #metadata
-CA-PEM: {{VALKEY_CA}}
+CA-Certificate: {{VALKEY_CA}}
 #action
 PING
 ```
 
-`CA-PEM` goes in `#metadata`, is optional, requires TLS and
+`CA-Certificate` goes in `#metadata`, is optional, requires TLS and
 holds the actual PEM certificate text, usually in a dictionary variable with
 its line breaks preserved. `CA-Cert` file paths are no longer supported.
 System CA trust and hostname verification are enabled; there is no insecure option.

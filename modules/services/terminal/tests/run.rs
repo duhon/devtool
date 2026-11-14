@@ -101,8 +101,9 @@ fn names(cmds: &Cmds) -> Vec<(&str, &str)> {
 #[test]
 fn env_values_are_resolved_then_quoted_and_output_streams() {
     let module = Module::default();
-    let cmds = module
-        .run("#target\nssh {{host}}\n#payload\necho \"$V\"; echo {{word}}\n#metadata\nV: {{value}}");
+    let cmds = module.run(
+        "#target\nssh {{host}}\n#payload\necho \"$V\"; echo {{word}}\n#metadata\nV: {{value}}",
+    );
     let (tag, text) = resolve(
         &cmds,
         &[("host", "a b"), ("value", "it's \"x\""), ("word", "w")],

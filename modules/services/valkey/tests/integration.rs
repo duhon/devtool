@@ -482,7 +482,7 @@ async fn pubsub_is_live_plain_and_tls_validates_ca_hostname_and_stop() {
         (plain.as_str(), "", "test:plain-news"),
         (
             tls.as_str(),
-            "#metadata\nCA-PEM: {{VALKEY_CA}}\n",
+            "#metadata\nCA-Certificate: {{VALKEY_CA}}\n",
             "test:tls-news",
         ),
     ] {
@@ -546,7 +546,7 @@ async fn pubsub_is_live_plain_and_tls_validates_ca_hostname_and_stop() {
     let wrong_host = tls.replace("localhost", "127.0.0.1");
     runner
         .start(&format!(
-            "#target\n{wrong_host}\n#metadata\nCA-PEM: {{{{VALKEY_CA}}}}\n#action\nPING"
+            "#target\n{wrong_host}\n#metadata\nCA-Certificate: {{{{VALKEY_CA}}}}\n#action\nPING"
         ))
         .await;
     while runner.result.is_none() {
@@ -555,7 +555,7 @@ async fn pubsub_is_live_plain_and_tls_validates_ca_hostname_and_stop() {
     assert_eq!(runner.result.as_ref().unwrap()["outcome"], "ERROR");
     runner
         .start(&format!(
-            "#target\n{tls}\n#metadata\nCA-PEM: {{{{VALKEY_CA}}}}\n#action\nPING"
+            "#target\n{tls}\n#metadata\nCA-Certificate: {{{{VALKEY_CA}}}}\n#action\nPING"
         ))
         .await;
     while runner.result.is_none() {

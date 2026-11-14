@@ -125,13 +125,16 @@ impl Connection {
                 return Err("Duplicate option".into());
             }
             match name.as_str() {
-                "ca-pem" if request.tls && !value.trim().is_empty() => {
+                "ca-certificate" if request.tls && !value.trim().is_empty() => {
                     request.ca_pem = Some(value.clone());
                 }
-                "ca-pem" => return Err("CA-PEM requires rediss:// and a PEM certificate".into()),
+                "ca-certificate" => {
+                    return Err("CA-Certificate requires rediss:// and a PEM certificate".into());
+                }
                 "ca-cert" => {
                     return Err(
-                        "CA-Cert paths are no longer supported; use CA-PEM: {{VALKEY_CA}}".into(),
+                        "CA-Cert paths are no longer supported; use CA-Certificate: {{VALKEY_CA}}"
+                            .into(),
                     );
                 }
                 _ => return Err(format!("Unknown Valkey option: {name}")),

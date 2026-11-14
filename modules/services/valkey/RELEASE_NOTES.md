@@ -1,7 +1,7 @@
 ## 2.0.0
 
 - `Timeout` moved to the console (global `#options` key); the module no longer parses it.
-- `CA-PEM` moved from `#options` to the new `#metadata` section. `#options` keeps only the console keys.
+- `CA-PEM` is now `CA-Certificate` and moved from `#options` to the new `#metadata` section. `#options` keeps only the console keys.
 
 ## 1.0.0
 
