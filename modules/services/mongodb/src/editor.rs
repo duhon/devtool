@@ -341,25 +341,7 @@ pub fn highlight(state: &[u8], lines: &[String], columns: &[LineColumns]) -> Vec
 
 /// The folds of a response: tables never fold, a JSON reply folds by brackets.
 pub fn folds(check: &Check) -> Vec<services_sdk::Fold> {
-    let mut folds = table::folds(&check.text, &check.columns);
-    let lines: Vec<&str> = check.text.split('\n').collect();
-    if let Some(start) = lines.iter().position(|line| {
-        marker(line).is_some_and(|(name, _)| matches!(name.as_str(), "responce" | "response"))
-    }) {
-        let body = &lines[start + 1..];
-        if !body
-            .iter()
-            .any(|line| line.starts_with('+') || line.starts_with('|'))
-        {
-            folds.extend(json::folds(body.iter().copied()).into_iter().map(|fold| {
-                services_sdk::Fold {
-                    start: fold.start + start as u32 + 1,
-                    end: fold.end + start as u32 + 1,
-                }
-            }));
-        }
-    }
-    folds
+    table::folds(&check.text, &check.columns)
 }
 
 /// A schema value the Agent reads: the database, its collections and their sampled fields.

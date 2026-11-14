@@ -1,4 +1,5 @@
 # Artemis module release notes
+- A `Format: json` reply is highlighted as JSON and folds by brackets.
 
 ## 6.0.0
 

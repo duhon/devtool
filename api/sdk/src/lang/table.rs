@@ -366,6 +366,8 @@ pub struct State {
     pub columns: Vec<Option<Kind>>,
     /// Undeclared cells that look like JSON are styled as JSON.
     pub guess_json: bool,
+    /// `json` continues a whole JSON document (a `Format: json` reply), not a cell.
+    pub document: bool,
     /// The JSON values of a row's cells that continue on its next line (a wrapped cell).
     pub cells: Vec<Option<Fragment>>,
 }
@@ -541,7 +543,8 @@ impl State {
         out.push(
             u8::from(self.vertical)
                 | u8::from(self.json.is_some()) << 1
-                | u8::from(self.guess_json) << 2,
+                | u8::from(self.guess_json) << 2
+                | u8::from(self.document) << 3,
         );
         len(out, self.cuts.len());
         for cut in &self.cuts {
@@ -640,6 +643,7 @@ impl State {
                 declared,
                 columns,
                 guess_json: flags & 4 != 0,
+                document: flags & 8 != 0,
                 cells,
             };
             Some((state, rest))
@@ -803,6 +807,34 @@ pub fn folds(text: &str, columns: &[crate::ColumnType]) -> Vec<crate::Fold> {
     let separator = |line: &str| line.starts_with("*****") && line.trim_end().ends_with("*****");
     let mut out = Vec::new();
     let mut at = 0;
+    let mut in_response = false;
+    while at < lines.len() {
+        let line = lines[at];
+        if line.starts_with('#') {
+            in_response = line.starts_with("#respon");
+        } else if in_response && line.starts_with(['{', '[']) {
+            let mut json = json::State::default();
+            let start = at;
+            loop {
+                json::tokens(lines[at], &mut json);
+                at += 1;
+                if json.open.is_empty() || at >= lines.len() || lines[at].starts_with('#') {
+                    break;
+                }
+            }
+            out.extend(
+                json::folds(lines[start..at].iter().copied())
+                    .into_iter()
+                    .map(|fold| crate::Fold {
+                        start: fold.start + start as u32,
+                        end: fold.end + start as u32,
+                    }),
+            );
+            continue;
+        }
+        at += 1;
+    }
+    at = 0;
     while at < lines.len() {
         if !separator(lines[at]) {
             at += 1;
@@ -847,9 +879,14 @@ pub fn folds(text: &str, columns: &[crate::ColumnType]) -> Vec<crate::Fold> {
 pub fn tokens(line: &str, state: &mut State) -> Vec<Token> {
     let trimmed = line.trim();
     if let Some(json_state) = &mut state.json {
-        let tokens = cell_json(line, json_state);
+        let tokens = if state.document {
+            json::tokens(line, json_state)
+        } else {
+            cell_json(line, json_state)
+        };
         if json_state.open.is_empty() {
             state.json = None;
+            state.document = false;
         }
         return tokens;
     }
@@ -928,6 +965,15 @@ pub fn tokens(line: &str, state: &mut State) -> Vec<Token> {
         state.cuts.clear();
         state.borders = 0;
     }
+    if !state.vertical && state.guess_json && line.starts_with(['{', '[']) {
+        let mut json = json::State::default();
+        let tokens = json::tokens(line, &mut json);
+        if !json.open.is_empty() {
+            state.json = Some(json);
+            state.document = true;
+        }
+        return tokens;
+    }
     if state.vertical
         && let Some(colon) = line.find(": ")
         && !line[..colon].trim().is_empty()
@@ -954,6 +1000,28 @@ mod tests {
     use super::*;
     use crate::lang::styled;
     use serde_json::json;
+
+    #[test]
+    fn a_json_document_reply_is_styled_and_folds() {
+        let mut state = State {
+            guess_json: true,
+            ..State::default()
+        };
+        let kinds: Vec<_> = ["[", "  {", "    \"id\": 1", "  }", "]"]
+            .iter()
+            .map(|line| {
+                tokens(line, &mut state)
+                    .iter()
+                    .map(|t| t.kind.clone())
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        assert_eq!(kinds[2], vec!["string property", "number"]);
+        assert!(!state.document && state.json.is_none());
+        let text = "#respon 1 · OK\n[\n  {\n    \"id\": 1\n  }\n]\n#check b";
+        let found: Vec<_> = folds(text, &[]).iter().map(|f| (f.start, f.end)).collect();
+        assert_eq!(found, vec![(1, 5), (2, 4)]);
+    }
 
     fn columns(names: &[(&str, Kind)]) -> Vec<Column> {
         names

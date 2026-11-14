@@ -4,6 +4,7 @@
 
 - New `#options` key `Columns-Size` (`name=20`): the width of a column in characters.
 - `Format: table | json | vertical` is offered in `#options` hints.
+- A `Format: json` reply is highlighted as JSON and folds by brackets.
 
 ## 4.0.0
 
