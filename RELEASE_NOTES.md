@@ -8,6 +8,8 @@
   `#headers` without listing it. `#options` is for the check itself: `Timeout`,
   `Repeat`, limits, `Format` and `Columns-*`. Saved checks of the other services are not
   converted.
+- `Format: vertical` is removed: `Format` takes `table` or `json`. MySQL keeps `\G` after
+  the query.
 - `Timeout` is a console option for every service: it stops the run like Stop.
 - Hints in `#options` are marked `g` (console), `m` (module) or `u` (saved by you).
 

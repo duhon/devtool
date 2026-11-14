@@ -95,12 +95,7 @@ pub fn complete(check: &Check, pos: usize, known: &Catalog) -> Completions {
         }
         Some("options") => {
             let used = key_value::used(at.other_lines());
-            let hints = [
-                "Max-Documents: 1000",
-                "Format: json",
-                "Format: table",
-                "Format: vertical",
-            ];
+            let hints = ["Max-Documents: 1000", "Format: json", "Format: table"];
             let extra: Vec<(&str, &str)> = OPTIONS.iter().map(|name| (*name, "Option")).collect();
             let items = key_value::items(&hints, &extra, &used);
             let mut result = finish(line_start, at.pos, at.before.trim(), items);

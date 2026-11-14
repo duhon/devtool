@@ -10,7 +10,7 @@ pub const SECTIONS: [&str; 4] = ["target", "metadata", "options", "payload"];
 
 const COMMANDS: &str = "search stats eval where table fields sort dedup rex rename lookup join transaction head tail top rare chart timechart bin bucket stream streamstats eventstats fillnull convert foreach makemv mvexpand mvcombine spath xmlkv regex format addinfo appendcols append appendpipe multisearch map tstats inputlookup outputlookup collect delete outputcsv inputcsv iplocation geostats cluster anomalydetection predict trendline gauge highlight loadjob savedsearch sendemail sistats sireduce strcat transpose untable union";
 
-const OPTIONS: [(&str, &str); 7] = [
+const OPTIONS: [(&str, &str); 6] = [
     ("Count: 30", "Option"),
     ("Offset: 0", "Option"),
     (
@@ -19,7 +19,6 @@ const OPTIONS: [(&str, &str); 7] = [
     ),
     ("Columns-Size: ", "column=100 (characters)"),
     ("Format: table", "Option"),
-    ("Format: vertical", "Option"),
     ("Format: json", "Option"),
 ];
 
@@ -392,7 +391,6 @@ mod tests {
                 "Columns-Type: ",
                 "Columns-Size: ",
                 "Format: table",
-                "Format: vertical",
                 "Format: json"
             ]
         );

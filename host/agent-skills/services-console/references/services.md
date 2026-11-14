@@ -37,7 +37,7 @@ Every service has a `#options` section. Its `Repeat`, `Repeat-Until` and
   Shift+Enter on the check, an edit of the check or a hidden panel.
 - `Repeat-Until: changed`, together with Repeat, stops it once the shown
   response differs from the previous one.
-- `Format: table|vertical|json`, only for table services such as MySQL, Splunk
+- `Format: table|json`, only for table services such as MySQL, Splunk
   and Artemis, changes how the Console and History show the rows. The result
   data stays the same.
 

@@ -77,7 +77,7 @@ private CA.
 | --- | --- |
 | `Max-Documents` | Documents shown (1-10000, default 1000); more are marked truncated |
 | `Batch-Size` | Documents per server batch |
-| `Format` | `table`, `json` or `vertical` |
+| `Format` | `table` or `json` |
 | `Columns-Type` | `column=json` and other display overrides |
 | `Columns-Size` | `column=100`: the width of a column in characters |
 

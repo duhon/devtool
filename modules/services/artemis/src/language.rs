@@ -47,14 +47,13 @@ const CLAUSES: [(&str, &str); 20] = [
     ("AMQDurable", "WHERE: 'DURABLE' or 'NON_DURABLE'"),
 ];
 
-const OPTIONS: [(&str, &str); 5] = [
+const OPTIONS: [(&str, &str); 4] = [
     (
         "Columns-Type: ",
         "column=json column=datetime column=number column=boolean column=text",
     ),
     ("Columns-Size: ", "column=100 (characters)"),
     ("Format: table", "Option"),
-    ("Format: vertical", "Option"),
     ("Format: json", "Option"),
 ];
 

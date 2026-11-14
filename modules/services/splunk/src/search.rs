@@ -744,7 +744,7 @@ mod tests {
         }
         assert_eq!(
             plan("Format: wide").unwrap_err(),
-            "Format takes table, vertical or json, not \"wide\""
+            "Format takes table or json, not \"wide\""
         );
     }
 

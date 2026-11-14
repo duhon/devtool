@@ -195,7 +195,6 @@ pub fn json(columns: &[Column], rows: &[Vec<Value>]) -> String {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Format {
     Table,
-    Vertical,
     Json,
 }
 
@@ -203,10 +202,9 @@ impl Format {
     pub fn parse(value: &str) -> Result<Self, String> {
         match value.trim().to_ascii_lowercase().as_str() {
             "table" => Ok(Self::Table),
-            "vertical" => Ok(Self::Vertical),
             "json" => Ok(Self::Json),
             _ => Err(format!(
-                "Format takes table, vertical or json, not {:?}",
+                "Format takes table or json, not {:?}",
                 value.trim()
             )),
         }
@@ -223,7 +221,6 @@ pub fn show(
     match format {
         Some(Format::Json) => json(columns, rows),
         Some(Format::Table) => render(columns, rows, false),
-        Some(Format::Vertical) => render(columns, rows, true),
         None => render(columns, rows, vertical),
     }
 }

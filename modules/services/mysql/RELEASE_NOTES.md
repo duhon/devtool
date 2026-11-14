@@ -1,4 +1,5 @@
 # MySQL module release notes
+- `Format: vertical` is removed: `Format` takes `table` or `json`. MySQL keeps `\G` after the query.
 
 ## 4.1.0
 

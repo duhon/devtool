@@ -1,5 +1,6 @@
 # Splunk module release notes
 - A `Format: json` reply is highlighted as JSON and folds by brackets.
+- `Format: vertical` is removed: `Format` takes `table` or `json`.
 
 ## 5.0.0
 

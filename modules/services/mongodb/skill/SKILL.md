@@ -45,7 +45,7 @@ skeletons from them.
   `{"$numberDecimal": "1.5"}`, `{"$regularExpression": {"pattern": "^a", "options": "i"}}`.
   Plain integers become int32/int64, fractions double. Errors name line and column.
 - `#options`: `Max-Documents` (default 1000, at most 10000), `Batch-Size`,
-  `Format: table|json|vertical`, `Columns-Type: name=json …` and
+  `Format: table|json`, `Columns-Type: name=json …` and
   `Columns-Size: name=100 …` (display only).
 
 ## Actions and payloads

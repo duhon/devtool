@@ -130,11 +130,7 @@ fn options_offer_the_console_then_the_module_and_a_saved_hint_is_the_default() {
     };
     let all = grouped("");
     assert!(
-        all.contains(&(
-            "Format: ".into(),
-            Some("Format: json | table | vertical".into()),
-            true
-        )),
+        all.contains(&("Format: ".into(), Some("Format: json | table".into()), true)),
         "{all:?}"
     );
     let values = grouped("Format: ");

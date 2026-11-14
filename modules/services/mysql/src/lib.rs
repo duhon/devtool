@@ -619,7 +619,6 @@ pub fn complete(check: &Check, pos: usize, schema: &Value) -> Completions {
                 item(format!("{COLUMNS_SIZE}: "), COLUMNS_SIZE_DETAIL, "header"),
                 item("Format: json", "Header", "header"),
                 item("Format: table", "Header", "header"),
-                item("Format: vertical", "Header", "header"),
             ]
             .into_iter()
             .filter(|item| !used.contains(&key_value::name(&item.insert)))

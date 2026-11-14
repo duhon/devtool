@@ -164,7 +164,7 @@ fn checks_fail_before_any_call() {
         ),
         (
             "#target\nhttp://broker:8161\n#options\nFormat: wide",
-            "Format takes table, vertical or json, not \"wide\"",
+            "Format takes table or json, not \"wide\"",
         ),
     ] {
         let cmds = Module::default().run(source);

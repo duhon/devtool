@@ -315,7 +315,7 @@ fn runs_render_their_call_with_the_row_count_and_format() {
     assert_eq!(cmds[1].args()["body"], "[\n  {\n    \"1\": 1\n  }\n]");
     assert_eq!(
         build("#target\nmysql://db\n#options\nFormat: grid\n#payload\nSELECT 1").unwrap_err(),
-        "Format takes table, vertical or json, not \"grid\""
+        "Format takes table or json, not \"grid\""
     );
 }
 
@@ -468,7 +468,7 @@ fn markers_scheme_and_options_complete_outside_the_query() {
     assert_eq!(inserts("#target\nmy|"), vec!["mysql://"]);
     assert_eq!(
         inserts("#target\nmysql://db\n#options\nFor|"),
-        vec!["Format: json", "Format: table", "Format: vertical"]
+        vec!["Format: json", "Format: table"]
     );
     assert_eq!(
         inserts("#target\nmysql://db\n#options\nCol|"),
