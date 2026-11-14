@@ -456,6 +456,25 @@ fn a_second_run_of_a_running_check_stops_it_and_starts_nothing() {
 }
 
 #[test]
+fn a_timeout_stops_the_run_and_ends_it_with_the_seconds() {
+    let window = Window::new();
+    let text = format!("{GET}\n#options\nTimeout: 5");
+    window.run("rest", &text, "a").unwrap();
+    let id = window.fake.last();
+    window.fake.fire();
+    assert_eq!(*window.fake.stopped.borrow(), [id]);
+    window
+        .fake
+        .answer(id, Reply::Result(json!({"cancelled": true})));
+    let (runs, responses) = window.heard();
+    assert!(
+        responses[0].0.contains("Timed out after 5 seconds"),
+        "{responses:?}"
+    );
+    assert!(!runs.last().unwrap().running);
+}
+
+#[test]
 fn a_repeat_runs_again_until_stop_then_commits_its_history() {
     let window = Window::new();
     let text = format!("{GET}\n#options\nRepeat: 5s");

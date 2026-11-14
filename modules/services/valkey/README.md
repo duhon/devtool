@@ -48,14 +48,12 @@ Prefer storing the entire endpoint in `{{VALKEY_URL}}`.
 #target
 {{VALKEY_URL}}
 #options
-Timeout: 30
 CA-PEM: {{VALKEY_CA}}
 #action
 PING
 ```
 
-`Timeout` is 1–110 seconds, default 30. It covers the command or subscription
-setup, not an established subscription. `CA-PEM` is optional, requires TLS and
+The console `Timeout` stops the run. `CA-PEM` is optional, requires TLS and
 holds the actual PEM certificate text, usually in a dictionary variable with
 its line breaks preserved. `CA-Cert` file paths are no longer supported.
 System CA trust and hostname verification are enabled; there is no insecure option.

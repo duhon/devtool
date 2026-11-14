@@ -1,6 +1,6 @@
 [package]
 name = "services-module-valkey"
-version = "1.0.0"
+version = "1.0.1"
 edition.workspace = true
 publish.workspace = true
 description = "Valkey service module (commands and Pub/Sub over TCP sessions)"

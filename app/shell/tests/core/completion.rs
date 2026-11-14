@@ -296,6 +296,9 @@ fn repeat_until_is_offered_under_a_repeat() {
             .filter(|text| !text.starts_with('#'))
             .collect()
     };
-    assert_eq!(options("X-Debug: 1"), ["Repeat: 5s"]);
-    assert_eq!(options("Repeat: 1m"), ["Repeat-Until: changed"]);
+    assert_eq!(options("X-Debug: 1"), ["Timeout: 30", "Repeat: 5s"]);
+    assert_eq!(
+        options("Repeat: 1m"),
+        ["Timeout: 30", "Repeat-Until: changed"]
+    );
 }

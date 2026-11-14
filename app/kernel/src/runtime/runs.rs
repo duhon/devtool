@@ -90,6 +90,10 @@ pub(super) struct RunState {
     repeat: Option<Repeat>,
     /// The request pipeline of the run in flight.
     pipeline: Option<requests::Run>,
+    /// `Timeout` in milliseconds, its timer, and the seconds of a timeout that stopped the run.
+    timeout: Option<u32>,
+    deadline: Option<i32>,
+    timed_out: Option<u32>,
 }
 
 impl RunState {
@@ -270,6 +274,9 @@ impl Core {
                 duplicate_error: None,
                 repeat,
                 pipeline: None,
+                timeout: options.timeout,
+                deadline: None,
+                timed_out: None,
             },
         );
         self.show(key);
@@ -296,6 +303,9 @@ impl Core {
                 duplicate_error: None,
                 repeat: None,
                 pipeline: None,
+                timeout: None,
+                deadline: None,
+                timed_out: None,
             },
         );
         self.show(key);
@@ -305,8 +315,34 @@ impl Core {
         );
     }
 
-    /// Sends a run: the driver call the panels prepared, or the check its module runs.
+    /// Sends a run and starts its `Timeout`.
     fn send(&mut self, key: &str, message: Value) {
+        if let Some(ms) = self.runs.get(key).and_then(|run| run.timeout) {
+            let owner = key.to_owned();
+            let due = self.callback(move |()| Input::Deadline(owner.clone()));
+            let timer = self.platform.timeout(ms, due).ok();
+            if let Some(run) = self.runs.get_mut(key) {
+                run.deadline = timer;
+            }
+        }
+        self.dispatch(key, message);
+    }
+
+    /// The `Timeout` of the run `key` is over: it stops, as with Stop.
+    pub(super) fn deadline(&mut self, key: &str) {
+        let Some(run) = self.runs.get_mut(key) else {
+            return;
+        };
+        run.deadline = None;
+        if !run.view.running {
+            return;
+        }
+        run.timed_out = run.timeout.map(|ms| ms / 1000);
+        self.stop(key);
+    }
+
+    /// Sends a run: the driver call the panels prepared, or the check its module runs.
+    fn dispatch(&mut self, key: &str, message: Value) {
         let Some(run) = self.runs.get_mut(key) else {
             return;
         };
@@ -462,12 +498,25 @@ impl Core {
                 view.result = error;
             }
         }
+        if !run.view.running
+            && let Some(timer) = run.deadline.take()
+        {
+            self.platform.clear(timer);
+        }
+        let timed_out = if run.view.running {
+            None
+        } else {
+            run.timed_out.take()
+        };
         let body = requests::format::check_response(&run.view.result, &run.stdout, &run.stderr);
         let running = run.view.running;
         let outcome = if running {
-            "Running"
+            "Running".to_owned()
+        } else if let Some(seconds) = timed_out {
+            run.view.status = format!("{time} · ERROR · Timed out after {seconds} seconds");
+            format!("Timed out after {seconds} seconds")
         } else {
-            requests::format::outcome(&run.view.result)
+            requests::format::outcome(&run.view.result).to_owned()
         };
         let mut status = format!("{time} · {outcome}");
         if let Some(repeat) = run.repeat.as_mut() {

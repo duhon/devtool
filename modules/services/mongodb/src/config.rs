@@ -4,13 +4,11 @@
 use services_sdk::lang::key_value;
 use services_sdk::lang::table::{Format, Options};
 
-pub const DEFAULT_TIMEOUT_S: u64 = 30;
+pub const DEFAULT_TIMEOUT_S: u64 = 3600;
 pub const DEFAULT_MAX_DOCUMENTS: u64 = 1000;
 const MAX_DOCUMENTS: u64 = 10_000;
-const MAX_TIMEOUT_S: u64 = 3600;
 
-pub const OPTIONS: [&str; 6] = [
-    "Timeout",
+pub const OPTIONS: [&str; 5] = [
     "Max-Documents",
     "Batch-Size",
     "Format",
@@ -288,10 +286,6 @@ impl Connection {
             }
             seen.push(key.clone());
             match key.as_str() {
-                "timeout" => {
-                    connection.timeout_ms =
-                        number("Timeout", &value, 1, MAX_TIMEOUT_S, " seconds")? * 1000;
-                }
                 "max-documents" => {
                     connection.max_documents =
                         number("Max-Documents", &value, 1, MAX_DOCUMENTS, "")?;
@@ -332,7 +326,7 @@ mod tests {
     fn the_database_comes_from_the_uri() {
         let uri = Connection::parse("mongodb://h1:27017,h2/app?replicaSet=rs", "", "").unwrap();
         assert_eq!(uri.database, "app");
-        assert_eq!(uri.timeout_ms, 30_000);
+        assert_eq!(uri.timeout_ms, 3_600_000);
         assert_eq!(uri.max_documents, 1000);
         assert!(
             Connection::parse("mongodb://h", "", "")
@@ -346,20 +340,19 @@ mod tests {
         let c = Connection::parse(
             "mongodb://h/app",
             "",
-            "Timeout: 5\nMax-Documents: 50\nbatch-size: 7\nFormat: json\nColumns-Type: a=json\nColumns-Size: a=20",
+            "Max-Documents: 50\nbatch-size: 7\nFormat: json\nColumns-Type: a=json\nColumns-Size: a=20",
         )
         .unwrap();
-        assert_eq!(
-            (c.timeout_ms, c.max_documents, c.batch_size),
-            (5000, 50, Some(7))
-        );
+        assert_eq!((c.max_documents, c.batch_size), (50, Some(7)));
         assert_eq!(c.format, Some(Format::Json));
         assert_eq!(c.columns_type.as_deref(), Some("a=json"));
         assert_eq!(c.columns_size.as_deref(), Some("a=20"));
         let error = |options: &str| Connection::parse("mongodb://h/app", "", options).unwrap_err();
-        assert_eq!(error("Timeout: 0"), "Timeout must be 1-3600 seconds");
         assert_eq!(error("Max-Documents: x"), "Max-Documents must be 1-10000");
-        assert_eq!(error("Timeout: 1\ntimeout: 2"), "Duplicate option timeout");
+        assert_eq!(
+            error("Format: json\nformat: table"),
+            "Duplicate option format"
+        );
         assert!(error("Format: xml").starts_with("Format takes"));
         assert!(error("Columns-Type: a").starts_with("Invalid Columns-Type"));
         assert!(error("Retries: 1").starts_with("Unknown option \"Retries\""));

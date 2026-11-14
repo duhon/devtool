@@ -48,7 +48,7 @@ fn a_find_becomes_the_driver_request_and_a_table() {
     let cmds = started(
         &mut module,
         &format!(
-            "#target\n{TARGET}\n#collection\nusers\n#action\nfind\n#options\nTimeout: 5\nMax-Documents: 50\nBatch-Size: 10\n#payload\n{{\"filter\": {{\"age\": {{\"$gt\": 21}}}}, \"sort\": {{\"name\": 1}}, \"limit\": 2}}"
+            "#target\n{TARGET}\n#collection\nusers\n#action\nfind\n#options\nMax-Documents: 50\nBatch-Size: 10\n#payload\n{{\"filter\": {{\"age\": {{\"$gt\": 21}}}}, \"sort\": {{\"name\": 1}}, \"limit\": 2}}"
         ),
         &[],
     );
@@ -57,7 +57,7 @@ fn a_find_becomes_the_driver_request_and_a_table() {
     assert_eq!(request["database"], "shop");
     assert_eq!(request["maxDocuments"], 50);
     assert_eq!(request["batchSize"], 10);
-    assert_eq!(request["timeoutMs"], 5000);
+    assert_eq!(request["timeoutMs"], 3_600_000);
     assert_eq!(
         request["command"],
         json!({"find": "users", "filter": {"age": {"$gt": {"$numberInt": "21"}}},
@@ -278,9 +278,12 @@ fn static_completion_follows_the_sections() {
     assert!(command.contains(&"dbStats".into()), "{command:?}");
     let options = labels(
         &mut module,
-        "#target\nmongodb://h/app\n#options\nTi|\n#payload\n{}",
+        "#target\nmongodb://h/app\n#options\nMa|\n#payload\n{}",
     );
-    assert!(options.contains(&"Timeout: 30".into()), "{options:?}");
+    assert!(
+        options.contains(&"Max-Documents: 1000".into()),
+        "{options:?}"
+    );
     assert_eq!(
         labels(&mut module, "#target\nmongodb+|"),
         ["mongodb+srv://"]

@@ -14,7 +14,6 @@ users
 #action
 find
 #options
-Timeout: 30
 Max-Documents: 200
 #payload
 {"filter": {"age": {"$gt": 21}}, "sort": {"name": 1}, "limit": 10}
@@ -45,8 +44,7 @@ skeletons from them.
   values: `{"$oid": "…"}`, `{"$date": "2024-01-01T00:00:00Z"}`, `{"$numberLong": "5"}`,
   `{"$numberDecimal": "1.5"}`, `{"$regularExpression": {"pattern": "^a", "options": "i"}}`.
   Plain integers become int32/int64, fractions double. Errors name line and column.
-- `#options`: `Timeout` (seconds, default 30),
-  `Max-Documents` (default 1000, at most 10000), `Batch-Size`,
+- `#options`: `Max-Documents` (default 1000, at most 10000), `Batch-Size`,
   `Format: table|json|vertical`, `Columns-Type: name=json …` and
   `Columns-Size: name=100 …` (display only).
 

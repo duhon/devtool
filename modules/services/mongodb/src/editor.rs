@@ -95,7 +95,6 @@ pub fn complete(check: &Check, pos: usize, known: &Catalog) -> Completions {
         Some("options") => {
             let used = key_value::used(at.other_lines());
             let hints = [
-                "Timeout: 30",
                 "Max-Documents: 1000",
                 "Format: json",
                 "Format: table",

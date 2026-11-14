@@ -155,7 +155,7 @@ pub fn suggest(
     finish(ch, ch, "", vec![])
 }
 /// The console's `#options` keys.
-const OPTION_HINTS: [&str; 2] = ["Repeat: 5s", "Repeat-Until: changed"];
+const OPTION_HINTS: [&str; 3] = ["Timeout: 30", "Repeat: 5s", "Repeat-Until: changed"];
 
 /// The check of a Kernel service around the cursor at `line`, `ch` (UTF-16) of `source`, and
 /// the cursor's UTF-8 offset in the check text; `None` outside a check.

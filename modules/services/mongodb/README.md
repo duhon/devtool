@@ -18,7 +18,6 @@ users
 #action
 find
 #options
-Timeout: 30
 Max-Documents: 200
 #payload
 {"filter": {"age": {"$gt": 21}}, "sort": {"name": 1}, "limit": 10}
@@ -76,7 +75,6 @@ private CA.
 
 | Option | Meaning |
 | --- | --- |
-| `Timeout` | Seconds for the whole call (1-3600, default 30) |
 | `Max-Documents` | Documents shown (1-10000, default 1000); more are marked truncated |
 | `Batch-Size` | Documents per server batch |
 | `Format` | `table`, `json` or `vertical` |

@@ -87,9 +87,8 @@ fn successful_setup_sends_one_command_and_returns_visible_binary_safe_results() 
 #[test]
 fn variables_are_resolved_after_argument_parsing_and_ca_is_not_a_file_path() {
     let mut module = Harness::default();
-    let cmds = module.run(
-        "#target\n{{URL}}\n#options\nCA-PEM: {{CA}}\nTimeout: 10\n#action\nSET key '{{VALUE}}'",
-    );
+    let cmds =
+        module.run("#target\n{{URL}}\n#options\nCA-PEM: {{CA}}\n#action\nSET key '{{VALUE}}'");
     let cmds = resolve(
         &mut module,
         &cmds,

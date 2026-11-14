@@ -2,7 +2,7 @@
   "id": "valkey",
   "kind": "service",
   "name": "Valkey",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Valkey commands, live Pub/Sub and contextual command completion.",
   "abi": 2,
   "app": ">=4.1.0",

@@ -40,8 +40,12 @@ fn console_options_run_the_check_and_never_reach_the_module() {
         RunOptions {
             repeat: Some(120_000),
             until_changed: true,
+            timeout: None,
         }
     );
+    let (params, options) = parse_run("rest", "#target\nhttps://a\n#options\nTimeout: 45").unwrap();
+    assert_eq!(params, parse("rest", "#target\nhttps://a").unwrap());
+    assert_eq!(options.timeout, Some(45_000));
     // A module with its own options keeps them; the console's are taken out first.
     let (params, options) = parse_run(
         "artemis",
@@ -56,6 +60,11 @@ fn console_options_run_the_check_and_never_reach_the_module() {
     for (service, options, error) in [
         ("rest", "Repeat-Until: changed", "Repeat-Until needs Repeat"),
         // A time has its unit: s, m or h, 1s to 24h.
+        (
+            "rest",
+            "Timeout: 0",
+            "Timeout takes seconds from 1 to 3600, not \"0\"",
+        ),
         ("rest", "Repeat: 5", "Repeat takes a time from 1s to 24h"),
         ("rest", "Repeat: 25h", "Repeat takes a time from 1s to 24h"),
         ("rest", "Repeat: 1.5s", "Repeat takes a time from 1s to 24h"),
@@ -67,7 +76,7 @@ fn console_options_run_the_check_and_never_reach_the_module() {
         (
             "rest",
             "Repeat: 5s\nUntil: changed",
-            "Unknown option \"Until\"; REST takes Repeat and Repeat-Until",
+            "Unknown option \"Until\"; REST takes Repeat, Repeat-Until and Timeout",
         ),
         ("rest", "X-Debug: 1", "Unknown option \"X-Debug\""),
     ] {

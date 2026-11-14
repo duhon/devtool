@@ -3620,7 +3620,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-valkey"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "percent-encoding",
  "prost",

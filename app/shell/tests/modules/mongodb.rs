@@ -100,10 +100,10 @@ fn options_offer_the_console_then_the_module_and_a_saved_hint_is_the_default() {
     assert!(labels.contains(&("Format: ".into(), Some('m'))));
     assert!(badges("", &[]).contains(&("Repeat: 5s".into(), Some('g'))));
     let plain = options("", &[]);
-    assert_eq!(plain[0], "Repeat: 5s");
+    assert_eq!(plain[..2], ["Timeout: 30", "Repeat: 5s"]);
     assert!(plain.contains(&"Format: ".to_owned()), "{plain:?}");
     let with = options("", &saved);
-    assert_eq!(with[0], "Repeat: 10s");
+    assert_eq!(with[..2], ["Timeout: 30", "Repeat: 10s"]);
     assert!(!with.contains(&"Repeat: 5s".to_owned()));
     assert!(
         !options("Repeat: 1m", &saved)

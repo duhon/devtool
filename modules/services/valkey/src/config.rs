@@ -117,7 +117,7 @@ impl Connection {
             }
             None => None,
         };
-        let mut timeout_ms = 30_000;
+        let timeout_ms = 110_000;
         let mut seen = std::collections::BTreeSet::new();
         for (name, value) in &plan.options {
             let name = name.to_ascii_lowercase();
@@ -125,15 +125,6 @@ impl Connection {
                 return Err("Duplicate option".into());
             }
             match name.as_str() {
-                "timeout" => {
-                    timeout_ms = value
-                        .trim()
-                        .parse::<u32>()
-                        .ok()
-                        .filter(|value| (1..=110).contains(value))
-                        .ok_or("Timeout must be 1-110 seconds")?
-                        * 1000;
-                }
                 "ca-pem" if request.tls && !value.trim().is_empty() => {
                     request.ca_pem = Some(value.clone());
                 }

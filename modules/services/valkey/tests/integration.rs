@@ -332,16 +332,6 @@ async fn packaged_wasm_runs_full_command_scenario_through_actual_host_tcp_driver
         "ERROR"
     );
     assert_eq!(runner.command(&url, "EXISTS auth-leak").await, "0");
-
-    runner
-        .start(&format!(
-            "#target\n{url}\n#options\nTimeout: 1\n#action\nBLPOP no-jobs 0"
-        ))
-        .await;
-    while runner.result.is_none() {
-        runner.next().await;
-    }
-    assert_eq!(runner.result.as_ref().unwrap()["outcome"], "ERROR");
 }
 
 #[tokio::test]
@@ -492,7 +482,7 @@ async fn pubsub_is_live_plain_and_tls_validates_ca_hostname_and_stop() {
         (plain.as_str(), "", "test:plain-news"),
         (
             tls.as_str(),
-            "#options\nTimeout: 1\nCA-PEM: {{VALKEY_CA}}\n",
+            "#options\nCA-PEM: {{VALKEY_CA}}\n",
             "test:tls-news",
         ),
     ] {

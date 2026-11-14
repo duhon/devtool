@@ -1,3 +1,7 @@
+## 1.0.1
+
+- `Timeout` moved to the console (global `#options` key); the module no longer parses it.
+
 ## 1.0.0
 
 - Rewrite the module for Services DevTools 4.1: one portable WASM module using

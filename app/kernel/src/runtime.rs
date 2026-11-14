@@ -156,6 +156,8 @@ enum Input {
     Answer(String, String, Result<Value, Failure>),
     /// The wait of a repeating run is over.
     Repeat(String),
+    /// The `Timeout` of a run is over.
+    Deadline(String),
     /// History answered the save of a finished repeat: (check id, reply).
     RepeatSaved(String, Reply),
     /// An event of an Agent turn: (module, tag, reply).
@@ -522,6 +524,7 @@ impl Core {
                 self.apply(effects);
             }
             Input::Repeat(key) => self.repeat(&key),
+            Input::Deadline(key) => self.deadline(&key),
             Input::RepeatSaved(check, reply) => self.repeat_saved(&check, reply),
             Input::Turn(module, tag, reply) => self.turn_replied(&module, &tag, reply),
             Input::Modules(reply) => self.modules_listed(reply),

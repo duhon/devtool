@@ -57,6 +57,9 @@ pub struct RunOptions {
     pub repeat: Option<u32>,
     /// `Repeat-Until: changed`: a repeat stops when the shown response changes.
     pub until_changed: bool,
+    /// `Timeout: 30`: seconds (1 to 3600, here in milliseconds) after which the console stops
+    /// the run, like Stop.
+    pub timeout: Option<u32>,
 }
 
 /// The console's keys of an `#options` text and the lines left for the module.
@@ -77,6 +80,18 @@ fn console_options(text: &str, name: &str) -> Result<RunOptions, String> {
                     format!("Repeat takes a time from 1s to 24h, like 5s, 2m or 1h, not {value:?}")
                 })?);
             }
+            "timeout" => {
+                options.timeout = Some(
+                    value
+                        .parse::<u32>()
+                        .ok()
+                        .filter(|seconds| (1..=3600).contains(seconds))
+                        .ok_or_else(|| {
+                            format!("Timeout takes seconds from 1 to 3600, not {value:?}")
+                        })?
+                        * 1000,
+                );
+            }
             "repeat-until" if value.eq_ignore_ascii_case("changed") => options.until_changed = true,
             "repeat-until" => {
                 return Err(format!("Repeat-Until takes \"changed\", not {value:?}"));
@@ -93,14 +108,14 @@ fn console_options(text: &str, name: &str) -> Result<RunOptions, String> {
             .map_or(*line, |(option, _)| option)
             .trim();
         return Err(format!(
-            "Unknown option {option:?}; {name} takes Repeat and Repeat-Until"
+            "Unknown option {option:?}; {name} takes Repeat, Repeat-Until and Timeout"
         ));
     }
     Ok(options)
 }
 
 /// A Kernel service's check (the text after its `#check` line) as its module gets it, and
-/// the options the console runs it with. The console owns Repeat and Repeat-Until; a module
+/// the options the console runs it with. The console owns Repeat, Repeat-Until and Timeout; a module
 /// that runs its checks itself gets the rest of `#options`, others none.
 pub fn kernel_run(
     service: &str,
@@ -127,7 +142,7 @@ pub fn kernel_run(
         let console = line.split_once(':').is_some_and(|(name, _)| {
             matches!(
                 name.trim().to_ascii_lowercase().as_str(),
-                "repeat" | "repeat-until"
+                "repeat" | "repeat-until" | "timeout"
             )
         });
         if in_options && (console || !runs) {
