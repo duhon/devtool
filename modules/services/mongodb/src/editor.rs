@@ -8,7 +8,7 @@ use crate::payload;
 use serde_json::Value;
 use services_sdk::lang::check::At;
 use services_sdk::lang::table::{self, State as TableState};
-use services_sdk::lang::{endpoint, finish, headers, item, json, marker};
+use services_sdk::lang::{endpoint, finish, item, json, key_value, marker};
 use services_sdk::{Check, Completions, Item, Line, LineColumns, Token};
 use std::collections::BTreeMap;
 
@@ -80,10 +80,10 @@ pub fn complete(check: &Check, pos: usize, known: &Catalog) -> Completions {
             )
         }
         Some("headers") => {
-            let used = headers::used(at.other_lines());
+            let used = key_value::used(at.other_lines());
             let hints = ["Auth: x509", "Certificate: "];
             let extra: Vec<(&str, &str)> = HEADERS.iter().map(|name| (*name, "Header")).collect();
-            let items = headers::items(&hints, &extra, &used);
+            let items = key_value::items(&hints, &extra, &used);
             let mut result = finish(line_start, at.pos, at.before.trim(), items);
             if at.before.trim().is_empty() && !used.is_empty() {
                 let mut items = finish(line_start, at.pos, "", at.unused(&SECTIONS)).items;
@@ -93,7 +93,7 @@ pub fn complete(check: &Check, pos: usize, known: &Catalog) -> Completions {
             result
         }
         Some("options") => {
-            let used = headers::used(at.other_lines());
+            let used = key_value::used(at.other_lines());
             let hints = [
                 "Timeout: 30",
                 "Max-Documents: 1000",
@@ -102,7 +102,7 @@ pub fn complete(check: &Check, pos: usize, known: &Catalog) -> Completions {
                 "Format: vertical",
             ];
             let extra: Vec<(&str, &str)> = OPTIONS.iter().map(|name| (*name, "Option")).collect();
-            let items = headers::items(&hints, &extra, &used);
+            let items = key_value::items(&hints, &extra, &used);
             let mut result = finish(line_start, at.pos, at.before.trim(), items);
             if at.before.trim().is_empty() && !used.is_empty() {
                 let mut items = finish(line_start, at.pos, "", at.unused(&SECTIONS)).items;
@@ -311,9 +311,9 @@ pub fn highlight(state: &[u8], lines: &[String], columns: &[LineColumns]) -> Vec
                     Area::Endpoint => endpoint::tokens(line, false),
                     Area::Options => {
                         response.declare(line);
-                        headers::tokens(line)
+                        key_value::tokens(line)
                     }
-                    Area::Headers => headers::tokens(line),
+                    Area::Headers => key_value::tokens(line),
                     Area::Collection => endpoint::tokens(line, false),
                     Area::Action => whole(line.trim_end(), "keyword"),
                     Area::Payload => payload_tokens(line, &mut payload),

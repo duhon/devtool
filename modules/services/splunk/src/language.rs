@@ -3,7 +3,7 @@
 
 use services_sdk::lang::check::At;
 use services_sdk::lang::table;
-use services_sdk::lang::{endpoint, finish, headers, item, marker};
+use services_sdk::lang::{endpoint, finish, item, key_value, marker};
 use services_sdk::{Check, Completions, Item, Line, Token};
 
 pub const SECTIONS: [&str; 4] = ["target", "headers", "options", "payload"];
@@ -244,7 +244,7 @@ pub fn highlight(
                     Area::Endpoint => endpoint::tokens(line, false),
                     Area::Headers => {
                         response.declare(line);
-                        headers::tokens(line)
+                        key_value::tokens(line)
                     }
                     Area::Search => spl(line, &mut search),
                     Area::Prelude | Area::Response => table::tokens(line, &mut response),
@@ -260,10 +260,10 @@ pub fn highlight(
 }
 
 fn pairs(at: &At, hints: Vec<Item>) -> Completions {
-    let used = headers::used(at.other_lines());
+    let used = key_value::used(at.other_lines());
     let items: Vec<Item> = hints
         .into_iter()
-        .filter(|item| !used.contains(&headers::name(&item.insert)))
+        .filter(|item| !used.contains(&key_value::name(&item.insert)))
         .collect();
     let line_start = at.line_start(at.line);
     let mut result = finish(line_start, at.pos, at.before.trim(), items);
@@ -303,7 +303,7 @@ pub fn complete(check: &Check, pos: usize) -> Completions {
                 .collect();
             pairs(&at, hints)
         }
-        Some("headers") => pairs(&at, headers::items(&HEADERS, &[], &Default::default())),
+        Some("headers") => pairs(&at, key_value::items(&HEADERS, &[], &Default::default())),
         Some("payload") => {
             if let Some(next) = at.next_section(&SECTIONS) {
                 return next;

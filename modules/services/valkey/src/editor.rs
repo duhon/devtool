@@ -1,6 +1,6 @@
 use crate::{config, discovery::Scope};
 use serde_json::Value;
-use services_sdk::lang::{check::At, endpoint, finish, headers, item, json, marker};
+use services_sdk::lang::{check::At, endpoint, finish, item, json, key_value, marker};
 use services_sdk::{Check, Completions, Item, Line, Token};
 
 const SECTIONS: &[&str] = &["target", "options", "action"];
@@ -178,12 +178,12 @@ pub fn complete(check: &Check, pos: u32, snapshot: Option<&Value>) -> Completion
             )
         }
         Some("options") => {
-            let used = headers::used(at.other_lines());
+            let used = key_value::used(at.other_lines());
             finish(
                 at.line_start(at.line),
                 at.pos,
                 at.before.trim(),
-                headers::items(&["Timeout: 30", "CA-PEM: {{VALKEY_CA}}"], &[], &used),
+                key_value::items(&["Timeout: 30", "CA-PEM: {{VALKEY_CA}}"], &[], &used),
             )
         }
         Some("action") => {
@@ -367,7 +367,7 @@ pub fn highlight(state: &[u8], lines: &[String]) -> Vec<Line> {
             } else {
                 match area {
                     1 => endpoint::tokens(line, false),
-                    2 => headers::tokens(line),
+                    2 => key_value::tokens(line),
                     3 => {
                         if argument == 0 && line.trim_start().starts_with('[') {
                             json_mode = true;

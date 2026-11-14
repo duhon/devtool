@@ -1,7 +1,7 @@
 use percent_encoding::percent_decode_str;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use services_sdk::{Check, lang::headers, tcp};
+use services_sdk::{Check, lang::key_value, tcp};
 use url::Url;
 
 pub const RESPONSE_LIMIT: usize = 16 * 1024 * 1024;
@@ -28,7 +28,7 @@ impl Plan {
         Ok(Self {
             endpoint,
             args,
-            options: headers::pairs(check.text_of("options")),
+            options: key_value::pairs(check.text_of("options")),
         })
     }
 

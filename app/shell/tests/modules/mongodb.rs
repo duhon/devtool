@@ -53,7 +53,7 @@ fn a_line_reached_cold_is_colored_like_the_exact_pass() {
 #[test]
 fn options_offer_the_console_then_the_module_and_a_saved_hint_is_the_default() {
     services_shell::link();
-    let options = |lines: &str, hints: &[(String, String)]| -> Vec<String> {
+    let details = |lines: &str, hints: &[(String, String)]| -> Vec<(String, String)> {
         let source = format!("#check\n#target mongodb://localhost/shop\n#options\n{lines}");
         let line = source.lines().count() - 1 + usize::from(lines.is_empty());
         services_kernel::editor::completion::suggest(
@@ -67,11 +67,21 @@ fn options_offer_the_console_then_the_module_and_a_saved_hint_is_the_default() {
         )
         .candidates
         .into_iter()
-        .map(|candidate| candidate.text)
-        .filter(|text| !text.starts_with('#'))
+        .map(|candidate| (candidate.text, candidate.detail))
+        .filter(|(text, _)| !text.starts_with('#'))
         .collect()
     };
+    let options = |lines: &str, hints: &[(String, String)]| -> Vec<String> {
+        details(lines, hints)
+            .into_iter()
+            .map(|(text, _)| text)
+            .collect()
+    };
     let saved = [("Repeat: 10s".to_owned(), "Saved hint #options".to_owned())];
+    let labels = details("", &saved);
+    assert!(labels.contains(&("Repeat: 10s".into(), "Saved hint".into())));
+    assert!(labels.contains(&("Format: json".into(), "Module".into())));
+    assert!(details("", &[]).contains(&("Repeat: 5s".into(), "App".into())));
     let plain = options("", &[]);
     assert_eq!(plain[0], "Repeat: 5s");
     assert!(plain.contains(&"Format: json".to_owned()), "{plain:?}");

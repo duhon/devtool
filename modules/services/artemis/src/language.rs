@@ -4,7 +4,7 @@
 use crate::action::COMMANDS;
 use serde_json::Value;
 use services_sdk::lang::check::At;
-use services_sdk::lang::{endpoint, finish, headers, item, json, marker, table, token_start};
+use services_sdk::lang::{endpoint, finish, item, json, key_value, marker, table, token_start};
 use services_sdk::{Check, Completions, Item, Line, Token};
 
 pub const SECTIONS: [&str; 5] = ["target", "headers", "action", "options", "payload"];
@@ -230,7 +230,7 @@ pub fn highlight(
                     Area::Endpoint => endpoint::tokens(line, false),
                     Area::Headers => {
                         response.declare(line);
-                        headers::tokens(line)
+                        key_value::tokens(line)
                     }
                     Area::Action => action(line, &mut command),
                     Area::Body => json::tokens(line, &mut body),
@@ -265,10 +265,10 @@ pub fn action_name(name: &str) -> String {
 }
 
 fn pairs(at: &At, hints: Vec<Item>) -> Completions {
-    let used = headers::used(at.other_lines());
+    let used = key_value::used(at.other_lines());
     let items: Vec<Item> = hints
         .into_iter()
-        .filter(|item| !used.contains(&headers::name(&item.insert)))
+        .filter(|item| !used.contains(&key_value::name(&item.insert)))
         .collect();
     let line_start = at.line_start(at.line);
     let mut result = finish(line_start, at.pos, at.before.trim(), items);
@@ -304,7 +304,7 @@ pub fn complete(check: &Check, pos: usize, discovered: &Value) -> Completions {
         }
         Some("headers") => pairs(
             &at,
-            headers::items(&["Authorization: Basic "], &[], &Default::default()),
+            key_value::items(&["Authorization: Basic "], &[], &Default::default()),
         ),
         Some("options") => pairs(
             &at,

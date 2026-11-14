@@ -5,7 +5,7 @@
 use serde::Deserialize;
 use serde_json::{Value, json};
 use services_sdk::lang::check::At;
-use services_sdk::lang::{finish, headers, item, marker, shell};
+use services_sdk::lang::{finish, item, key_value, marker, shell};
 use services_sdk::process::{self, Exit, Request};
 use services_sdk::{
     Check, Cmd, Completions, Event, Failure, Line, Module, Rendered, Subscriptions, Token, cmd, run,
@@ -106,7 +106,7 @@ pub fn plan(check: &Check) -> Result<Value, String> {
     if command.trim().is_empty() {
         return Err("command is required".into());
     }
-    let env = headers::pairs(check.text_of("env"));
+    let env = key_value::pairs(check.text_of("env"));
     Ok(json!({"argv": argv, "command": command, "env": env}))
 }
 
@@ -251,7 +251,7 @@ pub fn highlight(state: &[u8], lines: &[String]) -> Vec<Line> {
                 }
                 _ => match area {
                     Area::Shell => shell::tokens(line, &mut quote),
-                    Area::Env => headers::tokens(line),
+                    Area::Env => key_value::tokens(line),
                     Area::Other | Area::Response => vec![],
                 },
             };
@@ -285,8 +285,8 @@ pub fn complete(check: &Check, pos: usize) -> Completions {
         }
         Some("target") => at.next_section(&SECTIONS).unwrap_or_else(|| at.none()),
         Some("env") => {
-            let used = headers::used(at.other_lines());
-            let items = headers::items(&ENV, &[], &used);
+            let used = key_value::used(at.other_lines());
+            let items = key_value::items(&ENV, &[], &used);
             let mut result = finish(line_start, at.pos, at.before.trim(), items);
             if at.before.trim().is_empty() && !used.is_empty() {
                 let mut items = finish(line_start, at.pos, "", at.unused(&SECTIONS)).items;

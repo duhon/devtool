@@ -154,16 +154,7 @@ pub fn suggest(
     finish(ch, ch, "", vec![])
 }
 /// The console's `#options` keys.
-const OPTION_HINTS: [(&str, &str); 2] = [
-    (
-        "Repeat: 5s",
-        "Run again 5s, 2m or 1h after each response, until Stop",
-    ),
-    (
-        "Repeat-Until: changed",
-        "Stop repeating when the response changes",
-    ),
-];
+const OPTION_HINTS: [&str; 2] = ["Repeat: 5s", "Repeat-Until: changed"];
 
 /// The check of a Kernel service around the cursor at `line`, `ch` (UTF-16) of `source`, and
 /// the cursor's UTF-8 offset in the check text; `None` outside a check.
@@ -341,11 +332,12 @@ fn kernel_suggest(
         );
         for candidate in &mut candidates {
             candidate.text.insert_str(0, &head);
+            candidate.detail = "Module".into();
         }
-        let global = OPTION_HINTS.iter().map(|(text, detail)| Candidate {
+        let global = OPTION_HINTS.iter().map(|text| Candidate {
             text: (*text).to_owned(),
             label: None,
-            detail: (*detail).to_owned(),
+            detail: "App".into(),
             continue_hint: false,
             literal: false,
         });

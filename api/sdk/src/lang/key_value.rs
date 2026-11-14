@@ -1,4 +1,4 @@
-//! `Name: value` lines: headers, and option lists with the same shape.
+//! `Name: value` lines, such as headers and option lists: tokens, parsing and hints.
 
 use super::{item, placeholder, run, token};
 use crate::{Item, Token};

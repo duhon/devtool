@@ -1,7 +1,7 @@
 //! The `#target` connection string, the `#headers` (client certificate) and the `#options`
 //! of a check.
 
-use services_sdk::lang::headers;
+use services_sdk::lang::key_value;
 use services_sdk::lang::table::{Format, Options};
 
 pub const DEFAULT_TIMEOUT_S: u64 = 30;
@@ -183,7 +183,7 @@ fn with_certificate(target: &str, parts: &Split, headers: &str) -> Result<String
     let mut certificate = None;
     let mut password = None;
     let mut seen = Vec::new();
-    for (name, value) in headers::pairs(headers) {
+    for (name, value) in key_value::pairs(headers) {
         let key = name.to_ascii_lowercase();
         if seen.contains(&key) {
             return Err(format!("Duplicate header {name}"));
@@ -284,7 +284,7 @@ impl Connection {
         };
         let mut database = None;
         let mut seen = Vec::new();
-        for (name, value) in headers::pairs(options) {
+        for (name, value) in key_value::pairs(options) {
             let key = name.to_ascii_lowercase();
             if seen.contains(&key) {
                 return Err(format!("Duplicate option {name}"));

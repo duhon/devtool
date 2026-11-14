@@ -7,7 +7,7 @@ mod probe;
 use serde_json::Value;
 use services_sdk::http::Request;
 use services_sdk::lang::rest::{self, Language, discovery::Discovery, highlight};
-use services_sdk::lang::{curl, endpoint, headers};
+use services_sdk::lang::{curl, endpoint, key_value};
 use services_sdk::{
     Check, Chunk, Cmd, Completions, DriverCall, Event, Fold, Line, Module, Rendered, Subscriptions,
 };
@@ -46,7 +46,7 @@ pub fn request(check: &Check) -> Result<Request, String> {
         .collect();
     let body = body.join("\n");
     Ok(Request {
-        headers: headers::pairs(check.text_of("headers")),
+        headers: key_value::pairs(check.text_of("headers")),
         body: (!body.trim().is_empty()).then_some(body),
         ..Request::new(&method, url)
     })

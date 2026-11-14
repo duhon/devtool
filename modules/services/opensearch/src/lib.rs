@@ -8,7 +8,7 @@ pub mod schema;
 use serde_json::Value;
 use services_sdk::http::Request;
 use services_sdk::lang::rest::{self, Language, discovery::Discovery, highlight};
-use services_sdk::lang::{endpoint, headers};
+use services_sdk::lang::{endpoint, key_value};
 use services_sdk::{
     Check, Chunk, Cmd, Completions, DriverCall, Event, Fold, Line, Module, Rendered, Subscriptions,
 };
@@ -46,7 +46,7 @@ pub fn request(check: &Check) -> Result<Request, String> {
     if !http || url.contains('#') {
         return Err(ENDPOINT.into());
     }
-    let mut headers = headers::pairs(check.text_of("headers"));
+    let mut headers = key_value::pairs(check.text_of("headers"));
     let mut body = Some(check.text_of("payload").to_owned()).filter(|body| !body.is_empty());
     if let Some(body) = &mut body {
         let given = headers

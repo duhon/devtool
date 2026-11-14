@@ -5,7 +5,7 @@ use crate::export::{Export, MAX_RESPONSE_BYTES};
 use crate::{PREVIEW_WARNING, TIMEOUT_SECONDS};
 use serde_json::{Value, json};
 use services_sdk::http::{self, Request};
-use services_sdk::lang::headers;
+use services_sdk::lang::key_value;
 use services_sdk::lang::table::{self, Column, Format, Kind, Options};
 use services_sdk::{Check, Cmd, Failure, Rendered, cmd, run};
 
@@ -126,7 +126,7 @@ impl Plan {
             return Err("splunk request needs a #target block".into());
         }
         let mut options = std::collections::BTreeMap::new();
-        for (name, value) in headers::pairs(text("options")) {
+        for (name, value) in key_value::pairs(text("options")) {
             let key = name.to_ascii_lowercase();
             options.insert(key, value);
         }
@@ -170,7 +170,7 @@ impl Plan {
             "Content-Type".to_owned(),
             "application/x-www-form-urlencoded".to_owned(),
         )];
-        for (name, value) in headers::pairs(text("headers")) {
+        for (name, value) in key_value::pairs(text("headers")) {
             headers.retain(|(known, _)| !known.eq_ignore_ascii_case(&name));
             headers.push((name, value));
         }

@@ -3,7 +3,7 @@
 
 use crate::language;
 use serde_json::Value;
-use services_sdk::lang::{self, finish, headers, item, json, marker};
+use services_sdk::lang::{self, finish, item, json, key_value, marker};
 use services_sdk::{Check, Completions, Item};
 
 pub const SECTIONS: [&str; 4] = ["target", "headers", "variables", "payload"];
@@ -126,7 +126,7 @@ pub fn complete(schema: Option<&Value>, check: &Check, pos: usize) -> Completion
             finish(pos - value.len(), pos, value, urls)
         }
         "headers" => {
-            let used = headers::used(
+            let used = key_value::used(
                 (body_start..section_end)
                     .filter(|i| *i != line)
                     .map(|i| lines.text(i)),
@@ -135,7 +135,7 @@ pub fn complete(schema: Option<&Value>, check: &Check, pos: usize) -> Completion
                 line_start,
                 pos,
                 before.trim(),
-                headers::items(&HEADERS, &[], &used),
+                key_value::items(&HEADERS, &[], &used),
             );
             if before.trim().is_empty() && !used.is_empty() {
                 let mut items = finish(line_start, pos, "", unused()).items;

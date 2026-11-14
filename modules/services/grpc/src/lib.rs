@@ -12,7 +12,7 @@ use reflection::{Found, Goal, Run, Server, Step};
 use serde_json::{Value, json};
 use services_sdk::grpc::{self, Request, Response};
 use services_sdk::lang::check::At;
-use services_sdk::lang::{curl, endpoint, finish, headers, item, json, marker, placeholder};
+use services_sdk::lang::{curl, endpoint, finish, item, json, key_value, marker, placeholder};
 use services_sdk::run::{self, Answer, OneCall};
 use services_sdk::{
     Check, Cmd, Completions, DriverCall, Event, Failure, Fold, Line, Module, Rendered,
@@ -76,7 +76,7 @@ fn target_path(endpoint: &str) -> (&str, &str) {
 
 /// The request metadata: `#headers` with lowercased names; a `-bin` value is base64.
 pub fn metadata(check: &Check) -> Vec<(String, String)> {
-    headers::pairs(check.text_of("headers"))
+    key_value::pairs(check.text_of("headers"))
         .into_iter()
         .map(|(name, value)| (name.to_ascii_lowercase(), value))
         .collect()
@@ -190,7 +190,7 @@ pub fn export(check: &Check) -> Result<String, String> {
         lines.push("  -plaintext".into());
     }
     lines.push("  -emit-defaults".into());
-    for (name, value) in headers::pairs(check.text_of("headers")) {
+    for (name, value) in key_value::pairs(check.text_of("headers")) {
         lines.push(format!("  -H {}", curl::quote(&format!("{name}: {value}"))));
     }
     let message = check.text_of("payload");
@@ -750,7 +750,7 @@ pub fn highlight(state: &[u8], lines: &[String]) -> Vec<Line> {
             } else {
                 match area {
                     Area::Endpoint => endpoint_tokens(line),
-                    Area::Headers => headers::tokens(line),
+                    Area::Headers => key_value::tokens(line),
                     Area::Prelude | Area::Message | Area::Response => json::tokens(line, &mut body),
                     Area::Proto | Area::Other => vec![],
                 }
@@ -849,12 +849,12 @@ pub fn complete(module: &Grpc, check: &Check, pos: usize) -> Completions {
             )
         }
         Some("headers") => {
-            let used = headers::used(at.other_lines());
+            let used = key_value::used(at.other_lines());
             let mut result = finish(
                 line_start,
                 at.pos,
                 at.before.trim(),
-                headers::items(&HEADERS, &[], &used),
+                key_value::items(&HEADERS, &[], &used),
             );
             if at.before.trim().is_empty() && !used.is_empty() {
                 let mut items = finish(line_start, at.pos, "", at.unused(&SECTIONS)).items;

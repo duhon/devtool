@@ -10,7 +10,7 @@ mod language;
 use discovery::Connection;
 use serde_json::{Value, json};
 use services_sdk::http::Response;
-use services_sdk::lang::{curl, headers};
+use services_sdk::lang::{curl, key_value};
 use services_sdk::run::{self, OneCall};
 use services_sdk::{
     Check, Cmd, Completions, Event, Failure, Fold, Line, Module, Rendered, Subscriptions, cmd,
@@ -56,7 +56,7 @@ fn parts(check: &Check) -> Result<Parts<'_>, String> {
         .transpose()?;
     Ok(Parts {
         url,
-        headers: headers::pairs(check.text_of("headers")),
+        headers: key_value::pairs(check.text_of("headers")),
         query: query(check),
         variables,
     })
@@ -87,7 +87,7 @@ fn resolved_request(document: Value) -> Result<services_sdk::DriverCall, String>
     }
     let connection = Connection {
         url: url.to_owned(),
-        headers: headers::pairs(document["headers"].as_str().unwrap_or("")),
+        headers: key_value::pairs(document["headers"].as_str().unwrap_or("")),
     };
     let query = document["payload"].as_str().unwrap_or("");
     let variables = Some(document["variables"].clone()).filter(|v| !v.is_null());

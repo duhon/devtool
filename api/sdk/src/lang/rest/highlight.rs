@@ -2,7 +2,7 @@
 //! region as JSON when it looks like JSON.
 
 use super::Language;
-use crate::lang::{endpoint, headers, json, marker};
+use crate::lang::{endpoint, json, key_value, marker};
 use crate::{Fold, Line, Token};
 
 /// The part of a check a line is in.
@@ -137,7 +137,7 @@ pub fn highlight(lang: &Language, state: &[u8], lines: &[String]) -> Vec<Line> {
                     }
                     Area::Endpoint => endpoint::tokens(line, true),
                     Area::Action => method(lang, line),
-                    Area::Headers | Area::Options => headers::tokens(line),
+                    Area::Headers | Area::Options => key_value::tokens(line),
                     _ => vec![],
                 }
             };

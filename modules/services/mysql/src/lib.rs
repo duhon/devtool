@@ -7,7 +7,7 @@ use serde_json::{Map, Value, json};
 use services_sdk::lang::check::At;
 use services_sdk::lang::resolve::Resolver;
 use services_sdk::lang::table::{self, Column, Format, Kind, Options};
-use services_sdk::lang::{endpoint, finish, headers, item, marker, sql};
+use services_sdk::lang::{endpoint, finish, item, key_value, marker, sql};
 use services_sdk::mysql::{self, Request, Response, ResultSet};
 use services_sdk::run::{self, Answer, OneCall};
 use services_sdk::{
@@ -61,7 +61,7 @@ pub fn parse_sql(source: &str) -> Result<Query, String> {
 
 /// The `Columns-Type` of the `#options` section.
 fn option(check: &Check, name: &str) -> Option<String> {
-    headers::pairs(check.text_of("options"))
+    key_value::pairs(check.text_of("options"))
         .into_iter()
         .find(|(key, _)| key.eq_ignore_ascii_case(name))
         .map(|(_, value)| value)
@@ -555,7 +555,7 @@ pub fn highlight(state: &[u8], lines: &[String], columns: &[LineColumns]) -> Vec
                     Area::Endpoint => endpoint::tokens(line, false),
                     Area::Options => {
                         response.declare(line);
-                        headers::tokens(line)
+                        key_value::tokens(line)
                     }
                     Area::Query => sql::tokens(line, &mut query),
                     Area::Prelude | Area::Response => table::tokens(line, &mut response),
@@ -604,14 +604,14 @@ pub fn complete(check: &Check, pos: usize, schema: &Value) -> Completions {
             )
         }
         Some("options") => {
-            let used = headers::used(at.other_lines());
+            let used = key_value::used(at.other_lines());
             let items: Vec<Item> = [item(
                 format!("{COLUMNS_TYPE}: "),
                 COLUMNS_TYPE_DETAIL,
                 "header",
             )]
             .into_iter()
-            .filter(|item| !used.contains(&headers::name(&item.insert)))
+            .filter(|item| !used.contains(&key_value::name(&item.insert)))
             .collect();
             let mut result = finish(line_start, at.pos, at.before.trim(), items);
             if at.before.trim().is_empty() && !used.is_empty() {

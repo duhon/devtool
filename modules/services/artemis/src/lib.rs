@@ -8,7 +8,7 @@ pub mod language;
 
 use jolokia::{Error, Reply, Request};
 use serde_json::{Map, Value, json};
-use services_sdk::lang::headers;
+use services_sdk::lang::key_value;
 use services_sdk::lang::table::{self, Column, Format, Kind};
 use services_sdk::{
     Check, Cmd, Completions, Event, Failure, Line, Module, Rendered, Subscriptions, cmd, run,
@@ -77,7 +77,7 @@ fn plan(check: &Check) -> Result<Plan, String> {
     }
     let mut options = Map::new();
     let mut format = None;
-    for (name, value) in headers::pairs(check.text_of("options")) {
+    for (name, value) in key_value::pairs(check.text_of("options")) {
         let name = name.to_ascii_lowercase();
         if name == "format" {
             format = Some(Format::parse(&value)?);
@@ -115,7 +115,7 @@ fn plan(check: &Check) -> Result<Plan, String> {
 }
 
 fn header_map(check: &Check) -> Map<String, Value> {
-    headers::pairs(check.text_of("headers"))
+    key_value::pairs(check.text_of("headers"))
         .into_iter()
         .map(|(name, value)| (name, Value::String(value)))
         .collect()

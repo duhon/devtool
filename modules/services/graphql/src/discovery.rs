@@ -4,7 +4,7 @@
 
 use serde_json::{Map, Value, json};
 use services_sdk::http::{Request, Response};
-use services_sdk::lang::headers;
+use services_sdk::lang::key_value;
 use services_sdk::{Check, Cmd, Failure, cmd};
 
 /// Schemas and connections remembered.
@@ -57,7 +57,7 @@ impl Connection {
         });
         (web || url.starts_with("{{")).then(|| Self {
             url: url.to_owned(),
-            headers: headers::pairs(check.text_of("headers")),
+            headers: key_value::pairs(check.text_of("headers")),
         })
     }
 }

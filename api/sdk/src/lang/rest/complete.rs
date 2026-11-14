@@ -3,7 +3,7 @@
 
 use super::Language;
 use super::discovery::{Discovery, Probe, endpoint_url};
-use crate::lang::{self, endpoint, finish, headers, item, json, marker};
+use crate::lang::{self, endpoint, finish, item, json, key_value, marker};
 use crate::{Check, Completions, Item};
 use serde_json::Value;
 
@@ -122,7 +122,7 @@ pub fn complete<P: Probe>(
             finish(line_start, pos, before.trim(), methods)
         }
         "headers" => {
-            let used = headers::used(
+            let used = key_value::used(
                 (body_start..section_end)
                     .filter(|i| *i != line)
                     .map(|i| lines.text(i)),
@@ -139,7 +139,7 @@ pub fn complete<P: Probe>(
                 line_start,
                 pos,
                 before.trim(),
-                headers::items(lang.headers, &discovered, &used),
+                key_value::items(lang.headers, &discovered, &used),
             );
             if before.trim().is_empty() && !used.is_empty() {
                 let mut items = finish(line_start, pos, "", unused()).items;

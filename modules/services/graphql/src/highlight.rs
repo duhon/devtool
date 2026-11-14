@@ -2,7 +2,7 @@
 //! GraphQL, `#variables` and JSON responses as JSON, the endpoint as an address.
 
 use serde_json::Value;
-use services_sdk::lang::{endpoint, headers, json, marker, placeholder};
+use services_sdk::lang::{endpoint, json, key_value, marker, placeholder};
 use services_sdk::{Fold, Line, Token};
 
 /// The part of a check a line is in.
@@ -378,7 +378,7 @@ pub fn highlight(state: &[u8], lines: &[String]) -> Vec<Line> {
                     Area::Prelude | Area::Query => tokens(line, &mut graphql),
                     Area::Variables | Area::ResponseJson => json::tokens(line, &mut json),
                     Area::Endpoint => endpoint::tokens(line, false),
-                    Area::Headers | Area::Options => headers::tokens(line),
+                    Area::Headers | Area::Options => key_value::tokens(line),
                     _ => vec![],
                 }
             };
