@@ -617,6 +617,9 @@ pub fn complete(check: &Check, pos: usize, schema: &Value) -> Completions {
             let items: Vec<Item> = [
                 item(format!("{COLUMNS_TYPE}: "), COLUMNS_TYPE_DETAIL, "header"),
                 item(format!("{COLUMNS_SIZE}: "), COLUMNS_SIZE_DETAIL, "header"),
+                item("Format: json", "Header", "header"),
+                item("Format: table", "Header", "header"),
+                item("Format: vertical", "Header", "header"),
             ]
             .into_iter()
             .filter(|item| !used.contains(&key_value::name(&item.insert)))

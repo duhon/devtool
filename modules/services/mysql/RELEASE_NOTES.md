@@ -3,6 +3,7 @@
 ## 4.1.0
 
 - New `#options` key `Columns-Size` (`name=20`): the width of a column in characters.
+- `Format: table | json | vertical` is offered in `#options` hints.
 
 ## 4.0.0
 

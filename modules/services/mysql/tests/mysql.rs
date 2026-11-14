@@ -467,6 +467,10 @@ fn markers_scheme_and_options_complete_outside_the_query() {
     };
     assert_eq!(inserts("#target\nmy|"), vec!["mysql://"]);
     assert_eq!(
+        inserts("#target\nmysql://db\n#options\nFor|"),
+        vec!["Format: json", "Format: table", "Format: vertical"]
+    );
+    assert_eq!(
         inserts("#target\nmysql://db\n#options\nCol|"),
         vec!["Columns-Type: ", "Columns-Size: "]
     );
