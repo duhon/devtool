@@ -86,6 +86,12 @@ impl Check {
             .find(|section| section.name == name)
             .map(|section| section.text.as_str())
     }
+    /// The `#metadata` text of an HTTP check; `#headers` is its unlisted alias.
+    pub fn http_metadata(&self) -> &str {
+        self.section("metadata")
+            .or_else(|| self.section("headers"))
+            .unwrap_or("")
+    }
     /// The section's text, empty when it is absent.
     pub fn text_of(&self, name: &str) -> &str {
         self.section(name).unwrap_or("")

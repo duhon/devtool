@@ -1,14 +1,15 @@
 ---
 name: module-splunk
-description: "Splunk searches in the Services DevTools Console: #target, #payload SPL, #options (From, To, Count, Preview, Offset, Columns-Type, Columns-Size), the rate limit and preview results. Load before writing, editing or explaining Splunk requests."
+description: "Splunk searches in the Services DevTools Console: #target, #payload SPL, #metadata (Search-From, Search-To, Search-App, Search-Preview), #options (Count, Offset, Format, Columns-Type, Columns-Size), the rate limit and preview results. Load before writing, editing or explaining Splunk requests."
 ---
 
 # Splunk service
 
-Use `#target` for the base URL, optional `#headers`, and `#payload` with SPL.
-`#options` accepts From, To, App, Count, Preview, Offset, Columns-Type and
-Columns-Size as Name: value lines. These parameters
-must be inside `#options`, not separate sections. Do not invent indexes or use
+Use `#target` for the base URL, optional `#metadata`, and `#payload` with SPL.
+`#metadata` takes HTTP headers and the search's own parameters Search-From,
+Search-To, Search-App and Search-Preview as Name: value lines. `#options` accepts
+Count, Offset, Format, Columns-Type and Columns-Size. These parameters
+must be inside their section, not separate sections. Do not invent indexes or use
 Terminal to work around missing Splunk context.
 There is no MySQL-style schema for Splunk. Use explicit literal field names:
 `Columns-Type: message.timestamp=datetime message.message=json`.

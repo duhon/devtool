@@ -1,6 +1,6 @@
 ---
 name: module-artemis
-description: "ActiveMQ Artemis checks in the Services DevTools Console: #target, #action commands (QUEUES, ADDRESSES, CONSUMERS, BROWSE, RECEIVE, SEND, PUBLISH, PURGE, MOVE, RETRY, PAUSE, RESUME, JOLOKIA) with WHERE, LIMIT, SET and TO, #headers, #options and #payload, through the broker's Jolokia console API. Load before writing, editing or explaining Artemis requests."
+description: "ActiveMQ Artemis checks in the Services DevTools Console: #target, #action commands (QUEUES, ADDRESSES, CONSUMERS, BROWSE, RECEIVE, SEND, PUBLISH, PURGE, MOVE, RETRY, PAUSE, RESUME, JOLOKIA) with WHERE, LIMIT, SET and TO, #metadata, #options and #payload, through the broker's Jolokia console API. Load before writing, editing or explaining Artemis requests."
 ---
 
 # Artemis service
@@ -11,12 +11,13 @@ console (port 8161), not a messaging protocol.
 - `#target` is only the broker: the web console URL, `http://user:password@host:8161`
   (`https://` with TLS), or its Jolokia URL when that is not at
   `/console/jolokia`. Log in in the URL or with an `Authorization: Basic …`
-  header in `#headers`, not both; the user needs a management role.
-- `#headers` are HTTP headers of every Jolokia call.
+  header in `#metadata`, not both; the user needs a management role.
+- `#metadata` are HTTP headers of every Jolokia call, plus `Message-Persistent: false`
+  (SEND, PUBLISH) for a non-persistent message.
 - `#action` is a command, its `/queue` or `/address`, then clauses, on one
   line or several. It defaults to QUEUES. A name with spaces or `=<>!,()` is
   quoted: `'my queue'`; a quote inside doubles: `'it''s'`.
-- `#options`: `Persistent: false` (SEND, PUBLISH), Columns-Type, Columns-Size.
+- `#options`: Format, Columns-Type, Columns-Size.
 - `#payload` is the message of SEND and PUBLISH, or the request of JOLOKIA.
 
 Commands:
@@ -59,7 +60,7 @@ warns when the broker has more.
       #check new order
       #target
       http://localhost:8161
-      #headers
+      #metadata
       Authorization: Basic YWRtaW46YWRtaW4=
       #action
       SEND /orders SET tenant = 't1', _AMQ_GROUP_ID = 'g1'

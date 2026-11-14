@@ -1,5 +1,9 @@
 # Artemis module release notes
 
+## 6.0.0
+
+- `#headers` is `#metadata` (`#headers` still works, unlisted). `Persistent` moved from `#options` to `#metadata` as `Message-Persistent`.
+
 ## 5.0.0
 
 - A WebAssembly module for Services DevTools 4.0; it needs that version or newer.

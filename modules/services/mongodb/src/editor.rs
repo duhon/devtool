@@ -3,7 +3,7 @@
 //! discovery found.
 
 use crate::action;
-use crate::config::{HEADERS, OPTIONS};
+use crate::config::{METADATA, OPTIONS};
 use crate::payload;
 use serde_json::Value;
 use services_sdk::lang::check::At;
@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 
 pub const SECTIONS: [&str; 6] = [
     "target",
-    "headers",
+    "metadata",
     "collection",
     "action",
     "payload",
@@ -79,10 +79,11 @@ pub fn complete(check: &Check, pos: usize, known: &Catalog) -> Completions {
                     .collect(),
             )
         }
-        Some("headers") => {
+        Some("metadata") => {
             let used = key_value::used(at.other_lines());
             let hints = ["Auth: x509", "Certificate: "];
-            let extra: Vec<(&str, &str)> = HEADERS.iter().map(|name| (*name, "Header")).collect();
+            let extra: Vec<(&str, &str)> =
+                METADATA.iter().map(|name| (*name, "Metadata")).collect();
             let items = key_value::items(&hints, &extra, &used);
             let mut result = finish(line_start, at.pos, at.before.trim(), items);
             if at.before.trim().is_empty() && !used.is_empty() {
@@ -189,7 +190,7 @@ enum Area {
     Prelude,
     Endpoint,
     Options,
-    Headers,
+    Metadata,
     Payload,
     Other,
     Response,
@@ -202,7 +203,7 @@ impl Area {
         Area::Prelude,
         Area::Endpoint,
         Area::Options,
-        Area::Headers,
+        Area::Metadata,
         Area::Payload,
         Area::Other,
         Area::Response,
@@ -291,7 +292,7 @@ pub fn highlight(state: &[u8], lines: &[String], columns: &[LineColumns]) -> Vec
                 area = match named.as_deref() {
                     Some("target") => Area::Endpoint,
                     Some("options") => Area::Options,
-                    Some("headers") => Area::Headers,
+                    Some("metadata") => Area::Metadata,
                     Some("collection") => Area::Collection,
                     Some("action") => Area::Action,
                     Some("payload") => Area::Payload,
@@ -312,7 +313,7 @@ pub fn highlight(state: &[u8], lines: &[String], columns: &[LineColumns]) -> Vec
                         response.declare(line);
                         key_value::tokens(line)
                     }
-                    Area::Headers => key_value::tokens(line),
+                    Area::Metadata => key_value::tokens(line),
                     Area::Collection => endpoint::tokens(line, false),
                     Area::Action => whole(line.trim_end(), "keyword"),
                     Area::Payload => payload_tokens(line, &mut payload),

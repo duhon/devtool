@@ -194,7 +194,7 @@ fn completed_graphql_operations_offer_separators_without_polluting_field_hints()
                 .iter()
                 .map(|candidate| candidate.text.as_str())
                 .collect::<Vec<_>>(),
-            ["#headers", "#variables"]
+            ["#metadata", "#variables"]
         );
     }
     for body in [
@@ -2220,7 +2220,7 @@ fn marks_survive_incomplete_queries_and_need_no_selection_set() {
 
 #[test]
 fn marks_skip_variables_headers_and_responses() {
-    let source = "#variables\n{\"images\":{},\"products\":{}}\n#payload\nfragment Fields on Product { images { url } }\nquery { products { sku ...Fields } }\n#headers\nimages: products\n#responce\n{ products { images } }";
+    let source = "#variables\n{\"images\":{},\"products\":{}}\n#payload\nfragment Fields on Product { images { url } }\nquery { products { sku ...Fields } }\n#metadata\nimages: products\n#responce\n{ products { images } }";
     assert_eq!(
         marked(source, &product_schema()),
         [(3, "images".into()), (4, "products".into())]

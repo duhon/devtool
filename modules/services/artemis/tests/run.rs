@@ -172,12 +172,13 @@ fn checks_fail_before_any_call() {
         assert_eq!(cmds[0].2["error"], error);
     }
     let module = Module::default();
-    let cmds =
-        module.run("#target\nhttp://broker:8161\n#action\nBROWSE /q\n#options\nPersistent: false");
+    let cmds = module.run(
+        "#target\nhttp://broker:8161\n#action\nBROWSE /q\n#metadata\nMessage-Persistent: false",
+    );
     let cmds = module.resolve(&cmds, &[]);
     assert_eq!(
         cmds[0].2["error"],
-        "Persistent applies to SEND or PUBLISH, not BROWSE"
+        "Message-Persistent applies to SEND or PUBLISH, not BROWSE"
     );
 }
 

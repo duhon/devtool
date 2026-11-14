@@ -91,8 +91,8 @@ fn a_find_shows_numbers_and_strings() {
 }
 
 #[test]
-fn headers_are_highlighted_as_key_value_lines() {
-    let lines: Vec<String> = ["#headers", "Auth: x509", "Certificate: /keys/c.pem"]
+fn metadata_are_highlighted_as_key_value_lines() {
+    let lines: Vec<String> = ["#metadata", "Auth: x509", "Certificate: /keys/c.pem"]
         .map(String::from)
         .to_vec();
     let out = Mongodb::default().highlight(&[], &lines, &[]);
@@ -109,7 +109,7 @@ fn headers_are_highlighted_as_key_value_lines() {
             })
             .collect()
     };
-    assert_eq!(kinds(0), [("#headers".to_owned(), "comment".to_owned())]);
+    assert_eq!(kinds(0), [("#metadata".to_owned(), "comment".to_owned())]);
     let auth = kinds(1);
     assert_eq!(auth[0].0, "Auth");
     assert_ne!(auth[0].1, auth[1].1, "{auth:?}");

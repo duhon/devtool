@@ -16,6 +16,16 @@ pub const API_TIMEOUT_MS: f64 = 120_000.0;
 /// The wait after a 429 without a usable Retry-After.
 const RETRY_AFTER_MS: f64 = 60_000.0;
 
+/// Keys of the search in `#metadata`, as `Search-<key>`.
+const SEARCH_KEYS: [&str; 4] = ["from", "to", "app", "preview"];
+/// `#options` keys that moved to `#metadata`.
+const MOVED: [(&str, &str); 4] = [
+    ("from", "From"),
+    ("to", "To"),
+    ("app", "App"),
+    ("preview", "Preview"),
+];
+
 const LEGACY_SECTIONS: [&str; 6] = ["from", "to", "app", "count", "preview", "offset"];
 
 /// Sections that used to hold options are refused instead of being sent as SPL.
@@ -41,7 +51,7 @@ pub fn check_markers(text: &str) -> Result<(), String> {
 pub fn sections(check: &Check) -> Value {
     json!({
         "target": check.text_of("target").trim(),
-        "headers": check.text_of("headers"),
+        "headers": check.http_metadata(),
         "options": check.text_of("options"),
         "payload": check.text_of("payload"),
     })
@@ -131,12 +141,33 @@ impl Plan {
             options.insert(key, value);
         }
         let option = |key: &str| options.get(key).map(String::as_str);
+        for (moved, name) in MOVED {
+            if options.contains_key(moved) {
+                return Err(format!("{name} moved to #metadata as Search-{name}"));
+            }
+        }
+        let mut params = std::collections::BTreeMap::new();
+        let mut sent = Vec::new();
+        for (name, value) in key_value::pairs(text("headers")) {
+            let key = name.to_ascii_lowercase();
+            match key.strip_prefix("search-") {
+                Some(key) if SEARCH_KEYS.contains(&key) => {
+                    params.insert(key.to_owned(), value);
+                }
+                Some(_) => {
+                    return Err(format!(
+                        "Unknown Splunk metadata {name:?}; Search-From, Search-To, Search-App and Search-Preview are the search's"
+                    ));
+                }
+                None => sent.push((name, value)),
+            }
+        }
         let count = unsigned(option("count"), "Count", 100)?;
         let offset = unsigned(option("offset"), "Offset", 0)?;
-        let preview = preview(option("preview"))?;
+        let preview = preview(params.get("preview").map(String::as_str))?;
         let columns = Options::parse(option("columns-type"), option("columns-size"))?;
         let format = option("format").map(Format::parse).transpose()?;
-        let app = option("app").unwrap_or("").trim();
+        let app = params.get("app").map_or("", |app| app.trim());
         let base = url::Url::parse(&format!("{}/", base.trim_end_matches('/')))
             .map_err(|_| format!("Invalid baseUrl: {base}"))?;
         if !matches!(base.scheme(), "http" | "https") {
@@ -162,7 +193,7 @@ impl Plan {
             .append_pair("preview", if preview { "true" } else { "false" })
             .append_pair("segmentation", "none");
         for (option, key) in [("from", "earliest_time"), ("to", "latest_time")] {
-            if let Some(value) = options.get(option).filter(|value| !value.is_empty()) {
+            if let Some(value) = params.get(option).filter(|value| !value.is_empty()) {
                 form.append_pair(key, value);
             }
         }
@@ -170,7 +201,7 @@ impl Plan {
             "Content-Type".to_owned(),
             "application/x-www-form-urlencoded".to_owned(),
         )];
-        for (name, value) in key_value::pairs(text("headers")) {
+        for (name, value) in sent {
             headers.retain(|(known, _)| !known.eq_ignore_ascii_case(&name));
             headers.push((name, value));
         }
@@ -684,8 +715,14 @@ mod tests {
     }
 
     fn plan(options: &str) -> Result<Plan, String> {
-        Plan::parse(&json!({"target": "https://splunk.fixture", "headers": "",
-            "options": options, "payload": "index=main"}))
+        with_metadata("", options)
+    }
+
+    fn with_metadata(metadata: &str, options: &str) -> Result<Plan, String> {
+        Plan::parse(
+            &json!({"target": "https://splunk.fixture", "headers": metadata,
+            "options": options, "payload": "index=main"}),
+        )
     }
 
     #[test]
@@ -699,15 +736,10 @@ mod tests {
         assert_eq!(plan("Count: 30").unwrap().limit, Some(30));
         assert_eq!(plan("Offset: 30").unwrap().offset, 30);
         for value in ["true", " TRUE "] {
-            assert!(plan(&format!("Preview: {value}")).unwrap().preview);
+            let plan = with_metadata(&format!("Search-Preview: {value}"), "");
+            assert!(plan.unwrap().preview);
         }
-        for bad in [
-            "Count: -1",
-            "Count: abc",
-            "Count: 1.5",
-            "Offset: -1",
-            "Preview: yes",
-        ] {
+        for bad in ["Count: -1", "Count: abc", "Count: 1.5", "Offset: -1"] {
             assert!(plan(bad).is_err(), "{bad}");
         }
         assert_eq!(
@@ -718,17 +750,37 @@ mod tests {
 
     #[test]
     fn options_become_the_export_form_and_app_path() {
-        let plan = plan("From: -24h\nTo: -5m\nApp: my app\nPreview: true").unwrap();
+        let built = with_metadata(
+            "Search-From: -24h\nSearch-To: -5m\nSearch-App: my app\nSearch-Preview: true\nX-Id: 1",
+            "",
+        )
+        .unwrap();
+        assert!(built.headers.contains(&("X-Id".to_owned(), "1".to_owned())));
         assert_eq!(
-            plan.url,
+            plan("From: -1h").unwrap_err(),
+            "From moved to #metadata as Search-From"
+        );
+        assert!(
+            with_metadata("Search-Cow: 1", "")
+                .unwrap_err()
+                .starts_with("Unknown Splunk metadata")
+        );
+        assert!(
+            with_metadata("From: a@b", "")
+                .unwrap()
+                .headers
+                .contains(&("From".to_owned(), "a@b".to_owned()))
+        );
+        assert_eq!(
+            built.url,
             "https://splunk.fixture/servicesNS/-/my%20app/search/v2/jobs/export"
         );
         assert_eq!(
-            plan.legacy,
+            built.legacy,
             "https://splunk.fixture/servicesNS/-/my%20app/search/jobs/export"
         );
         assert_eq!(
-            plan.body,
+            built.body,
             "search=search+index%3Dmain&output_mode=json&preview=true&segmentation=none&earliest_time=-24h&latest_time=-5m"
         );
         assert!(Plan::parse(&json!({"target": "ftp://x", "payload": "a"})).is_err());

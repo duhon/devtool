@@ -117,7 +117,7 @@ fn titles_are_plain_names_and_prefixed_inputs_are_rejected() {
         " \t#check Products",
     ] {
         let args =
-            json!({"revision":"1","checkId":id,"title":title,"request":"#headers\nX-Test: value"});
+            json!({"revision":"1","checkId":id,"title":title,"request":"#metadata\nX-Test: value"});
         for create in [false, true] {
             assert!(
                 workspace
@@ -141,7 +141,7 @@ fn titles_are_plain_names_and_prefixed_inputs_are_rejected() {
         args["checkId"] = json!(id);
         assert!(workspace.edit("rest", &args, 1, false).is_err());
     }
-    let create=workspace.edit("rest",&json!({"revision":"1","checkId":id,"title":"products overview","request":"#headers\nX-Test: value"}),1,true).unwrap();
+    let create=workspace.edit("rest",&json!({"revision":"1","checkId":id,"title":"products overview","request":"#metadata\nX-Test: value"}),1,true).unwrap();
     assert!(
         create
             .text
@@ -151,7 +151,7 @@ fn titles_are_plain_names_and_prefixed_inputs_are_rejected() {
     let hashtag_title = workspace
         .edit(
             "rest",
-            &json!({"revision":"1","checkId":id,"title":"#checklist review","request":"#headers\nX-Test: value"}),
+            &json!({"revision":"1","checkId":id,"title":"#checklist review","request":"#metadata\nX-Test: value"}),
             1,
             true,
         )
@@ -251,7 +251,7 @@ fn renaming_preserves_body_response_ownership_and_check_identity() {
 fn combined_title_and_request_edits_preserve_connection_and_response_boundary() {
     services_shell::link();
     let mut workspace = Workspace::default();
-    let source = "#check Products\n#target\nhttps://example.invalid/products\n#headers\nX-Test: old\n#response\ncaptured";
+    let source = "#check Products\n#target\nhttps://example.invalid/products\n#metadata\nX-Test: old\n#response\ncaptured";
     workspace.refresh(
         "rest",
         source,
@@ -263,12 +263,12 @@ fn combined_title_and_request_edits_preserve_connection_and_response_boundary() 
         }],
     );
     let context = workspace.context("rest", 0).unwrap();
-    let edit=workspace.edit("rest",&json!({"revision":"1","checkId":context["activeCheck"],"title":"Updated products","request":"#headers\nX-Test: new"}),1,false).unwrap();
+    let edit=workspace.edit("rest",&json!({"revision":"1","checkId":context["activeCheck"],"title":"Updated products","request":"#metadata\nX-Test: new"}),1,false).unwrap();
     assert_eq!(edit.from, Position { line: 0, ch: 0 });
     assert_eq!(edit.to, Position { line: 5, ch: 0 });
     assert_eq!(
         edit.text,
-        "#check Updated products\n#target\nhttps://example.invalid/products\n\n#headers\nX-Test: new\n"
+        "#check Updated products\n#target\nhttps://example.invalid/products\n\n#metadata\nX-Test: new\n"
     );
 }
 

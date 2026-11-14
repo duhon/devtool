@@ -282,7 +282,7 @@ impl<P: Probe> Discovery<P> {
         let Some(url) = url_at(check, Some(pos)) else {
             return vec![];
         };
-        let headers = key_value::pairs(check.text_of("headers"));
+        let headers = key_value::pairs(check.http_metadata());
         if url.contains("{{") {
             return self.resolve(url, headers, Purpose::Hints);
         }
@@ -304,7 +304,7 @@ impl<P: Probe> Discovery<P> {
     /// Discovery on demand: the check's address again, cached or not.
     pub fn manual(&mut self, check: &Check) -> Vec<Cmd> {
         let url = url_at(check, None).unwrap_or("");
-        let headers = key_value::pairs(check.text_of("headers"));
+        let headers = key_value::pairs(check.http_metadata());
         if url.contains("{{") {
             return self.resolve(url, headers, Purpose::Manual);
         }

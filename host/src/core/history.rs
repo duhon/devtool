@@ -452,7 +452,7 @@ mod tests {
     fn legacy_snapshot_cleanup_preserves_request_and_verbatim_response() {
         let data = Data::new();
         let store = data.history();
-        let source = "#check example\n#target\nhttps://catalog.fixture/graphql\n#headers\nX-Api-Key: [redacted]\n#payload\nquery { products { name } }";
+        let source = "#check example\n#target\nhttps://catalog.fixture/graphql\n#metadata\nX-Api-Key: [redacted]\n#payload\nquery { products { name } }";
         let body = " {\"data\":{\"products\":[]},\"debug\":\"payload-owned\"}\r\n";
         let legacy = format!(
             "{source}\n\n#effective-parameters\n{{\"url\":\"https://catalog.fixture/graphql\"}}\n\n#response success\n{}",

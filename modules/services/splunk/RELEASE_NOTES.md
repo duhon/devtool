@@ -1,5 +1,9 @@
 # Splunk module release notes
 
+## 5.0.0
+
+- `#headers` is `#metadata`. `From`, `To`, `App` and `Preview` moved from `#options` to `#metadata` as `Search-From`, `Search-To`, `Search-App` and `Search-Preview`, so `From` stays a usable HTTP header. `Count` and `Offset` stay in `#options`. Saved checks are not converted.
+
 ## 4.0.0
 
 - A WebAssembly module for Services DevTools 4.0; it needs that version or newer.

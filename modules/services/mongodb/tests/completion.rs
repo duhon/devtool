@@ -822,20 +822,20 @@ fn complete_at(module: &mut Harness, text: &str) -> Vec<(String, String)> {
 }
 
 #[test]
-fn headers_have_a_marker_names_and_values() {
+fn metadata_has_a_marker_names_and_values() {
     let mut module = Harness::default();
-    let marker = complete_at(&mut module, "#target\nmongodb://h/app\n#h|");
+    let marker = complete_at(&mut module, "#target\nmongodb://h/app\n#m|");
     assert!(
-        marker.iter().any(|(label, _)| label == "#headers"),
+        marker.iter().any(|(label, _)| label == "#metadata"),
         "{marker:?}"
     );
     let next = complete_at(&mut module, "#target\nmongodb://h/app\n|");
     assert!(
-        next.iter().any(|(label, _)| label == "#headers"),
+        next.iter().any(|(label, _)| label == "#metadata"),
         "{next:?}"
     );
 
-    let names = complete_at(&mut module, "#target\nmongodb://h/app\n#headers\n|");
+    let names = complete_at(&mut module, "#target\nmongodb://h/app\n#metadata\n|");
     let found: Vec<&str> = names.iter().map(|(label, _)| label.as_str()).collect();
     assert_eq!(
         found,
@@ -843,7 +843,7 @@ fn headers_have_a_marker_names_and_values() {
     );
     let used = complete_at(
         &mut module,
-        "#target\nmongodb://h/app\n#headers\nAuth: x509\n|",
+        "#target\nmongodb://h/app\n#metadata\nAuth: x509\n|",
     );
     assert!(
         !used.iter().any(|(label, _)| label.starts_with("Auth")),

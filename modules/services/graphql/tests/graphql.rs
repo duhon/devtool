@@ -186,7 +186,7 @@ fn introspection() -> String {
     .to_string()
 }
 
-const CONNECTION: &str = "#target\nhttp://svc/graphql\n#headers\nX-Token: secret\n#payload\n";
+const CONNECTION: &str = "#target\nhttp://svc/graphql\n#metadata\nX-Token: secret\n#payload\n";
 
 /// A Graphql whose discovery introspected `CONNECTION`.
 fn discovered() -> Graphql {
@@ -220,7 +220,7 @@ fn highlight_styles_each_section_and_carries_state() {
     let lines = [
         "#target",
         "https://api.test/graphql",
-        "#headers",
+        "#metadata",
         "Accept: */*",
         "#variables",
         "{\"id\": 1}",
@@ -281,11 +281,11 @@ fn folds_cover_selections_variables_and_a_json_response() {
 fn completion_offers_unused_markers_urls_and_headers() {
     let graphql = Graphql::default();
     let (_, c) = complete(&graphql, "#target\nhttp://x\n#|");
-    assert_eq!(labels(&c), ["#headers", "#variables", "#payload"]);
+    assert_eq!(labels(&c), ["#metadata", "#variables", "#payload"]);
     let (_, c) = complete(&graphql, "#target\nht|");
     assert_eq!(labels(&c), ["http://", "https://"]);
     assert_eq!((c.from, c.to), (8, 10));
-    let (_, c) = complete(&graphql, "#headers\nX-Api-Key: 1\nX-A|");
+    let (_, c) = complete(&graphql, "#metadata\nX-Api-Key: 1\nX-A|");
     assert!(
         !labels(&c)
             .iter()
@@ -434,7 +434,7 @@ fn request(call: &DriverCall) -> Value {
 #[test]
 fn build_posts_the_query_and_variables() {
     let mut graphql = Graphql::default();
-    let text = "#target\nhttps://x/graphql\n#headers\nContent-Type: application/graphql+json\nX: 1\n#variables\n{\"id\": \"{{id}}\"}\n#payload\nquery ($id: ID) { user(id: $id) { name } }";
+    let text = "#target\nhttps://x/graphql\n#metadata\nContent-Type: application/graphql+json\nX: 1\n#variables\n{\"id\": \"{{id}}\"}\n#payload\nquery ($id: ID) { user(id: $id) { name } }";
     let r = request(&build(&mut graphql, &check(text), &[("id", "a\"b")]).unwrap());
     assert_eq!(r["method"], "POST");
     assert_eq!(r["url"], "https://x/graphql");
@@ -494,7 +494,7 @@ fn render_pretty_prints_json_and_maps_outcomes() {
 #[test]
 fn export_and_import_round_trip_through_curl() {
     let graphql = Graphql::default();
-    let text = "#target\nhttps://x/graphql\n#headers\nX: it's\n#variables\n{\n  \"id\": 1\n}\n#payload\n{ user(id: $id) { name } }";
+    let text = "#target\nhttps://x/graphql\n#metadata\nX: it's\n#variables\n{\n  \"id\": 1\n}\n#payload\n{ user(id: $id) { name } }";
     let curl = graphql.export(&check(text)).unwrap();
     assert_eq!(
         curl,
@@ -502,7 +502,7 @@ fn export_and_import_round_trip_through_curl() {
     );
     assert_eq!(
         graphql.import(&curl).unwrap(),
-        "#target\nhttps://x/graphql\n#headers\nX: it's\nContent-Type: application/json\n#variables\n{\n  \"id\": 1\n}\n#payload\n{ user(id: $id) { name } }"
+        "#target\nhttps://x/graphql\n#metadata\nX: it's\nContent-Type: application/json\n#variables\n{\n  \"id\": 1\n}\n#payload\n{ user(id: $id) { name } }"
     );
     assert_eq!(
         graphql
@@ -564,7 +564,7 @@ fn curl_matches_the_original_javascript() {
         graphql
             .import("curl 'https://api.example.com/graphql' -H 'content-type: application/json' --data-raw '{\"query\":\"query Foo($id: ID!) { foo(id: $id) { name } }\",\"variables\":{\"id\":\"1\"}}'")
             .unwrap(),
-        "#target\nhttps://api.example.com/graphql\n#headers\ncontent-type: application/json\n#variables\n{\n  \"id\": \"1\"\n}\n#payload\nquery Foo($id: ID!) { foo(id: $id) { name } }"
+        "#target\nhttps://api.example.com/graphql\n#metadata\ncontent-type: application/json\n#variables\n{\n  \"id\": \"1\"\n}\n#payload\nquery Foo($id: ID!) { foo(id: $id) { name } }"
     );
     assert_eq!(
         graphql

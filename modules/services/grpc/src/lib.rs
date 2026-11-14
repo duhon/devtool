@@ -1,5 +1,5 @@
 //! The gRPC service: a `#target` (`grpc[s]://target/package.Service/Method`), metadata
-//! `#headers`, an optional `#proto` and a JSON `#payload`, called through the Host `grpc`
+//! `#metadata`, an optional `#proto` and a JSON `#payload`, called through the Host `grpc`
 //! driver. Without `#proto` the descriptors come from server reflection, asked while the
 //! check is edited; the response prints as JSON. `grpcurl` command lines are imported and
 //! exported.
@@ -20,7 +20,7 @@ use services_sdk::{
 };
 use std::collections::BTreeMap;
 
-pub const SECTIONS: [&str; 4] = ["target", "headers", "proto", "payload"];
+pub const SECTIONS: [&str; 4] = ["target", "metadata", "proto", "payload"];
 
 pub const HEADERS: [&str; 9] = [
     "Accept: */*",
@@ -74,9 +74,9 @@ fn target_path(endpoint: &str) -> (&str, &str) {
     }
 }
 
-/// The request metadata: `#headers` with lowercased names; a `-bin` value is base64.
+/// The request metadata: `#metadata` with lowercased names; a `-bin` value is base64.
 pub fn metadata(check: &Check) -> Vec<(String, String)> {
-    key_value::pairs(check.text_of("headers"))
+    key_value::pairs(check.text_of("metadata"))
         .into_iter()
         .map(|(name, value)| (name.to_ascii_lowercase(), value))
         .collect()
@@ -190,7 +190,7 @@ pub fn export(check: &Check) -> Result<String, String> {
         lines.push("  -plaintext".into());
     }
     lines.push("  -emit-defaults".into());
-    for (name, value) in key_value::pairs(check.text_of("headers")) {
+    for (name, value) in key_value::pairs(check.text_of("metadata")) {
         lines.push(format!("  -H {}", curl::quote(&format!("{name}: {value}"))));
     }
     let message = check.text_of("payload");
@@ -269,7 +269,7 @@ pub fn import(command: &str) -> Result<String, String> {
     let mut sections = vec![format!("#target\n{scheme}://{target}/{symbol}")];
     if !headers.is_empty() {
         let lines: Vec<_> = headers.iter().map(|(k, v)| format!("{k}: {v}")).collect();
-        sections.push(format!("#headers\n{}", lines.join("\n")));
+        sections.push(format!("#metadata\n{}", lines.join("\n")));
     }
     if let Some(data) = data.filter(|data| !data.is_empty() && data != "@") {
         sections.push(format!("#payload\n{}", curl::pretty(&data)));
@@ -450,7 +450,7 @@ impl Grpc {
             Err(error) => return vec![cmd::fail(&run, &error, &Value::Null)],
         };
         let sections = json!({"target": check.text_of("target"),
-            "headers": check.text_of("headers"), "payload": check.text_of("payload")});
+            "headers": check.text_of("metadata"), "payload": check.text_of("payload")});
         self.resolving.insert(run.clone(), (check, pool));
         vec![run::resolve_value(format!("{run}{RESOLVE}"), &sections)]
     }
@@ -739,7 +739,7 @@ pub fn highlight(state: &[u8], lines: &[String]) -> Vec<Line> {
             let tokens = if is_marker {
                 area = match named.as_deref() {
                     Some("target") => Area::Endpoint,
-                    Some("headers") => Area::Headers,
+                    Some("metadata") => Area::Headers,
                     Some("proto") => Area::Proto,
                     Some("payload") => Area::Message,
                     Some("responce" | "response") => Area::Response,
@@ -848,7 +848,7 @@ pub fn complete(module: &Grpc, check: &Check, pos: usize) -> Completions {
                 ],
             )
         }
-        Some("headers") => {
+        Some("metadata") => {
             let used = key_value::used(at.other_lines());
             let mut result = finish(
                 line_start,

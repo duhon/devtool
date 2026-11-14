@@ -57,7 +57,7 @@ impl Area {
                     _ if response => Area::Response,
                     "target" => Area::Endpoint,
                     "action" => Area::Action,
-                    "headers" => Area::Headers,
+                    "metadata" | "headers" => Area::Headers,
                     "payload" => Area::Body,
                     "options" => Area::Options,
                     _ => Area::Other,

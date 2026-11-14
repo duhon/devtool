@@ -43,7 +43,7 @@
       'Folding the complete response must remain available');
     return region;
   };
-  setSource(editor, `#check Streaming export\n#target\n${fixtureUrl}\n#options\nFrom: -1h\nTo: now\nApp: search\nCount: 2\n${typedOptions}\n#payload\nindex=fixture | sort - _time`);
+  setSource(editor, `#check Streaming export\n#target\n${fixtureUrl}\n#metadata\nSearch-From: -1h\nSearch-To: now\nSearch-App: search\n#options\nCount: 2\n${typedOptions}\n#payload\nindex=fixture | sort - _time`);
   editor.setCursor(editor.lastLine(), editor.getLine(editor.lastLine()).length);
   await key('Shift+Enter');
   await wait(() => editor.getValue().includes('splunk-final-🦀-1')
@@ -74,7 +74,7 @@
   assert(debug.includes('"ignoredPreviewRecords": 4') && debug.includes('"legacyFallbacks": 0'),
     'The normal export must ignore preview and require no compatibility retry');
   await click(testid('console-main-status'));
-  setSource(editor, `#check Preview and offset\n#target\n${fixtureUrl}\n#options\nFrom: -1h\nTo: now\nApp: search\nCount: 2\nPreview: true\nOffset: 1\n${typedOptions}\n#payload\nindex=fixture | sort - _time`);
+  setSource(editor, `#check Preview and offset\n#target\n${fixtureUrl}\n#metadata\nSearch-From: -1h\nSearch-To: now\nSearch-App: search\nSearch-Preview: true\n#options\nCount: 2\nOffset: 1\n${typedOptions}\n#payload\nindex=fixture | sort - _time`);
   editor.setCursor(editor.lastLine(), editor.getLine(editor.lastLine()).length);
   await key('Shift+Enter');
   await wait(() => editor.getValue().includes('splunk-preview-🦀-2')
@@ -108,7 +108,7 @@
   const saved = editorOf('history-editor').getValue();
   assertTyped(editorOf('history-editor'));
   assert(saved.includes('Preview results are provisional') && saved.includes('· WARNING')
-    && saved.includes('Preview: true') && saved.includes('Offset: 1'),
+    && saved.includes('Search-Preview: true') && saved.includes('Offset: 1'),
   'History must preserve preview status, option values and the selected portion');
   await click(testid('console-history-toggle'));
   await click(testid('console-service-rest'));

@@ -55,12 +55,12 @@ shown in results, hints, debug data or errors.
 
 ### Client certificate (X.509)
 
-For passwordless authentication (for example Atlas) add a `#headers` section:
+For passwordless authentication (for example Atlas) add a `#metadata` section:
 
 ```text
 #target
 mongodb+srv://cluster0.xxxxx.mongodb.net/mydb
-#headers
+#metadata
 Auth: x509
 Certificate: {{env:MONGO_CERT}}
 ```

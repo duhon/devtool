@@ -33,7 +33,7 @@ fn inserts_only_payload_and_normalizes_inline_sections() {
         Some("@my_create_book")
     );
     assert!(suggest("artemis", "", "#payload\n@m", 1, 2, &templates).is_none());
-    assert!(suggest("artemis", "", "#headers\n@", 1, 1, &templates).is_none());
+    assert!(suggest("artemis", "", "#metadata\n@", 1, 1, &templates).is_none());
     assert!(suggest("artemis", "", "#payload\nmail@", 1, 5, &templates).is_none());
 }
 
@@ -61,7 +61,7 @@ fn check_header_uses_description_without_copying_template_definition() {
 https://fakerestapi.azurewebsites.net/api/v1/Books/123
 #action
 PUT
-#headers
+#metadata
 Content-Type: application/json
 Accept: application/json
 #payload

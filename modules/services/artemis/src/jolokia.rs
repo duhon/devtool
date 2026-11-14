@@ -268,7 +268,7 @@ pub struct Request {
     action: action::Action,
     target: Target,
     /// The HTTP headers of every Jolokia call: the defaults, the endpoint's login and
-    /// `#headers`.
+    /// `#metadata`.
     headers: Map<String, Value>,
     body: String,
     persistent: bool,
@@ -322,12 +322,12 @@ impl Request {
             "" => true,
             _ if !matches!(command, Command::Send | Command::Publish) => {
                 return Err(Error::new(format!(
-                    "Persistent applies to SEND or PUBLISH, not {name}"
+                    "Message-Persistent applies to SEND or PUBLISH, not {name}"
                 )));
             }
             "true" | "yes" => true,
             "false" | "no" => false,
-            _ => return Err(Error::new("Persistent must be true or false")),
+            _ => return Err(Error::new("Message-Persistent must be true or false")),
         };
         let columns = table::Options::parse(
             params["columnsType"].as_str(),
@@ -1297,7 +1297,7 @@ mod tests {
         );
         assert_eq!(
             error(json!({"url":"http://b:8161","action":"BROWSE /q","persistent":"false"})),
-            "Persistent applies to SEND or PUBLISH, not BROWSE"
+            "Message-Persistent applies to SEND or PUBLISH, not BROWSE"
         );
         let publish = parse(json!({
             "url":"http://b:8161","action":"PUBLISH /events","persistent":"no","payload":"x",

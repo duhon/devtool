@@ -28,7 +28,7 @@ impl Plan {
         Ok(Self {
             endpoint,
             args,
-            options: key_value::pairs(check.text_of("options")),
+            options: key_value::pairs(check.text_of("metadata")),
         })
     }
 

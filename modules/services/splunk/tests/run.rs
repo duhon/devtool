@@ -89,8 +89,13 @@ impl Run {
 
     /// Starts a search with `options` and resolves it: the reply asks for the lock.
     fn resolved(&self, options: &str) -> Cmds {
+        self.resolved_in(&format!("#options\n{options}"))
+    }
+
+    /// Like `resolved`, with the sections between `#target` and `#payload` as written.
+    fn resolved_in(&self, sections: &str) -> Cmds {
         let cmds = self.run(&format!(
-            "#target\nhttps://splunk.fixture\n#options\n{options}\n#payload\nindex={{{{idx}}}}"
+            "#target\nhttps://splunk.fixture\n{sections}\n#payload\nindex={{{{idx}}}}"
         ));
         assert_eq!(names(&cmds), [("console:splunk:1:resolve", "vars.resolve")]);
         assert_eq!(cmds[0].2["mode"], "json");
@@ -236,7 +241,7 @@ fn bad_checks_finish_the_run_with_an_error() {
         cmds[0].2["error"],
         "Unsupported Splunk section #count; use #options."
     );
-    let cmds = run.resolved("Preview: maybe");
+    let cmds = run.resolved_in("#metadata\nSearch-Preview: maybe");
     assert_eq!(names(&cmds), [(RUN, "run.result")]);
     assert_eq!(cmds[0].2["error"], "Splunk Preview must be true or false");
 }

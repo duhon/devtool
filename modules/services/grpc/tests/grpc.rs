@@ -115,7 +115,7 @@ const PROTO: &str = r#"syntax = "proto3";
 fn with_proto(method: &str, message: &str) -> String {
     let proto: Vec<_> = PROTO.lines().map(str::trim).collect();
     format!(
-        "#target\ngrpc://localhost:50051/fixture.Echo/{method}\n#headers\nX-Token: sent-token\n#proto\n{}\n#payload\n{message}",
+        "#target\ngrpc://localhost:50051/fixture.Echo/{method}\n#metadata\nX-Token: sent-token\n#proto\n{}\n#payload\n{message}",
         proto.join("\n")
     )
 }
@@ -355,7 +355,7 @@ fn call_shapes_streams_and_statuses() {
 #[test]
 fn reflection_falls_back_to_v1alpha_and_asks_for_each_dependency() {
     let mut grpc = Grpc::default();
-    let text = "#target\ngrpc://{{host}}/fixture.Echo/Unary\n#headers\nAuthorization: Bearer t\n#payload\n{\"text\":\"{{name}}\"}";
+    let text = "#target\ngrpc://{{host}}/fixture.Echo/Unary\n#metadata\nAuthorization: Bearer t\n#payload\n{\"text\":\"{{name}}\"}";
     let cmds = grpc.update(Event::Document(check(text)));
     assert!(statuses(&cmds).is_empty(), "quiet while editing");
     assert!(cmds.iter().all(|cmd| cmd.name != "vars.resolve"));
@@ -416,7 +416,7 @@ fn reflection_falls_back_to_v1alpha_and_asks_for_each_dependency() {
     assert_eq!(body["text"], "Ann");
 
     let fields: Vec<_> = grpc
-        .complete(&check("#target\ngrpc://{{host}}/fixture.Echo/Unary\n#headers\nAuthorization: Bearer t\n#payload\n{\n  \"te"), 999)
+        .complete(&check("#target\ngrpc://{{host}}/fixture.Echo/Unary\n#metadata\nAuthorization: Bearer t\n#payload\n{\n  \"te"), 999)
         .items
         .into_iter()
         .map(|item| item.label)
@@ -427,7 +427,7 @@ fn reflection_falls_back_to_v1alpha_and_asks_for_each_dependency() {
     );
     let methods: Vec<_> = grpc
         .complete(
-            &check("#target\ngrpc://{{host}}/fixture.Echo/U\n#headers\nAuthorization: Bearer t"),
+            &check("#target\ngrpc://{{host}}/fixture.Echo/U\n#metadata\nAuthorization: Bearer t"),
             38,
         )
         .items
@@ -511,7 +511,7 @@ fn hints_list_services_and_discover_reports_failures() {
 #[test]
 fn grpcurl_export_and_import() {
     let grpc = Grpc::default();
-    let text = "#target\ngrpc://localhost:50051/fixture.Echo/Unary\n#headers\nX-Token: it's\n#payload\n{\"text\":\"a\"}";
+    let text = "#target\ngrpc://localhost:50051/fixture.Echo/Unary\n#metadata\nX-Token: it's\n#payload\n{\"text\":\"a\"}";
     let command = grpc.export(&check(text)).unwrap();
     assert_eq!(
         command,
@@ -536,7 +536,7 @@ fn highlighting_and_folds() {
     let lines: Vec<String> = [
         "#target",
         "grpcs://{{host}}:443/fixture.Echo/Unary",
-        "#headers",
+        "#metadata",
         "x-token: abc",
         "#payload",
         "{",

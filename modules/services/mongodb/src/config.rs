@@ -1,4 +1,4 @@
-//! The `#target` connection string, the `#headers` (client certificate) and the `#options`
+//! The `#target` connection string, the `#metadata` (client certificate) and the `#options`
 //! of a check.
 
 use services_sdk::lang::key_value;
@@ -16,7 +16,7 @@ pub const OPTIONS: [&str; 5] = [
     "Columns-Size",
 ];
 
-pub const HEADERS: [&str; 3] = ["Auth", "Certificate", "CertificatePassword"];
+pub const METADATA: [&str; 3] = ["Auth", "Certificate", "CertificatePassword"];
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Connection {
@@ -173,16 +173,16 @@ fn number(name: &str, value: &str, min: u64, max: u64, unit: &str) -> Result<u64
         .ok_or_else(|| format!("{name} must be {min}-{max}{unit}"))
 }
 
-/// The target with the client certificate of `#headers` put into its query.
-fn with_certificate(target: &str, parts: &Split, headers: &str) -> Result<String, String> {
+/// The target with the client certificate of `#metadata` put into its query.
+fn with_certificate(target: &str, parts: &Split, metadata: &str) -> Result<String, String> {
     let mut auth = None;
     let mut certificate = None;
     let mut password = None;
     let mut seen = Vec::new();
-    for (name, value) in key_value::pairs(headers) {
+    for (name, value) in key_value::pairs(metadata) {
         let key = name.to_ascii_lowercase();
         if seen.contains(&key) {
-            return Err(format!("Duplicate header {name}"));
+            return Err(format!("Duplicate metadata {name}"));
         }
         seen.push(key.clone());
         let value = value.trim().to_owned();
@@ -192,8 +192,8 @@ fn with_certificate(target: &str, parts: &Split, headers: &str) -> Result<String
             "certificatepassword" => password = Some(value),
             _ => {
                 return Err(format!(
-                    "Unknown header {name:?}; MongoDB takes {}",
-                    HEADERS.join(", ")
+                    "Unknown metadata {name:?}; MongoDB takes {}",
+                    METADATA.join(", ")
                 ));
             }
         }
@@ -257,8 +257,8 @@ fn with_certificate(target: &str, parts: &Split, headers: &str) -> Result<String
 }
 
 impl Connection {
-    /// The target, headers and options of a check, `{{…}}` variables resolved.
-    pub fn parse(target: &str, headers: &str, options: &str) -> Result<Self, String> {
+    /// The target, metadata and options of a check, `{{…}}` variables resolved.
+    pub fn parse(target: &str, metadata: &str, options: &str) -> Result<Self, String> {
         let target = target.trim();
         if target.is_empty() {
             return Err(
@@ -269,7 +269,7 @@ impl Connection {
             return Err("#target must be a mongodb:// or mongodb+srv:// connection string".into());
         };
         let mut connection = Self {
-            uri: with_certificate(target, &parts, headers)?,
+            uri: with_certificate(target, &parts, metadata)?,
             database: decode(parts.database),
             timeout_ms: DEFAULT_TIMEOUT_S * 1000,
             max_documents: DEFAULT_MAX_DOCUMENTS,
@@ -388,12 +388,12 @@ mod certificate_tests {
 
     const X509: &str = "Auth: x509\nCertificate: /keys/my client.pem";
 
-    fn uri(target: &str, headers: &str) -> String {
-        Connection::parse(target, headers, "").unwrap().uri
+    fn uri(target: &str, metadata: &str) -> String {
+        Connection::parse(target, metadata, "").unwrap().uri
     }
 
-    fn error(target: &str, headers: &str) -> String {
-        Connection::parse(target, headers, "").unwrap_err()
+    fn error(target: &str, metadata: &str) -> String {
+        Connection::parse(target, metadata, "").unwrap_err()
     }
 
     #[test]
@@ -443,7 +443,7 @@ mod certificate_tests {
     }
 
     #[test]
-    fn headers_are_validated() {
+    fn metadata_are_validated() {
         let target = "mongodb://h/app";
         assert!(error(target, "Auth: x509").starts_with("Auth: x509 needs a Certificate"));
         assert_eq!(
@@ -457,11 +457,11 @@ mod certificate_tests {
         assert_eq!(error(target, "Auth: kerberos"), "Auth takes x509 or scram");
         assert_eq!(
             error(target, "Auth: x509\nauth: x509"),
-            "Duplicate header auth"
+            "Duplicate metadata auth"
         );
         assert_eq!(
             error(target, "Cert: /k.pem"),
-            "Unknown header \"Cert\"; MongoDB takes Auth, Certificate, CertificatePassword"
+            "Unknown metadata \"Cert\"; MongoDB takes Auth, Certificate, CertificatePassword"
         );
         assert_eq!(
             error("mongodb://u:pw@h/app", X509),

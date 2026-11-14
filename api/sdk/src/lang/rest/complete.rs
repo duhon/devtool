@@ -121,7 +121,7 @@ pub fn complete<P: Probe>(
                 .collect();
             finish(line_start, pos, before.trim(), methods)
         }
-        "headers" => {
+        "metadata" | "headers" => {
             let used = key_value::used(
                 (body_start..section_end)
                     .filter(|i| *i != line)

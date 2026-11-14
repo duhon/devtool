@@ -1,6 +1,6 @@
 [package]
 name = "services-module-splunk"
-version = "4.0.0"
+version = "5.0.0"
 edition.workspace = true
 publish.workspace = true
 description = "Splunk service module"

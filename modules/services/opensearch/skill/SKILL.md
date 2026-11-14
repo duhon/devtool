@@ -1,6 +1,6 @@
 ---
 name: module-opensearch
-description: "OpenSearch checks in the Services DevTools Console: the URL under #target, the HTTP method under #action, #headers and a JSON or NDJSON #payload for search, documents, indices, bulk and multi-search. Load before writing, editing or explaining OpenSearch requests."
+description: "OpenSearch checks in the Services DevTools Console: the URL under #target, the HTTP method under #action, #metadata and a JSON or NDJSON #payload for search, documents, indices, bulk and multi-search. Load before writing, editing or explaining OpenSearch requests."
 ---
 
 # OpenSearch service
@@ -11,7 +11,7 @@ The OpenSearch HTTP API. Each check is one request.
 #check Search
 #target
 http://localhost:9200/logs-*/_search?pretty=true
-#headers
+#metadata
 Accept: application/json
 #payload
 {"size": 10, "query": {"match_all": {}}}
@@ -30,7 +30,7 @@ POST
   `#action` is the method like REST: GET, POST, PUT, PATCH, DELETE, HEAD or
   OPTIONS; without it the request is a GET, which keeps its `#payload` for
   searches.
-- `#headers` uses one `Name: value` per line. Log in with an
+- `#metadata` uses one `Name: value` per line. Log in with an
   `Authorization` header built from application variables; never put real
   credentials in a check. AWS SigV4 signing is not supported.
 - `#payload` is JSON, kept on GET searches. `_bulk`, `_msearch` and

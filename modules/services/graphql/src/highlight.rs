@@ -60,7 +60,7 @@ impl Area {
                 let area = match name.as_str() {
                     _ if response => Area::Response,
                     "target" => Area::Endpoint,
-                    "headers" => Area::Headers,
+                    "metadata" | "headers" => Area::Headers,
                     "variables" => Area::Variables,
                     "payload" => Area::Query,
                     "options" => Area::Options,

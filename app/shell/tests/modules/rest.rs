@@ -62,7 +62,7 @@ fn styled(runs: &[(String, Style)], text: &str) -> Style {
 fn the_module_colors_checks_with_utf16_spans_and_the_console_overlays_variables() {
     services_shell::link();
     let source = lines(
-        "#check Привет 😀\n#target\nhttps://пример.рф/{{:host}}/pets/{id}\n#headers\nX-Имя😀: {{:token}}\n#payload\n{\"имя\": \"значение\"}\n#responce OK\n{\"ok\": true}",
+        "#check Привет 😀\n#target\nhttps://пример.рф/{{:host}}/pets/{id}\n#metadata\nX-Имя😀: {{:token}}\n#payload\n{\"имя\": \"значение\"}\n#responce OK\n{\"ok\": true}",
     );
     let mut highlighter = highlighter();
     assert_eq!(
@@ -109,21 +109,26 @@ fn module_completions_merge_with_console_markers_options_and_variables() {
     assert_eq!(
         texts("#check\n#", 1, 1),
         [
-            "#target", "#action", "#headers", "#payload", "#options", "#check"
+            "#target",
+            "#action",
+            "#metadata",
+            "#payload",
+            "#options",
+            "#check"
         ]
     );
     // A used section is not offered again; `#check` always is.
     assert_eq!(
         texts("#check\n#target\nhttps://a/\n#", 3, 1),
-        ["#action", "#headers", "#payload", "#options", "#check"]
+        ["#action", "#metadata", "#payload", "#options", "#check"]
     );
     assert!(texts("#check\n#options\n", 2, 0).contains(&"Repeat: 5s".to_owned()));
-    let variables = at("#check\n#target\nhttps://a\n#headers\nX: {{", 4, 5);
+    let variables = at("#check\n#target\nhttps://a\n#metadata\nX: {{", 4, 5);
     assert_eq!((variables.from, variables.to), (3, 5));
     assert_eq!(variables.candidates[0].text, "{{:");
     // Without a check only `#check` starts one.
     assert_eq!(texts("#", 0, 1), ["#check"]);
-    let header = at("#check\n#target\nhttps://a\n#headers\nAccept-E", 4, 8);
+    let header = at("#check\n#target\nhttps://a\n#metadata\nAccept-E", 4, 8);
     assert_eq!((header.from, header.to), (0, 8));
     assert!(header.candidates[0].text.starts_with("Accept-Encoding"));
     // The module completes on the last, empty line too.
@@ -152,7 +157,7 @@ fn a_run_is_the_modules_http_call_with_the_console_options() {
     services_shell::link();
     let (call, options) = console::parse_run(
         "rest",
-        "#target\nhttps://a/x\n#action\nPOST\n#headers\nX: y\n#options\nRepeat: 5s\n#payload\n{}",
+        "#target\nhttps://a/x\n#action\nPOST\n#metadata\nX: y\n#options\nRepeat: 5s\n#payload\n{}",
     )
     .unwrap();
     assert_eq!(
@@ -161,6 +166,13 @@ fn a_run_is_the_modules_http_call_with_the_console_options() {
             "url":"https://a/x","headers":[["X","y"]],"body":"{}","text":true}})
     );
     assert_eq!(options.repeat, Some(5000));
+    // `#headers` is an unlisted alias of `#metadata` in HTTP services.
+    let (alias, _) = console::parse_run(
+        "rest",
+        "#target\nhttps://a/x\n#action\nPOST\n#headers\nX: y\n#payload\n{}",
+    )
+    .unwrap();
+    assert_eq!(alias, call);
     // before_request passes the Variables panel, which reports unknown refs.
     assert_eq!(
         console::parse_run("rest", "#target\nhttps://a/{{:x}}").unwrap_err(),
@@ -203,11 +215,13 @@ fn rest_is_a_kernel_tab_ordered_by_its_manifest() {
     assert_eq!(services::default_service(), "rest");
     assert_eq!(
         console::markers("rest"),
-        ["target", "action", "headers", "payload", "options"]
+        ["target", "action", "metadata", "payload", "options"]
     );
     assert_eq!(
         services::template_sections("rest"),
-        ["check", "target", "action", "headers", "payload", "options"]
+        [
+            "check", "target", "action", "metadata", "payload", "options"
+        ]
     );
 }
 

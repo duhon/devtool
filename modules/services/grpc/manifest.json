@@ -2,7 +2,7 @@
   "id": "grpc",
   "kind": "service",
   "name": "gRPC",
-  "version": "4.0.0",
+  "version": "5.0.0",
   "description": "Make a gRPC call and inspect the response.",
   "abi": 2,
   "app": ">=4.0",

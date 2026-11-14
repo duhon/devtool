@@ -56,13 +56,13 @@ fn section_markers_come_from_the_modules() {
         // The console's own `#options` (Repeat, Repeat-Until) come last.
         (
             "grpc",
-            &["target", "headers", "proto", "payload", "options"],
+            &["target", "metadata", "proto", "payload", "options"],
         ),
-        ("splunk", &["target", "headers", "options", "payload"]),
+        ("splunk", &["target", "metadata", "options", "payload"]),
         ("terminal", &["target", "payload", "env", "options"]),
         (
             "artemis",
-            &["target", "headers", "action", "options", "payload"],
+            &["target", "metadata", "action", "options", "payload"],
         ),
     ] {
         assert_eq!(console::markers(service), sections, "{service}");

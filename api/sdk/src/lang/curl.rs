@@ -144,7 +144,7 @@ pub fn parse(command: &str) -> Result<Command, String> {
     })
 }
 
-/// The headers as the text of an imported `#headers` section; `None` without headers.
+/// The headers as the text of an imported `#metadata` section; `None` without headers.
 pub fn imported_headers(command: &Command) -> Option<String> {
     (!command.headers.is_empty()).then(|| {
         command

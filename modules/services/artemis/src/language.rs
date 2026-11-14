@@ -7,7 +7,7 @@ use services_sdk::lang::check::At;
 use services_sdk::lang::{endpoint, finish, item, json, key_value, marker, table, token_start};
 use services_sdk::{Check, Completions, Item, Line, Token};
 
-pub const SECTIONS: [&str; 5] = ["target", "headers", "action", "options", "payload"];
+pub const SECTIONS: [&str; 5] = ["target", "metadata", "action", "options", "payload"];
 
 const KEYWORDS: [&str; 16] = [
     "WHERE", "LIMIT", "SET", "TO", "AND", "OR", "NOT", "IN", "LIKE", "BETWEEN", "IS", "NULL",
@@ -47,11 +47,7 @@ const CLAUSES: [(&str, &str); 20] = [
     ("AMQDurable", "WHERE: 'DURABLE' or 'NON_DURABLE'"),
 ];
 
-const OPTIONS: [(&str, &str); 6] = [
-    (
-        "Persistent: false",
-        "SEND, PUBLISH: a non-persistent message",
-    ),
+const OPTIONS: [(&str, &str); 5] = [
     (
         "Columns-Type: ",
         "column=json column=datetime column=number column=boolean column=text",
@@ -208,7 +204,7 @@ pub fn highlight(
             let tokens = if is_marker {
                 area = match named.as_deref() {
                     Some("target") => Area::Endpoint,
-                    Some("headers" | "options") => Area::Headers,
+                    Some("metadata" | "headers" | "options") => Area::Headers,
                     Some("action") => Area::Action,
                     Some("payload") => Area::Body,
                     Some("responce" | "response") => Area::Response,
@@ -302,9 +298,13 @@ pub fn complete(check: &Check, pos: usize, discovered: &Value) -> Completions {
                 .into();
             finish(from, at.pos, value, items)
         }
-        Some("headers") => pairs(
+        Some("metadata" | "headers") => pairs(
             &at,
-            key_value::items(&["Authorization: Basic "], &[], &Default::default()),
+            key_value::items(
+                &["Authorization: Basic ", "Message-Persistent: false"],
+                &[],
+                &Default::default(),
+            ),
         ),
         Some("options") => pairs(
             &at,

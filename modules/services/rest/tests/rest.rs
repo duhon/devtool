@@ -199,7 +199,7 @@ fn highlight_styles_each_section_and_carries_state() {
     let lines = [
         "#target",
         "https://api.test/users/{id}?q=1",
-        "#headers",
+        "#metadata",
         "Accept: */*",
         "#payload",
         "{",
@@ -223,7 +223,7 @@ fn highlight_styles_each_section_and_carries_state() {
             ("q=1", "number"),
         ])
     );
-    assert_eq!(s[2], comment("#headers"));
+    assert_eq!(s[2], comment("#metadata"));
     assert_eq!(s[3], pairs(&[("Accept", "attribute"), ("*/*", "string")]));
     assert_eq!(s[4], comment("#payload"));
     assert!(s[6].contains(&("\"name\"".into(), "string property".into())));
@@ -249,7 +249,7 @@ fn highlight_starts_from_a_synthetic_marker_line() {
     let body = &styles(&rest, &start, &["{\"a\": [1]}"])[0];
     assert!(body.contains(&("\"a\"".into(), "string property".into())));
     assert!(body.contains(&("1".into(), "number".into())));
-    let start = rest.highlight(&[], &["#headers".into()], &[])[0]
+    let start = rest.highlight(&[], &["#metadata".into()], &[])[0]
         .state
         .clone();
     assert_eq!(
@@ -321,14 +321,14 @@ fn folds_cover_the_body_and_a_json_response() {
 fn completion_offers_unused_markers_methods_and_urls() {
     let rest = Rest::default();
     let (_, c) = complete(&rest, "#target\nhttp://x\n#|");
-    assert_eq!(labels(&c), ["#action", "#headers", "#payload"]);
+    assert_eq!(labels(&c), ["#action", "#metadata", "#payload"]);
     assert_eq!(c.items[0].insert, "#action\n");
     assert_eq!(c.items[0].detail, "Section");
 
     let (_, c) = complete(&rest, "|");
     assert_eq!(
         inserts(&c),
-        ["#target\n", "#action\n", "#headers\n", "#payload\n"]
+        ["#target\n", "#action\n", "#metadata\n", "#payload\n"]
     );
 
     let (_, c) = complete(&rest, "#action\nP|");
@@ -351,12 +351,12 @@ fn completion_offers_unused_markers_methods_and_urls() {
 #[test]
 fn header_completion_skips_used_names() {
     let rest = Rest::default();
-    let (_, c) = complete(&rest, "#target\nhttp://x\n#headers\nAccept: */*\n|");
+    let (_, c) = complete(&rest, "#target\nhttp://x\n#metadata\nAccept: */*\n|");
     assert_eq!(&labels(&c)[..2], ["#action", "#payload"]);
     assert!(!labels(&c).contains(&"Accept: */*"));
-    assert!(!labels(&c).contains(&"#headers"));
+    assert!(!labels(&c).contains(&"#metadata"));
 
-    let (_, c) = complete(&rest, "#target\nhttp://x\n#headers\nx-api|");
+    let (_, c) = complete(&rest, "#target\nhttp://x\n#metadata\nx-api|");
     assert_eq!(labels(&c), ["X-Api-Key:"]);
     assert_eq!(c.items[0].detail, "Header");
 }
@@ -397,7 +397,7 @@ fn discovery_feeds_paths_headers_and_body_fields() {
     assert_eq!(labels(&c), ["/api/users"]);
     assert_eq!(c.to as usize, text.len());
 
-    let (_, c) = complete(&rest, "#target\nhttp://svc/api/users\n#headers\nX-T|");
+    let (_, c) = complete(&rest, "#target\nhttp://svc/api/users\n#metadata\nX-T|");
     let tenant = c.items.iter().find(|i| i.label == "X-Tenant: ").unwrap();
     assert_eq!(tenant.detail, "OpenAPI header");
 
@@ -487,7 +487,7 @@ fn resolve(rest: &mut Rest, cmds: &[Cmd]) -> Vec<Cmd> {
 fn an_address_with_variables_is_resolved_through_the_app() {
     let mut rest = Rest::default();
     let text =
-        "#target\n{{var:api}}/users\n#action\nPOST\n#headers\nX-Token: {{var:token}}\n#payload\n";
+        "#target\n{{var:api}}/users\n#action\nPOST\n#metadata\nX-Token: {{var:token}}\n#payload\n";
     let cmds = hints(&mut rest, text);
     assert_eq!(
         resolves(&cmds)
@@ -554,7 +554,7 @@ fn discovery_caches_each_api_and_tries_a_failed_address_once() {
     let mut rest = Rest::default();
     let site = |name: &str, token: &str| {
         format!(
-            "#target\nhttp://svc/{name}/rest/v1/product\n#action\nPOST\n#headers\nX-Token: {token}\n#payload\n"
+            "#target\nhttp://svc/{name}/rest/v1/product\n#action\nPOST\n#metadata\nX-Token: {token}\n#payload\n"
         )
     };
     for name in ["site1", "site2"] {
@@ -680,7 +680,7 @@ fn build_sends_the_endpoint_headers_and_body() {
     let rest = Rest::default();
     let call = rest
         .build(&check(
-            "#target\n{{base}}/users\n#action\npost\n#headers\nAccept: */*\n# off: 1\n\nX-Id: {{id}}\n#payload\n{\"a\": 1}",
+            "#target\n{{base}}/users\n#action\npost\n#metadata\nAccept: */*\n# off: 1\n\nX-Id: {{id}}\n#payload\n{\"a\": 1}",
         ))
         .unwrap();
     let request = request(&call);
@@ -700,7 +700,7 @@ fn build_sends_the_endpoint_headers_and_body() {
         "GET"
     );
     for (bad, error) in [
-        ("#headers\nA: 1", "#target must be a URL"),
+        ("#metadata\nA: 1", "#target must be a URL"),
         (
             "#target\nGET http://x",
             "#target holds only the URL: put the method GET in #action",
@@ -750,7 +750,7 @@ fn render_pretty_prints_json_and_maps_outcomes() {
 #[test]
 fn export_and_import_round_trip_through_curl() {
     let rest = Rest::default();
-    let text = "#target\nhttps://x/a\n#action\nPOST\n#headers\nAccept: */*\nX: it's\n#payload\n{\n  \"a\": 1\n}";
+    let text = "#target\nhttps://x/a\n#action\nPOST\n#metadata\nAccept: */*\nX: it's\n#payload\n{\n  \"a\": 1\n}";
     let curl = rest.export(&check(text)).unwrap();
     assert_eq!(
         curl,

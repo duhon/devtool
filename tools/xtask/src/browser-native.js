@@ -105,7 +105,7 @@
   };
   const restDiscoveryCount = () => nativeProbe.discoveries.filter(request => request.service === 'rest').length;
   for (const site of ['site1', 'site2']) {
-    const source = `#check ${site}\n#target\n${fixtureUrl}/${site}/rest/v1/product\n#action\nPOST\n#headers\nX-Token: first\n#payload\n`;
+    const source = `#check ${site}\n#target\n${fixtureUrl}/${site}/rest/v1/product\n#action\nPOST\n#metadata\nX-Token: first\n#payload\n`;
     setSource(bookEditor, '');
     const before = restDiscoveryCount();
     pasteRest(source);
@@ -121,7 +121,7 @@
   }
   const sitesLoaded = restDiscoveryCount();
   for (const site of ['site1', 'site2', 'site1']) {
-    setSource(bookEditor, `#check cached\n#target\n${fixtureUrl}/${site}/rest/v1/product\n#action\nPOST\n#headers\nX-Token: changed\n#payload\n`);
+    setSource(bookEditor, `#check cached\n#target\n${fixtureUrl}/${site}/rest/v1/product\n#action\nPOST\n#metadata\nX-Token: changed\n#payload\n`);
     await key('Control+Space');
     await wait(() => candidates().some(candidate => candidate.includes(`"${site}"`)));
     assert(!candidates().some(candidate => candidate.includes(`"${site === 'site1' ? 'site2' : 'site1'}"`)),
@@ -164,7 +164,7 @@
     'Typing path slashes after real native success must not rediscover the same API'));
   await key('Escape');
   const bookEndpoint = `${fixtureUrl}/api/v1/Books/`;
-  const bookPrefix = method => `#check test1\n#target\n${bookEndpoint}\n#action\n${method}\n#headers\nContent-Type: application/json\nAccept: application/json\n#payload\n`;
+  const bookPrefix = method => `#check test1\n#target\n${bookEndpoint}\n#action\n${method}\n#metadata\nContent-Type: application/json\nAccept: application/json\n#payload\n`;
   const bookFields = ['"id": ', '"title": ""', '"description": ""', '"pageCount": ', '"excerpt": ""', '"publishDate": ""'];
   setSource(bookEditor, bookPrefix('POST'));
   await key('Control+Space');
@@ -214,7 +214,7 @@
   const magentoPath = '/rest/default/V1/integration/admin/token';
   const magentoUrl = `http://{{var:magento}}${magentoPath}`;
   const magentoPrefix = endpoint =>
-    `#check magento\n#target\n${endpoint}\n#action\nPOST\n#headers\nContent-Type: application/json\n#payload\n`;
+    `#check magento\n#target\n${endpoint}\n#action\nPOST\n#metadata\nContent-Type: application/json\n#payload\n`;
   const credentials = ['"username": ""', '"password": ""'];
   const checkLocalBodyHints = async () => {
     for (const source of [magentoPrefix(magentoUrl).trimEnd(), magentoPrefix(magentoUrl)]) {
@@ -430,7 +430,7 @@
   'The real native registry must report GraphQL errors instead of caching an empty successful schema');
   assert(![...document.querySelectorAll('[role="alert"]')].some(visible),
     'A real native manual discovery error must appear only in status/debug');
-  const authenticated = `#check protected-schema\n#target\n${discoveryEndpoint}\n#headers\nX-Token: {{second:TOKEN}}\n#payload\n{\n  `;
+  const authenticated = `#check protected-schema\n#target\n${discoveryEndpoint}\n#metadata\nX-Token: {{second:TOKEN}}\n#payload\n{\n  `;
   setSource(discoveryEditor, authenticated);
   discoveryEditor.setCursor(discoveryEditor.lastLine(), discoveryEditor.getLine(discoveryEditor.lastLine()).length);
   // Discovery is lazy: asking for hints introspects the new connection.
@@ -444,7 +444,7 @@
   await wait(() => candidates().includes('sku') && candidates().includes('images'),
     'Real native introspection must restore nested GraphQL field completion');
   await key('Escape');
-  setSource(discoveryEditor, `#check protected-schema\n#target\n${discoveryEndpoint}\n#headers\nX-Token: {{second:TOKEN}}\n#payload\n{\n  products\n  sku\n}`);
+  setSource(discoveryEditor, `#check protected-schema\n#target\n${discoveryEndpoint}\n#metadata\nX-Token: {{second:TOKEN}}\n#payload\n{\n  products\n  sku\n}`);
   const kindOf = (line, name) => discoveryEditor.getLineTokens(line).find(token => token.string === name)?.type || '';
   await wait(() => kindOf(7, 'products').includes('graphql-object-field'),
     'The discovered schema must mark object fields before their selection set is written');

@@ -1,4 +1,4 @@
-//! The GraphQL service: a `#target` URL, `#headers`, `#variables` (JSON) and a `#payload`
+//! The GraphQL service: a `#target` URL, `#metadata`, `#variables` (JSON) and a `#payload`
 //! (also the text before the first marker) POSTed through the Host `http` driver, with
 //! introspection for completion when the user asks for hints.
 
@@ -56,7 +56,7 @@ fn parts(check: &Check) -> Result<Parts<'_>, String> {
         .transpose()?;
     Ok(Parts {
         url,
-        headers: key_value::pairs(check.text_of("headers")),
+        headers: key_value::pairs(check.http_metadata()),
         query: query(check),
         variables,
     })
@@ -69,7 +69,7 @@ fn document(check: &Check) -> String {
     format!(
         "{{\"target\":{},\"headers\":{},\"payload\":{},\"variables\":{}}}",
         json!(check.text_of("target")),
-        json!(check.text_of("headers")),
+        json!(check.http_metadata()),
         json!(query(check)),
         if variables.is_empty() {
             "null"
@@ -253,7 +253,7 @@ impl Module for Graphql {
         }
         let mut sections = vec![format!("#target\n{}", command.url)];
         if let Some(headers) = curl::imported_headers(&command) {
-            sections.push(format!("#headers\n{headers}"));
+            sections.push(format!("#metadata\n{headers}"));
         }
         if let Some(variables) = parsed
             .get("variables")

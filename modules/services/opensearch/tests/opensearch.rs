@@ -154,7 +154,7 @@ fn discover(
 
 fn source(path: &str) -> String {
     format!(
-        "#check test\n#target\nhttp://example.test/proxy/{path}\n#headers\nAuthorization: Basic fixture\n#payload\n"
+        "#check test\n#target\nhttp://example.test/proxy/{path}\n#metadata\nAuthorization: Basic fixture\n#payload\n"
     )
 }
 
@@ -201,7 +201,7 @@ fn target_is_url_action_is_method_and_bodies_pass_unchanged() {
     let module = OpenSearch::default();
     let search = request(
         &module,
-        "#target\nhttps://example.test:9200/logs-*/_search?size=5\n#action\nget\n#headers\nAuthorization: Basic eA==\n#payload\n{\"query\":{\"match_all\":{}}}",
+        "#target\nhttps://example.test:9200/logs-*/_search?size=5\n#action\nget\n#metadata\nAuthorization: Basic eA==\n#payload\n{\"query\":{\"match_all\":{}}}",
     )
     .unwrap();
     assert_eq!(search["method"], "GET");
@@ -260,14 +260,14 @@ fn ndjson_apis_get_their_content_type_and_exactly_one_final_newline() {
     }
     let bulk = request(
         &module,
-        "#target\nhttp://localhost:9200/_bulk\n#action\nPOST\n#headers\ncontent-type: application/json\n#payload\n{}",
+        "#target\nhttp://localhost:9200/_bulk\n#action\nPOST\n#metadata\ncontent-type: application/json\n#payload\n{}",
     )
     .unwrap();
     assert_eq!(header(&bulk, "content-type"), ["application/json"]);
     assert_eq!(bulk["body"], "{}\n");
     let custom = request(
         &module,
-        "#target\nhttp://localhost:9200/custom\n#action\nPOST\n#headers\nContent-Type: application/x-ndjson; charset=utf-8\n#payload\n{}",
+        "#target\nhttp://localhost:9200/custom\n#action\nPOST\n#metadata\nContent-Type: application/x-ndjson; charset=utf-8\n#payload\n{}",
     )
     .unwrap();
     assert_eq!(custom["body"], "{}\n");
@@ -507,7 +507,7 @@ fn bool_clauses_offer_the_leaf_queries_in_every_item() {
 #[test]
 fn header_hints_lead_with_the_module_ones_and_skip_used_names() {
     let module = discovered();
-    let endpoint = "#check test\n#target\nhttp://example.test/proxy/logs/_search\n#headers\n";
+    let endpoint = "#check test\n#target\nhttp://example.test/proxy/logs/_search\n#metadata\n";
     assert_eq!(
         inserts(&complete(&module, endpoint)),
         [

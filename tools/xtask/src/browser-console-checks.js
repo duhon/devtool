@@ -561,11 +561,11 @@
     const originalHints = hints.getValue();
     setSource(hints, '#target\nhttp://\n');
     await type('#');
-    await wait(() => JSON.stringify(candidates().sort()) === JSON.stringify(['#action', '#headers', '#options', '#payload']),
+    await wait(() => JSON.stringify(candidates().sort()) === JSON.stringify(['#action', '#metadata', '#options', '#payload']),
       () => `Typing # in Hints must offer the sections it lacks: ${JSON.stringify(candidates())}`);
     await pick(hints, '#payload');
     assert(hints.getLine(2) === '#payload', 'Picking a Hints section must insert its header');
-    const changedHints = `${originalHints.trimEnd()}\n#headers\nX-Console-Panel-Fixture: saved\n`;
+    const changedHints = `${originalHints.trimEnd()}\n#metadata\nX-Console-Panel-Fixture: saved\n`;
     hints.setValue(changedHints);
     await wait(() => toolStatus()?.textContent.includes('Hints save · OK'), () => `Edited hints must be saved to Local: ${toolStatus()?.textContent}`);
     await closePanel('hints');

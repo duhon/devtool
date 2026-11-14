@@ -6,7 +6,7 @@ use serde_json::Value;
 use services_sdk::lang::{self, finish, item, json, key_value, marker};
 use services_sdk::{Check, Completions, Item};
 
-pub const SECTIONS: [&str; 4] = ["target", "headers", "variables", "payload"];
+pub const SECTIONS: [&str; 4] = ["target", "metadata", "variables", "payload"];
 
 pub const HEADERS: [&str; 9] = [
     "Accept: */*",
@@ -125,7 +125,7 @@ pub fn complete(schema: Option<&Value>, check: &Check, pos: usize) -> Completion
             let urls = URLS.iter().map(|url| item(*url, "", "url")).collect();
             finish(pos - value.len(), pos, value, urls)
         }
-        "headers" => {
+        "metadata" | "headers" => {
             let used = key_value::used(
                 (body_start..section_end)
                     .filter(|i| *i != line)

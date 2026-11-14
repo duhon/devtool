@@ -3,7 +3,7 @@ use serde_json::Value;
 use services_sdk::lang::{check::At, endpoint, finish, item, json, key_value, marker};
 use services_sdk::{Check, Completions, Item, Line, Token};
 
-const SECTIONS: &[&str] = &["target", "options", "action"];
+const SECTIONS: &[&str] = &["target", "metadata", "options", "action"];
 const COMMANDS: &str = "APPEND AUTH BITCOUNT BITOP BLPOP BRPOP CLIENT COMMAND COPY DBSIZE DECR DECRBY DEL DUMP ECHO EVAL EVALSHA EXISTS EXPIRE EXPIREAT EXPIRETIME FLUSHDB GET GETDEL GETEX GETRANGE GETSET HDEL HEXISTS HGET HGETALL HINCRBY HINCRBYFLOAT HKEYS HLEN HMGET HMSET HRANDFIELD HSCAN HSET HSETNX HSTRLEN HVALS INCR INCRBY INCRBYFLOAT INFO KEYS LINDEX LINSERT LLEN LMOVE LPOP LPOS LPUSH LPUSHX LRANGE LREM LSET LTRIM MGET MSET MSETNX OBJECT PERSIST PEXPIRE PEXPIREAT PING PSETEX PTTL PUBLISH PUBSUB RANDOMKEY RENAME RENAMENX RESTORE RPOP RPUSH RPUSHX SADD SCAN SCARD SDIFF SDIFFSTORE SELECT SET SETEX SETNX SETRANGE SINTER SINTERSTORE SISMEMBER SMEMBERS SMISMEMBER SMOVE SPOP SRANDMEMBER SREM SSCAN STRLEN SUBSCRIBE SUNION SUNIONSTORE TIME TOUCH TTL TYPE UNLINK XADD XDEL XLEN XRANGE XREAD XREVRANGE ZADD ZCARD ZCOUNT ZINCRBY ZRANGE ZRANGEBYSCORE ZRANK ZREM ZREVRANGE ZREVRANK ZSCAN ZSCORE ZMSCORE";
 
 #[derive(Clone, Debug)]
@@ -177,7 +177,8 @@ pub fn complete(check: &Check, pos: u32, snapshot: Option<&Value>) -> Completion
                 ],
             )
         }
-        Some("options") => {
+        Some("options") => at.none(),
+        Some("metadata") => {
             let used = key_value::used(at.other_lines());
             finish(
                 at.line_start(at.line),
@@ -350,7 +351,7 @@ pub fn highlight(state: &[u8], lines: &[String]) -> Vec<Line> {
             {
                 area = match name.as_str() {
                     "target" => 1,
-                    "options" => 2,
+                    "metadata" | "options" => 2,
                     "action" => 3,
                     "responce" | "response" => 4,
                     _ => 0,

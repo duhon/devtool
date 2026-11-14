@@ -57,7 +57,7 @@ impl Connection {
         });
         (web || url.starts_with("{{")).then(|| Self {
             url: url.to_owned(),
-            headers: key_value::pairs(check.text_of("headers")),
+            headers: key_value::pairs(check.http_metadata()),
         })
     }
 }

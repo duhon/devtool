@@ -11,7 +11,7 @@ fn every_service_console_parses_into_its_request_shape() {
     assert_eq!(
         parse(
             "rest",
-            "#headers\nX: y\n#payload\n{}\n#target\nhttps://a\n#action\nPOST"
+            "#metadata\nX: y\n#payload\n{}\n#target\nhttps://a\n#action\nPOST"
         )
         .unwrap(),
         json!({"driver":"http","stream":false,"request":{"method":"POST","url":"https://a",
@@ -115,7 +115,7 @@ fn exported_commands_quote_text_so_it_splits_back_unchanged() {
     let value = "it's \"quoted\"";
     let command = export(
         "rest",
-        &format!("#target\nhttps://fixture.invalid\n#headers\nX-Note: {value}"),
+        &format!("#target\nhttps://fixture.invalid\n#metadata\nX-Note: {value}"),
     )
     .unwrap();
     assert!(

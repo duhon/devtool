@@ -2,7 +2,7 @@
 
 ## 1.1.0
 
-- X.509 client-certificate authentication through a new `#headers` section
+- X.509 client-certificate authentication through a new `#metadata` section
   (`Auth: x509`, `Certificate: <PEM file>`, optional `CertificatePassword`); the module
   adds `authMechanism=MONGODB-X509`, `authSource=$external` and `tlsCertificateKeyFile`
   to the `#target`.

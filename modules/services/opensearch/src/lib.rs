@@ -1,5 +1,5 @@
 //! The OpenSearch service: `#target` (the URL with the index and API in its path),
-//! `#action` (the method, GET by default), `#headers` and a JSON `#payload`, NDJSON for bulk and multi-search, sent through the Host
+//! `#action` (the method, GET by default), `#metadata` and a JSON `#payload`, NDJSON for bulk and multi-search, sent through the Host
 //! `http` driver; completion of indices, aliases and mapped fields from discovery.
 
 mod discovery;
@@ -21,7 +21,7 @@ const ENDPOINT: &str =
     "#target must be an http(s) URL, for example http://localhost:9200/logs-*/_search";
 
 const LANGUAGE: Language = Language {
-    sections: &["target", "action", "headers", "payload"],
+    sections: &["target", "action", "metadata", "payload"],
     methods: &endpoint::METHODS,
     headers: &[
         "Authorization: ",
@@ -46,7 +46,7 @@ pub fn request(check: &Check) -> Result<Request, String> {
     if !http || url.contains('#') {
         return Err(ENDPOINT.into());
     }
-    let mut headers = key_value::pairs(check.text_of("headers"));
+    let mut headers = key_value::pairs(check.http_metadata());
     let mut body = Some(check.text_of("payload").to_owned()).filter(|body| !body.is_empty());
     if let Some(body) = &mut body {
         let given = headers

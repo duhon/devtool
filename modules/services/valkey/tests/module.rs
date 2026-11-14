@@ -88,7 +88,7 @@ fn successful_setup_sends_one_command_and_returns_visible_binary_safe_results() 
 fn variables_are_resolved_after_argument_parsing_and_ca_is_not_a_file_path() {
     let mut module = Harness::default();
     let cmds =
-        module.run("#target\n{{URL}}\n#options\nCA-PEM: {{CA}}\n#action\nSET key '{{VALUE}}'");
+        module.run("#target\n{{URL}}\n#metadata\nCA-PEM: {{CA}}\n#action\nSET key '{{VALUE}}'");
     let cmds = resolve(
         &mut module,
         &cmds,
@@ -120,7 +120,7 @@ fn variables_are_resolved_after_argument_parsing_and_ca_is_not_a_file_path() {
     );
 
     let cmds =
-        module.run("#target\nredis://localhost/0\n#options\nCA-Cert: /tmp/ca.pem\n#action\nPING");
+        module.run("#target\nredis://localhost/0\n#metadata\nCA-Cert: /tmp/ca.pem\n#action\nPING");
     let cmds = resolve(&mut module, &cmds, &[]);
     assert!(
         cmds.iter()

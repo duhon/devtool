@@ -242,7 +242,7 @@ impl Peer {
             self.event(session, "session.idle", json!({}))
         } else if message.contains("agent edit") {
             let mut args = args;
-            args["request"] = json!("#headers\nX-Agent: edited\n");
+            args["request"] = json!("#metadata\nX-Agent: edited\n");
             self.tool(session, "console_edit_check", args, "edit", context)
         } else if message.contains("agent rename") {
             let mut args = args;
@@ -253,7 +253,7 @@ impl Peer {
                 "products overview"
             });
             if combined {
-                args["request"] = json!("#headers\nX-Agent: renamed");
+                args["request"] = json!("#metadata\nX-Agent: renamed");
             }
             self.tool(
                 session,
@@ -265,7 +265,7 @@ impl Peer {
         } else if message.contains("agent bad title") {
             let mut args = args;
             args["title"] = json!("#check products overview");
-            args["request"] = json!("#headers\nX-Agent: rejected");
+            args["request"] = json!("#metadata\nX-Agent: rejected");
             self.tool(session, "console_create_check", args, "bad-title", context)
         } else if message.contains("agent stale rename") {
             let mut args = args;

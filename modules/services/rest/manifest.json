@@ -2,7 +2,7 @@
   "id": "rest",
   "kind": "service",
   "name": "REST",
-  "version": "4.0.0",
+  "version": "4.1.0",
   "description": "Send a REST request and inspect the response.",
   "abi": 2,
   "app": ">=4.0",

@@ -22,7 +22,7 @@ There is no Discover button. Alt+Space in the editor requests discovery for
 the check at the cursor. The automatic triggers are:
 
 1. Select the rest service tab and the relevant check. Its `#target` must
-   contain the URL (the method goes in `#action`), and any authentication headers belong in `#headers`.
+   contain the URL (the method goes in `#action`), and any authentication headers belong in `#metadata`.
 2. In the URL, typing `/` triggers discovery for the prefix up to that slash.
    For an existing URL, delete and retype its slash immediately after the host
    or at the API mount boundary. Do not add an extra slash or execute the check.

@@ -1,4 +1,4 @@
-//! The REST service: a `#target` (URL), `#action` (method, GET by default), `#headers` and a `#payload` sent through the
+//! The REST service: a `#target` (URL), `#action` (method, GET by default), `#metadata` and a `#payload` sent through the
 //! Host `http` driver, with OpenAPI discovery for completion when the user asks for hints.
 
 pub mod openapi;
@@ -25,7 +25,7 @@ pub const HEADERS: [&str; 9] = [
 ];
 
 const LANGUAGE: Language = Language {
-    sections: &["target", "action", "headers", "payload"],
+    sections: &["target", "action", "metadata", "payload"],
     methods: &endpoint::METHODS,
     headers: &HEADERS,
     discovered_header: "OpenAPI header",
@@ -46,7 +46,7 @@ pub fn request(check: &Check) -> Result<Request, String> {
         .collect();
     let body = body.join("\n");
     Ok(Request {
-        headers: key_value::pairs(check.text_of("headers")),
+        headers: key_value::pairs(check.http_metadata()),
         body: (!body.trim().is_empty()).then_some(body),
         ..Request::new(&method, url)
     })
@@ -120,7 +120,7 @@ impl Module for Rest {
             sections.push(format!("#action\n{}", command.method));
         }
         if let Some(headers) = curl::imported_headers(&command) {
-            sections.push(format!("#headers\n{headers}"));
+            sections.push(format!("#metadata\n{headers}"));
         }
         if let Some(body) = curl::imported_body(&command) {
             sections.push(format!("#payload\n{body}"));

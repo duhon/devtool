@@ -1,5 +1,9 @@
 # REST module release notes
 
+## 4.1.0
+
+- `#headers` is `#metadata`; `#headers` still works but is not offered.
+
 ## 4.0.0
 
 - A WebAssembly module for Services DevTools 4.0; it needs that version or newer.

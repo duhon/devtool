@@ -17,18 +17,20 @@ use std::collections::BTreeMap;
 
 /// Commands that send `#payload`.
 const WITH_BODY: [&str; 3] = ["SEND", "PUBLISH", "JOLOKIA"];
+/// The `#metadata` name that sets the message's persistence; the others are HTTP headers.
+const PERSISTENT: &str = "message-persistent";
 /// `#options` names and the params they fill.
-const OPTIONS: [(&str, &str); 3] = [
-    ("persistent", "persistent"),
+const OPTIONS: [(&str, &str); 2] = [
     ("columns-type", "columnsType"),
     ("columns-size", "columnsSize"),
 ];
 /// Options of the earlier format and where their meaning moved.
-const MOVED: [(&str, &str); 5] = [
+const MOVED: [(&str, &str); 6] = [
     ("count", "LIMIT n in #action"),
     ("filter", "QUEUES text (names containing it) in #action"),
     ("selector", "WHERE in #action"),
-    ("durable", "Persistent"),
+    ("durable", "Message-Persistent in #metadata"),
+    ("persistent", "Message-Persistent in #metadata"),
     ("jolokia-path", "the #target path"),
 ];
 const DISCOVER: &str = "discover:";
@@ -94,12 +96,17 @@ fn plan(check: &Check) -> Result<Plan, String> {
             return Err(match MOVED.iter().find(|(option, _)| *option == name) {
                 Some((_, place)) => format!("Option {name:?} is now {place}"),
                 None => format!(
-                    "Unknown Artemis option {name:?}; use Persistent, Columns-Type, Columns-Size or Format"
+                    "Unknown Artemis option {name:?}; use Columns-Type, Columns-Size or Format"
                 ),
             });
         };
         if !value.is_empty() {
             options.insert(key.into(), json!(value));
+        }
+    }
+    for (name, value) in key_value::pairs(check.http_metadata()) {
+        if name.eq_ignore_ascii_case(PERSISTENT) && !value.is_empty() {
+            options.insert("persistent".into(), json!(value));
         }
     }
     Ok(Plan {
@@ -115,8 +122,9 @@ fn plan(check: &Check) -> Result<Plan, String> {
 }
 
 fn header_map(check: &Check) -> Map<String, Value> {
-    key_value::pairs(check.text_of("headers"))
+    key_value::pairs(check.http_metadata())
         .into_iter()
+        .filter(|(name, _)| !name.eq_ignore_ascii_case(PERSISTENT))
         .map(|(name, value)| (name, Value::String(value)))
         .collect()
 }
@@ -248,7 +256,7 @@ fn connection(check: &Check) -> String {
     format!(
         "{}\n{}",
         check.text_of("target").trim(),
-        check.text_of("headers").trim()
+        check.http_metadata().trim()
     )
 }
 

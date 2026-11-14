@@ -69,7 +69,7 @@ mod tests {
     fn splits_at_marker_lines_only() {
         let check = check(
             "rest",
-            "#target https://x/a\n#headers\nAccept: */*\n# a comment\n#payload\n{\"a\":#1}\n",
+            "#target https://x/a\n#metadata\nAccept: */*\n# a comment\n#payload\n{\"a\":#1}\n",
             &json!({"Repeat": "5s"}),
         );
         let names: Vec<(&str, &str)> = check
@@ -81,7 +81,7 @@ mod tests {
             names,
             [
                 ("target", "https://x/a"),
-                ("headers", "Accept: */*\n# a comment"),
+                ("metadata", "Accept: */*\n# a comment"),
                 ("payload", "{\"a\":#1}")
             ]
         );

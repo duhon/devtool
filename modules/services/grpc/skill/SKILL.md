@@ -1,12 +1,12 @@
 ---
 name: module-grpc
-description: "gRPC checks in the Services DevTools Console: #target, metadata #headers, #proto and the #payload JSON. Load before writing, editing or explaining gRPC requests."
+description: "gRPC checks in the Services DevTools Console: #target, metadata #metadata, #proto and the #payload JSON. Load before writing, editing or explaining gRPC requests."
 ---
 
 # gRPC service
 
 Use `#target` with the selected transport/server/service/method address,
-optional `#headers` for metadata, optional `#proto`, and `#payload` with JSON.
+optional `#metadata` for metadata, optional `#proto`, and `#payload` with JSON.
 Inspect the existing target and schema rather than guessing a method name.
 Calls go through the Host gRPC driver: unary and streaming RPC shapes; a JSON
 array in `#payload` sends several messages to a client-streaming method. Without

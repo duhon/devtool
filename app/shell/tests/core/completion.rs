@@ -131,7 +131,7 @@ fn non_service_editors_never_offer_console_or_service_syntax() {
             "qu",
             "NAME: ",
             "#check example\n",
-            "#check example\n#headers\n",
+            "#check example\n#metadata\n",
         ] {
             let result = suggest(
                 service,

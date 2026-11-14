@@ -3452,7 +3452,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-artemis"
-version = "5.0.0"
+version = "6.0.0"
 dependencies = [
  "base64 0.22.1",
  "percent-encoding",
@@ -3490,7 +3490,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-graphql"
-version = "4.0.0"
+version = "4.1.0"
 dependencies = [
  "prost",
  "serde_json",
@@ -3499,7 +3499,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-grpc"
-version = "4.0.0"
+version = "5.0.0"
 dependencies = [
  "prost",
  "prost-reflect",
@@ -3552,7 +3552,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-opensearch"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "serde_json",
  "services-sdk",
@@ -3561,7 +3561,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-rest"
-version = "4.0.0"
+version = "4.1.0"
 dependencies = [
  "prost",
  "serde_json",
@@ -3589,7 +3589,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-splunk"
-version = "4.0.0"
+version = "5.0.0"
 dependencies = [
  "httpdate",
  "prost",
@@ -3620,7 +3620,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-valkey"
-version = "1.0.1"
+version = "2.0.0"
 dependencies = [
  "percent-encoding",
  "prost",

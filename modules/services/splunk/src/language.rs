@@ -6,16 +6,12 @@ use services_sdk::lang::table;
 use services_sdk::lang::{endpoint, finish, item, key_value, marker};
 use services_sdk::{Check, Completions, Item, Line, Token};
 
-pub const SECTIONS: [&str; 4] = ["target", "headers", "options", "payload"];
+pub const SECTIONS: [&str; 4] = ["target", "metadata", "options", "payload"];
 
 const COMMANDS: &str = "search stats eval where table fields sort dedup rex rename lookup join transaction head tail top rare chart timechart bin bucket stream streamstats eventstats fillnull convert foreach makemv mvexpand mvcombine spath xmlkv regex format addinfo appendcols append appendpipe multisearch map tstats inputlookup outputlookup collect delete outputcsv inputcsv iplocation geostats cluster anomalydetection predict trendline gauge highlight loadjob savedsearch sendemail sistats sireduce strcat transpose untable union";
 
-const OPTIONS: [(&str, &str); 11] = [
-    ("From: -24h", "Option"),
-    ("To: now", "Option"),
-    ("App: search", "Option"),
+const OPTIONS: [(&str, &str); 7] = [
     ("Count: 30", "Option"),
-    ("Preview: false", "Option"),
     ("Offset: 0", "Option"),
     (
         "Columns-Type: ",
@@ -27,7 +23,11 @@ const OPTIONS: [(&str, &str); 11] = [
     ("Format: json", "Option"),
 ];
 
-const HEADERS: [&str; 5] = [
+const HEADERS: [&str; 9] = [
+    "Search-From: -24h",
+    "Search-To: now",
+    "Search-App: search",
+    "Search-Preview: false",
     "Accept: */*",
     "Authorization: Bearer ",
     "Cookie: ",
@@ -224,7 +224,7 @@ pub fn highlight(
             let tokens = if is_marker {
                 area = match named.as_deref() {
                     Some("target") => Area::Endpoint,
-                    Some("headers" | "options") => Area::Headers,
+                    Some("metadata" | "headers" | "options") => Area::Headers,
                     Some("payload") => Area::Search,
                     Some("responce" | "response") => Area::Response,
                     _ => Area::Other,
@@ -303,7 +303,9 @@ pub fn complete(check: &Check, pos: usize) -> Completions {
                 .collect();
             pairs(&at, hints)
         }
-        Some("headers") => pairs(&at, key_value::items(&HEADERS, &[], &Default::default())),
+        Some("metadata" | "headers") => {
+            pairs(&at, key_value::items(&HEADERS, &[], &Default::default()))
+        }
         Some("payload") => {
             if let Some(next) = at.next_section(&SECTIONS) {
                 return next;
@@ -379,17 +381,13 @@ mod tests {
     fn completes_markers_endpoints_and_options() {
         assert_eq!(
             labels("#"),
-            ["#target\n", "#headers\n", "#options\n", "#payload\n"]
+            ["#target\n", "#metadata\n", "#options\n", "#payload\n"]
         );
         assert_eq!(labels("#target\nhttp"), ["https://", "http://"]);
         assert_eq!(
             labels("#options\n"),
             [
-                "From: -24h",
-                "To: now",
-                "App: search",
                 "Count: 30",
-                "Preview: false",
                 "Offset: 0",
                 "Columns-Type: ",
                 "Columns-Size: ",
@@ -398,6 +396,7 @@ mod tests {
                 "Format: json"
             ]
         );
+        assert!(labels("#metadata\n").contains(&"Search-From: -24h".into()));
         assert!(
             !labels("#options\nFormat: json\n")
                 .iter()

@@ -47,13 +47,13 @@ Prefer storing the entire endpoint in `{{VALKEY_URL}}`.
 ```text
 #target
 {{VALKEY_URL}}
-#options
+#metadata
 CA-PEM: {{VALKEY_CA}}
 #action
 PING
 ```
 
-The console `Timeout` stops the run. `CA-PEM` is optional, requires TLS and
+`CA-PEM` goes in `#metadata`, is optional, requires TLS and
 holds the actual PEM certificate text, usually in a dictionary variable with
 its line breaks preserved. `CA-Cert` file paths are no longer supported.
 System CA trust and hostname verification are enabled; there is no insecure option.

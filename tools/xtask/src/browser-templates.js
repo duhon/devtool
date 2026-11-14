@@ -47,7 +47,7 @@
     'A draft of an unloaded module must not break Templates');
   assert(!testid('templates-panel').querySelector('.agent-intro'),'Templates must not show an introductory heading above the editor');
   assert(status().textContent.includes('@@ = @'),'The short escaping hint must live in the status strip');
-  assert([...testid('templates-sections').querySelectorAll('[role="tab"]')].map(tab=>tab.textContent).join(',')==='check,target,headers,variables,payload,options',
+  assert([...testid('templates-sections').querySelectorAll('[role="tab"]')].map(tab=>tab.textContent).join(',')==='check,target,metadata,variables,payload,options',
     `GraphQL Templates must expose exactly its own section tabs: ${[...testid('templates-sections').querySelectorAll('[role="tab"]')].map(tab=>tab.textContent)}`);
   await select('variables');
   await save('graphql','variables',definitions);
@@ -93,16 +93,16 @@
   await holds(()=>!entries().some(item=>item.displayText?.startsWith('@')),'A standalone @ inside a section must not automatically suggest templates',100);
   await key('Control+Space');
   await holds(()=>!entries().some(item=>item.displayText?.startsWith('@')),'Manual completion inside section content must not suggest templates',100);
-  await select('headers');
-  await save('graphql','headers','@auth Auth headers\nX-Template: yes\nContent-Type: application/json');
-  setSource(source,'#check Headers\n#headers ');
+  await select('metadata');
+  await save('graphql','metadata','@auth Auth headers\nX-Template: yes\nContent-Type: application/json');
+  setSource(source,'#check Headers\n#metadata ');
   await type('@');
   await pick('@auth');
-  assert(source.getValue()==='#check Headers\n#headers\nX-Template: yes\nContent-Type: application/json',
+  assert(source.getValue()==='#check Headers\n#metadata\nX-Template: yes\nContent-Type: application/json',
     'Header templates must not duplicate the section marker');
   await select('check');
-  const full=`#check Full book\n#target\n${fixtureUrl}/template-full\n#headers\nAccept: application/json\n#variables\n${body}`;
-  const implicit=`#target\n${fixtureUrl}/api/v1/Books/123\n#headers\nContent-Type: application/json\nAccept: application/json\n#variables\n${body2}`;
+  const full=`#check Full book\n#target\n${fixtureUrl}/template-full\n#metadata\nAccept: application/json\n#variables\n${body}`;
+  const implicit=`#target\n${fixtureUrl}/api/v1/Books/123\n#metadata\nContent-Type: application/json\nAccept: application/json\n#variables\n${body2}`;
   await save('graphql','check',`@full_book Complete check\n${full}\n@test1 mmm\n${implicit}\n@without_description\n${implicit}`);
   setSource(source,'#check @test1');
   await key('Control+Space');
@@ -147,12 +147,12 @@
     'MySQL templates must use the exact main Console SQL token styles');
   await click(testid('console-service-splunk'));
   await wait(()=>document.querySelector('[data-testid="templates-section-options"]'));
-  assert([...testid('templates-sections').querySelectorAll('[role="tab"]')].map(tab=>tab.textContent).join(',')==='check,target,headers,options,payload',
+  assert([...testid('templates-sections').querySelectorAll('[role="tab"]')].map(tab=>tab.textContent).join(',')==='check,target,metadata,options,payload',
     'Splunk Templates must not duplicate options as empty from/to/app/count tabs');
   setSource(editorOf('console-editor'),'#check Splunk sections\n#');
   await key('Control+Space');
   await wait(()=>entries().some(item=>item.text==='#options'));
-  assert(entries().map(item=>item.text).join(',')==='#target,#headers,#options,#payload,#check',
+  assert(entries().map(item=>item.text).join(',')==='#target,#metadata,#options,#payload,#check',
     'Splunk section completion must offer only canonical sections');
   await key('Escape');
   for(const section of ['from','to','app','count']) {

@@ -3,7 +3,7 @@
   await openConsole();
   await click(testid('console-service-rest'));
   const editor=editorOf('console-editor');
-  setSource(editor,`#check History acceptance\n#target\n${fixtureUrl}/history-fixture?value={{env:SERVICES_DEVTOOLS_ENV_PROBE}}\n#action\nPUT\n#headers\nContent-Type: application/json\nAuthorization: Bearer history-secret-token\n#payload\n{"text":"first","env":"{{env:SERVICES_DEVTOOLS_ENV_PROBE}}"}`);
+  setSource(editor,`#check History acceptance\n#target\n${fixtureUrl}/history-fixture?value={{env:SERVICES_DEVTOOLS_ENV_PROBE}}\n#action\nPUT\n#metadata\nContent-Type: application/json\nAuthorization: Bearer history-secret-token\n#payload\n{"text":"first","env":"{{env:SERVICES_DEVTOOLS_ENV_PROBE}}"}`);
   const current=Number(testid('console-session-name').dataset.sessionId);
   const snapshot=async()=>(await testDriver.sessionLibrary()).sessions.find(s=>s.id===current).snapshot.console;
   await wait(async()=>(await snapshot()).checkIdentities?.rest?.length===1);

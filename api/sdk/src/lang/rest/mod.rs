@@ -1,5 +1,5 @@
 //! The language of REST-like services: a `#target` (the URL), an `#action` (the HTTP
-//! method, GET without it), `#headers` and a JSON `#payload`, with completion from a discovered OpenAPI-like summary (`paths`,
+//! method, GET without it), `#metadata` and a JSON `#payload`, with completion from a discovered OpenAPI-like summary (`paths`,
 //! `methodsByPath`, `headers`, `bodySchemas`, `baseUrl`/`basePath`) and the discovery runs
 //! that find it through the `http` driver.
 
