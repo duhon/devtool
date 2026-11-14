@@ -1,6 +1,6 @@
 # Release notes
 
-## Unreleased
+## 5.0.0
 
 - The `#headers` section is `#metadata`: everything that travels with the request (HTTP
   headers, gRPC metadata, authentication, certificates, a Splunk search's `Search-*`
