@@ -91,11 +91,11 @@ fn a_find_becomes_the_driver_request_and_a_table() {
 }
 
 #[test]
-fn the_database_comes_from_the_option_and_variables_are_resolved() {
+fn the_database_comes_from_the_uri_and_variables_are_resolved() {
     let mut module = Harness::default();
     let cmds = started(
         &mut module,
-        "#target\nmongodb://{{HOST}}:27017\n#collection\n{{COLL}}\n#action\ncountDocuments\n#options\nDatabase: {{DB}}\n#payload\n{\"filter\": {\"n\": \"{{N}}\"}}",
+        "#target\nmongodb://{{HOST}}:27017/{{DB}}\n#collection\n{{COLL}}\n#action\ncountDocuments\n#payload\n{\"filter\": {\"n\": \"{{N}}\"}}",
         &[
             ("HOST", "h.example"),
             ("DB", "metrics"),
@@ -104,7 +104,7 @@ fn the_database_comes_from_the_option_and_variables_are_resolved() {
         ],
     );
     let request = call(&cmds);
-    assert_eq!(request["uri"], "mongodb://h.example:27017");
+    assert_eq!(request["uri"], "mongodb://h.example:27017/metrics");
     assert_eq!(request["database"], "metrics");
     assert_eq!(request["command"]["aggregate"], "events");
     assert_eq!(

@@ -6,6 +6,8 @@
   (`Auth: x509`, `Certificate: <PEM file>`, optional `CertificatePassword`); the module
   adds `authMechanism=MONGODB-X509`, `authSource=$external` and `tlsCertificateKeyFile`
   to the `#target`.
+- New `#options` key `Columns-Size`. `Connect-Timeout` and `Database` are removed: the
+  database is the URI path.
 
 ## 1.0.0
 

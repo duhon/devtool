@@ -1,5 +1,9 @@
 # MySQL module release notes
 
+## 4.1.0
+
+- New `#options` key `Columns-Size` (`name=20`): the width of a column in characters.
+
 ## 4.0.0
 
 - A WebAssembly module for Services DevTools 4.0; it needs that version or newer.

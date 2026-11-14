@@ -21,13 +21,15 @@ pub const SECTIONS: [&str; 3] = ["target", "options", "payload"];
 pub const DISCOVERY_SQL: &str = "SELECT table_name AS tableName, column_name AS columnName, column_type AS columnType, column_key AS columnKey FROM information_schema.columns WHERE table_schema = DATABASE() ORDER BY table_name, ordinal_position";
 
 const COLUMNS_TYPE: &str = "Columns-Type";
+const COLUMNS_SIZE: &str = "Columns-Size";
 const COLUMNS_TYPE_DETAIL: &str =
     "column=json column=datetime column=number column=boolean column=text";
+const COLUMNS_SIZE_DETAIL: &str = "column=100 (characters)";
 /// Schemas kept, the most recent last.
 const SCHEMAS: usize = 16;
 const DISCOVER: &str = "discover:";
 
-/// The field of a driver request with how its answer prints (`vertical`, `columnsType`):
+/// The field of a driver request with how its answer prints (`vertical`, `columnsType`, `columnsSize`):
 /// the parts of a check the driver does not take, and ignores.
 pub const CONSOLE: &str = "console";
 
@@ -67,7 +69,7 @@ fn option(check: &Check, name: &str) -> Option<String> {
         .map(|(_, value)| value)
 }
 
-/// The driver request of a check: `{url, sql, console: {vertical, columnsType}}`; `{{…}}`
+/// The driver request of a check: `{url, sql, console: {vertical, columnsType, columnsSize}}`; `{{…}}`
 /// placeholders stay for the App to resolve.
 pub fn request(check: &Check) -> Result<Value, String> {
     let url = check.text_of("target").trim();
@@ -76,7 +78,8 @@ pub fn request(check: &Check) -> Result<Value, String> {
     }
     let query = parse_sql(check.text_of("payload"))?;
     let types = option(check, COLUMNS_TYPE);
-    Options::parse(types.as_deref(), None)?;
+    let sizes = option(check, COLUMNS_SIZE);
+    Options::parse(types.as_deref(), sizes.as_deref())?;
     let format = option(check, "Format");
     if let Some(format) = &format {
         Format::parse(format)?;
@@ -85,6 +88,9 @@ pub fn request(check: &Check) -> Result<Value, String> {
     let mut console = json!({"vertical": query.vertical});
     if let Some(types) = types {
         console["columnsType"] = json!(types);
+    }
+    if let Some(sizes) = sizes {
+        console["columnsSize"] = json!(sizes);
     }
     if let Some(format) = format {
         console["format"] = json!(format);
@@ -145,7 +151,10 @@ pub fn render(call: Option<&Value>, response: &Value) -> Result<Rendered, String
     let response = Response::parse(response)?;
     let console = call.map_or(Value::Null, |call| call[CONSOLE].clone());
     let vertical = console["vertical"] == true;
-    let options = Options::parse(console["columnsType"].as_str(), None)?;
+    let options = Options::parse(
+        console["columnsType"].as_str(),
+        console["columnsSize"].as_str(),
+    )?;
     let format = console["format"].as_str().map(Format::parse).transpose()?;
     let mut tables: Vec<_> = response.sets.iter().map(set_table).collect();
     for name in options.types.keys() {
@@ -605,11 +614,10 @@ pub fn complete(check: &Check, pos: usize, schema: &Value) -> Completions {
         }
         Some("options") => {
             let used = key_value::used(at.other_lines());
-            let items: Vec<Item> = [item(
-                format!("{COLUMNS_TYPE}: "),
-                COLUMNS_TYPE_DETAIL,
-                "header",
-            )]
+            let items: Vec<Item> = [
+                item(format!("{COLUMNS_TYPE}: "), COLUMNS_TYPE_DETAIL, "header"),
+                item(format!("{COLUMNS_SIZE}: "), COLUMNS_SIZE_DETAIL, "header"),
+            ]
             .into_iter()
             .filter(|item| !used.contains(&key_value::name(&item.insert)))
             .collect();

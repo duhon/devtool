@@ -28,7 +28,7 @@ skeletons from them.
 ## Sections
 
 - `#target`: a `mongodb://` or `mongodb+srv://` URI; `{{VARIABLE}}` works. The database
-  is the URI path, else `Database:` in `#options`. Credentials belong in the URI (or in
+  is the URI path. Credentials belong in the URI (or in
   variables); they are never shown in results, hints or errors. Read preference, TLS and
   replica set come from the URI query.
 - `#headers` (optional): `Auth: x509` with `Certificate: <path to a PEM file with the client
@@ -45,9 +45,10 @@ skeletons from them.
   values: `{"$oid": "…"}`, `{"$date": "2024-01-01T00:00:00Z"}`, `{"$numberLong": "5"}`,
   `{"$numberDecimal": "1.5"}`, `{"$regularExpression": {"pattern": "^a", "options": "i"}}`.
   Plain integers become int32/int64, fractions double. Errors name line and column.
-- `#options`: `Timeout` (seconds, default 30), `Connect-Timeout` (seconds),
-  `Max-Documents` (default 1000, at most 10000), `Batch-Size`, `Database`,
-  `Format: table|json|vertical`, `Columns-Type: name=json …` (display only).
+- `#options`: `Timeout` (seconds, default 30),
+  `Max-Documents` (default 1000, at most 10000), `Batch-Size`,
+  `Format: table|json|vertical`, `Columns-Type: name=json …` and
+  `Columns-Size: name=100 …` (display only).
 
 ## Actions and payloads
 

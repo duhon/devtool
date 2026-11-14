@@ -191,6 +191,12 @@ fn options_use_literal_column_names_and_reject_unknown_types() {
         &response,
     );
     assert!(missing.unwrap_err().contains("missing"));
+    let sized =
+        build("#target\nmysql://db\n#options\nColumns-Size: name=4\n#payload\nselect 1").unwrap();
+    assert_eq!(sized["console"]["columnsSize"], "name=4");
+    assert!(
+        build("#target\nmysql://db\n#options\nColumns-Size: name=x\n#payload\nselect 1").is_err()
+    );
 }
 
 #[test]
@@ -462,7 +468,7 @@ fn markers_scheme_and_options_complete_outside_the_query() {
     assert_eq!(inserts("#target\nmy|"), vec!["mysql://"]);
     assert_eq!(
         inserts("#target\nmysql://db\n#options\nCol|"),
-        vec!["Columns-Type: "]
+        vec!["Columns-Type: ", "Columns-Size: "]
     );
     assert!(inserts("#target\nmysql://db\n#payload\nSELECT 1\n#responce OK\n|").is_empty());
     assert!(!inserts("#target\nmysql://db\n#|").is_empty());

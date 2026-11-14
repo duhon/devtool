@@ -51,7 +51,7 @@ Syntax errors name the line and column.
 ## Target and options
 
 `#target` is a `mongodb://` or `mongodb+srv://` URI with `{{VARIABLE}}` substitution.
-The database is the URI path, else `Database:` in `#options`. Credentials are never
+The database is the URI path. Credentials are never
 shown in results, hints, debug data or errors.
 
 ### Client certificate (X.509)
@@ -77,12 +77,11 @@ private CA.
 | Option | Meaning |
 | --- | --- |
 | `Timeout` | Seconds for the whole call (1-3600, default 30) |
-| `Connect-Timeout` | Seconds to connect (1-120) |
 | `Max-Documents` | Documents shown (1-10000, default 1000); more are marked truncated |
 | `Batch-Size` | Documents per server batch |
-| `Database` | Database when the URI has none |
 | `Format` | `table`, `json` or `vertical` |
 | `Columns-Type` | `column=json` and other display overrides |
+| `Columns-Size` | `column=100`: the width of a column in characters |
 
 ## Results
 

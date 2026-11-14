@@ -8,16 +8,14 @@ pub const DEFAULT_TIMEOUT_S: u64 = 30;
 pub const DEFAULT_MAX_DOCUMENTS: u64 = 1000;
 const MAX_DOCUMENTS: u64 = 10_000;
 const MAX_TIMEOUT_S: u64 = 3600;
-const MAX_CONNECT_S: u64 = 120;
 
-pub const OPTIONS: [&str; 7] = [
+pub const OPTIONS: [&str; 6] = [
     "Timeout",
-    "Database",
     "Max-Documents",
     "Batch-Size",
-    "Connect-Timeout",
     "Format",
     "Columns-Type",
+    "Columns-Size",
 ];
 
 pub const HEADERS: [&str; 3] = ["Auth", "Certificate", "CertificatePassword"];
@@ -27,11 +25,11 @@ pub struct Connection {
     pub uri: String,
     pub database: String,
     pub timeout_ms: u64,
-    pub connect_ms: Option<u64>,
     pub max_documents: u64,
     pub batch_size: Option<u32>,
     pub format: Option<Format>,
     pub columns_type: Option<String>,
+    pub columns_size: Option<String>,
 }
 
 struct Split<'a> {
@@ -276,13 +274,12 @@ impl Connection {
             uri: with_certificate(target, &parts, headers)?,
             database: decode(parts.database),
             timeout_ms: DEFAULT_TIMEOUT_S * 1000,
-            connect_ms: None,
             max_documents: DEFAULT_MAX_DOCUMENTS,
             batch_size: None,
             format: None,
             columns_type: None,
+            columns_size: None,
         };
-        let mut database = None;
         let mut seen = Vec::new();
         for (name, value) in key_value::pairs(options) {
             let key = name.to_ascii_lowercase();
@@ -295,15 +292,6 @@ impl Connection {
                     connection.timeout_ms =
                         number("Timeout", &value, 1, MAX_TIMEOUT_S, " seconds")? * 1000;
                 }
-                "connect-timeout" => {
-                    connection.connect_ms = Some(
-                        number("Connect-Timeout", &value, 1, MAX_CONNECT_S, " seconds")? * 1000,
-                    );
-                }
-                "database" if value.trim().is_empty() => {
-                    return Err("Database needs a database name".into());
-                }
-                "database" => database = Some(value.trim().to_owned()),
                 "max-documents" => {
                     connection.max_documents =
                         number("Max-Documents", &value, 1, MAX_DOCUMENTS, "")?;
@@ -317,6 +305,10 @@ impl Connection {
                     Options::parse(Some(&value), None)?;
                     connection.columns_type = Some(value);
                 }
+                "columns-size" => {
+                    Options::parse(None, Some(&value))?;
+                    connection.columns_size = Some(value);
+                }
                 _ => {
                     return Err(format!(
                         "Unknown option {name:?}; MongoDB takes {}",
@@ -326,9 +318,7 @@ impl Connection {
             }
         }
         if connection.database.is_empty() {
-            connection.database = database.ok_or(
-                "A database is required: put it in the connection string (…/app) or set Database in #options",
-            )?;
+            return Err("A database is required: put it in the connection string (…/app)".into());
         }
         Ok(connection)
     }
@@ -339,20 +329,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_database_comes_from_the_uri_or_the_option() {
+    fn the_database_comes_from_the_uri() {
         let uri = Connection::parse("mongodb://h1:27017,h2/app?replicaSet=rs", "", "").unwrap();
         assert_eq!(uri.database, "app");
         assert_eq!(uri.timeout_ms, 30_000);
         assert_eq!(uri.max_documents, 1000);
-        let option = Connection::parse(
-            "mongodb+srv://u:p@cluster.example.net",
-            "",
-            "Database: shop",
-        )
-        .unwrap();
-        assert_eq!(option.database, "shop");
-        let both = Connection::parse("mongodb://h/app", "", "Database: shop").unwrap();
-        assert_eq!(both.database, "app");
         assert!(
             Connection::parse("mongodb://h", "", "")
                 .unwrap_err()
@@ -365,15 +346,16 @@ mod tests {
         let c = Connection::parse(
             "mongodb://h/app",
             "",
-            "Timeout: 5\nConnect-Timeout: 2\nMax-Documents: 50\nbatch-size: 7\nFormat: json\nColumns-Type: a=json",
+            "Timeout: 5\nMax-Documents: 50\nbatch-size: 7\nFormat: json\nColumns-Type: a=json\nColumns-Size: a=20",
         )
         .unwrap();
         assert_eq!(
-            (c.timeout_ms, c.connect_ms, c.max_documents, c.batch_size),
-            (5000, Some(2000), 50, Some(7))
+            (c.timeout_ms, c.max_documents, c.batch_size),
+            (5000, 50, Some(7))
         );
         assert_eq!(c.format, Some(Format::Json));
         assert_eq!(c.columns_type.as_deref(), Some("a=json"));
+        assert_eq!(c.columns_size.as_deref(), Some("a=20"));
         let error = |options: &str| Connection::parse("mongodb://h/app", "", options).unwrap_err();
         assert_eq!(error("Timeout: 0"), "Timeout must be 1-3600 seconds");
         assert_eq!(error("Max-Documents: x"), "Max-Documents must be 1-10000");
@@ -437,10 +419,8 @@ mod certificate_tests {
             format!("mongodb://h/app?{tail}")
         );
         assert_eq!(
-            Connection::parse("mongodb://h", X509, "Database: d")
-                .unwrap()
-                .uri,
-            format!("mongodb://h/?{tail}")
+            Connection::parse("mongodb://h/d", X509, "").unwrap().uri,
+            format!("mongodb://h/d?{tail}")
         );
         assert_eq!(
             uri(

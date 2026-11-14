@@ -22,6 +22,7 @@ including aliases: numbers, booleans, dates/times and native JSON. An optional
 `Columns-Type: feed_data=json enabled=boolean`. Supported types are text, number,
 boolean, datetime and json. Assignments are whitespace-separated and use exact
 returned column names. Overrides affect display only, not the underlying values.
+`Columns-Size: name=20` limits a column to that many characters.
 JSON stays compact in horizontal text tables; a query ending in `\G` uses a
 vertical record layout with indented JSON. Cell contents are flat, never folding
 JSON trees. Console tables remain copyable plain text, including their borders.

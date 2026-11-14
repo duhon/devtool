@@ -18,6 +18,7 @@ pub struct Display {
     pub view: Option<View>,
     pub format: Option<Format>,
     pub columns_type: Option<String>,
+    pub columns_size: Option<String>,
 }
 
 /// An Extended JSON value as plain JSON: numbers are numbers, `$date` an ISO string.
@@ -183,7 +184,10 @@ pub fn render(
     request: &Request,
     response: &Response,
 ) -> Result<(Rendered, String), String> {
-    let options = Options::parse(display.columns_type.as_deref(), None)?;
+    let options = Options::parse(
+        display.columns_type.as_deref(),
+        display.columns_size.as_deref(),
+    )?;
     let view = display.view.unwrap_or(View::Auto);
     let mut columns_out: Vec<ColumnType> = Vec::new();
     let mut parts: Vec<String> = Vec::new();

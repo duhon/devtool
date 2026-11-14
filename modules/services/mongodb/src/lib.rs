@@ -336,7 +336,6 @@ impl Mongodb {
             max_documents: Some(connection.max_documents),
             batch_size: connection.batch_size,
             timeout_ms: Some(connection.timeout_ms),
-            connect_ms: connection.connect_ms,
             ..Request::new(&connection.uri, &database, statement.command)
         };
         let mut shown = serde_json::to_value(&request).expect("a request");
@@ -350,6 +349,7 @@ impl Mongodb {
                     view: Some(statement.view),
                     format: connection.format,
                     columns_type: connection.columns_type,
+                    columns_size: connection.columns_size,
                 },
             },
         );
