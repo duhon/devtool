@@ -64,6 +64,8 @@ pub trait Platform {
     fn agent_workspace_id(&self) -> String;
     /// Reads (`options` null) or saves the options new Agent chats get.
     fn agent_options(&self, options: &Value) -> Result<Value, Failure>;
+    /// Reads (`access` null) or saves what the Agent may use.
+    fn agent_access(&self, access: &Value) -> Result<Value, Failure>;
     /// A module command only the platform serves (kv, clipboard, the inspected page);
     /// `None` when it is not one.
     fn local(
@@ -660,6 +662,8 @@ impl Core {
                 return Vec::new();
             }
             "agent.options" => return answer(self.platform.agent_options(&args["options"])),
+            "agent.access" => return answer(self.platform.agent_access(&Value::Null)),
+            "agent.access.save" => return answer(self.platform.agent_access(&args["access"])),
             name => match crate::requests::hosted(name, args, self.platform.native()) {
                 Some(Hosted::Request(request, after)) => (request, after),
                 Some(Hosted::Done(value)) => return answer(Ok(value)),

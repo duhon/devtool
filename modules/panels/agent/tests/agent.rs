@@ -227,3 +227,40 @@ fn a_chat_tab_is_renamed_in_place() {
         "{view}"
     );
 }
+
+#[test]
+fn tool_questions_wait_in_the_chat_and_the_answer_goes_back_to_the_tool() {
+    let mut agent = loaded();
+    let (_, turn) = start(&mut agent, "Run it");
+    let ask = |agent: &mut Agent, tag: &str, title: &str| {
+        agent.update(Event::ToolCall {
+            tag: tag.into(),
+            name: "permission_request".into(),
+            args: json!({"turn": turn, "arguments": {"kind": "shell", "title": title, "detail": "ls"}}),
+        })
+    };
+    let cmds = ask(&mut agent, "call-1", "First");
+    assert!(!names(&cmds).contains(&"agent.reply"));
+    ask(&mut agent, "call-2", "Second");
+    let view = format!("{:?}", agent.view());
+    assert!(view.contains("agent-permission-allow"), "{view}");
+    assert!(view.contains("First"), "{view}");
+    let cmds = agent.update(Event::Ui {
+        msg: Msg::Permit(true),
+        value: None,
+    });
+    let reply = find(&cmds, "agent.reply");
+    assert_eq!(
+        (reply.tag.as_str(), &reply.args()["result"]),
+        ("call-1", &json!({"allow": true}))
+    );
+    let cmds = agent.update(Event::Ui {
+        msg: Msg::Permit(false),
+        value: None,
+    });
+    assert_eq!(find(&cmds, "agent.reply").tag, "call-2");
+    assert_eq!(
+        find(&cmds, "agent.reply").args()["result"],
+        json!({"allow": false})
+    );
+}

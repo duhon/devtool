@@ -36,6 +36,11 @@ impl Core {
                 let mut params = args;
                 params["workspaceId"] = json!(self.platform.agent_workspace_id());
                 params["service"] = json!(self.service);
+                // The Host never trusts a module for what the Agent may use.
+                params["access"] = match self.platform.agent_access(&Value::Null) {
+                    Ok(access) => access,
+                    Err(failure) => return Some(reply(Err(failure))),
+                };
                 let (m, t) = (module.to_owned(), cmd.tag.clone());
                 let answer = self.callback(move |reply| Input::Turn(m.clone(), t.clone(), reply));
                 let stream =
@@ -159,7 +164,7 @@ impl Core {
                     ) {
                         self.notice(format!("Agent · ERROR · {error}"));
                     }
-                } else if tool.starts_with("page_") {
+                } else if tool.starts_with("page_") || tool == "permission_request" {
                     if let Some(turn) = self.turns.get_mut(tag) {
                         turn.calls.insert(call.clone());
                     }

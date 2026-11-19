@@ -10,6 +10,86 @@ pub struct Options {
     pub reasoning_effort: Option<String>,
 }
 
+/// The highest [`Access::level`]: full access.
+pub const MAX_ACCESS_LEVEL: u8 = 4;
+/// The levels of the Agent access slider; each one includes the ones before it.
+pub const ACCESS_LEVELS: [&str; 5] = [
+    "Isolated",
+    "Internet",
+    "Knowledge & tools",
+    "File system",
+    "Full access",
+];
+
+/// Whether the user is asked in the chat before the Agent acts.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Confirm {
+    #[default]
+    Ask,
+    Allow,
+}
+
+/// How long a permission to change an inspected page lasts.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PageActions {
+    /// One permission per inspected document.
+    #[default]
+    Document,
+    /// Every action asks.
+    Action,
+}
+
+/// What the Agent may use. `level` decides what is allowed; the other fields only refine it
+/// and apply from the level that introduces them.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields, default)]
+pub struct Access {
+    pub level: u8,
+    /// Level 0: how long a permission to fill, click or otherwise change the page lasts.
+    pub page_actions: PageActions,
+    /// Level 1: fetching a URL that carries data (a query string, a fragment, credentials).
+    pub web_data: Confirm,
+    /// Retired: extra skill folders. Read so that saved settings still load, never written.
+    #[serde(skip_serializing)]
+    pub skill_folders: Vec<String>,
+    /// Level 2: the MCP servers of the Copilot configuration the Agent may use.
+    pub mcp_servers: Vec<String>,
+    /// Level 2: skills of the Copilot configuration (by name) the Agent must not use.
+    pub off_skills: Vec<String>,
+    /// Level 2: custom agents of the Copilot configuration (by name) the Agent must not use.
+    pub off_agents: Vec<String>,
+    /// Level 2: leave the Copilot custom instructions (`copilot-instructions.md`) out.
+    pub off_instructions: bool,
+    /// Level 3: reading a directory the chat has not read yet.
+    pub read_directories: Confirm,
+    /// Level 4: running shell commands.
+    pub shell: Confirm,
+    /// Level 4: creating and editing files.
+    pub write: Confirm,
+}
+
+impl Access {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.level > MAX_ACCESS_LEVEL {
+            return Err(format!(
+                "Agent access level {} is not supported (0 to {MAX_ACCESS_LEVEL})",
+                self.level
+            ));
+        }
+        if self.mcp_servers.len() > 64 {
+            return Err("Agent access lists more than 64 servers".into());
+        }
+        Ok(())
+    }
+
+    /// Whether the level includes the capability that `level` introduces.
+    pub fn has(&self, level: u8) -> bool {
+        self.level >= level
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Model {
@@ -83,6 +163,33 @@ mod tests {
             serde_json::from_str(r#"{"model":"saved-model","reasoningEffort":"high"}"#).unwrap();
         assert_eq!(saved.model.as_deref(), Some("saved-model"));
         assert_eq!(saved.reasoning_effort.as_deref(), Some("high"));
+    }
+
+    #[test]
+    fn access_defaults_to_the_isolated_level_and_rejects_bad_values() {
+        let access: Access = serde_json::from_str("{}").unwrap();
+        assert_eq!(access, Access::default());
+        assert_eq!(access.level, 0);
+        assert_eq!(access.shell, Confirm::Ask);
+        assert!(access.validate().is_ok());
+        assert!(!access.has(1) && access.has(0));
+        let saved: Access = serde_json::from_str(
+            r#"{"level":4,"pageActions":"action","shell":"allow","skillFolders":["/skills"]}"#,
+        )
+        .unwrap();
+        assert!(saved.has(4) && saved.has(3));
+        assert_eq!(saved.page_actions, PageActions::Action);
+        assert_eq!(saved.shell, Confirm::Allow);
+        assert_eq!(saved.write, Confirm::Ask);
+        assert!(
+            Access {
+                level: 5,
+                ..saved.clone()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(serde_json::from_str::<Access>(r#"{"unknown":1}"#).is_err());
     }
 
     #[test]

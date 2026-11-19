@@ -8,6 +8,7 @@ use crate::editor::extension;
 use crate::editor::model::{Event as EditorEvent, Mark, Setup};
 use crate::indicator::Indicator;
 use services_sdk::ui::{self, Node, node::Kind};
+use std::mem;
 use std::rc::Rc;
 use wasm_bindgen::{JsCast, closure::Closure};
 use web_sys::{Element, HtmlInputElement, HtmlSelectElement};
@@ -342,6 +343,14 @@ pub fn render(node: &Node, on: &Callback<Action>) -> Html {
         Kind::Row(row) => html! {
             <div class={classes(node, "ui-row")} data-key={data_key.clone()} data-testid={data_key} title={tip} aria-label={aria}>{children(&row.children, on)}</div>
         },
+        Kind::Column(column) if node.variant.split_whitespace().any(|name| name == "follow") => {
+            html! {
+                <FollowColumn key={node.key.clone()} class={classes(node, "ui-column")} data_key={data_key}
+                    title={tip} label={aria} count={column.children.len()}>
+                    {children(&column.children, on)}
+                </FollowColumn>
+            }
+        }
         Kind::Column(column) => html! {
             <div class={classes(node, "ui-column")} data-key={data_key.clone()} data-testid={data_key} title={tip} aria-label={aria}>{children(&column.children, on)}</div>
         },
@@ -1395,6 +1404,73 @@ fn combobox(props: &ComboboxProps) -> Html {
                 </div>
             }
         </div>
+    }
+}
+
+#[derive(Properties, PartialEq)]
+struct FollowProps {
+    class: Classes,
+    data_key: Option<AttrValue>,
+    title: Option<AttrValue>,
+    label: Option<AttrValue>,
+    /// How many children the column has: a bigger count is a new message.
+    count: usize,
+    children: Html,
+}
+
+/// How close to the end, in pixels, still counts as being at the end.
+const FOLLOW_SLACK: i32 = 24;
+
+/// A scrolling column that stays at its end while content arrives. Scrolling up away from the
+/// end stops that; a new child, or scrolling back to the end, resumes it.
+#[function_component(FollowColumn)]
+fn follow_column(props: &FollowProps) -> Html {
+    let node = use_node_ref();
+    let pinned = use_mut_ref(|| true);
+    let seen = use_mut_ref(|| 0usize);
+    let top = use_mut_ref(|| 0);
+    let onscroll = {
+        let (node, pinned) = (node.clone(), pinned.clone());
+        Callback::from(move |_: Event| {
+            if let Some(element) = node.cast::<Element>() {
+                let at = element.scroll_top();
+                let gap = element.scroll_height() - at - element.client_height();
+                // Our own smooth scroll only moves down; moving up is the reader leaving the end.
+                if at < mem::replace(&mut *top.borrow_mut(), at) {
+                    *pinned.borrow_mut() = false;
+                }
+                if gap <= FOLLOW_SLACK {
+                    *pinned.borrow_mut() = true;
+                }
+            }
+        })
+    };
+    {
+        let (node, count) = (node.clone(), props.count);
+        use_effect(move || {
+            let before = mem::replace(&mut *seen.borrow_mut(), count);
+            if count > before {
+                *pinned.borrow_mut() = true;
+            }
+            if *pinned.borrow()
+                && let Some(element) = node.cast::<Element>()
+            {
+                let options = web_sys::ScrollToOptions::new();
+                options.set_top(f64::from(element.scroll_height()));
+                // The first paint of a chat lands at its end at once.
+                options.set_behavior(if before == 0 {
+                    web_sys::ScrollBehavior::Instant
+                } else {
+                    web_sys::ScrollBehavior::Smooth
+                });
+                element.scroll_to_with_scroll_to_options(&options);
+            }
+        });
+    }
+    html! {
+        <div ref={node} class={props.class.clone()} data-key={props.data_key.clone()}
+            data-testid={props.data_key.clone()} title={props.title.clone()}
+            aria-label={props.label.clone()} {onscroll}>{props.children.clone()}</div>
     }
 }
 

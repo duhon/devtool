@@ -158,6 +158,10 @@ pub struct Page {
     denied: BTreeSet<String>,
     guided: BTreeSet<String>,
     grant: Option<(String, Value)>,
+    /// Every page action needs its own approval (Agent access level 0 option).
+    pub per_action: bool,
+    /// The turn whose next page action was just approved by itself.
+    once: Option<String>,
     access: BTreeMap<String, String>,
     pending: Option<(Call, Approval)>,
     jobs: BTreeMap<String, Job>,
@@ -274,6 +278,8 @@ impl Page {
         if approve {
             if guide_only {
                 self.guided.insert(call.turn.clone());
+            } else if self.per_action {
+                self.once = Some(call.turn.clone());
             } else {
                 self.grant = Some((approval.origin, approval.page_id));
             }
@@ -544,7 +550,8 @@ impl Page {
                 "Page writing was denied for this Agent turn; reading remains available.",
             );
         }
-        if writes && self.grant.as_ref() != Some(&identity) {
+        let approved_once = writes && self.once.take().as_ref() == Some(&call.turn);
+        if writes && !approved_once && (self.per_action || self.grant.as_ref() != Some(&identity)) {
             if self.pending.is_some() {
                 return fail(
                     &call,

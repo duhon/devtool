@@ -223,6 +223,10 @@ impl Runtime {
             };
         } else if service == "updates" {
             crate::core::updates::dispatch(&self.sources, self.sources.data(), message).await
+        } else if service == "agent_models" && message["op"] == "mcp" {
+            Ok(self.agent.mcp_servers())
+        } else if service == "agent_models" && message["op"] == "system" {
+            Ok(self.agent.system_items())
         } else if service == "agent_models" {
             self.agent.catalog().await
         } else if service == "agent_sessions" {

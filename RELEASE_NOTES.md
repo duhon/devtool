@@ -1,5 +1,17 @@
 # Release notes
 
+## 5.1.0
+
+- Agent access (Settings → Agent): a slider from level 0 (isolated, as before) through Internet,
+  Knowledge & tools (the skills, custom agents, instructions and MCP servers your Copilot already
+  has, each switchable; HTTP MCP servers use the Copilot CLI sign-ins), File system (read-only),
+  to Full access (shell, write and edit). Each level has its own options (ask or don't ask); the
+  Agent asks in the chat, and its answers last for that chat only. Console runs always ask,
+  and after page, web or MCP content enters a turn, risky actions ask regardless of options.
+- Large results of tools (for example MCP servers) are saved in the chat's own folder and the
+  Agent reads them from there at every level; nothing else on disk opens before File system.
+- Works with the current Copilot CLI (protocol 4); MCP sign-ins are kept between chats.
+
 ## 5.0.0
 
 - The `#headers` section is `#metadata`: everything that travels with the request (HTTP

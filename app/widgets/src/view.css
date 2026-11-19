@@ -287,6 +287,8 @@ span.editor-diff-removed-text { background: var(--diff-removed-text); }
 
 .ui-column.is-tight { gap: 0; }
 
+.ui-column.is-group { gap: 6px; padding: 10px 12px; margin-bottom: 18px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg-raised); }
+
 .ui-column:is(.is-tight, .is-primary) > .is-quote { margin-bottom: 6px; }
 
 .ui-column.is-well { padding: 6px 8px; border-radius: 3px; background: var(--bg-sunken); }
@@ -372,6 +374,13 @@ textarea.ui-input { resize: vertical; min-height: 56px; max-height: 30vh; }
 .ui-combobox-current, .ui-combobox-option { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
 
 .ui-combobox-current > .ui-input { flex: 1 1 auto; width: 100%; }
+.ui-combobox-current { position: relative; }
+
+.ui-combobox-current > .ui-input { padding-right: 92px; cursor: pointer; }
+
+.ui-combobox-current > .ui-combobox-detail { position: absolute; right: 24px; top: 50%; transform: translateY(-50%); pointer-events: none; }
+
+.ui-combobox-current::after { content: "\25BE"; position: absolute; right: 8px; top: 50%; transform: translateY(-50%); color: var(--fg-quote); pointer-events: none; }
 
 .ui-combobox-detail { color: var(--fg-quote); font-size: 11px; white-space: nowrap; }
 

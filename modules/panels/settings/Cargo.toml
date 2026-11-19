@@ -1,6 +1,6 @@
 [package]
 name = "services-module-settings"
-version = "4.0.1"
+version = "4.1.0"
 edition.workspace = true
 publish.workspace = true
 description = "Settings panel module, built into the App: modules, their sources and the Agent's model"

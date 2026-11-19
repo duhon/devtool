@@ -8,16 +8,17 @@ pub mod page;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use services_sdk::{Cmd, Event, Module, Subscriptions, cmd, ui};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 
 const CHATS: &str = "chats";
 const SESSIONS: &str = "sessions";
 const OPTIONS: &str = "options";
+const ACCESS: &str = "access";
 const ACTIVE: &str = "active";
 const DELETE: &str = "delete";
 const TURN: &str = "turn:";
 pub const MAX_PROMPT: usize = 32 * 1024;
-pub const INTRO: &str = "Ask about the active check or the inspected web page. Console runs require approval. In DevTools, page reading and interaction require separate permission for each Copilot turn and site.";
+pub const INTRO: &str = "Ask about the active check or the inspected web page. Console runs require approval. In DevTools, page reading and interaction require separate permission for each Copilot turn and site. Settings → Agent access can give Copilot the web, your Copilot skills, agents and MCP servers, files and the shell; risky actions are confirmed here.";
 pub const STOPPED: &str = "Agent stopped. Cancellation was requested for its running Console requests. Already committed changes are not rolled back.";
 const CHAT_PREFIX: &str = "agent-chat-";
 const LIST_TAB: &str = "agent-chat-list-toggle";
@@ -42,6 +43,8 @@ pub enum Msg {
     ApprovePage,
     GuidePage,
     DenyPage,
+    /// Allows or denies the oldest question of the Agent's tools.
+    Permit(bool),
     ToggleList,
     Restore(String),
     Delete(String),
@@ -176,6 +179,8 @@ pub struct Agent {
     error: Option<String>,
     /// Console runs waiting for approval, by chat.
     approvals: BTreeMap<String, Value>,
+    /// Questions of the Agent's web, file, shell and MCP tools, oldest first: `(reply tag, question)`.
+    permissions: BTreeMap<String, VecDeque<(String, Value)>>,
     page: page::Page,
 }
 
@@ -331,6 +336,7 @@ impl Agent {
         let mut cmds = vec![cmd::agent_stop(&tag)];
         cmds.extend(self.page.revoke(&tag));
         self.approvals.remove(chat);
+        self.permissions.remove(chat);
         cmds
     }
 
@@ -475,6 +481,7 @@ impl Agent {
             return Vec::new();
         };
         self.approvals.remove(chat);
+        self.permissions.remove(chat);
         let cmds = self.page.revoke(&turn.tag);
         if result.get("error").is_none()
             && result["stopped"] != true
@@ -515,7 +522,10 @@ impl Agent {
     /// The state of a chat: running, waiting for approval or how its last turn ended.
     fn chat_state(&self, chat: &str) -> &'static str {
         if self.turns.contains_key(chat) {
-            if self.approvals.contains_key(chat) || self.page.approval(chat).is_some() {
+            if self.approvals.contains_key(chat)
+                || self.permissions.contains_key(chat)
+                || self.page.approval(chat).is_some()
+            {
                 "warning"
             } else {
                 "busy"
@@ -624,9 +634,11 @@ impl Agent {
     }
 
     fn status(&self) -> Cmd {
-        let waiting =
-            self.approvals.contains_key(&self.active) || self.page.approval(&self.active).is_some();
+        let waiting = self.approvals.contains_key(&self.active)
+            || self.permissions.contains_key(&self.active)
+            || self.page.approval(&self.active).is_some();
         let anyone_waiting = !self.approvals.is_empty()
+            || !self.permissions.is_empty()
             || self
                 .turns
                 .keys()
@@ -834,7 +846,7 @@ impl Agent {
         }
         body.push(
             ui::column(transcript)
-                .variant("primary inset")
+                .variant("primary inset follow")
                 .key("agent-transcript"),
         );
         if let Some(approval) = self.page.approval(&chat.id) {
@@ -843,7 +855,11 @@ impl Agent {
                     ui::heading("Page interaction permission"),
                     ui::text(approval.origin.clone()),
                     ui::text(format!("{} · {}", approval.title, approval.url)),
-                    ui::text("Allow clicks, typing and other control actions on this page? Permission lasts across turns until navigation or reload. Actions may be irreversible."),
+                    ui::text(if self.page.per_action {
+                        "Allow this click, typing or other control action on the page? Every action is asked separately. Actions may be irreversible."
+                    } else {
+                        "Allow clicks, typing and other control actions on this page? Permission lasts across turns until navigation or reload. Actions may be irreversible."
+                    }),
                     ui::text("Guide only allows reading, scrolling and visual hints; you click and enter data yourself.").variant("muted"),
                     ui::row(vec![
                         ui::button("Allow on this page", &Msg::ApprovePage).key("agent-approve-page"),
@@ -854,6 +870,30 @@ impl Agent {
                 .variant("warning")
                 .key("agent-page-approval"),
             );
+        }
+        if let Some((_, question)) = self.permissions.get(&chat.id).and_then(VecDeque::front) {
+            let field = |name: &str| question[name].as_str().unwrap_or_default().to_owned();
+            let mut lines = vec![
+                ui::text(field("title")).variant("heading"),
+                ui::text(field("detail"))
+                    .variant("pre")
+                    .key("agent-permission-detail"),
+            ];
+            if !field("diff").is_empty() {
+                lines.push(ui::text(field("diff")).variant("pre"));
+            }
+            if question["tainted"] == true {
+                lines.push(
+                    ui::text("Page, website or tool content was used in this turn. Make sure the action is what you asked for.")
+                        .variant("muted"),
+                );
+            }
+            lines.push(ui::text("Your answer applies to this chat only.").variant("muted"));
+            lines.push(ui::row(vec![
+                ui::button("Allow", &Msg::Permit(true)).key("agent-permission-allow"),
+                ui::button("Deny", &Msg::Permit(false)).key("agent-permission-deny"),
+            ]));
+            body.push(ui::column(lines).variant("warning").key("agent-permission"));
         }
         if let Some(approval) = self.approvals.get(&chat.id) {
             let field = |name: &str| approval[name].as_str().unwrap_or_default().to_owned();
@@ -940,6 +980,7 @@ impl Module for Agent {
                     cmd::kv_get(CHATS, CHATS),
                     cmd::workspace_list(SESSIONS),
                     cmd::agent_options(OPTIONS, None),
+                    cmd::agent_access(ACCESS),
                 ]
             }
             Event::Shown => {
@@ -949,6 +990,7 @@ impl Module for Agent {
                     cmd::kv_get(CHATS, CHATS),
                     cmd::workspace_list(SESSIONS),
                     cmd::agent_options(OPTIONS, None),
+                    cmd::agent_access(ACCESS),
                 ]
             }
             Event::Hidden => {
@@ -1022,6 +1064,12 @@ impl Module for Agent {
                 }
                 Vec::new()
             }
+            Event::Reply { tag, result } if tag == ACCESS => {
+                if let Ok(access) = result {
+                    self.page.per_action = access["pageActions"] == "action";
+                }
+                Vec::new()
+            }
             Event::Reply { tag, result } if tag == DELETE => {
                 self.deleted(result);
                 Vec::new()
@@ -1047,6 +1095,13 @@ impl Module for Agent {
             Event::ToolCall { tag, name, args } => {
                 let turn = args["turn"].as_str().unwrap_or_default().to_owned();
                 match self.chat_of_turn(&turn) {
+                    Some(chat) if !self.turns[&chat].stopping && name == "permission_request" => {
+                        self.permissions
+                            .entry(chat)
+                            .or_default()
+                            .push_back((tag, args["arguments"].clone()));
+                        Vec::new()
+                    }
                     Some(chat) if !self.turns[&chat].stopping => {
                         if let Some(turn) = self.turns.get_mut(&chat) {
                             turn.activity = name.clone();
@@ -1204,6 +1259,19 @@ impl Agent {
             Msg::DenyPage => {
                 let active = self.active.clone();
                 self.page.decide(&active, false, false)
+            }
+            Msg::Permit(allow) => {
+                let active = self.active.clone();
+                let Some(queue) = self.permissions.get_mut(&active) else {
+                    return Vec::new();
+                };
+                let Some((tag, _)) = queue.pop_front() else {
+                    return Vec::new();
+                };
+                if queue.is_empty() {
+                    self.permissions.remove(&active);
+                }
+                vec![cmd::agent_reply(&tag, &json!({"allow": allow}))]
             }
             Msg::ToggleList => {
                 self.list_open = !self.list_open;

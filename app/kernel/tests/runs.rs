@@ -271,6 +271,9 @@ impl Platform for Fake {
     fn agent_options(&self, _options: &Value) -> Result<Value, Failure> {
         Ok(Value::Null)
     }
+    fn agent_access(&self, _access: &Value) -> Result<Value, Failure> {
+        Ok(json!({"level": 0}))
+    }
     fn local(
         &self,
         _module: &str,

@@ -123,6 +123,10 @@ impl Platform for Browser {
         crate::storage::agent_options(options)
     }
 
+    fn agent_access(&self, access: &Value) -> Result<Value, Failure> {
+        crate::storage::agent_access(access)
+    }
+
     fn local(
         &self,
         module: &str,

@@ -180,6 +180,37 @@ mod browser {
         })
     }
 
+    const AGENT_ACCESS: &str = "servicesConsole.agentAccessV2";
+
+    /// Reads (`access` null) or saves what the Agent may use; the reply is the access saved, or
+    /// the isolated default when none is. An unreadable value reads as the isolated default.
+    pub fn agent_access(access: &Value) -> Result<Value, Failure> {
+        use services_contracts::agent::Access;
+        let storage = window()
+            .local_storage()
+            .ok()
+            .flatten()
+            .ok_or_else(|| Failure::new("Local storage is unavailable"))?;
+        if !access.is_null() {
+            let checked: Access = serde_json::from_value(access.clone())
+                .map_err(|error| Failure::new(format!("Invalid Agent access: {error}")))?;
+            checked.validate().map_err(Failure::new)?;
+            let value = serde_json::to_value(&checked).unwrap_or_default();
+            storage
+                .set_item(AGENT_ACCESS, &value.to_string())
+                .map_err(|_| Failure::new("Agent access could not be saved"))?;
+            return Ok(value);
+        }
+        let saved = storage
+            .get_item(AGENT_ACCESS)
+            .ok()
+            .flatten()
+            .and_then(|raw| serde_json::from_str::<Access>(&raw).ok())
+            .filter(|access| access.validate().is_ok())
+            .unwrap_or_default();
+        Ok(serde_json::to_value(saved).unwrap_or_default())
+    }
+
     /// The per-window id the Host checks Agent workspace tool calls against.
     pub fn agent_workspace_id() -> String {
         let storage = window().session_storage().ok().flatten();

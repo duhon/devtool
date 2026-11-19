@@ -497,6 +497,8 @@ pub fn hosted(name: &str, mut args: Value, native: bool) -> Option<Hosted> {
             After::Sources,
         )),
         "sources.open" => request(json!({"service":"sources","op":"open","source":args["source"]})),
+        "agent.mcp" => request(json!({"service":"agent_models","op":"mcp"})),
+        "agent.system" => request(json!({"service":"agent_models","op":"system"})),
         "agent.models" => Some(Hosted::Request(
             json!({"service":"agent_models"}),
             After::Models,

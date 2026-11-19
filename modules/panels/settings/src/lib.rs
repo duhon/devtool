@@ -8,7 +8,10 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use services_contracts::{
-    agent::{Catalog, FUSION_MODEL_ID, FUSION_MODEL_NAME, Model, Options},
+    agent::{
+        ACCESS_LEVELS, Access, Catalog, Confirm, FUSION_MODEL_ID, FUSION_MODEL_NAME,
+        MAX_ACCESS_LEVEL, Model, Options, PageActions,
+    },
     package::APPLICATION_ID,
 };
 use services_sdk::{Cmd, Event, Module, cmd, time, ui};
@@ -32,6 +35,10 @@ const RESOLVE: &str = "resolve";
 const OPEN: &str = "open";
 const UPDATE: &str = "update";
 const SAVE_OPTIONS: &str = "options";
+const ACCESS: &str = "access";
+const SAVE_ACCESS: &str = "access-save";
+const MCP: &str = "mcp";
+const SYSTEM: &str = "system";
 
 #[derive(Serialize, Deserialize)]
 pub enum Msg {
@@ -66,6 +73,20 @@ pub enum Msg {
     Sync(String),
     Model,
     Reasoning,
+    /// The Agent access level chosen on the slider.
+    Level,
+    PageActions,
+    WebData,
+    ReadDirectories,
+    Shell,
+    Write,
+    /// Turns an MCP server on or off: its name.
+    Mcp(String),
+    /// Turns a skill of the Copilot configuration on or off: its name.
+    Skill(String),
+    /// Turns a custom agent of the Copilot configuration on or off: its name.
+    SubAgent(String),
+    Instructions,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -151,6 +172,20 @@ pub struct Settings {
     catalog: Option<Catalog>,
     options: Options,
     loading_models: bool,
+    access: Access,
+    access_loaded: bool,
+    /// The MCP servers Copilot has configured: `(name, kind)`; `None` until loaded.
+    mcp: Option<Vec<(String, String)>>,
+    /// The skills, custom agents and instructions Copilot has configured; `None` until loaded.
+    system: Option<System>,
+}
+
+/// What the Copilot configuration offers besides MCP servers: `(name, description)` pairs.
+#[derive(Default)]
+struct System {
+    skills: Vec<(String, String)>,
+    agents: Vec<(String, String)>,
+    instructions: bool,
 }
 
 /// A sync whose conflicts are settled one by one in Diff.
@@ -468,6 +503,33 @@ impl Settings {
             commands.push(cmd::agent_models(MODELS));
             commands.push(self.running(AGENT, "Load Copilot models"));
         }
+        if self.tab == AGENT && !self.access_loaded {
+            self.access_loaded = true;
+            commands.push(cmd::agent_access(ACCESS));
+        }
+        if self.tab == AGENT && self.access.level == 2 {
+            if self.mcp.is_none() {
+                commands.push(cmd::agent_mcp(MCP));
+            }
+            if self.system.is_none() {
+                commands.push(cmd::agent_system(SYSTEM));
+            }
+        }
+        commands
+    }
+
+    /// Saves the Agent access; a new chat turn reads it.
+    fn save_access(&mut self, access: Access) -> Vec<Cmd> {
+        if let Err(error) = access.validate() {
+            return vec![self.report(AGENT, format!("Agent access · ERROR · {error}"), "error")];
+        }
+        let value = serde_json::to_value(&access).unwrap_or_default();
+        self.access = access;
+        let mut commands = vec![
+            cmd::agent_access_save(SAVE_ACCESS, &value),
+            self.running(AGENT, "Agent access"),
+        ];
+        commands.extend(self.load());
         commands
     }
 
@@ -939,6 +1001,80 @@ impl Settings {
                 let (text, indicator) = outcome("New Agent chat settings", &result);
                 vec![self.report(AGENT, text, indicator)]
             }
+            ACCESS => {
+                match result.map(serde_json::from_value::<Access>) {
+                    Ok(Ok(access)) => self.access = access,
+                    Ok(Err(error)) => {
+                        return vec![self.report(
+                            AGENT,
+                            format!("Agent access · ERROR · {error}"),
+                            "error",
+                        )];
+                    }
+                    Err(failure) => {
+                        return vec![self.report(
+                            AGENT,
+                            format!("Agent access · ERROR · {}", failure.message),
+                            "error",
+                        )];
+                    }
+                }
+                self.load()
+            }
+            SAVE_ACCESS => {
+                let (text, indicator) = outcome("Agent access", &result);
+                vec![self.report(AGENT, text, indicator)]
+            }
+            MCP => match result {
+                Ok(value) => {
+                    self.mcp = Some(
+                        value["servers"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .map(|server| (text_of(server, "name"), text_of(server, "kind")))
+                            .collect(),
+                    );
+                    Vec::new()
+                }
+                Err(failure) => {
+                    self.mcp = Some(Vec::new());
+                    vec![self.report(
+                        AGENT,
+                        format!("Load MCP servers · ERROR · {}", failure.message),
+                        "error",
+                    )]
+                }
+            },
+            SYSTEM => match result {
+                Ok(value) => {
+                    let pairs = |key: &str| -> Vec<(String, String)> {
+                        value[key]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .map(|item| (text_of(item, "name"), text_of(item, "description")))
+                            .collect()
+                    };
+                    self.system = Some(System {
+                        skills: pairs("skills"),
+                        agents: pairs("agents"),
+                        instructions: value["instructions"].as_bool().unwrap_or(false),
+                    });
+                    Vec::new()
+                }
+                Err(failure) => {
+                    self.system = Some(System::default());
+                    vec![self.report(
+                        AGENT,
+                        format!(
+                            "Load Copilot skills and agents · ERROR · {}",
+                            failure.message
+                        ),
+                        "error",
+                    )]
+                }
+            },
             _ => Vec::new(),
         }
     }
@@ -1129,6 +1265,70 @@ impl Settings {
                 Ok(level) if level >= 0.0 => self.reasoning(level as usize),
                 _ => Vec::new(),
             },
+            Msg::Level => match value.parse::<f64>() {
+                Ok(level) if (0.0..=MAX_ACCESS_LEVEL as f64).contains(&level) => {
+                    let mut access = self.access.clone();
+                    access.level = level as u8;
+                    self.save_access(access)
+                }
+                _ => Vec::new(),
+            },
+            Msg::PageActions => {
+                let mut access = self.access.clone();
+                access.page_actions = if value == "true" {
+                    PageActions::Action
+                } else {
+                    PageActions::Document
+                };
+                self.save_access(access)
+            }
+            Msg::WebData | Msg::ReadDirectories | Msg::Shell | Msg::Write => {
+                let mut access = self.access.clone();
+                let choice = if value == "true" {
+                    Confirm::Ask
+                } else {
+                    Confirm::Allow
+                };
+                match msg {
+                    Msg::WebData => access.web_data = choice,
+                    Msg::ReadDirectories => access.read_directories = choice,
+                    Msg::Shell => access.shell = choice,
+                    _ => access.write = choice,
+                }
+                self.save_access(access)
+            }
+            Msg::Mcp(name) => {
+                let mut access = self.access.clone();
+                if value == "true" {
+                    if !access.mcp_servers.contains(&name) {
+                        access.mcp_servers.push(name);
+                    }
+                } else {
+                    access.mcp_servers.retain(|server| server != &name);
+                }
+                self.save_access(access)
+            }
+            Msg::Skill(name) => {
+                let mut access = self.access.clone();
+                access.off_skills.retain(|off| off != &name);
+                if value != "true" {
+                    access.off_skills.push(name);
+                }
+                self.save_access(access)
+            }
+            Msg::SubAgent(name) => {
+                let mut access = self.access.clone();
+                access.off_agents.retain(|off| off != &name);
+                if value != "true" {
+                    access.off_agents.push(name);
+                }
+                self.save_access(access)
+            }
+            Msg::Instructions => {
+                let mut access = self.access.clone();
+                access.off_instructions = value != "true";
+                self.save_access(access)
+            }
         }
     }
 
@@ -1815,6 +2015,17 @@ impl Settings {
     }
 
     fn view_agent(&self) -> Vec<ui::Node> {
+        vec![
+            ui::column(self.view_models())
+                .variant("group")
+                .key("agent-settings-chats"),
+            ui::column(self.view_access())
+                .variant("group")
+                .key("agent-settings-access"),
+        ]
+    }
+
+    fn view_models(&self) -> Vec<ui::Node> {
         let mut body = vec![ui::heading("New Agent chats")];
         let Some(catalog) = &self.catalog else {
             body.push(
@@ -1826,7 +2037,7 @@ impl Settings {
                 .variant("muted")
                 .key("agent-models-loading"),
             );
-            return vec![ui::column(body).variant("loose").key("agent-settings")];
+            return body;
         };
         let current = self.model_id();
         let mut choices: Vec<ui::Choice> = catalog
@@ -1886,6 +2097,164 @@ impl Settings {
             slider = slider.marker(index as u32, "Model default");
         }
         body.push(slider);
-        vec![ui::column(body).variant("loose").key("agent-settings")]
+        body
+    }
+
+    fn view_access(&self) -> Vec<ui::Node> {
+        let access = &self.access;
+        let level = access.level as usize;
+        let ask = |label: &str, value: Confirm, msg: Msg, key: &str| {
+            ui::checkbox(label, value == Confirm::Ask, &msg).key(key.to_owned())
+        };
+        let (summary, mut options) = match level {
+            0 => (
+                "The Agent sees only this application: Console checks and the inspected page. It has no internet, files, skills or MCP servers.",
+                vec![
+                    ui::checkbox(
+                        "Ask before every page action (forms, clicks), not once per page",
+                        access.page_actions == PageActions::Action,
+                        &Msg::PageActions,
+                    )
+                    .key("agent-access-page-actions"),
+                ],
+            ),
+            1 => (
+                "The Agent gets data from the internet on its own: documentation, issues, changelogs and other public pages, including requests with parameters in the link. It does not control your open page and does not see your logins or cookies. Plain requests need no confirmation.",
+                vec![ask(
+                    "Ask before sending data out (a link with parameters, a fragment or credentials)",
+                    access.web_data,
+                    Msg::WebData,
+                    "agent-access-web-data",
+                )],
+            ),
+            2 => (
+                "The Agent can use what your Copilot has on this computer: skills, custom agents, instructions and MCP servers. Turn off what it must not use. MCP servers use your Copilot sign-ins, so the Agent acts as you there.",
+                self.view_tools(),
+            ),
+            3 => (
+                "The Agent gets access to the file system, read-only: it can read any file you can read, but cannot change anything.",
+                vec![ask(
+                    "Ask before reading a new folder (and its subfolders)",
+                    access.read_directories,
+                    Msg::ReadDirectories,
+                    "agent-access-read",
+                )],
+            ),
+            _ => (
+                "The Agent can run shell commands and create or change files.",
+                vec![
+                    ask(
+                        "Ask before running shell commands",
+                        access.shell,
+                        Msg::Shell,
+                        "agent-access-shell",
+                    ),
+                    ask(
+                        "Ask before writing or editing files",
+                        access.write,
+                        Msg::Write,
+                        "agent-access-write",
+                    ),
+                ],
+            ),
+        };
+        let mut body = vec![
+            ui::heading("Agent access"),
+            ui::row(vec![
+                ui::text("Level"),
+                ui::spacer(),
+                ui::text(format!("{level} · {}", ACCESS_LEVELS[level]))
+                    .variant("bold")
+                    .key("agent-access-value"),
+            ]),
+            ui::slider(0.0, MAX_ACCESS_LEVEL as f64, 1.0, level as f64, &Msg::Level)
+                .labels(
+                    ACCESS_LEVELS
+                        .iter()
+                        .map(|name| (*name).to_owned())
+                        .collect(),
+                )
+                .marker(0, "Default")
+                .key("agent-access-level"),
+            ui::text(summary)
+                .variant("muted")
+                .key("agent-access-summary"),
+        ];
+        body.append(&mut options);
+        body
+    }
+
+    fn view_tools(&self) -> Vec<ui::Node> {
+        let access = &self.access;
+        let section = |title: &str| ui::text(title.to_owned()).variant("bold");
+        let mut nodes = vec![section("Skills")];
+        match &self.system {
+            None => nodes.push(ui::text("Loading skills…").variant("muted")),
+            Some(system) if system.skills.is_empty() => {
+                nodes.push(ui::text("Copilot has no skills configured.").variant("muted"))
+            }
+            Some(system) => nodes.extend(system.skills.iter().map(|(name, description)| {
+                ui::checkbox(
+                    name.clone(),
+                    !access.off_skills.contains(name),
+                    &Msg::Skill(name.clone()),
+                )
+                .title(description.clone())
+                .key(format!("agent-access-skill-{name}"))
+            })),
+        }
+        nodes.push(section("Custom agents"));
+        match &self.system {
+            None => nodes.push(ui::text("Loading agents…").variant("muted")),
+            Some(system) if system.agents.is_empty() => {
+                nodes.push(ui::text("Copilot has no custom agents configured.").variant("muted"))
+            }
+            Some(system) => nodes.extend(system.agents.iter().map(|(name, description)| {
+                ui::checkbox(
+                    name.clone(),
+                    !access.off_agents.contains(name),
+                    &Msg::SubAgent(name.clone()),
+                )
+                .title(description.clone())
+                .key(format!("agent-access-agent-{name}"))
+            })),
+        }
+        nodes.push(section("Instructions"));
+        nodes.push(match &self.system {
+            Some(system) if system.instructions => ui::checkbox(
+                "Your Copilot instructions (copilot-instructions.md)",
+                !access.off_instructions,
+                &Msg::Instructions,
+            )
+            .key("agent-access-instructions"),
+            Some(_) => ui::text("Copilot has no custom instructions.").variant("muted"),
+            None => ui::text("Loading instructions…").variant("muted"),
+        });
+        nodes.push(section("MCP servers"));
+        nodes.extend(self.view_servers());
+        nodes
+    }
+
+    fn view_servers(&self) -> Vec<ui::Node> {
+        let Some(servers) = &self.mcp else {
+            return vec![ui::text("Loading MCP servers…").variant("muted")];
+        };
+        if servers.is_empty() {
+            return vec![
+                ui::text("No MCP servers are configured for Copilot (mcp-config.json).")
+                    .variant("muted"),
+            ];
+        }
+        servers
+            .iter()
+            .map(|(name, kind)| {
+                ui::checkbox(
+                    format!("{name} · {kind}"),
+                    self.access.mcp_servers.contains(name),
+                    &Msg::Mcp(name.clone()),
+                )
+                .key(format!("agent-access-mcp-{name}"))
+            })
+            .collect()
     }
 }

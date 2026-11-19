@@ -48,6 +48,10 @@ pub const NAMES: &[&str] = &[
     "agent.sessions",
     "agent.models",
     "agent.options",
+    "agent.access",
+    "agent.access.save",
+    "agent.mcp",
+    "agent.system",
     "modules.check",
     "modules.install",
     "modules.remove",
@@ -273,6 +277,9 @@ pub fn document_insert(tag: impl Into<String>, text: &str) -> Cmd {
 /// Commands only built-in modules (Settings) may send: they manage the modules, their
 /// sources and the App.
 pub const PRIVILEGED: &[&str] = &[
+    "agent.access.save",
+    "agent.mcp",
+    "agent.system",
     "modules.check",
     "modules.install",
     "modules.remove",
@@ -340,6 +347,30 @@ pub fn agent_models(tag: impl Into<String>) -> Cmd {
 /// reply is the saved options.
 pub fn agent_options(tag: impl Into<String>, options: Option<&Value>) -> Cmd {
     Cmd::new(tag, "agent.options", &json!({"options": options}))
+}
+
+/// Reads what the Agent may use (the access level and its options); the reply is the saved
+/// access, or the isolated default when none is.
+pub fn agent_access(tag: impl Into<String>) -> Cmd {
+    Cmd::new(tag, "agent.access", &json!({}))
+}
+
+/// Saves what the Agent may use. Only built-in modules may; the reply is the saved access.
+pub fn agent_access_save(tag: impl Into<String>, access: &Value) -> Cmd {
+    Cmd::new(tag, "agent.access.save", &json!({"access": access}))
+}
+
+/// The MCP servers of the Copilot configuration the Agent can be given: `{servers: [{name,
+/// kind}]}`. Only built-in modules may ask.
+pub fn agent_mcp(tag: impl Into<String>) -> Cmd {
+    Cmd::new(tag, "agent.mcp", &json!({}))
+}
+
+/// The skills, custom agents and instructions of the Copilot configuration the Agent can be
+/// given: `{skills: [{name, description}], agents: [{name, description}], instructions}`. Only
+/// built-in modules may ask.
+pub fn agent_system(tag: impl Into<String>) -> Cmd {
+    Cmd::new(tag, "agent.system", &json!({}))
 }
 
 /// The sources with what they offer and what is installed: `{sources, installed}`. `force`
