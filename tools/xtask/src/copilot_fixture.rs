@@ -1014,8 +1014,8 @@ Raw HTML: <img src="https://images.fixture.invalid/raw" onerror="globalThis.agen
         let params = &request["params"];
         let session = params["sessionId"].as_str().unwrap_or("");
         let result = match method {
-            "connect" => json!({"ok":true,"protocolVersion":3,"version":"services-sdk-acceptance"}),
-            "ping" => json!({"message":params["message"],"timestamp":0,"protocolVersion":3}),
+            "connect" => json!({"ok":true,"protocolVersion":4,"version":"services-sdk-acceptance"}),
+            "ping" => json!({"message":params["message"],"timestamp":0,"protocolVersion":4}),
             "session.model.list" => json!({"auto":{"defaultTier":"standard","tiers":[]},"list":[
                 {"id":"sample-versatile","name":"Sample Versatile","modelPickerCategory":"versatile",
                  "capabilities":{"supports":{"vision":false,"reasoningEffort":true},"limits":{}},
@@ -1034,32 +1034,39 @@ Raw HTML: <img src="https://images.fixture.invalid/raw" onerror="globalThis.agen
             "session.delete" => json!({"success":true}),
             "session.create" | "session.resume" => {
                 if params["name"] == "Services DevTools model settings" {
-                    ensure!(params["availableTools"] == json!([]));
-                    ensure!(params["requestPermission"] == true);
+                    ensure!(params["tools"]["availableTools"] == json!([]));
+                    ensure!(params["permissions"]["request"] == true);
                     return self.send(json!({"jsonrpc":"2.0","id":request["id"],
                         "result":{"sessionId":session,"workspacePath":params["workingDirectory"]}}));
                 }
-                let folders: Vec<String> = match params.get("skillDirectories") {
+                let folders: Vec<String> = match params["skills"].get("directories") {
                     None => Vec::new(),
                     Some(value) => serde_json::from_value(value.clone())
                         .context("skillDirectories must list paths")?,
                 };
                 if folders.is_empty() {
-                    ensure!(params["availableTools"] == json!(["custom:*"]));
                     ensure!(
-                        params["enableSkills"] != true,
+                        params["tools"]["availableTools"] == json!(["custom:*", "builtin:view"])
+                    );
+                    ensure!(
+                        params["skills"]["enabled"] != true,
                         "Skills are enabled without a team folder"
                     );
                 } else {
-                    ensure!(params["availableTools"] == json!(["custom:*", "builtin:skill"]));
                     ensure!(
-                        params["enableSkills"] == true,
+                        params["tools"]["availableTools"]
+                            == json!(["custom:*", "builtin:skill", "builtin:view"])
+                    );
+                    ensure!(
+                        params["skills"]["enabled"] == true,
                         "A team folder needs enableSkills"
                     );
                 }
                 self.skills.insert(session.into(), folders);
-                ensure!(params["requestPermission"] == true);
-                let tools = params["tools"].as_array().context("Missing custom tools")?;
+                ensure!(params["permissions"]["request"] == true);
+                let tools = params["tools"]["definitions"]
+                    .as_array()
+                    .context("Missing custom tools")?;
                 ensure!(
                     tools.len() == 28 && tools.iter().all(|tool| tool["skipPermission"] == true)
                 );
@@ -1107,12 +1114,13 @@ Raw HTML: <img src="https://images.fixture.invalid/raw" onerror="globalThis.agen
                 .join(".fixture-model-options.json");
                 let options = if method == "session.resume" {
                     ensure!(
-                        params.get("model").is_none() && params.get("reasoningEffort").is_none(),
+                        params.get("model").is_none()
+                            && params["inference"].get("reasoningEffort").is_none(),
                         "Resuming a chat must preserve its existing model and reasoning"
                     );
                     serde_json::from_slice(&std::fs::read(path)?)?
                 } else {
-                    let options = json!({"model":params["model"],"reasoningEffort":params["reasoningEffort"]});
+                    let options = json!({"model":params["model"],"reasoningEffort":params["inference"]["reasoningEffort"]});
                     std::fs::write(path, serde_json::to_vec(&options)?)?;
                     options
                 };

@@ -1429,6 +1429,7 @@ fn follow_column(props: &FollowProps) -> Html {
     let pinned = use_mut_ref(|| true);
     let seen = use_mut_ref(|| 0usize);
     let top = use_mut_ref(|| 0);
+    let height = use_mut_ref(|| 0);
     let onscroll = {
         let (node, pinned) = (node.clone(), pinned.clone());
         Callback::from(move |_: Event| {
@@ -1452,7 +1453,13 @@ fn follow_column(props: &FollowProps) -> Html {
             if count > before {
                 *pinned.borrow_mut() = true;
             }
+            let grown = node.cast::<Element>().is_some_and(|element| {
+                element.scroll_height()
+                    > mem::replace(&mut *height.borrow_mut(), element.scroll_height())
+            });
+            // Only new content moves the view; resizing the column keeps the reading position.
             if *pinned.borrow()
+                && (grown || count > before)
                 && let Some(element) = node.cast::<Element>()
             {
                 let options = web_sys::ScrollToOptions::new();
