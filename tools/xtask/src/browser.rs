@@ -1252,6 +1252,7 @@ fn seed_data(data: &Path) -> Result<Vec<(PathBuf, String)>> {
         ("opensearch", "http://opensearch.fixture.invalid:9200"),
         ("valkey", "redis://valkey.fixture.invalid:6379"),
         ("mongodb", "mongodb://mongodb.fixture.invalid:27017/app"),
+        ("kubernetes", "k8s://fixture/default"),
     ] {
         seeds.push((
             local.join(format!("hints/{service}.md")),

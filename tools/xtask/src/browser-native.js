@@ -4,7 +4,7 @@
   await wait(() => document.querySelector('[data-testid="native-status"]')?.hidden,
     'Installed companion must connect');
   await openConsole();
-  const services = ['mysql', 'rest', 'graphql', 'grpc', 'splunk', 'terminal', 'artemis', 'opensearch', 'valkey', 'mongodb'];
+  const services = ['mysql', 'rest', 'graphql', 'grpc', 'splunk', 'terminal', 'artemis', 'opensearch', 'valkey', 'mongodb', 'kubernetes'];
   for (const service of services) {
     await click(testid(`console-service-${service}`));
     await click(testid('console-editor-editor'), 80, 16);
@@ -27,6 +27,7 @@
     graphql: 'https://graphql.fixture.invalid', grpc: 'grpc://grpc.fixture.invalid:9000',
     splunk: 'https://splunk.fixture.invalid', artemis: 'http://artemis.fixture.invalid:8161',
     opensearch: 'http://opensearch.fixture.invalid:9200', valkey: 'redis://valkey.fixture.invalid:6379', mongodb: 'mongodb://mongodb.fixture.invalid:27017/app',
+    kubernetes: 'k8s://fixture/default',
   };
   for (const service of services) {
     await click(testid(`console-service-${service}`));

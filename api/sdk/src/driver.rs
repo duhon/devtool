@@ -9,6 +9,9 @@ pub enum Stage {
     Dns,
     Connect,
     Tls,
+    /// The credentials could not be obtained: a kubeconfig that cannot be read, an exec
+    /// plugin that failed.
+    Auth,
     Send,
     /// Writing to an open connection (a tcp session).
     Write,

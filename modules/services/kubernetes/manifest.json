@@ -1,0 +1,11 @@
+{
+  "id": "kubernetes",
+  "kind": "service",
+  "name": "Kubernetes",
+  "version": "1.0.0",
+  "description": "Kubernetes resources with kubectl-style verbs, discovery of contexts, namespaces and objects, and apply from YAML.",
+  "abi": 2,
+  "app": ">=4.1.0",
+  "drivers": {"kubernetes": "1"},
+  "order": 11
+}

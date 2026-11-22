@@ -12,6 +12,7 @@ pub mod diff;
 pub mod driver;
 pub mod grpc;
 pub mod http;
+pub mod kubernetes;
 pub mod lang;
 pub mod manifest;
 pub mod mongodb;
