@@ -199,9 +199,10 @@ pub fn import(service: &str, command: &str) -> Result<String, String> {
 /// The check as a command (curl, grpcurl…) with its variables resolved, secrets included:
 /// the command runs elsewhere, where the variables don't exist.
 pub fn export(service: &str, source: &str) -> Result<String, String> {
-    let source = crate::modules::registry::with(|modules| modules.resolve(source, false))
-        .map_err(|error| format!("Variables could not be resolved: {error}"))?
-        .text;
+    let source =
+        crate::modules::registry::with(|modules| modules.resolve_in(source, false, Some(service)))
+            .map_err(|error| format!("Variables could not be resolved: {error}"))?
+            .text;
     let (check, _) = kernel_run(service, &source)?;
     crate::modules::registry::with(|modules| modules.export(service, check))
 }
@@ -271,8 +272,9 @@ impl Run {
     /// Resolves the variables of the source and title History gets.
     pub fn resolve(&mut self) -> Result<(), String> {
         let history = &self.message["history"];
+        let service = self.message["service"].as_str();
         let resolve = |text: &str| {
-            crate::modules::registry::with(|modules| modules.resolve(text, false))
+            crate::modules::registry::with(|modules| modules.resolve_in(text, false, service))
                 .map(|resolution| (resolution.text, resolution.secrets))
         };
         let resolved =

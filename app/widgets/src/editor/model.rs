@@ -49,7 +49,8 @@ pub struct Setup {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Context {
     pub hints: Vec<(String, String)>,
-    pub templates: BTreeMap<String, String>,
+    /// The template library: `{service: {section: text}}`, global templates under `*`.
+    pub templates: BTreeMap<String, BTreeMap<String, String>>,
     pub discovery: serde_json::Value,
 }
 
@@ -865,7 +866,9 @@ impl Session {
                 self.ask_hints();
             }
             Command::Newline => {
-                self.operation(|session| session.change(|state| state.newline_and_indent(now)));
+                if !self.enter_hook(now) {
+                    self.operation(|session| session.change(|state| state.newline_and_indent(now)));
+                }
                 self.show_hints(true);
             }
             Command::ToggleFold => self.toggle_fold(self.state.cursor().line),
@@ -1149,6 +1152,32 @@ impl Session {
             .inserted(self.state.lines(), from, inserted, origin)
             .map(|transaction| self.change(|state| state.apply(transaction, now)))
             .unwrap_or_default()
+    }
+
+    /// Enter at the end of a line may be the owner's: it answers with the edit to make instead
+    /// of a line break, or with an error to report. True when it did.
+    fn enter_hook(&mut self, now: f64) -> bool {
+        let selection = self.state.selection();
+        let cursor = self.state.cursor();
+        if selection.anchor != selection.head
+            || cursor.ch != utf16_len(self.state.line(cursor.line))
+        {
+            return false;
+        }
+        let extension = self.extension().clone();
+        let answer = extension.enter(self.state.lines(), cursor, &self.context);
+        match answer {
+            None => false,
+            Some(Err(error)) => {
+                self.events.push(Event::EditError(error));
+                true
+            }
+            Some(Ok(mut transaction)) => {
+                transaction.origin = "enter".into();
+                self.operation(|session| session.change(|state| state.apply(transaction, now)));
+                true
+            }
+        }
     }
 
     /// Hints after typing or pasting.
@@ -1707,6 +1736,78 @@ mod tests {
             key: name,
             ..Key::default()
         }
+    }
+
+    struct Owner;
+
+    impl Extension for Owner {
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+
+        fn enter(
+            &self,
+            lines: &[String],
+            cursor: Position,
+            _context: &Context,
+        ) -> Option<Result<Transaction, String>> {
+            match lines[cursor.line].as_str() {
+                "go" => Some(Ok(Transaction::replace(
+                    Position { line: 1, ch: 0 },
+                    Position { line: 1, ch: 1 },
+                    "new",
+                    "enter",
+                ))),
+                "bad" => Some(Err("wrong".into())),
+                _ => None,
+            }
+        }
+    }
+
+    #[test]
+    fn enter_at_the_end_of_a_line_may_be_the_owners_edit_or_error() {
+        let mut editor = Session::new(
+            Setup::default(),
+            Rc::new(Owner),
+            "go
+x
+bad
+plain",
+        );
+        editor.select(Selection::cursor(at(0, 2)), false);
+        editor.take_events();
+        editor.update(Msg::Command(Command::Newline), 0.0);
+        assert_eq!(
+            editor.source().as_ref(),
+            "go
+new
+bad
+plain"
+        );
+        editor.select(Selection::cursor(at(2, 3)), false);
+        let events = editor.update(Msg::Command(Command::Newline), 0.0);
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, Event::EditError(e) if e == "wrong"))
+        );
+        assert_eq!(
+            editor.source().as_ref(),
+            "go
+new
+bad
+plain"
+        );
+        editor.select(Selection::cursor(at(3, 5)), false);
+        editor.update(Msg::Command(Command::Newline), 0.0);
+        assert_eq!(
+            editor.source().as_ref(),
+            "go
+new
+bad
+plain
+"
+        );
     }
 
     #[test]

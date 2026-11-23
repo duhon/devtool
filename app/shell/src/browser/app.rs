@@ -196,8 +196,6 @@ pub struct App {
     runs: BTreeMap<String, Run>,
     connection: Option<String>,
     notice: Option<Notice>,
-    /// Variable references completion offers, with their values: `({{set:name}}, value)`.
-    vars: Vec<(String, String)>,
     drag: Option<String>,
     module_status: BTreeMap<String, ModuleStatus>,
     module_history: BTreeMap<String, Vec<ModuleStatus>>,
@@ -273,7 +271,6 @@ impl Component for App {
             runs: BTreeMap::new(),
             connection: None,
             notice: None,
-            vars: Vec::new(),
             drag: None,
             module_status: BTreeMap::new(),
             module_history: BTreeMap::new(),
@@ -1108,14 +1105,7 @@ impl App {
                     .agent_workspace
                     .context_page(&service, cursor, offset, limit)?;
                 value["services"] = json!(services_kernel::modules::services::ids());
-                value["variables"] = json!(
-                    self.vars
-                        .iter()
-                        .map(|(name, _)| name)
-                        .filter(|name| !name.starts_with("{{env:"))
-                        .take(512)
-                        .collect::<Vec<_>>()
-                );
+                value["variables"] = json!(variable_names());
                 value["schemaAvailable"] = json!(self.module_schema(&service).is_some());
                 value
             }
@@ -1264,7 +1254,7 @@ impl App {
                     check_id,
                     revision,
                     params,
-                    variables: self.vars.clone(),
+                    variables: variable_refs(),
                     approval,
                     started: false,
                 });
@@ -1293,7 +1283,7 @@ impl App {
                 return Err("Console is no longer active".into());
             }
             self.agent_workspace.validate(&service, &pending.revision)?;
-            if self.vars != pending.variables {
+            if variable_refs() != pending.variables {
                 return Err("CONFLICT: variables changed; request new approval".into());
             }
             self.agent_workspace.check_line(&service, &pending.check_id)
@@ -1393,6 +1383,30 @@ fn agent_debug(debug: &Value, response: bool) -> Value {
     scrub(&mut debug, response);
     debug
 }
+/// Every variable of the tree with its value, as `({{.panel.path}}, value)`, in priority order.
+fn variable_refs() -> Vec<(String, String)> {
+    services_sdk::refs::leaves(&services_kernel::modules::registry::root())
+        .into_iter()
+        .map(|leaf| (format!("{{{{.{}.{}}}}}", leaf.panel, leaf.path), leaf.value))
+        .collect()
+}
+
+/// The references the Agent may use, never values: `{{.var.x}}` and, for panels other than
+/// the environment, the relative `{{:x}}`.
+fn variable_names() -> Vec<String> {
+    let mut names = Vec::new();
+    for leaf in services_sdk::refs::leaves(&services_kernel::modules::registry::root()) {
+        names.push(format!("{{{{.{}.{}}}}}", leaf.panel, leaf.path));
+        if leaf.panel != "env" {
+            names.push(format!("{{{{:{}}}}}", leaf.path));
+        }
+    }
+    let mut seen = BTreeSet::new();
+    names.retain(|name| seen.insert(name.clone()));
+    names.truncate(512);
+    names
+}
+
 /// Resolves the variables of an Agent run's parameters the way a console run does.
 fn resolve_agent_params(value: Value) -> Result<Value, String> {
     match value {

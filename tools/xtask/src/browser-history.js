@@ -3,7 +3,7 @@
   await openConsole();
   await click(testid('console-service-rest'));
   const editor=editorOf('console-editor');
-  setSource(editor,`#check History acceptance\n#target\n${fixtureUrl}/history-fixture?value={{env:SERVICES_DEVTOOLS_ENV_PROBE}}\n#action\nPUT\n#metadata\nContent-Type: application/json\nAuthorization: Bearer history-secret-token\n#payload\n{"text":"first","env":"{{env:SERVICES_DEVTOOLS_ENV_PROBE}}"}`);
+  setSource(editor,`#check History acceptance\n#target\n${fixtureUrl}/history-fixture?value={{.env.SERVICES_DEVTOOLS_ENV_PROBE}}\n#action\nPUT\n#metadata\nContent-Type: application/json\nAuthorization: Bearer history-secret-token\n#payload\n{"text":"first","env":"{{.env.SERVICES_DEVTOOLS_ENV_PROBE}}"}`);
   const current=Number(testid('console-session-name').dataset.sessionId);
   const snapshot=async()=>(await testDriver.sessionLibrary()).sessions.find(s=>s.id===current).snapshot.console;
   await wait(async()=>(await snapshot()).checkIdentities?.rest?.length===1);
@@ -92,7 +92,7 @@
   assert(!list().querySelector('.is-primary'),'Collapsing the current execution must remove its current mark');
   assert(await detail(9)===oldest,'The oldest execution must remain visible and immutable when reopened');
   const latest=await detail(0);
-  assert(latest.includes('third') && latest.includes('companion-fixture-only') && !latest.includes('{{env:'),
+  assert(latest.includes('third') && latest.includes('companion-fixture-only') && !latest.includes('{{.env.'),
     `History must show full resolved sections/body rather than current variable references: ${latest}`);
   assert(!latest.includes('history-secret-token'),'History must not persist exposed Authorization secrets');
   const header=latest.match(/\n#responce [^\n]+ · OK\n/)?.[0];

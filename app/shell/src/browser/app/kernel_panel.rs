@@ -232,8 +232,6 @@ impl App {
 
     /// What the modules add to the editors changed: the console editors complete anew.
     pub(super) fn contributed(&mut self) {
-        self.vars = services_kernel::modules::registry::variables();
-        services_widgets::view::hints_changed();
         self.templates = services_kernel::modules::registry::contributions("templates")
             .into_iter()
             .filter_map(|library| {

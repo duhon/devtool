@@ -33,15 +33,23 @@ impl Runtime {
     }
     fn collect_sensitive(value: &Value, out: &mut Vec<String>) {
         if let Some(object) = value.as_object() {
-            for (key, value) in object {
+            for (key, value) in object.iter().filter(|(key, _)| !key.starts_with('#')) {
                 if crate::agent::Redactor::sensitive_name(key) {
-                    if let Some(value) = value.as_str() {
-                        out.push(value.to_owned());
-                    }
+                    Self::collect_leaves(value, out);
                 } else {
                     Self::collect_sensitive(value, out);
                 }
             }
+        }
+    }
+    fn collect_leaves(value: &Value, out: &mut Vec<String>) {
+        match value {
+            Value::String(text) => out.push(text.clone()),
+            Value::Object(object) => object
+                .iter()
+                .filter(|(key, _)| !key.starts_with('#'))
+                .for_each(|(_, value)| Self::collect_leaves(value, out)),
+            _ => {}
         }
     }
     pub fn agent_sensitive_values(&self) -> Result<Vec<String>> {
@@ -298,4 +306,17 @@ pub fn error_reply(error: &crate::core::error::Error, id: Value) -> Value {
     reply["id"] = id;
     reply["ok"] = json!(false);
     reply
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sensitive_hashes_contribute_every_leaf() {
+        let vars = json!({"credentials": {"user": "bob", "inner": {"pass": "hunter2"}, "# note": ""}, "plain": {"token": "t1", "x": "keep"}});
+        let mut out = Vec::new();
+        Runtime::collect_sensitive(&vars, &mut out);
+        assert_eq!(out, ["bob", "hunter2", "t1"]);
+    }
 }

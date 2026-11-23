@@ -114,7 +114,7 @@ pub fn resolve(harness: &mut Harness, cmds: &[Cmd], vars: &[(&str, &str)]) -> Ve
     let mut text = args["text"].as_str().unwrap().to_owned();
     for (name, value) in vars {
         let escaped = serde_json::to_string(value).unwrap();
-        text = text.replace(&format!("{{{{{name}}}}}"), &escaped[1..escaped.len() - 1]);
+        text = text.replace(&format!("{{{{:{name}}}}}"), &escaped[1..escaped.len() - 1]);
     }
     harness.reply(&resolve.tag, json!(text))
 }

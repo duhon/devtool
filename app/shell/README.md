@@ -80,7 +80,7 @@ Native host hints use `{service:"hints",op:"get"|"save",serviceName,text}`.
 
 Templates are global, not part of Console session snapshots. The right Templates
 panel edits per-service/section raw definitions (`@name description` plus a literal
-multiline body); drafts persist separately in `servicesConsole.templateDrafts`.
+multiline body), saved as typed even when a definition has an error.
 The native `.console-templates.json` library is served over native messaging.
 Saves validate definitions, lock across
 processes, compare the previous section text and atomically rename a private file.
@@ -101,6 +101,9 @@ Completion inserts literal bodies with one undo step, normalizing inline `#secti
 and replacing `#check @name` with the entire supplied check. Check templates
 without their own check header receive `#check <description>` (falling back to
 the template name for an empty description); explicit check headers are preserved.
+A check template with parameters completes to `#check <description> @name(` and its arguments; Enter
+on the complete call replaces the rest of the check with the expansion (without the
+template's own check header), keeping the call as the check header.
 Template suggestions open on Space immediately after a section marker; `@name`
 on the same marker line filters them. Standalone references and ordinary section
 content do not trigger template suggestions.

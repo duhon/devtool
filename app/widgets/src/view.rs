@@ -20,10 +20,6 @@ pub const CSS: &str = include_str!("view.css");
 pub type Action = (Vec<u8>, Option<String>);
 
 thread_local! {
-    /// The editors on screen that complete hints, by id, with their language.
-    static HINT_EDITORS: std::cell::RefCell<std::collections::BTreeMap<u64, (editor::Handle, AttrValue)>> =
-        const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
-    static NEXT_EDITOR: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     /// Typing not yet told to its module (`on_input` waits), by field: module, msg, text and
     /// the timeout that tells it.
     static PENDING: std::cell::RefCell<std::collections::BTreeMap<u64, Pending>> =
@@ -86,27 +82,6 @@ pub fn take_pending(module: &str) -> Vec<Action> {
             })
             .collect()
     })
-}
-
-/// The hints the editors' languages complete changed: the editors on screen follow.
-pub fn hints_changed() {
-    let editors: Vec<(editor::Handle, AttrValue)> =
-        HINT_EDITORS.with(|editors| editors.borrow().values().cloned().collect());
-    for (handle, language) in editors {
-        set_hints(&handle, &language);
-    }
-}
-
-/// Gives `handle` the hints of `language`; false when it has none.
-fn set_hints(handle: &editor::Handle, language: &str) -> bool {
-    let Some(hints) = extension::languages().hints(language) else {
-        return false;
-    };
-    handle.set_context(crate::editor::model::Context {
-        hints,
-        ..Default::default()
-    });
-    true
 }
 
 /// The estimated height of a row of a virtual list, in CSS pixels.
@@ -1036,22 +1011,6 @@ fn text_editor(props: &EditorProps) -> Html {
             editor::Handle::with_extension(setup, extension, &text)
         })
     };
-    {
-        let handle = (*handle).clone();
-        let language = AttrValue::from(props.editor.language.clone());
-        use_effect_with((), move |()| {
-            let id = NEXT_EDITOR.with(|next| {
-                next.set(next.get() + 1);
-                next.get()
-            });
-            if set_hints(&handle, &language) {
-                HINT_EDITORS.with(|editors| editors.borrow_mut().insert(id, (handle, language)));
-            }
-            move || {
-                HINT_EDITORS.with(|editors| editors.borrow_mut().remove(&id));
-            }
-        });
-    }
     {
         let handle = (*handle).clone();
         use_effect_with(

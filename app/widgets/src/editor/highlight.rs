@@ -274,40 +274,47 @@ fn char_end(text: &str, pos: usize, n: usize) -> usize {
         .map_or(text.len(), |(index, _)| pos + index)
 }
 
-/// `{{variable}}` everywhere; the overlay's style replaces the base style.
+const REFERENCE: &str = "gw-placeholder";
+const MARK: &str = "gw-placeholder-colon";
+
+/// `{{reference}}` everywhere (separators `.` `:` `*` `~` in a paler style) and live calls
+/// `{{@name(args)}}` by their parts; the overlay's style replaces the base style.
 fn overlay(text: &str) -> Vec<(usize, usize, &'static str)> {
     let mut out = Vec::new();
-    let (mut pos, mut open) = (0, false);
+    let (mut pos, mut depth) = (0, 0usize);
     while pos < text.len() {
         let rest = &text[pos..];
-        if rest.starts_with("{{") {
-            open = true;
-            out.push((pos, pos + 2, "gw-placeholder"));
+        if rest.starts_with("{{") && !text[..pos].ends_with('\\') {
+            out.push((pos, pos + 2, REFERENCE));
             pos += 2;
+            if text[pos..].starts_with('@') {
+                pos = call(text, pos, &mut out);
+            } else {
+                depth += 1;
+            }
             continue;
         }
-        if open {
+        if depth > 0 {
             if rest.starts_with("}}") {
-                open = false;
-                out.push((pos, pos + 2, "gw-placeholder"));
+                depth -= 1;
+                out.push((pos, pos + 2, REFERENCE));
                 pos += 2;
                 continue;
             }
-            if rest.starts_with(':') {
-                out.push((pos, pos + 1, "gw-placeholder-colon"));
+            if rest.starts_with([':', '.', '*', '~']) {
+                out.push((pos, pos + 1, MARK));
                 pos += 1;
                 continue;
             }
             let name = rest
-                .bytes()
-                .take_while(|b| b.is_ascii_alphanumeric() || *b == b'_' || *b == b'-')
-                .count();
+                .find([':', '.', '*', '~', '}', '{'])
+                .unwrap_or(rest.len());
             if name > 0 {
-                out.push((pos, pos + name, "gw-placeholder"));
+                out.push((pos, pos + name, REFERENCE));
                 pos += name;
                 continue;
             }
-            open = false;
+            depth = 0;
         }
         let ordinary = rest.find("{{").unwrap_or(rest.len());
         pos += if ordinary > 0 {
@@ -319,8 +326,79 @@ fn overlay(text: &str) -> Vec<(usize, usize, &'static str)> {
     out
 }
 
-/// Splits base tokens where overlay ranges begin and end; joins equal neighbours.
+/// The parts of the live call `@name(args)}}` at `pos`: `@`, brackets and commas as
+/// separators, the name as a definition, a `"literal"` as a string, a bare parameter as a
+/// template argument and a `:path`/`.path` as a reference. Returns where it ends.
+fn call(text: &str, mut pos: usize, out: &mut Vec<(usize, usize, &'static str)>) -> usize {
+    let word = |at: usize, dot: bool| {
+        text[at..]
+            .find(|c: char| !(c.is_alphanumeric() || matches!(c, '_' | '-') || dot && c == '.'))
+            .map_or(text.len(), |n| at + n)
+    };
+    out.push((pos, pos + 1, MARK));
+    let name = word(pos + 1, true);
+    if name > pos + 1 {
+        out.push((pos + 1, name, "def"));
+    }
+    pos = name;
+    let mut variable = false;
+    while let Some(c) = text[pos..].chars().next() {
+        if text[pos..].starts_with("}}") {
+            out.push((pos, pos + 2, REFERENCE));
+            return pos + 2;
+        }
+        let next = pos + c.len_utf8();
+        let (end, style) = match c {
+            '"' => {
+                let mut escaped = false;
+                let end = text[next..]
+                    .char_indices()
+                    .find(|&(_, ch)| {
+                        let close = ch == '"' && !escaped;
+                        escaped = ch == '\\' && !escaped;
+                        close
+                    })
+                    .map_or(text.len(), |(index, _)| next + index + 1);
+                variable = false;
+                (end, Some("string"))
+            }
+            '(' | ')' | ',' => {
+                variable = false;
+                (next, Some(MARK))
+            }
+            ':' | '.' => {
+                variable = true;
+                (next, Some(MARK))
+            }
+            '*' | '~' if variable => (next, Some(MARK)),
+            c if c.is_alphanumeric() || c == '_' => (
+                word(pos, false),
+                Some(if variable { REFERENCE } else { "tpl-arg" }),
+            ),
+            c if c.is_whitespace() => (next, None),
+            _ => (next, Some(REFERENCE)),
+        };
+        if let Some(style) = style {
+            out.push((pos, end, style));
+        }
+        pos = end;
+    }
+    pos
+}
+
+/// Splits base tokens where overlay ranges begin and end; joins equal neighbours. A base
+/// style with a `tpl-` class keeps it under the overlay.
 fn merge(base: &[(usize, Style)], overlay: &[(usize, usize, &'static str)]) -> Vec<(usize, Style)> {
+    let layered = |overlay: &'static str, base: Style| match base {
+        Some(base)
+            if base
+                .split_whitespace()
+                .any(|class| class.starts_with("tpl-")) =>
+        {
+            style(&format!("{overlay} {base}"))
+        }
+        _ => overlay,
+    };
     let mut out: Vec<(usize, Style)> = Vec::with_capacity(base.len());
     let mut push = |end: usize, style: Style| match out.last_mut() {
         Some(last) if last.1 == style => last.0 = end,
@@ -336,7 +414,7 @@ fn merge(base: &[(usize, Style)], overlay: &[(usize, usize, &'static str)]) -> V
             match overlay.get(next) {
                 Some(&(from, to, overlay)) if from <= at => {
                     let stop = to.min(end);
-                    push(stop, Some(overlay));
+                    push(stop, Some(layered(overlay, style)));
                     at = stop;
                 }
                 Some(&(from, _, _)) => {
@@ -418,7 +496,7 @@ fn fallback(text: &str, pos: usize) -> (usize, Style) {
     ];
     let rest = &text[pos..];
     let end = |n: usize| pos + n;
-    if rest.starts_with("{{") {
+    if rest.starts_with("{{") && !text[..pos].ends_with('\\') {
         return (
             rest.find("}}").map_or(text.len(), |n| end(n + 2)),
             Some("gw-placeholder"),
@@ -484,6 +562,50 @@ pub fn style(kind: &str) -> &'static str {
 mod tests {
     use super::*;
 
+    #[test]
+    fn template_classes_stay_under_the_reference_overlay() {
+        let text = "a {{x}}";
+        let merged = merge(&[(2, None), (7, Some("tpl-arg"))], &overlay(text));
+        assert_eq!(merged.last(), Some(&(7, Some("gw-placeholder tpl-arg"))));
+        let plain = merge(&[(7, Some("string"))], &overlay(text));
+        assert_eq!(plain.last(), Some(&(7, Some("gw-placeholder"))));
+        assert!(overlay(r"a \{{x}}").is_empty());
+    }
+
+    #[test]
+    fn calls_and_wildcards_are_colored_by_part() {
+        let parts = |text: &'static str| -> Vec<(&str, &str)> {
+            overlay(text)
+                .into_iter()
+                .map(|(from, to, style)| (&text[from..to], style))
+                .collect()
+        };
+        let mark = "gw-placeholder-colon";
+        assert_eq!(
+            parts(r#"{{@l(t, "t", :a.*)}}"#),
+            [
+                ("{{", "gw-placeholder"),
+                ("@", mark),
+                ("l", "def"),
+                ("(", mark),
+                ("t", "tpl-arg"),
+                (",", mark),
+                ("\"t\"", "string"),
+                (",", mark),
+                (":", mark),
+                ("a", "gw-placeholder"),
+                (".", mark),
+                ("*", mark),
+                (")", mark),
+                ("}}", "gw-placeholder"),
+            ]
+        );
+        assert_eq!(parts("{{:e~}}")[3], ("~", mark));
+        let nested = parts("{{.a.{{b}}}}");
+        assert_eq!(nested.last(), Some(&("}}", "gw-placeholder")));
+        assert_eq!(nested.iter().filter(|(text, _)| *text == "}}").count(), 2);
+    }
+
     fn lines(text: &str) -> Vec<String> {
         text.split('\n').map(str::to_owned).collect()
     }
@@ -511,14 +633,16 @@ mod tests {
     #[test]
     fn placeholders_overlay_the_language() {
         let mut highlighter = Highlighter::new("json");
-        let doc = lines("{\"id\": \"{{user:id}}\"}");
+        let doc = lines("{\"id\": \"{{.user.id}}\"}");
         assert_eq!(
             styled(&mut highlighter, &doc, 0),
             [
                 ("\"id\"".to_owned(), "string property"),
                 ("\"".to_owned(), "string"),
-                ("{{user".to_owned(), "gw-placeholder"),
-                (":".to_owned(), "gw-placeholder-colon"),
+                ("{{".to_owned(), "gw-placeholder"),
+                (".".to_owned(), "gw-placeholder-colon"),
+                ("user".to_owned(), "gw-placeholder"),
+                (".".to_owned(), "gw-placeholder-colon"),
                 ("id}}".to_owned(), "gw-placeholder"),
                 ("\"".to_owned(), "string"),
             ]

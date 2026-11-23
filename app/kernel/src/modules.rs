@@ -12,6 +12,7 @@ pub mod services;
 
 use prost::Message;
 use serde_json::{Value, json};
+use services_contracts::templates;
 use services_sdk::wire::{self, answer, event, request};
 use services_sdk::{
     Check, Chunk, Cmd, Completions, DriverCall, Failure, Fold, Kind, Line, Manifest, Rendered,
@@ -667,7 +668,7 @@ impl Modules {
                 if run.is_none() {
                     let mut call = DriverCall::new(&text("driver"), &request);
                     call.stream = stream;
-                    match self.before_request(call) {
+                    match self.before_request(call, Some(id)) {
                         Ok(call) => request = call.request(),
                         Err(error) => return self.refuse(id, &cmd.tag, &error),
                     }
@@ -711,7 +712,7 @@ impl Modules {
             }
             "vars.resolve" => {
                 let result = self
-                    .resolve(&text("text"), args["mode"] == "json")
+                    .resolve_in(&text("text"), args["mode"] == "json", Some(id))
                     .map(|resolution| json!(resolution.text))
                     .map_err(Failure::new);
                 let module = self.loaded.get_mut(id).expect("loaded");
@@ -897,7 +898,6 @@ impl Modules {
             request::Kind::Import(_) => "import",
             request::Kind::BeforeRequest(_) => "before_request",
             request::Kind::AfterResponse(_) => "after_response",
-            request::Kind::Resolve(_) => "resolve",
         };
         let bytes = wire::Request {
             kind: Some(request),
@@ -1052,7 +1052,7 @@ impl Modules {
     /// The service builds the call, then every panel may change or reject it, by `order`.
     pub fn prepare(&mut self, service: &str, check: Check) -> Result<DriverCall, String> {
         let call = self.build(service, check)?;
-        self.before_request(call)
+        self.before_request(call, Some(service))
     }
 
     fn panels(&self) -> Vec<String> {
@@ -1064,9 +1064,13 @@ impl Modules {
 
     /// Every string of a driver call has its variables resolved, then every panel may
     /// change or reject the call, by `order`.
-    pub fn before_request(&mut self, mut call: DriverCall) -> Result<DriverCall, String> {
+    pub fn before_request(
+        &mut self,
+        mut call: DriverCall,
+        service: Option<&str>,
+    ) -> Result<DriverCall, String> {
         let request = call.request();
-        let resolved = self.resolve_strings(&request)?;
+        let resolved = self.resolve_strings(&request, service)?;
         if resolved != request {
             call.set_request(&resolved);
         }
@@ -1079,103 +1083,81 @@ impl Modules {
         Ok(call)
     }
 
-    fn resolve_strings(&mut self, value: &Value) -> Result<Value, String> {
+    fn resolve_strings(&mut self, value: &Value, service: Option<&str>) -> Result<Value, String> {
         Ok(match value {
             Value::String(text) if text.contains("{{") => {
-                Value::String(self.resolve(text, false)?.text)
+                Value::String(self.resolve_in(text, false, service)?.text)
             }
             Value::Array(items) => Value::Array(
                 items
                     .iter()
-                    .map(|item| self.resolve_strings(item))
+                    .map(|item| self.resolve_strings(item, service))
                     .collect::<Result<_, _>>()?,
             ),
             Value::Object(fields) => Value::Object(
                 fields
                     .iter()
-                    .map(|(key, item)| Ok((key.clone(), self.resolve_strings(item)?)))
+                    .map(|(key, item)| Ok((key.clone(), self.resolve_strings(item, service)?)))
                     .collect::<Result<_, String>>()?,
             ),
             other => other.clone(),
         })
     }
 
-    /// One pass over the panels by `order`: each resolves the references it owns. `None`
-    /// when no panel keeps variables.
-    fn resolve_pass(
+    /// The `{{…}}` references of `text` resolved against the variable tree the panels contribute
+    /// (`var`, the Dictionary sets, `env`), and the live `{{@name(args)}}` template calls expanded
+    /// first, among the templates of every service ([`Modules::resolve_in`] without one). In
+    /// `json` mode each value is escaped as the content of a JSON string.
+    pub fn resolve(&mut self, text: &str, json: bool) -> Result<services_sdk::Resolution, String> {
+        self.resolve_in(text, json, None)
+    }
+
+    /// [`Modules::resolve`] for text of `service`: a live call sees the global templates and
+    /// those of that service (the section of the text is not known here, so any section of it).
+    pub fn resolve_in(
         &mut self,
         text: &str,
         json: bool,
-        last: bool,
-        secrets: &mut Vec<String>,
-    ) -> Result<Option<String>, String> {
-        let mut text = text.to_owned();
-        let mut handled = false;
-        for panel in self.panels() {
-            let request = request::Kind::Resolve(wire::ResolveRequest {
-                text: text.clone(),
-                json,
-                last,
-            });
-            match self.sync(&panel, request)? {
-                answer::Kind::Resolved(resolved) if resolved.handled => {
-                    if let Some(error) = resolved.error {
-                        return Err(error);
-                    }
-                    handled = true;
-                    text = resolved.text;
+        service: Option<&str>,
+    ) -> Result<services_sdk::Resolution, String> {
+        let root = registry::root();
+        let mut templates: Option<BTreeMap<String, templates::Template>> = None;
+        let mut expand = |name: &str, args_text: &str| {
+            let templates = templates.get_or_insert_with(|| scoped_templates(service));
+            let call = templates::parse_call(&format!("{name}({args_text})"))?;
+            templates::expand(
+                &|name| templates.get(name).cloned(),
+                &call,
+                &BTreeMap::new(),
+            )
+        };
+        let document = json
+            .then(|| serde_json::from_str::<Value>(text).ok())
+            .flatten();
+        let resolved = match document {
+            // A JSON document is resolved string by string, so the `{{ }}` syntax is read as
+            // written rather than JSON-escaped, and every result is escaped on serialization.
+            Some(document) => {
+                let mut secrets = Vec::new();
+                let document = resolve_json_strings(&document, &mut |text| {
+                    let resolved = services_sdk::refs::resolve(text, &root, false, &mut expand)?;
                     secrets.extend(resolved.secrets);
+                    Ok(resolved.text)
+                })?;
+                services_sdk::refs::Resolution {
+                    text: document.to_string(),
+                    secrets,
                 }
-                answer::Kind::Resolved(_) => {}
-                _ => return Err(unexpected("resolve")),
             }
-        }
-        Ok(handled.then_some(text))
-    }
-
-    /// The `{{…}}` variables of `text` resolved: every panel that keeps variables resolves
-    /// the ones it owns, by `order`, until nothing changes (a value may hold references
-    /// of another panel), then each resolves what it only falls back to. A reference left is
-    /// an error. In `json` mode each value is escaped as the content of a JSON string.
-    pub fn resolve(&mut self, text: &str, json: bool) -> Result<services_sdk::Resolution, String> {
-        const PASSES: usize = 16;
-        let mut secrets = Vec::new();
-        let mut current = text.to_owned();
-        let mut last = false;
-        let mut passes = 0;
-        loop {
-            if services_sdk::refs::find(&current).is_empty() {
-                break;
-            }
-            let Some(next) = self.resolve_pass(&current, json, last, &mut secrets)? else {
-                return Err("No module resolves variables".into());
-            };
-            let changed = next != current;
-            current = next;
-            passes += 1;
-            if passes > PASSES {
-                return Err(format!(
-                    "Circular variable reference: {}",
-                    references(&current)
-                ));
-            }
-            if !changed {
-                if last {
-                    break;
-                }
-                last = true;
-            } else {
-                last = false;
-            }
-        }
-        if !services_sdk::refs::find(&current).is_empty() {
-            return Err(format!("Unknown variable(s): {}", references(&current)));
-        }
+            // Not JSON (a GraphQL `#variables` like `{"id": {{:id}}}`): resolved as text.
+            _ => services_sdk::refs::resolve(text, &root, json, &mut expand)?,
+        };
+        let mut secrets = resolved.secrets;
         secrets.retain(|secret| !secret.is_empty());
         secrets.sort();
         secrets.dedup();
         Ok(services_sdk::Resolution {
-            text: current,
+            text: resolved.text,
             secrets,
         })
     }
@@ -1225,13 +1207,54 @@ fn unexpected(call: &str) -> String {
     format!("The module answered {call} with something else")
 }
 
-/// The references left in `text`, like `{{dev:host}}, {{:x}}`.
-fn references(text: &str) -> String {
-    services_sdk::refs::find(text)
-        .iter()
-        .map(|(set, name)| format!("{{{{{set}:{name}}}}}"))
-        .collect::<Vec<_>>()
-        .join(", ")
+/// `value` with each string (keys too) that holds a `{{` replaced by `resolve` of it.
+fn resolve_json_strings(
+    value: &Value,
+    resolve: &mut dyn FnMut(&str) -> Result<String, String>,
+) -> Result<Value, String> {
+    Ok(match value {
+        Value::String(text) if text.contains("{{") => Value::String(resolve(text)?),
+        Value::Array(items) => Value::Array(
+            items
+                .iter()
+                .map(|item| resolve_json_strings(item, resolve))
+                .collect::<Result<_, _>>()?,
+        ),
+        Value::Object(fields) => {
+            let mut out = serde_json::Map::new();
+            for (key, item) in fields {
+                let key = if key.contains("{{") {
+                    resolve(key)?
+                } else {
+                    key.clone()
+                };
+                out.insert(key, resolve_json_strings(item, resolve)?);
+            }
+            Value::Object(out)
+        }
+        other => other.clone(),
+    })
+}
+
+/// The templates a live call may use: the global ones, then those of `service` (of every
+/// service without one); on a name clash the global one wins, then the first by name.
+fn scoped_templates(service: Option<&str>) -> BTreeMap<String, templates::Template> {
+    let library = registry::templates();
+    let mut all = BTreeMap::new();
+    for template in templates::own(&library, "*", "*") {
+        all.insert(template.name.clone(), template);
+    }
+    for (name, sections) in &library {
+        if name == "*" || service.is_some_and(|service| service != name) {
+            continue;
+        }
+        for (_, text) in sections.iter().filter(|(section, _)| *section != "*") {
+            for template in templates::parse_partial(text).0 {
+                all.entry(template.name.clone()).or_insert(template);
+            }
+        }
+    }
+    all
 }
 
 /// Modules shipped inside the App (Settings); only they manage modules and the App.

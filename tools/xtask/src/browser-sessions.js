@@ -118,7 +118,7 @@
   for(const service of ['mysql','rest','graphql','grpc','splunk','terminal']) {
     await click(testid(`console-service-${service}`));
     setSource(editorOf('console-editor'),service==='rest'
-      ?`#check session-a-rest\n#target\n${fixtureUrl}/session?session-value={{var:SESSION_MARKER}}\n`
+      ?`#check session-a-rest\n#target\n${fixtureUrl}/session?session-value={{.var.SESSION_MARKER}}\n`
       :`#check session-a-${service}\n`);
   }
   await vars('SESSION_MARKER: alpha');

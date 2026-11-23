@@ -69,7 +69,7 @@ pub fn token(
             state.quote = None;
         }
     }
-    if rest.starts_with("{{") {
+    if rest.starts_with("{{") && (pos == 0 || text.chars().nth(pos - 1) != Some('\\')) {
         state.placeholder = true;
         return (2, Some("gw-placeholder"));
     }
@@ -78,10 +78,13 @@ pub fn token(
             state.placeholder = false;
             return (2, Some("gw-placeholder"));
         }
-        if chars[0] == ':' {
+        if chars[0] == ':' || chars[0] == '.' {
             return (1, Some("gw-placeholder-colon"));
         }
-        let n = word(&rest, "-");
+        let n = chars
+            .iter()
+            .take_while(|c| !matches!(c, ':' | '.' | '}'))
+            .count();
         if n > 0 {
             return (n, Some("gw-placeholder"));
         }

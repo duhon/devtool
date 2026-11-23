@@ -114,7 +114,10 @@ and are embedded with `include_str!`. The one exception is the Shell's
 - Keep the extension public key/ID and the native host name stable.
 - Variables editors complete only placeholders; Console syntax, saved hints
   and discovery are scoped to their own service.
-- Placeholder syntax is `{{var:x}}`, `{{env:X}}`, `{{<set>:x}}` (a Dictionary set),
-  `{{:x}}`; shell `${VAR}` remains shell syntax.
+- Placeholder syntax: `{{.var.x}}`, `{{.<set>.x}}` (a Dictionary set) and `{{.env.X}}` are
+  absolute paths from the variable tree root; `{{:x}}` is relative (Variables, then Dictionary
+  sets in order, then env); `{{@tpl(args)}}` is a live template call. Hashes use indentation,
+  `*`/`**` select children/descendants, a trailing `~` selects keys. Shell `${VAR}` remains
+  shell syntax.
 - Preserve existing worktree changes. Commit only on request and increment the
   extension/workspace patch version by default when committing.

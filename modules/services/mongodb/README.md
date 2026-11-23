@@ -12,7 +12,7 @@ Install **MongoDB** in Settings → Modules.
 ```text
 #check Adult users
 #target
-mongodb://{{USER}}:{{PASSWORD}}@localhost:27017/app
+mongodb://{{:USER}}:{{:PASSWORD}}@localhost:27017/app
 #collection
 users
 #action
@@ -49,7 +49,7 @@ Syntax errors name the line and column.
 
 ## Target and options
 
-`#target` is a `mongodb://` or `mongodb+srv://` URI with `{{VARIABLE}}` substitution.
+`#target` is a `mongodb://` or `mongodb+srv://` URI with `{{:VARIABLE}}` substitution.
 The database is the URI path. Credentials are never
 shown in results, hints, debug data or errors.
 
@@ -62,7 +62,7 @@ For passwordless authentication (for example Atlas) add a `#metadata` section:
 mongodb+srv://cluster0.xxxxx.mongodb.net/mydb
 #metadata
 Auth: x509
-Certificate: {{env:MONGO_CERT}}
+Certificate: {{.env.MONGO_CERT}}
 ```
 
 `Certificate` is the path of a PEM file with the client certificate and key. The module
@@ -92,7 +92,7 @@ documents read before it. The result is one plain driver call, not a stream.
 Discovery starts by itself: once the target is complete (the cursor left its line, or
 another section began) the collections are listed, and the collections the check names
 (`#collection`, and `from`/`coll` in the payload, at most four, only if they exist) are
-sampled from 20 documents. A target with `{{variables}}` is resolved first. Partial or
+sampled from 20 documents. A target with `{{:variables}}` is resolved first. Partial or
 invalid targets stay quiet; Discover forces a refresh.
 
 Completion knows the structure of the payload, like GraphQL's:

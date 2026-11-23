@@ -203,7 +203,7 @@ fn highlight_styles_each_section_and_carries_state() {
         "Accept: */*",
         "#payload",
         "{",
-        "  \"name\": \"{{user}}\",",
+        "  \"name\": \"{{:user}}\",",
         "  # note",
         "  \"n\": 1",
         "}",
@@ -472,29 +472,28 @@ fn resolves(cmds: &[Cmd]) -> Vec<(String, String)> {
         .collect()
 }
 
-/// Answers the one `vars.resolve` in `cmds` with `{{var:api}}` → `http://svc/api`.
+/// Answers the one `vars.resolve` in `cmds` with `{{:api}}` → `http://svc/api`.
 fn resolve(rest: &mut Rest, cmds: &[Cmd]) -> Vec<Cmd> {
     let [(tag, text)] = &resolves(cmds)[..] else {
         panic!("one resolve in {cmds:?}")
     };
     rest.update(Event::Reply {
         tag: tag.clone(),
-        result: Ok(json!(text.replace("{{var:api}}", "http://svc/api"))),
+        result: Ok(json!(text.replace("{{:api}}", "http://svc/api"))),
     })
 }
 
 #[test]
 fn an_address_with_variables_is_resolved_through_the_app() {
     let mut rest = Rest::default();
-    let text =
-        "#target\n{{var:api}}/users\n#action\nPOST\n#metadata\nX-Token: {{var:token}}\n#payload\n";
+    let text = "#target\n{{:api}}/users\n#action\nPOST\n#metadata\nX-Token: {{:token}}\n#payload\n";
     let cmds = hints(&mut rest, text);
     assert_eq!(
         resolves(&cmds)
             .iter()
             .map(|(_, t)| t.as_str())
             .collect::<Vec<_>>(),
-        ["{{var:api}}/users"]
+        ["{{:api}}/users"]
     );
     assert!(driver_calls(&cmds).is_empty());
     let cmds = resolve(&mut rest, &cmds);
@@ -505,7 +504,7 @@ fn an_address_with_variables_is_resolved_through_the_app() {
     let call = cmds.iter().find(|cmd| cmd.name == "driver.call").unwrap();
     assert_eq!(
         args(call)["request"]["headers"],
-        json!([["X-Token", "{{var:token}}"]])
+        json!([["X-Token", "{{:token}}"]])
     );
     let answer = answer(&mut rest, &cmds, found, &spec());
     let status = answer.iter().find(|cmd| cmd.name == "status.set").unwrap();
@@ -515,11 +514,11 @@ fn an_address_with_variables_is_resolved_through_the_app() {
     // Completion knows the resolved address of the endpoint.
     let (_, c) = complete(
         &rest,
-        "#target\n{{var:api}}/users\n#action\nPOST\n#payload\n{\n  \"name\": \"x\",\n  |\n}",
+        "#target\n{{:api}}/users\n#action\nPOST\n#payload\n{\n  \"name\": \"x\",\n  |\n}",
     );
     assert_eq!(labels(&c), ["\"role\": \"\"", "\"born\": \"\""]);
     // Another template is resolved when the check changes, without discovery.
-    let other = "#target\n{{var:api}}/users/\n#action\nPOST\n#payload\n";
+    let other = "#target\n{{:api}}/users/\n#action\nPOST\n#payload\n";
     let (_, c) = complete(&rest, &format!("{other}|"));
     assert_ne!(
         c.items.first().map(|i| i.detail.as_str()),
@@ -535,16 +534,16 @@ fn an_address_with_variables_is_resolved_through_the_app() {
     assert!(resolve(&mut rest, &cmds).is_empty());
 
     // A manual Discover reports variables that do not resolve.
-    let cmds = rest.update(Event::Discover(check("#target\n{{var:nope}}/a")));
+    let cmds = rest.update(Event::Discover(check("#target\n{{:nope}}/a")));
     let (tag, _) = resolves(&cmds).remove(0);
     let cmds = rest.update(Event::Reply {
         tag,
-        result: Err(Failure::new("Unresolved variable reference: {{var:nope}}")),
+        result: Err(Failure::new("Unresolved variable reference: {{:nope}}")),
     });
     assert_eq!(
         statuses(&cmds),
         [
-            "Discovery · ERROR · Variables of {{var:nope}}/a could not be resolved: Unresolved variable reference: {{var:nope}}"
+            "Discovery · ERROR · Variables of {{:nope}}/a could not be resolved: Unresolved variable reference: {{:nope}}"
         ]
     );
 }
@@ -656,9 +655,9 @@ fn discovery_reports_failures() {
             result: Ok(json!("svc/x")),
         })
     };
-    let cmds = hints(&mut rest, "#target\n{{base}}/x");
+    let cmds = hints(&mut rest, "#target\n{{:base}}/x");
     assert!(unresolved(&mut rest, cmds).is_empty());
-    let cmds = rest.update(Event::Discover(check("#target\n{{base}}/x")));
+    let cmds = rest.update(Event::Discover(check("#target\n{{:base}}/x")));
     assert_eq!(
         statuses(&unresolved(&mut rest, cmds)),
         ["Discovery · WARNING · Invalid or incomplete service address for discovery"]
@@ -680,15 +679,15 @@ fn build_sends_the_endpoint_headers_and_body() {
     let rest = Rest::default();
     let call = rest
         .build(&check(
-            "#target\n{{base}}/users\n#action\npost\n#metadata\nAccept: */*\n# off: 1\n\nX-Id: {{id}}\n#payload\n{\"a\": 1}",
+            "#target\n{{:base}}/users\n#action\npost\n#metadata\nAccept: */*\n# off: 1\n\nX-Id: {{:id}}\n#payload\n{\"a\": 1}",
         ))
         .unwrap();
     let request = request(&call);
     assert_eq!(request["method"], "POST");
-    assert_eq!(request["url"], "{{base}}/users");
+    assert_eq!(request["url"], "{{:base}}/users");
     assert_eq!(
         request["headers"],
-        json!([["Accept", "*/*"], ["X-Id", "{{id}}"]])
+        json!([["Accept", "*/*"], ["X-Id", "{{:id}}"]])
     );
     assert_eq!(request["body"], "{\"a\": 1}");
     assert_eq!(request["text"], true);

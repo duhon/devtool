@@ -50,7 +50,7 @@
   color: var(--token-path-param);
 }
 
-/* A {{:VAR}}/{{env:VAR}}/{{set:VAR}} reference gets its own token type, not one of the
+/* A {{.var.NAME}}/{{:NAME}}/{{@template()}} reference gets its own token type, not one of the
    built-in ones, specifically so this color is free to pick without
    colliding with anything the dracula theme already uses elsewhere: yellow
    (strings/JSON), purple (numbers/JSON literals), green (attributes/hosts),
@@ -61,15 +61,28 @@
   color: var(--token-error);
 }
 
-/* The ":" inside {{set:var}} specifically — a paler red than the rest
-   of the placeholder, so the eye can separate "which set" (left of the
-   colon) from "which variable in it" (right of the colon) at a glance. */
+/* The "." and ":" inside {{.dev.name}} / {{:name}} — a paler red than the rest
+   of the placeholder, so the eye can separate the path segments at a glance. */
 .theme-dracula span.tok-gw-placeholder-colon {
   color: var(--token-placeholder-colon);
 }
 
-/* Hover tooltip over an already-written {{:VAR}}/{{env:VAR}}/{{set:VAR}}
-   reference. position: fixed since it's positioned from event.clientX/clientY
+/* Templates: a parameter's name in its definition and its uses {{name}} in the body
+   (Dracula's orange parameters), and a definition's reference that offers no
+   options — underlined, as references are red already. */
+.theme-dracula span.tok-tpl-arg,
+.theme-dracula span.tok-gw-placeholder.tok-tpl-arg,
+.theme-dracula span.tok-gw-placeholder-colon.tok-tpl-arg {
+  color: var(--editor-orange);
+}
+
+.theme-dracula span.tok-tpl-problem {
+  text-decoration: underline wavy var(--editor-red);
+  text-decoration-skip-ink: none;
+  text-underline-offset: 3px;
+}
+
+/* Hover tooltip over an already-written {{…}} reference. position: fixed since it's positioned from event.clientX/clientY
    (viewport-relative), not page-scroll-relative. */
 .gw-var-tooltip {
   position: fixed;
@@ -88,8 +101,8 @@
   pointer-events: none;
 }
 
-/* {{:VAR}} autocomplete popup (typing "{{" -> owners and set names, "{{set:" -> that
-   set's variables), coloured to match dracula. */
+/* {{…}} autocomplete popup (typing "{{." -> the variable tree, "{{:" -> paths relative to
+   the panels), coloured to match dracula. */
 .editor-hints {
   background: var(--bg);
   border: 1px solid var(--border);

@@ -113,9 +113,9 @@ impl<'a> At<'a> {
     }
     /// Inside an open `{{…}}`: completion is the App's.
     pub fn in_placeholder(&self) -> bool {
-        self.before
-            .rfind("{{")
-            .is_some_and(|start| !self.before[start..].contains("}}"))
+        self.before.rfind("{{").is_some_and(|start| {
+            !self.before[start..].contains("}}") && !self.before[..start].ends_with('\\')
+        })
     }
     /// Nothing to complete at the position.
     pub fn none(&self) -> Completions {

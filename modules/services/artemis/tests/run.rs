@@ -85,7 +85,7 @@ impl Module {
         assert_eq!(args["mode"], "json");
         let mut text = args["text"].as_str().unwrap().to_owned();
         for (name, value) in vars {
-            text = text.replace(&format!("{{{{{name}}}}}"), value);
+            text = text.replace(&format!("{{{{:{name}}}}}"), value);
         }
         self.reply(tag, json!(text))
     }
@@ -107,7 +107,7 @@ const BROKER: &str = "org.apache.activemq.artemis:broker=\"b\"";
 #[test]
 fn queues_finds_the_broker_then_lists_and_shows_a_table() {
     let module = Module::default();
-    let cmds = module.run("#target\nhttp://{{host}}:8161\n#action\nQUEUES WHERE messages > 0 LIMIT 1\n#options\nColumns-Size: queue=3");
+    let cmds = module.run("#target\nhttp://{{:host}}:8161\n#action\nQUEUES WHERE messages > 0 LIMIT 1\n#options\nColumns-Size: queue=3");
     let cmds = module.resolve(&cmds, &[("host", "broker")]);
     assert_eq!(cmds[0].1, "driver.call", "{cmds:?}");
     assert_eq!(names(&cmds), [("console:artemis:1:call:0", "driver.call")]);

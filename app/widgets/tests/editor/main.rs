@@ -1,4 +1,4 @@
-//! BEHAVIOR of the generic widgets: the editor's syntax, variable hover, the find bar and
+//! BEHAVIOR of the generic widgets: the editor's syntax, the find bar and
 //! the state indicator.
 //! Run one area with `cargo test -p services-widgets --test editor -- syntax::`.
 
@@ -6,6 +6,5 @@
 mod support;
 
 mod find_bar;
-mod hover;
 mod indicator;
 mod syntax;

@@ -10,37 +10,34 @@ fn dictionary() -> Dictionary {
     Dictionary::with(files(&local()))
 }
 
-fn pass(dictionary: &Dictionary, text: &str) -> Result<String, String> {
-    dictionary
-        .resolve(text, false, false)
-        .expect("dictionary resolves")
-        .map(|resolution| resolution.text)
+/// The sets the panel last contributed to the variable tree, in order.
+fn tree(commands: &[Cmd]) -> Value {
+    let contribute = commands
+        .iter()
+        .rev()
+        .find(|command| command.name == "editor.contribute")
+        .expect("contributes");
+    contribute.args()["tree"].clone()
 }
 
 #[test]
-fn sets_resolve_by_name_and_from_the_first_set_with_the_variable() {
-    let dictionary = dictionary();
+fn every_set_is_a_first_level_node_of_the_tree_in_order() {
+    let local = json!({"order": ["dev", "stage"], "sets": {
+        "dev": {"#note": "x", "HOST": "dev.test", "hosts": {"catalog": "c.test"}},
+        "stage": {"HOST": "stage.test", "token": "t0k"}}});
+    let mut dictionary = Dictionary::default();
+    let commands = dictionary.update(Event::Reply {
+        tag: "sources".into(),
+        result: Ok(files(&local)),
+    });
+    let tree = tree(&commands);
     assert_eq!(
-        pass(
-            &dictionary,
-            "{{dev:URL}} {{stage:HOST}} {{mine:A}} {{:HOST}}"
-        )
-        .unwrap(),
-        "https://dev.test/{{var:path}} stage.test dev.test dev.test"
+        tree,
+        json!({"first": [
+            ["dev", {"HOST": "dev.test", "hosts": {"catalog": "c.test"}}],
+            ["stage", {"HOST": "stage.test", "token": "t0k"}]]})
     );
-    assert_eq!(
-        pass(&dictionary, "{{var:x}} {{:nope}}").unwrap(),
-        "{{var:x}} {{:nope}}"
-    );
-    assert_eq!(
-        pass(&dictionary, "{{dev:nope}}"),
-        Err("Unknown variable \"nope\" in dev".into())
-    );
-    let resolution = dictionary
-        .resolve("{{stage:token}}", false, false)
-        .unwrap()
-        .unwrap();
-    assert_eq!(resolution.secrets, ["t0k"]);
+    assert!(tree.get("last").is_none());
 }
 
 /// Runs the queued changes: the lock, the fresh layer (`stored`), the save.
@@ -91,7 +88,7 @@ fn ui(dictionary: &mut Dictionary, msg: Msg, value: &str) -> Vec<Cmd> {
 
 fn local() -> Value {
     json!({"order": ["dev", "stage", "mine"], "sets": {
-        "dev": {"HOST": "dev.test", "URL": "https://{{dev:HOST}}/{{var:path}}"},
+        "dev": {"HOST": "dev.test", "URL": "https://{{.dev.HOST}}/{{.var.path}}"},
         "stage": {"HOST": "stage.test", "token": "t0k"},
         "mine": {"A": "{{:HOST}}"}}})
 }
@@ -107,23 +104,28 @@ fn edits_are_saved_at_once_into_the_local_file() {
     let commands = ui(
         &mut dictionary,
         Msg::Edit,
-        "HOST: edited.test\nURL: https://{{dev:HOST}}/{{var:path}}\nPORT: 1",
+        "HOST: edited.test\nURL: https://{{.dev.HOST}}/{{.var.path}}\nPORT: 1\nhosts:\n  catalog: c.test",
     );
     assert!(commands.contains(&cmd::lock("dictionary", "dictionary")));
     let commands = transact(&mut dictionary, local());
     assert_eq!(
         saved(&commands)["sets"]["dev"],
-        json!({"HOST": "edited.test", "URL": "https://{{dev:HOST}}/{{var:path}}", "PORT": "1"})
+        json!({"HOST": "edited.test", "URL": "https://{{.dev.HOST}}/{{.var.path}}", "PORT": "1",
+            "hosts": {"catalog": "c.test"}})
     );
     assert_eq!(status(&commands), "Dictionary save · OK");
-    assert_eq!(pass(&dictionary, "{{dev:HOST}}").unwrap(), "edited.test");
+    assert_eq!(tree(&commands)["first"][0][1]["HOST"], "edited.test");
 
     let commands = ui(&mut dictionary, Msg::Edit, "broken");
     assert!(commands.contains(&cmd::status(
         "ERROR: Line 1: expected NAME: value.",
         "error"
     )));
-    assert_eq!(pass(&dictionary, "{{dev:HOST}}").unwrap(), "edited.test");
+    assert!(
+        !commands
+            .iter()
+            .any(|command| command.name == "editor.contribute")
+    );
     let view = format!("{:?}", dictionary.view());
     assert!(
         !view.contains("Reset") && !view.contains("From source"),
@@ -140,8 +142,8 @@ fn sets_are_renamed_and_reordered() {
         "dictionary-set-mine",
     );
     ui(&mut dictionary, Msg::Rename("mine".into()), "ours");
-    assert_eq!(pass(&dictionary, "{{ours:A}}").unwrap(), "dev.test");
     let commands = transact(&mut dictionary, local());
+    assert_eq!(tree(&commands)["first"][2][0], "ours");
     assert_eq!(status(&commands), "Dictionary rename · OK");
     assert_eq!(saved(&commands)["order"], json!(["dev", "stage", "ours"]));
     let stored = saved(&commands);
@@ -252,7 +254,6 @@ fn the_editor_keeps_the_text_as_typed() {
     });
     let view = format!("{:?}", dictionary.view());
     assert!(view.contains(&format!("{typed:?}")), "{view}");
-    assert_eq!(pass(&dictionary, "{{mine:A}}").unwrap(), "edited.test");
 }
 
 #[test]

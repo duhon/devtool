@@ -24,23 +24,56 @@ Undock into separate window.
   `#` at the start of a line offers the service's sections the hints lack.
   Lines under a `#section` line of Hints are offered only in that section;
   lines before any section are offered where their shape fits.
-- Templates opens a global, per-service library with section tabs (REST:
-  check, target, action, headers, payload). Each definition starts with `@name description`
-  at the start of a line, followed by literal multiline content until the next
-  definition. `@@` escapes a leading literal `@` in a body. Names are unique
-  within a service/section. Definitions autosave; invalid drafts stay visible
-  with an error and never replace saved definitions. Reload refreshes saved
-  content; Discard draft explicitly removes the current draft and reloads it.
-- In a request, press Space immediately after a section marker (for example
-  `#payload `) to see its templates, or type `#payload @name` to filter by name.
-  Choose a template name from the list. Templates are not suggested
-  on standalone content lines or in ordinary text. Only the template body is pasted,
-  not its name/description; inline markers get the required newline. This is
-  an undoable editor insertion, not runtime variable expansion. A check template
-  contains the request sections; if it does not start with a check header,
-  insertion adds `#check <description>` (or the template name if the description
-  is empty). An explicit check header is preserved unchanged. Templates remain
-  global when switching Console sessions, including session 0, unlike Hints.
+- Templates opens a library of named functions with scope tabs: per-service
+  sections (REST: check, target, action, headers, payload) plus Global (all
+  services). Each definition starts
+  with `@name(params) description` at the start of a line, or `@name description`
+  for no parameters, followed by literal multiline content until the next
+  definition. `\@` escapes a leading literal `@` in a body or a section line. A section line
+  (`#target @name(...)`, `#check @`) offers only the templates of that section;
+  a live call `{{@name(...)}}` may also use the Global ones, and on a name clash
+  the section's template wins. Definitions autosave as typed, errors included: the
+  status shows the first error, and a definition with an error (or a repeated
+  name) is skipped while the others keep working.
+- Parameters: `name`, `name: domain`, `name = "default"` or
+  `name: domain = "default"`. A domain is one `{{...}}` reference evaluated as a
+  list (for example `{{:services}}`, `{{.*.type}}`) or an inline list
+  `"a" | "b"`; it only provides completion options. A `{{param}}` inside a reference
+  domain is replaced by the argument already typed for that parameter (a `:path`
+  argument by its value), for example `env: {{.data.{{group}}~}}`; while it is not
+  typed the domain offers nothing. Example:
+  `@url(service: {{:services}}, type = "qa") Service URL`, body
+  `https://{{service}}.{{:base_domain}}/{{type}}`.
+- In a body `{{param}}` is replaced by the argument and `{{@other(args)}}` is
+  expanded; every other reference (`{{:x}}`, `{{.var.x}}`) stays in the text and
+  resolves at send time. `\{{` anywhere (bodies, sections, variable values) is a
+  literal `{{`: it is neither substituted nor resolved, and the `\` is dropped on
+  send. A parameter is substituted inside other references too, and references
+  nest: `{{.tree.{{a}}.{{b}}}}` or `{{.a.{{:b}}}}` builds the path from
+  the inner references first, then resolves it. Arguments are comma separated: a quoted literal
+  `"text"` (escapes `\"` and `\\`), a bare identifier (a parameter of the
+  enclosing template), or a variable reference `:path` / `.path` (kept live as
+  `{{:path}}`). Trailing arguments with defaults may be omitted; missing required
+  or extra arguments are errors. Nesting is cycle-checked, depth limit 16.
+- In a request, type `@` after a section marker (for example `#target @`) to
+  search visible templates by name and description; choosing one inserts `@name(`
+  and argument completion offers the parameter's options as quoted literals. A
+  `@word` typed by hand and never accepted stays plain text. Press Enter at the end
+  of a section line with a complete call (`#target @url("checkout", "qa")`) to
+  expand it: the call stays on the section line as metadata (it is not sent) and the
+  section body is silently replaced by the result. Editing the arguments and
+  pressing Enter again regenerates the body, overwriting manual edits. Only Enter
+  triggers this. `{{@name(args)}}` inside a body is a live call: kept in the text
+  and expanded at send time. A check template without parameters is inserted whole
+  by `#check @name`; one that does not start with a check header gets
+  `#check <description>` (or the template name) added. A check template with
+  parameters works like a section call: `#check @name` completes to
+  `#check <description> @name(` and then the arguments, and Enter replaces the whole check (up to the next check) with the
+  expansion, dropping the template's own check header; the call line stays the
+  check's header and Enter regenerates it. Templates
+  remain global when switching Console sessions, including session 0, unlike Hints.
+  When editing, preserve section-line calls, `{{@...}}` calls and references
+  instead of inlining their results.
 - Variables contains the session's variables and the read-only Environment.
   Dictionary contains named sets. Read the variables topic before explaining their behavior.
 - The main status strip and Debug belong only to the highlighted check in the

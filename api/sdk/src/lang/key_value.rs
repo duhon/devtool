@@ -119,7 +119,7 @@ mod tests {
             pairs(&[("  # Accept: */*", "comment")])
         );
         assert_eq!(
-            tokens_of("Authorization: Bearer {{prod:TOKEN}} x"),
+            tokens_of("Authorization: Bearer {{.prod.TOKEN}} x"),
             pairs(&[
                 ("Authorization", "attribute"),
                 ("Bearer ", "string"),
@@ -127,7 +127,7 @@ mod tests {
             ])
         );
         assert_eq!(
-            tokens_of("X-{{a}}: v:w"),
+            tokens_of("X-{{:a}}: v:w"),
             pairs(&[("X-", "attribute"), ("v:w", "string")])
         );
         assert_eq!(tokens_of(""), vec![]);

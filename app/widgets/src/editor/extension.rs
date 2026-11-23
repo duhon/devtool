@@ -162,6 +162,22 @@ pub trait Extension {
         Completion::default()
     }
 
+    /// Enter at the end of `cursor`'s line: `Some` is the owner's edit instead of a line break
+    /// (or the error that stops it), `None` leaves Enter alone.
+    fn enter(
+        &self,
+        _lines: &[String],
+        _cursor: Position,
+        _context: &Context,
+    ) -> Option<Result<Transaction, String>> {
+        None
+    }
+
+    /// What the reference under `ch` of `line` stands for, shown while the pointer rests on it.
+    fn hover(&self, _line: &str, _ch: usize) -> Option<String> {
+        None
+    }
+
     /// The text a non-literal candidate inserts on `line`; `None` inserts the candidate.
     fn insertion(&self, _candidate: &str, _line: &str) -> Option<String> {
         None
@@ -207,11 +223,6 @@ pub struct Viewport {
 pub trait Languages {
     /// The mode and extension of an editor of `language`.
     fn editor(&self, language: &str) -> (String, Rc<dyn Extension>);
-
-    /// The hints an editor of `language` completes; `None` when it has none.
-    fn hints(&self, _language: &str) -> Option<Vec<(String, String)>> {
-        None
-    }
 }
 
 struct Modes;

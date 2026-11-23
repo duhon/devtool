@@ -21,7 +21,17 @@ fn suggest(
     ch: usize,
     hints: &[(String, String)],
 ) -> Completion {
-    services_kernel::editor::completion::suggest(&Modules, service, field, source, line, ch, hints)
+    services_kernel::editor::completion::suggest(
+        &Modules,
+        service,
+        field,
+        source,
+        line,
+        ch,
+        hints,
+        &Default::default(),
+        &Default::default(),
+    )
 }
 
 fn highlighter() -> Highlighter {
@@ -97,7 +107,7 @@ fn the_module_colors_checks_with_utf16_spans_and_the_console_overlays_variables(
 #[test]
 fn module_completions_merge_with_console_markers_options_and_variables() {
     services_shell::link();
-    let hints = [("{{:token}}".to_owned(), "secret".to_owned())];
+    let hints: [(String, String); 0] = [];
     let at = |source: &str, line: usize, ch: usize| suggest("rest", "", source, line, ch, &hints);
     let texts = |source: &str, line: usize, ch: usize| {
         at(source, line, ch)
@@ -125,7 +135,8 @@ fn module_completions_merge_with_console_markers_options_and_variables() {
     assert!(texts("#check\n#options\n", 2, 0).contains(&"Repeat: 5s".to_owned()));
     let variables = at("#check\n#target\nhttps://a\n#metadata\nX: {{", 4, 5);
     assert_eq!((variables.from, variables.to), (3, 5));
-    assert_eq!(variables.candidates[0].text, "{{:");
+    assert_eq!(variables.candidates[0].text, "{{.");
+    assert!(variables.candidates.iter().any(|c| c.text == "{{:"));
     // Without a check only `#check` starts one.
     assert_eq!(texts("#", 0, 1), ["#check"]);
     let header = at("#check\n#target\nhttps://a\n#metadata\nAccept-E", 4, 8);
@@ -176,7 +187,7 @@ fn a_run_is_the_modules_http_call_with_the_console_options() {
     // before_request passes the Variables panel, which reports unknown refs.
     assert_eq!(
         console::parse_run("rest", "#target\nhttps://a/{{:x}}").unwrap_err(),
-        "Missing environment variable(s): x"
+        "Unknown variable {{:x}}"
     );
     assert_eq!(
         console::parse_run("rest", "#target\nGET https://a").unwrap_err(),
@@ -198,8 +209,8 @@ fn curl_export_and_import_go_through_the_module() {
         "curl \\\n  --request POST \\\n  --url 'https://a' \\\n  --data '{}'"
     );
     assert_eq!(
-        console::export("rest", "#target\nhttps://{{var:host}}/a").unwrap_err(),
-        "Variables could not be resolved: Unknown variable \"host\" in var"
+        console::export("rest", "#target\nhttps://{{.var.host}}/a").unwrap_err(),
+        "Variables could not be resolved: Unknown variable {{.var.host}}"
     );
     assert_eq!(
         console::import("rest", "curl -X POST https://a -d '{}'").unwrap(),

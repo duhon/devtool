@@ -1,11 +1,11 @@
 //! The Variables panel: the session's own variables (`var`, kept as a session kv key) and the
-//! environment of the user's login shell (`env`, read-only). It resolves `{{var:name}}`,
-//! `{{env:NAME}}` and `{{:name}}` when `var` has the name; `{{:name}}` that no panel owns
-//! falls back to the environment in the last pass.
+//! environment of the user's login shell (`env`, read-only). It only holds the data: it
+//! contributes `var` first and `env` last to the variable tree the Kernel resolves
+//! (`{{.var.x}}`, `{{:x}}`, `{{.env.X}}`). `var` values may be strings or nested hashes.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
-use services_sdk::{Cmd, Event, Module, Resolution, cmd, refs, ui};
+use services_sdk::{Cmd, Event, Module, cmd, refs, ui};
 
 /// The session kv key of the variables.
 pub const VAR: &str = "var";
@@ -82,17 +82,12 @@ impl Variables {
         ]
     }
 
-    /// What the editors complete and show on hover.
+    /// The panel's part of the variable tree: `var` first, `env` last.
     fn contribution(&self) -> Cmd {
-        let mut hints: Vec<(String, String)> = Vec::new();
-        for (name, value) in self.vars.iter().filter(|(name, _)| !name.starts_with('#')) {
-            hints.push((format!("{{{{var:{name}}}}}"), refs::text(value)));
-            hints.push((format!("{{{{:{name}}}}}"), refs::text(value)));
-        }
-        for (name, value) in &self.env {
-            hints.push((format!("{{{{env:{name}}}}}"), refs::text(value)));
-        }
-        cmd::contribute(&json!({ "variables": hints }))
+        cmd::contribute(&json!({"tree": {
+            "first": [[VAR, self.vars]],
+            "last": [[ENV, self.env]],
+        }}))
     }
 
     fn save(&mut self, text: String) -> Vec<Cmd> {
@@ -118,42 +113,6 @@ impl Variables {
                 commands.extend(self.note(VAR, &message, "error"));
                 commands
             }
-        }
-    }
-
-    /// The value of `name` in `var` with the references `var` and `env` own resolved.
-    fn own(&self, name: &str, chain: &mut Vec<String>) -> Result<Option<String>, String> {
-        let Some(value) = self.vars.get(name) else {
-            return Ok(None);
-        };
-        if chain.iter().any(|link| link == name) {
-            return Err(format!(
-                "Circular variable reference: {} -> {name}",
-                chain.join(" -> ")
-            ));
-        }
-        chain.push(name.to_owned());
-        let out = refs::replace(&refs::text(value), |set, name| {
-            self.reference(set, name, chain)
-        });
-        chain.pop();
-        out.map(Some)
-    }
-
-    fn reference(
-        &self,
-        set: &str,
-        name: &str,
-        chain: &mut Vec<String>,
-    ) -> Result<Option<String>, String> {
-        match set {
-            "var" => match self.own(name, chain)? {
-                Some(value) => Ok(Some(value)),
-                None => Err(format!("Unknown variable \"{name}\" in var")),
-            },
-            "" => self.own(name, chain),
-            ENV => Ok(self.env.get(name).map(refs::text)),
-            _ => Ok(None),
         }
     }
 }
@@ -256,7 +215,7 @@ impl Module for Variables {
         } else {
             ui::editor("headers", self.shown.clone(), &Msg::Edit)
                 .key("console-variables")
-                .placeholder("# comments start with #\nNAME: value\nlocale: en_US")
+                .placeholder("# comments start with #\nlocale: en_US\nhosts:\n  catalog: catalog.example.com\n  checkout: checkout.example.com")
                 .label("Variables · var")
                 .debounce(600)
         };
@@ -278,44 +237,6 @@ impl Module for Variables {
         )
         .key("variables-tabs");
         Some(ui::tabbed_panel(tabs, Vec::new(), Vec::new()))
-    }
-
-    fn resolve(&self, text: &str, json: bool, last: bool) -> Option<Result<Resolution, String>> {
-        let mut secrets = Vec::new();
-        let mut missing = Vec::new();
-        let result = refs::replace(text, |set, name| {
-            let value = match self.reference(set, name, &mut Vec::new())? {
-                Some(value) => Some(value),
-                None if last && set.is_empty() => self.env.get(name).map(refs::text),
-                None => None,
-            };
-            if value.is_none() && last && (set.is_empty() || set == ENV) {
-                missing.push(name.to_owned());
-            }
-            if let Some(value) = &value
-                && refs::sensitive(name)
-                && refs::find(value).is_empty()
-            {
-                secrets.push(value.clone());
-            }
-            Ok(value.map(|value| {
-                if json {
-                    refs::escape_json(&value)
-                } else {
-                    value
-                }
-            }))
-        });
-        Some(result.and_then(|text| {
-            if missing.is_empty() {
-                Ok(Resolution { text, secrets })
-            } else {
-                Err(format!(
-                    "Missing environment variable(s): {}",
-                    missing.join(", ")
-                ))
-            }
-        }))
     }
 }
 

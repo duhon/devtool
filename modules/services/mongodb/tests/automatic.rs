@@ -17,7 +17,8 @@ fn document(module: &mut Harness, text: &str) -> Vec<Cmd> {
     module.send(Kind::Document(check(text)))
 }
 
-const BY_VARIABLE: &str = "#target\nmongodb://{{var:mongo}}/gamelib\n#collection\nstores\n#action\naggregate\n#payload\n[]";
+const BY_VARIABLE: &str =
+    "#target\nmongodb://{{:mongo}}/gamelib\n#collection\nstores\n#action\naggregate\n#payload\n[]";
 
 #[test]
 fn a_target_followed_by_a_section_discovers_the_collections_on_its_own() {
@@ -59,7 +60,7 @@ fn a_target_with_a_variable_is_resolved_first_then_discovered() {
     let mut module = Harness::default();
     let cmds = document(&mut module, BY_VARIABLE);
     assert!(calls(&cmds).is_empty());
-    let cmds = resolve(&mut module, &cmds, &[("var:mongo", "vars.example:27017")]);
+    let cmds = resolve(&mut module, &cmds, &[("mongo", "vars.example:27017")]);
     let requests = calls(&cmds);
     assert_eq!(requests.len(), 1, "{cmds:?}");
     assert_eq!(requests[0]["uri"], "mongodb://vars.example:27017/gamelib");
@@ -70,7 +71,7 @@ fn a_target_with_a_variable_is_resolved_first_then_discovered() {
 fn typing_the_action_asks_again_without_repeating_known_work() {
     let mut module = Harness::default();
     let cmds = document(&mut module, BY_VARIABLE);
-    let cmds = resolve(&mut module, &cmds, &[("var:mongo", "vars.example:27017")]);
+    let cmds = resolve(&mut module, &cmds, &[("mongo", "vars.example:27017")]);
     assert_eq!(calls(&cmds).len(), 1);
     let typing = BY_VARIABLE.replace("aggregate", "agg");
     assert!(calls(&document(&mut module, &typing)).is_empty());
@@ -107,6 +108,6 @@ fn ctrl_space_in_the_action_resolves_the_variable_and_discovers() {
     let mut module = Harness::default();
     let pos = BY_VARIABLE.find("aggregate").unwrap() + 3;
     let cmds = module.hints(BY_VARIABLE, pos);
-    let cmds = resolve(&mut module, &cmds, &[("var:mongo", "vars.example:27017")]);
+    let cmds = resolve(&mut module, &cmds, &[("mongo", "vars.example:27017")]);
     assert_eq!(calls(&cmds)[0]["command"]["listCollections"], 1, "{cmds:?}");
 }

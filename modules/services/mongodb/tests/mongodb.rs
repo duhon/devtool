@@ -95,7 +95,7 @@ fn the_database_comes_from_the_uri_and_variables_are_resolved() {
     let mut module = Harness::default();
     let cmds = started(
         &mut module,
-        "#target\nmongodb://{{HOST}}:27017/{{DB}}\n#collection\n{{COLL}}\n#action\ncountDocuments\n#payload\n{\"filter\": {\"n\": \"{{N}}\"}}",
+        "#target\nmongodb://{{:HOST}}:27017/{{:DB}}\n#collection\n{{:COLL}}\n#action\ncountDocuments\n#payload\n{\"filter\": {\"n\": \"{{:N}}\"}}",
         &[
             ("HOST", "h.example"),
             ("DB", "metrics"),
@@ -392,7 +392,7 @@ fn discovery_fails_soft_and_waits_before_retrying() {
 #[test]
 fn discovery_resolves_variables_of_the_target() {
     let mut module = Harness::default();
-    let (plain, pos) = at("#target\nmongodb://{{HOST}}/app\n#collection\n|");
+    let (plain, pos) = at("#target\nmongodb://{{:HOST}}/app\n#collection\n|");
     let cmds = module.hints(&plain, pos);
     let cmds = resolve(&mut module, &cmds, &[("HOST", "vars.example")]);
     assert_eq!(call(&cmds)["uri"], "mongodb://vars.example/app");

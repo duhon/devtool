@@ -169,7 +169,7 @@ mod tests {
 
     #[test]
     fn placeholders_end_after_their_braces() {
-        assert_eq!(placeholder("a{{x:y}}b", 1), Some(8));
+        assert_eq!(placeholder("a{{.x.y}}b", 1), Some(9));
         assert_eq!(placeholder("{{open", 0), Some(2));
         assert_eq!(placeholder("{x}", 0), None);
     }

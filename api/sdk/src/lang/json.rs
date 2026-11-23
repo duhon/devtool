@@ -849,13 +849,13 @@ mod tests {
     #[test]
     fn placeholders_are_skipped_and_states_round_trip() {
         let mut state = State::default();
-        let line = r#"{"id": {{var:id}}, "n": "{{x}}"}"#;
+        let line = r#"{"id": {{.var.id}}, "n": "{{:x}}"}"#;
         assert_eq!(
             crate::lang::styled(line, &tokens(line, &mut state)),
             [
                 ("\"id\"", "string property"),
                 ("\"n\"", "string property"),
-                ("\"{{x}}\"", "string"),
+                ("\"{{:x}}\"", "string"),
             ]
             .map(|(a, b)| (a.to_owned(), b.to_owned()))
         );

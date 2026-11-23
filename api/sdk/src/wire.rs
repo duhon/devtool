@@ -457,34 +457,6 @@ pub struct Updated {
     pub subscriptions: Option<Subscriptions>,
 }
 
-/// Resolve the `{{…}}` variables of `text` a panel owns; in `json` mode each value is
-/// escaped as the content of a JSON string. The Kernel asks every panel by `order` until the
-/// text stops changing, then once more with `last`: the panel then resolves what it can only
-/// fall back to (Variables: `{{:x}}` from the environment) or fails on what it owns.
-#[derive(Clone, PartialEq, Message)]
-pub struct ResolveRequest {
-    #[prost(string, tag = "1")]
-    pub text: String,
-    #[prost(bool, tag = "2")]
-    pub json: bool,
-    #[prost(bool, tag = "3")]
-    pub last: bool,
-}
-
-/// A panel's answer to [`ResolveRequest`]: `handled` is false when it keeps no variables.
-#[derive(Clone, PartialEq, Message)]
-pub struct Resolved {
-    #[prost(bool, tag = "1")]
-    pub handled: bool,
-    #[prost(string, tag = "2")]
-    pub text: String,
-    #[prost(string, optional, tag = "3")]
-    pub error: Option<String>,
-    /// Values of sensitive variables the text now holds; History masks them.
-    #[prost(string, repeated, tag = "4")]
-    pub secrets: Vec<String>,
-}
-
 #[derive(Clone, PartialEq, Message)]
 pub struct AfterResponse {
     #[prost(message, optional, tag = "1")]
@@ -530,8 +502,6 @@ pub mod request {
         BeforeRequest(DriverCall),
         #[prost(message, tag = "11")]
         AfterResponse(AfterResponse),
-        #[prost(message, tag = "12")]
-        Resolve(ResolveRequest),
         #[prost(message, tag = "13")]
         Marks(Check),
         /// The schema the module discovered for this check.
@@ -585,8 +555,6 @@ pub mod answer {
         Text(String),
         #[prost(message, tag = "10")]
         Cmds(Cmds),
-        #[prost(message, tag = "11")]
-        Resolved(Resolved),
         #[prost(message, tag = "12")]
         Schema(Schema),
     }

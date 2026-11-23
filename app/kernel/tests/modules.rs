@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use services_kernel::document;
-use services_kernel::modules::{Effect, Instance, Modules};
+use services_kernel::modules::{Effect, Instance, Modules, registry};
 use services_sdk::wire::{self, event};
 use services_sdk::{
     Check, Chunk, Cmd, DriverCall, Event, Failure, Linked, Manifest, Module, Rendered,
@@ -23,7 +23,17 @@ fn drivers() -> BTreeMap<String, String> {
     BTreeMap::from([("http".to_owned(), "1".to_owned())])
 }
 
+/// The App links its modules before the Kernel orders panels; tests link only Settings' slot.
 fn modules() -> Modules {
+    registry::link(registry::Link {
+        builtin: || {
+            (
+                manifest("settings", "panel", 0),
+                Box::new(Linked::<Later>::default()),
+            )
+        },
+        linked: Vec::new,
+    });
     Modules::new("3.7.0", drivers(), Box::new(|| 0.0))
 }
 
@@ -143,14 +153,7 @@ impl Module for Panel {
             ..Subscriptions::default()
         }
     }
-    fn before_request(&self, mut call: DriverCall) -> Result<DriverCall, String> {
-        let mut request = call.request();
-        let url = request["url"].as_str().unwrap_or("").to_owned();
-        if url.contains("{{missing}}") {
-            return Err("Unknown variable {{missing}}".into());
-        }
-        request["url"] = json!(url.replace("{{host}}", "example.test"));
-        call.set_request(&request);
+    fn before_request(&self, call: DriverCall) -> Result<DriverCall, String> {
         Ok(call)
     }
     fn after_response(&self, call: &DriverCall, response: &Value) -> Vec<Cmd> {
@@ -330,18 +333,20 @@ fn a_hidden_panel_stops_its_work_and_gets_no_events() {
 fn the_request_pipeline_runs_the_service_then_panels_in_order() {
     let mut modules = modules();
     load(&mut modules);
-    let check = document::check("rest", "#target https://{{host}}/a", &Value::Null);
+    contribute(
+        "host",
+        json!({"first": [["var", {"host": "example.test"}]]}),
+    );
+    let check = document::check("rest", "#target https://{{:host}}/a", &Value::Null);
     let call = modules.prepare("rest", check).unwrap();
     assert_eq!(
         call.request()["headers"],
         json!([["X-Seen", "https://example.test/a"]])
     );
 
-    let missing = document::check("rest", "#target https://{{missing}}/", &Value::Null);
-    assert_eq!(
-        modules.prepare("rest", missing),
-        Err("Unknown variable {{missing}}".into())
-    );
+    let missing = document::check("rest", "#target https://{{:missing}}/", &Value::Null);
+    let error = modules.prepare("rest", missing).unwrap_err();
+    assert!(error.contains("Unknown variable"), "{error}");
     assert_eq!(
         modules.prepare("rest", document::check("rest", "#target", &Value::Null)),
         Err("#target needs a URL".into())
@@ -558,25 +563,33 @@ impl Module for Vars {
             _ => Vec::new(),
         }
     }
-    fn resolve(
-        &self,
-        text: &str,
-        _: bool,
-        _: bool,
-    ) -> Option<Result<services_sdk::Resolution, String>> {
-        Some(if text.contains("{{var:nope}}") {
-            Err("Unknown variable \"nope\" in var".into())
-        } else {
-            Ok(services_sdk::Resolution {
-                text: text.replace("{{var:host}}", "x.test"),
-                secrets: vec!["x.test".into()],
-            })
-        })
-    }
+}
+
+fn contribute(panel: &str, tree: Value) {
+    registry::contribute(panel, &json!({"tree": tree}));
+}
+
+/// The panels of a session: `var`, the sets `dev` and `stage`, then `env`.
+fn tree() {
+    // Undeclared panels are ordered by id.
+    contribute(
+        "1-vars",
+        json!({
+            "first": [["var", {"host": "x.test", "password": "p\"w",
+                "token": "{{.var.password}}", "user": "{{:login}}", "who": "{{:who}}"}]],
+            "last": [["env", {"HOME": "/home/me", "login": "env-login", "host": "env.test"}]],
+        }),
+    );
+    registry::contribute(
+        "2-dictionary",
+        &json!({"tree": {"first": [
+            ["dev", {"host": "dev.test", "hosts": {"catalog": "catalog.dev", "n": {"1": "deep"}}}],
+            ["stage", {"host": "stage.test", "api_key": "k3y"}]]}}),
+    );
 }
 
 #[test]
-fn the_kernel_resolves_variables_with_the_first_panel_that_keeps_them() {
+fn the_kernel_resolves_variables_from_the_tree_the_panels_contribute() {
     let mut modules = modules();
     modules
         .load(
@@ -595,10 +608,13 @@ fn the_kernel_resolves_variables_with_the_first_panel_that_keeps_them() {
     };
     let status = |modules: &Modules| modules.get("one").unwrap().status.clone().unwrap().text;
 
-    modules.broadcast(discover("http://{{var:host}}/a"));
-    assert_eq!(status(&modules), "url failed: No module resolves variables");
+    modules.broadcast(discover("http://{{.var.host}}/a"));
+    assert_eq!(
+        status(&modules),
+        "url failed: Unknown variable {{.var.host}}"
+    );
 
-    // A closed panel still starts and reads what it resolves from.
+    // A closed panel still starts and reads what it holds.
     let effects = modules
         .load(
             manifest("vars", "panel", 1),
@@ -615,20 +631,101 @@ fn the_kernel_resolves_variables_with_the_first_panel_that_keeps_them() {
     modules.reply("vars", "load", Ok(json!(null)));
     assert!(!modules.settling());
 
-    modules.broadcast(discover("http://{{var:host}}/a"));
+    tree();
+    modules.broadcast(discover("http://{{.var.host}}/a"));
     assert_eq!(status(&modules), "url http://x.test/a");
     assert_eq!(modules.get("one").unwrap().resolutions, 1);
-    assert_eq!(
-        modules.resolve("{{var:host}}", false).unwrap().secrets,
-        ["x.test"]
-    );
-    modules.broadcast(discover("{{var:nope}}"));
-    assert_eq!(
-        status(&modules),
-        "url failed: Unknown variable \"nope\" in var"
-    );
     // The reply ended the command: a late end changes nothing.
     assert!(modules.end("one", "url").is_empty());
+}
+
+fn text(modules: &mut Modules, text: &str) -> Result<String, String> {
+    modules
+        .resolve(text, false)
+        .map(|resolution| resolution.text)
+}
+
+#[test]
+fn references_resolve_by_priority_var_then_sets_then_env() {
+    let mut modules = modules();
+    tree();
+    assert_eq!(text(&mut modules, "{{:host}}").unwrap(), "x.test");
+    assert_eq!(
+        text(&mut modules, "{{.dev.host}} {{.stage.host}}").unwrap(),
+        "dev.test stage.test"
+    );
+    // Only `stage` has it, only `env` has it.
+    assert_eq!(
+        text(&mut modules, "{{:api_key}} {{:HOME}}").unwrap(),
+        "k3y /home/me"
+    );
+    assert_eq!(text(&mut modules, "{{.env.host}}").unwrap(), "env.test");
+    // A value's own references resolve too, wherever the other panel is.
+    assert_eq!(text(&mut modules, "{{:user}}").unwrap(), "env-login");
+    assert!(
+        text(&mut modules, "{{:nope}}")
+            .unwrap_err()
+            .contains("Unknown variable")
+    );
+    assert!(
+        text(&mut modules, "{{:who}}")
+            .unwrap_err()
+            .contains("ircular")
+    );
+}
+
+#[test]
+fn a_hash_path_selects_a_string_and_a_hash_is_a_string_context_error() {
+    let mut modules = modules();
+    tree();
+    assert_eq!(
+        text(&mut modules, "{{:hosts.catalog}} {{:hosts.n.1}}").unwrap(),
+        "catalog.dev deep"
+    );
+    let error = text(&mut modules, "{{:hosts}}").unwrap_err();
+    assert!(error.contains("expected a string, got a hash"), "{error}");
+}
+
+#[test]
+fn json_mode_escapes_values_and_secrets_are_returned() {
+    let mut modules = modules();
+    tree();
+    let resolution = modules.resolve("{\"p\":\"{{.var.token}}\"}", true).unwrap();
+    assert_eq!(resolution.text, "{\"p\":\"p\\\"w\"}");
+    assert_eq!(resolution.secrets, ["p\"w"]);
+    let resolution = modules.resolve("{{:api_key}}", false).unwrap();
+    assert_eq!(resolution.secrets, ["k3y"]);
+}
+
+#[test]
+fn live_template_calls_expand_at_resolve_time() {
+    let mut modules = modules();
+    tree();
+    registry::contribute(
+        "templates",
+        &json!({"templates": {
+            "*": {"*": "@tpl(name, kind = \"qa\") Url\nhttps://{{name}}.{{:host}}/{{kind}}"},
+            "rest": {"target": "@own Own\nown-{{.dev.host}}"}}}),
+    );
+    assert_eq!(
+        text(&mut modules, "GET {{@tpl(\"a\")}} {{@tpl(\"b\", \"x\")}}").unwrap(),
+        "GET https://a.x.test/qa https://b.x.test/x"
+    );
+    assert_eq!(text(&mut modules, "{{@own}}").unwrap(), "own-dev.test");
+    let error = text(&mut modules, "{{@nope}}").unwrap_err();
+    assert!(error.contains("Unknown template"), "{error}");
+    // A JSON plan: the call's quotes are read as written, its result is JSON-escaped.
+    registry::contribute(
+        "templates",
+        &json!({"templates": {"*": {"*": "@q(type = \"qa\") Q\n\"{{type}}\"\nline"}}}),
+    );
+    let plan = json!({"command": "echo '{{@q(\"prod\")}}'", "n": 1}).to_string();
+    let resolved: serde_json::Value =
+        serde_json::from_str(&modules.resolve(&plan, true).unwrap().text).unwrap();
+    assert_eq!(
+        resolved,
+        json!({"command": "echo '\"prod\"\nline'", "n": 1})
+    );
 }
 
 /// A service that runs its checks: a lock, a call, output, then a result.

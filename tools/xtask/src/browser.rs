@@ -836,7 +836,7 @@ fn scenarios() -> Vec<Scenario> {
             "templates",
             Core,
             60,
-            "Templates panel without service sections, kept drafts, exclusive tool panels; Splunk sections",
+            "Templates panel without service sections, saved invalid templates, exclusive tool panels; Splunk sections",
             script(include_str!("browser-templates.js")),
         ),
         scenario(
@@ -1238,7 +1238,7 @@ fn seed_data(data: &Path) -> Result<Vec<(PathBuf, String)>> {
         local.join("dictionary.json"),
         json!({
             "order":["default","second"],
-            "sets":{"default":{"TOKEN":"fixture","REF":"{{second:TOKEN}}"},"second":{"TOKEN":"resolved-fixture"}},
+            "sets":{"default":{"TOKEN":"fixture","REF":"{{.second.TOKEN}}"},"second":{"TOKEN":"resolved-fixture"}},
         })
         .to_string(),
     ));

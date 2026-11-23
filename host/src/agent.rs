@@ -829,7 +829,7 @@ fn workspace_tools(bridge: Arc<Mutex<Option<Bridge>>>) -> Vec<Tool> {
     let handler = Arc::new(WorkspaceTool { bridge });
     let mut tools: Vec<_> = [
         ("console_skill", "Read authoritative application knowledge. Read the relevant topic before explaining UI, the Agent panel, page tools, discovery, service syntax or variables. Optional topic:"),
-        ("console_context", "Read fresh service, active check, check IDs/revisions and available variables."),
+        ("console_context", "Read fresh service, active check, check IDs/revisions and available variable references ({{.var.x}}, {{:x}})."),
         ("console_read_check", "Read a request page. Requires service and checkId; optional offset/limit."),
         ("console_read_response", "Read a bounded response page. Requires service, checkId; optional offset and limit."),
         ("console_read_debug", "Read a check's current status and Debug: the error, exit code, stderr, timing and request/connection details the user sees. Requires service, checkId. Long values are clipped; read output with console_read_response."),
@@ -1245,8 +1245,7 @@ impl Redactor {
         .any(|part| name.contains(part))
     }
     pub fn text(&self, text: &str) -> String {
-        let placeholders =
-            Regex::new(r"\{\{[^{}\r\n]*:[^{}\r\n]*\}\}").expect("static variable pattern");
+        let placeholders = Regex::new(r"\{\{[^{}\r\n]*\}\}").expect("static variable pattern");
         let mut output = String::new();
         let mut start = 0;
         for placeholder in placeholders.find_iter(text) {
@@ -1461,20 +1460,20 @@ mod tests {
     fn masks_credentials_recursively_and_preserves_placeholders() {
         let redactor = Redactor::new(vec!["s3cr3t".into()]);
         let value = redactor.value(
-            json!({"request":"#env https://user:s3cr3t@shop.invalid\n{{var:TOKEN}}",
+            json!({"request":"#env https://user:s3cr3t@shop.invalid\n{{.var.TOKEN}}",
             "password":"other", "rows":[{"Authorization":"Bearer abc"}]}),
         );
         assert_eq!(
             value["request"],
-            "#env https://[redacted]@shop.invalid\n{{var:TOKEN}}"
+            "#env https://[redacted]@shop.invalid\n{{.var.TOKEN}}"
         );
         assert_eq!(value["password"], "[redacted]");
         assert_eq!(value["rows"][0]["Authorization"], "[redacted]");
         let short = Redactor::new(vec!["1".into(), "TOKEN".into()]);
-        let context=short.value(json!({"revision":"instance:1","checkId":"check-1","request":"select 1, '{{var:TOKEN}}'"}));
+        let context=short.value(json!({"revision":"instance:1","checkId":"check-1","request":"select 1, '{{.var.TOKEN}}'"}));
         assert_eq!(context["revision"], "instance:1");
         assert_eq!(context["checkId"], "check-1");
-        assert_eq!(context["request"], "select [redacted], '{{var:TOKEN}}'");
+        assert_eq!(context["request"], "select [redacted], '{{.var.TOKEN}}'");
     }
     #[test]
     fn clips_large_debug_to_the_budget() {

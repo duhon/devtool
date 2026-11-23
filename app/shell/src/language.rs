@@ -76,6 +76,8 @@ struct State {
     /// The module marks of a check, its `#check` line and the line after its last, until
     /// the text changes.
     module_marks: Option<(usize, usize, Rc<[Line]>)>,
+    /// The template definition lines of a templates editor, which band its templates.
+    definition_lines: Vec<usize>,
 }
 
 /// Folded line ranges, start and end.
@@ -94,6 +96,8 @@ pub struct Language {
     section: Option<String>,
     /// A saved run: its `#responce` line heads the response of the check above it.
     snapshot: bool,
+    /// The Global templates (`*/*`): definitions without a service.
+    global: bool,
     state: RefCell<State>,
 }
 
@@ -106,6 +110,7 @@ impl Language {
             field: field.to_owned(),
             section: (!section.is_empty()).then(|| section.to_owned()),
             snapshot: false,
+            global: false,
             state: RefCell::default(),
         }
     }
@@ -148,6 +153,11 @@ impl Language {
             }
             "hints" => make("headers".into(), "hints", tail, ""),
             "headers" => make("headers".into(), "vars", "variables", ""),
+            "*" if tail == "*" => {
+                let (mode, mut language) = make("*".into(), "", "", "");
+                language.global = true;
+                (mode, language)
+            }
             mode => make(mode.to_owned(), "", "", ""),
         }
     }
@@ -160,6 +170,28 @@ impl Language {
     /// The service whose module highlights the editor.
     pub fn module(&self) -> Option<&str> {
         self.module.as_deref()
+    }
+
+    /// Whether the editor edits templates: a section's or the Global ones.
+    fn templates(&self) -> bool {
+        self.section.is_some() || self.global
+    }
+
+    /// Remembers the template definition lines of `text`; true when they changed.
+    fn definitions(&self, text: &str) -> bool {
+        if !self.templates() {
+            return false;
+        }
+        let lines: Vec<usize> = text
+            .split('\n')
+            .enumerate()
+            .filter(|(_, line)| language::is_definition(line))
+            .map(|(index, _)| index)
+            .collect();
+        let mut state = self.state.borrow_mut();
+        let changed = state.definition_lines != lines;
+        state.definition_lines = lines;
+        changed
     }
 
     /// The module's marks of `lines[line]`, asked once per check until the text changes.
@@ -259,6 +291,10 @@ impl Extension for Language {
     }
 
     fn synchronize(&self, text: &str, generation: u64) -> Refresh {
+        let mut refresh = Refresh::default();
+        if self.definitions(text) {
+            refresh.redraw = true;
+        }
         let mut state = self.state.borrow_mut();
         let state = &mut *state;
         let regions = state.pending_regions.take().unwrap_or_else(|| {
@@ -270,7 +306,6 @@ impl Extension for Language {
                 Vec::new()
             }
         });
-        let mut refresh = Refresh::default();
         if regions != state.regions {
             let mut sorted = regions.clone();
             sorted.sort_by_key(|region| region.header);
@@ -302,6 +337,7 @@ impl Extension for Language {
         generation: u64,
         generations: &BTreeSet<u64>,
     ) -> Option<Result<(Payload, Refresh), String>> {
+        self.definitions(text);
         let mut state = self.state.borrow_mut();
         let history = state.history.as_mut()?;
         let changes: Vec<document::TextChange> = changes
@@ -439,8 +475,13 @@ impl Extension for Language {
 
     fn line_class(&self, line: usize) -> Option<&'static str> {
         let state = self.state.borrow();
-        state.history.as_ref()?;
-        document::checks::band(&state.check_lines, line).map(|odd| {
+        let starts = if self.templates() {
+            &state.definition_lines
+        } else {
+            state.history.as_ref()?;
+            &state.check_lines
+        };
+        document::checks::band(starts, line).map(|odd| {
             if odd {
                 "editor-band-even"
             } else {
@@ -472,9 +513,51 @@ impl Extension for Language {
     }
 
     fn highlight(&self, state: &[u8], lines: &[String], line: usize) -> Option<Tokens> {
-        let service = self.module.as_deref()?;
         let text = lines[line].as_str();
-        let marks = self.marks(service, lines, line);
+        if (self.section.is_some() || self.global) && language::is_definition(text) {
+            let problems = if text.contains("{{") {
+                language::references::definition_problems(&kernel::root(), text)
+            } else {
+                Vec::new()
+            };
+            let next = match self.module.as_deref() {
+                Some(service) => {
+                    language::section_state(&Modules, service, self.section.as_deref())
+                }
+                None => state.to_vec(),
+            };
+            return Some((language::definition_tokens(text, &problems), next));
+        }
+        let params = if self.templates() && text.contains("{{") {
+            lines[..line]
+                .iter()
+                .rfind(|line| language::is_definition(line))
+                .map(|definition| language::definition_params(definition))
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        let uses = language::parameter_marks(text, &params);
+        let Some(service) = self.module.as_deref() else {
+            // A Global body has no language: plain text with its parameter uses.
+            if !self.global {
+                return None;
+            }
+            let mut tokens = Vec::new();
+            for mark in &uses {
+                let (start, end) = (mark.start as usize, (mark.start + mark.len) as usize);
+                if start > tokens.last().map_or(0, |(end, _)| *end) {
+                    tokens.push((start, None));
+                }
+                tokens.push((end, Some(mark.kind.clone())));
+            }
+            tokens.push((text.len(), None));
+            tokens.dedup_by(|next, previous| next.0 <= previous.0);
+            return Some((tokens, state.to_vec()));
+        };
+        let mut marks = self.marks(service, lines, line);
+        marks.extend(uses);
+        marks.sort_by_key(|mark| mark.start);
         let document = self.state.borrow();
         let index = document
             .sorted
@@ -529,6 +612,7 @@ impl Extension for Language {
             (line, ch),
             &context.hints,
             &context.templates,
+            &kernel::root(),
         );
         Completion {
             from: completion.from,
@@ -549,6 +633,51 @@ impl Extension for Language {
             comma: completion.comma,
             automatic: completion.automatic,
         }
+    }
+
+    fn enter(
+        &self,
+        lines: &[String],
+        cursor: Position,
+        context: &Context,
+    ) -> Option<Result<Transaction, String>> {
+        let service = self.module.as_deref()?;
+        if !self.field.is_empty() || !self.document() {
+            return None;
+        }
+        let state = self.state.borrow();
+        let expansion = language::expand_call(
+            &Modules,
+            service,
+            lines,
+            cursor.line,
+            &state.regions,
+            &context.templates,
+        )?;
+        Some(expansion.map(|expansion| {
+            let rows: Vec<&str> = expansion.text.split('\n').collect();
+            let last = rows.last().map_or(0, |row| row.encode_utf16().count());
+            let end = Position {
+                line: expansion.from.line + rows.len() - 1,
+                ch: if rows.len() == 1 {
+                    expansion.from.ch + last
+                } else {
+                    last
+                },
+            };
+            let mut transaction = Transaction::replace(
+                widget_position(expansion.from),
+                widget_position(expansion.to),
+                expansion.text,
+                "enter",
+            );
+            transaction.selection = Some(services_widgets::editor::Selection::cursor(end));
+            transaction
+        }))
+    }
+
+    fn hover(&self, line: &str, ch: usize) -> Option<String> {
+        language::references::hover(&kernel::root(), line, ch).map(|hover| hover.text)
     }
 
     fn insertion(&self, candidate: &str, line: &str) -> Option<String> {
@@ -585,17 +714,13 @@ impl Extension for Language {
     }
 }
 
-/// The editors of modules' UI trees get a [`Language`]; `headers` ones complete variables.
+/// The editors of modules' UI trees get a [`Language`].
 struct Trees;
 
 impl Languages for Trees {
     fn editor(&self, language: &str) -> (String, Rc<dyn Extension>) {
         let (mode, language) = Language::of_tree(language);
         (mode, Rc::new(language))
-    }
-
-    fn hints(&self, language: &str) -> Option<Vec<(String, String)>> {
-        (language == "headers").then(kernel::variables)
     }
 }
 

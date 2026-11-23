@@ -87,7 +87,7 @@ fn resolve(cmds: &Cmds, vars: &[(&str, &str)]) -> (String, Value) {
     let mut text = args["text"].as_str().unwrap().to_owned();
     for (name, value) in vars {
         let escaped = serde_json::to_string(value).unwrap();
-        text = text.replace(&format!("{{{{{name}}}}}"), &escaped[1..escaped.len() - 1]);
+        text = text.replace(&format!("{{{{:{name}}}}}"), &escaped[1..escaped.len() - 1]);
     }
     (tag.clone(), json!(text))
 }
@@ -102,7 +102,7 @@ fn names(cmds: &Cmds) -> Vec<(&str, &str)> {
 fn env_values_are_resolved_then_quoted_and_output_streams() {
     let module = Module::default();
     let cmds = module.run(
-        "#target\nssh {{host}}\n#payload\necho \"$V\"; echo {{word}}\n#metadata\nV: {{value}}",
+        "#target\nssh {{:host}}\n#payload\necho \"$V\"; echo {{:word}}\n#metadata\nV: {{:value}}",
     );
     let (tag, text) = resolve(
         &cmds,

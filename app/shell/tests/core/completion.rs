@@ -5,6 +5,7 @@ use services_kernel::document::check_at;
 use services_kernel::editor::{Completion, fuzzy_match, insertion, marker_insertion};
 use services_kernel::modules::services;
 use services_kernel::requests as console;
+use services_sdk::refs::{self, Root};
 use services_shell::language::{Language, Modules};
 use services_widgets::editor::extension::Extension;
 
@@ -16,7 +17,17 @@ fn suggest(
     ch: usize,
     hints: &[(String, String)],
 ) -> Completion {
-    services_kernel::editor::completion::suggest(&Modules, service, field, source, line, ch, hints)
+    services_kernel::editor::completion::suggest(
+        &Modules,
+        service,
+        field,
+        source,
+        line,
+        ch,
+        hints,
+        &Default::default(),
+        &Default::default(),
+    )
 }
 
 #[test]
@@ -119,7 +130,6 @@ fn non_service_editors_never_offer_console_or_service_syntax() {
         ("GET".into(), String::new()),
         ("SELECT".into(), String::new()),
         ("query".into(), String::new()),
-        ("{{prod:TOKEN}}".into(), "fixture".into()),
     ];
     for (service, field) in [("vars", "variables"), ("", "")] {
         for source in [
@@ -148,9 +158,8 @@ fn non_service_editors_never_offer_console_or_service_syntax() {
             );
             assert!(result.candidates.is_empty(), "{service}: {source}");
         }
-        let result = suggest(service, field, "NAME: {{prod:TO", 0, 15, &hints);
-        assert_eq!(result.candidates.len(), 1);
-        assert_eq!(result.candidates[0].text, "{{prod:TOKEN}}");
+        let result = suggest(service, field, "NAME: {{.prod.TO", 0, 15, &hints);
+        assert!(result.candidates.is_empty());
     }
 }
 
@@ -242,45 +251,84 @@ fn markers_advance_to_their_value_but_request_leaves_room_for_a_title() {
     );
 }
 
+fn tree_suggest(
+    service: &str,
+    field: &str,
+    source: &str,
+    ch: usize,
+    vars: &[(&str, &str)],
+) -> Completion {
+    let root = Root::new(
+        vars.iter()
+            .map(|(panel, text)| ((*panel).to_owned(), refs::parse_lines(text).unwrap()))
+            .collect(),
+    );
+    services_kernel::editor::completion::suggest(
+        &Modules,
+        service,
+        field,
+        source,
+        0,
+        ch,
+        &[],
+        &Default::default(),
+        &root,
+    )
+}
+
+const PANELS: [(&str, &str); 3] = [
+    (
+        "var",
+        "type: qa\nhosts:\n  catalog: a.example\n  cart: b.example",
+    ),
+    ("dev", "type: dev\nhosts:\n  catalog: dev.example"),
+    ("env", "HOME: /home"),
+];
+
 #[test]
 fn variable_placeholders_replace_the_existing_closing_braces() {
     services_shell::link();
-    let r = suggest(
-        "rest",
-        "payload",
-        "{{:TOK}}",
-        0,
-        6,
-        &[("{{:TOKEN}}".into(), "value".into())],
-    );
-    assert_eq!(r.to, 8);
-    assert_eq!(r.from, 0);
-    assert_eq!(r.candidates[0].text, "{{:TOKEN}}");
+    let r = tree_suggest("rest", "payload", "{{:typ}}", 6, &PANELS);
+    assert_eq!((r.from, r.to), (0, 8));
+    assert_eq!(r.candidates[0].text, "{{:type}}");
 }
 
 #[test]
-fn owners_then_scoped_variables() {
+fn dot_walks_the_tree_and_colon_searches_every_leaf() {
     services_shell::link();
-    let hints = vec![
-        ("{{prod:TOKEN}}".into(), "secret".into()),
-        ("{{other:HOST}}".into(), "host".into()),
-        ("{{:TOKEN}}".into(), "global".into()),
-    ];
-    for (service, service_field) in [
-        ("mysql", "payload"),
-        ("rest", "target"),
-        ("vars", "variables"),
-    ] {
-        for field in [service_field, ""] {
-            let owners = suggest(service, field, "{{", 0, 2, &hints);
-            assert!(owners.candidates.iter().any(|c| c.text == "{{prod:"));
-            assert!(owners.candidates.iter().any(|c| c.text == "{{:"));
-            assert!(!owners.candidates.iter().any(|c| c.text.ends_with("}}")));
-            let variables = suggest(service, field, "{{prod:TK", 0, 9, &hints);
-            assert_eq!(variables.candidates.len(), 1);
-            assert_eq!(variables.candidates[0].text, "{{prod:TOKEN}}");
-        }
+    for (service, field) in [("mysql", "payload"), ("rest", ""), ("vars", "variables")] {
+        let starters = tree_suggest(service, field, "{{", 2, &PANELS);
+        assert!(starters.candidates.iter().any(|c| c.text == "{{."));
+        assert!(starters.candidates.iter().any(|c| c.text == "{{:"));
+        let panels = tree_suggest(service, field, "{{.", 3, &PANELS);
+        let names: Vec<_> = panels.candidates.iter().map(|c| c.text.as_str()).collect();
+        assert_eq!(names, ["{{.var.$0}}", "{{.dev.$0}}", "{{.env.$0}}"]);
+        assert!(panels.candidates.iter().all(|c| c.detail == "hash"));
+        let level = tree_suggest(service, field, "{{.dev.", 7, &PANELS);
+        let items: Vec<_> = level
+            .candidates
+            .iter()
+            .map(|c| (c.text.as_str(), c.detail.as_str()))
+            .collect();
+        assert_eq!(
+            items,
+            [("{{.dev.type}}", "dev"), ("{{.dev.hosts.$0}}", "hash")]
+        );
+        assert_eq!((level.from, level.to), (0, 7));
     }
+    let found = tree_suggest("rest", "", "{{:catal", 8, &PANELS);
+    let items: Vec<_> = found
+        .candidates
+        .iter()
+        .map(|c| (c.text.as_str(), c.detail.as_str()))
+        .collect();
+    assert_eq!(
+        items,
+        [
+            ("{{:hosts.catalog}}", "a.example — var"),
+            ("{{.dev.hosts.catalog}}", "dev.example — dev (shadowed)"),
+        ]
+    );
 }
 
 #[test]

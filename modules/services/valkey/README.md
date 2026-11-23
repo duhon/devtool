@@ -36,19 +36,19 @@ SET game:1 "The Witcher 3" EX 60
 ```
 
 No shell runs; variables, pipes and substitutions of a shell are not evaluated.
-DevTools `{{VARIABLE}}` substitution is supported. Arguments are parsed before
+DevTools `{{:VARIABLE}}` substitution is supported. Arguments are parsed before
 variable resolution, so spaces and quotes in a variable stay in one argument.
 Use separate checks for separate commands.
 
 URLs are `redis://[username:password@]host:port/database` or `rediss://…` for TLS.
 Port defaults to 6379, database to 0; URL-encode special characters in credentials.
-Prefer storing the entire endpoint in `{{VALKEY_URL}}`.
+Prefer storing the entire endpoint in `{{:VALKEY_URL}}`.
 
 ```text
 #target
-{{VALKEY_URL}}
+{{:VALKEY_URL}}
 #metadata
-CA-Certificate: {{VALKEY_CA}}
+CA-Certificate: {{:VALKEY_CA}}
 #action
 PING
 ```

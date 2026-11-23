@@ -257,9 +257,8 @@ pub fn diff_cancel() -> Cmd {
     Cmd::new("", "diff.cancel", &json!({}))
 }
 
-/// What the module adds to the editors: `{"variables": [[reference, value], …]}` (completion
-/// and hover of `{{…}}`), `{"templates": {service: {section: text}}}` or
-/// `{"hints": {service: text}}`. Replaces what the module contributed before under that key.
+/// What the module adds to the editors: `{"tree": {"first": […], "last": […]}}` (the variable
+/// tree of `{{…}}`), `{"templates": {service: {section: text}}}` or `{"hints": {service: text}}`. Replaces what the module contributed before under that key.
 pub fn contribute(contribution: &Value) -> Cmd {
     Cmd::new("", "editor.contribute", contribution)
 }

@@ -42,7 +42,7 @@
     await key('Escape');
     editor.replaceRange('{{', editor.getCursor());
     await key('Control+Space');
-    await wait(() => candidates().includes('{{env:'));
+    await wait(() => candidates().includes('{{.'));
     assert(candidates().every(text => text.startsWith('{{')), `${service}: placeholder completion isolation`);
     await key('Escape');
   }
@@ -62,7 +62,7 @@
     return output();
   };
   const envOutput = await runConsole('rest',
-    `#check env\n#target\n${fixtureUrl}/browser?env={{env:SERVICES_DEVTOOLS_ENV_PROBE}}&interactive={{env:SERVICES_DEVTOOLS_INTERACTIVE_PROBE}}`,
+    `#check env\n#target\n${fixtureUrl}/browser?env={{.env.SERVICES_DEVTOOLS_ENV_PROBE}}&interactive={{.env.SERVICES_DEVTOOLS_INTERACTIVE_PROBE}}`,
     output => output.includes('rust-ui-fixture'), 'The REST fixture must answer through the companion');
   assert(envOutput.includes('/browser?env=companion-fixture-only'), 'Login shell env substitution');
   assert(envOutput.includes('interactive=interactive-fixture-only'), 'Interactive shell env substitution');
@@ -213,7 +213,7 @@
   await click(testid('console-service-rest'));
   const magentoEditor = editorOf('console-editor');
   const magentoPath = '/rest/default/V1/integration/admin/token';
-  const magentoUrl = `http://{{var:magento}}${magentoPath}`;
+  const magentoUrl = `http://{{.var.magento}}${magentoPath}`;
   const magentoPrefix = endpoint =>
     `#check magento\n#target\n${endpoint}\n#action\nPOST\n#metadata\nContent-Type: application/json\n#payload\n`;
   const credentials = ['"username": ""', '"password": ""'];
@@ -282,8 +282,8 @@
   assert(magentoEditor.getLine(2) === magentoUrl,
     'Body completion must preserve the raw host variable in the request document');
   for (const endpoint of [
-    `{{var:magentoBase}}${magentoPath}`,
-    '{{var:magentoToken}}',
+    `{{.var.magentoBase}}${magentoPath}`,
+    '{{.var.magentoToken}}',
     `http://{{:magento}}${magentoPath}`,
   ]) {
     setSource(magentoEditor, `${magentoPrefix(endpoint)}{\n  `);
@@ -331,7 +331,7 @@
   assert(restDiscoveryCount() === magentoLoaded && magentoEditor.getLine(2) === magentoUrl,
     'Required-template selection and filling must not rediscover or rewrite the connection URL');
   await key('Escape');
-  const enumUrl = `http://{{var:magento}}/rest/default/V1/enum-test`;
+  const enumUrl = `http://{{.var.magento}}/rest/default/V1/enum-test`;
   const enumLoaded = restDiscoveryCount();
   const checkRestEnums = async (editor, prefix) => {
     setSource(editor, prefix);
@@ -392,7 +392,7 @@
   await click(testid('console-service-rest'));
   const categoryPath = '/rest/default/V1/categories/{categoryId}/move';
   const pathEditor = editorOf('console-editor');
-  setSource(pathEditor, '#check move\n#target\nhttp://{{var:magento}}/rest/default/V1/categories/\n#action\nPUT');
+  setSource(pathEditor, '#check move\n#target\nhttp://{{.var.magento}}/rest/default/V1/categories/\n#action\nPUT');
   pathEditor.setCursor({line: 2, ch: pathEditor.getLine(2).length});
   await pick(pathEditor, categoryPath);
   const checkPathParameterColor = async (editor, line) => {
@@ -409,13 +409,13 @@
     editor.replaceRange('42', {line, ch: start}, {line, ch: start + '{categoryId}'.length});
     await wait(() => !editor.getLineTokens(line).some(token => token.type?.includes('rest-path-param')));
     assert(editor.getLine(line).includes('/categories/42/move')
-      && editor.getLine(line).includes('{{var:magento}}'),
+      && editor.getLine(line).includes('{{.var.magento}}'),
     'Replacing a path parameter must clear its highlight without modifying URL variables');
   };
   await checkPathParameterColor(pathEditor, 2);
-  assert(pathEditor.getLine(2) === 'http://{{var:magento}}/rest/default/V1/categories/42/move',
+  assert(pathEditor.getLine(2) === 'http://{{.var.magento}}/rest/default/V1/categories/42/move',
     'Discovery insertion must retain the full method and variable-based URL');
-  setSource(pathEditor, `#check move\n#target\nhttp://{{var:magento}}${categoryPath}\n#action\nPUT\n#payload\n{"note":"{categoryId}"}`);
+  setSource(pathEditor, `#check move\n#target\nhttp://{{.var.magento}}${categoryPath}\n#action\nPUT\n#payload\n{"note":"{categoryId}"}`);
   await checkPathParameterColor(pathEditor, 2);
   assert(!pathEditor.getLineTokens(4).some(token => token.type?.includes('rest-path-param')),
     'Braces inside a REST JSON body must not become URL-parameter tokens');
@@ -431,7 +431,7 @@
   'The real native registry must report GraphQL errors instead of caching an empty successful schema');
   assert(![...document.querySelectorAll('[role="alert"]')].some(visible),
     'A real native manual discovery error must appear only in status/debug');
-  const authenticated = `#check protected-schema\n#target\n${discoveryEndpoint}\n#metadata\nX-Token: {{second:TOKEN}}\n#payload\n{\n  `;
+  const authenticated = `#check protected-schema\n#target\n${discoveryEndpoint}\n#metadata\nX-Token: {{.second.TOKEN}}\n#payload\n{\n  `;
   setSource(discoveryEditor, authenticated);
   discoveryEditor.setCursor(discoveryEditor.lastLine(), discoveryEditor.getLine(discoveryEditor.lastLine()).length);
   // Discovery is lazy: asking for hints introspects the new connection.
@@ -445,13 +445,13 @@
   await wait(() => candidates().includes('sku') && candidates().includes('images'),
     'Real native introspection must restore nested GraphQL field completion');
   await key('Escape');
-  setSource(discoveryEditor, `#check protected-schema\n#target\n${discoveryEndpoint}\n#metadata\nX-Token: {{second:TOKEN}}\n#payload\n{\n  products\n  sku\n}`);
+  setSource(discoveryEditor, `#check protected-schema\n#target\n${discoveryEndpoint}\n#metadata\nX-Token: {{.second.TOKEN}}\n#payload\n{\n  products\n  sku\n}`);
   const kindOf = (line, name) => discoveryEditor.getLineTokens(line).find(token => token.string === name)?.type || '';
   await wait(() => kindOf(7, 'products').includes('graphql-object-field'),
     'The discovered schema must mark object fields before their selection set is written');
   assert(!kindOf(8, 'sku').includes('graphql-object-field'), 'A scalar field must stay a plain field');
   const materializationQuery = 'query ($skus: [String]) { products(skus: $skus) { sku images { url } } }';
-  const materializationVariables = '{"skus":["{{var:sku}}"]}';
+  const materializationVariables = '{"skus":["{{.var.sku}}"]}';
   await click(testid('console-service-graphql'));
   const materializationEditor = editorOf('console-editor');
   const materializationSource = `#check materialization\n#target\n${fixtureUrl}/graphql-materialization\n#variables\n${materializationVariables}\n#payload\n${materializationQuery}`;
@@ -461,28 +461,28 @@
     && materializationEditor.getValue().includes('fixture-materialized-sku'),
   'GraphQL Console Variables must resolve array placeholders through the real companion');
   const materializationOutput = materializationEditor.getValue().slice(materializationEditor.getValue().lastIndexOf('#responce'));
-  assert(!materializationOutput.includes('{{var:sku}}') && materializationEditor.getValue().startsWith(materializationSource),
+  assert(!materializationOutput.includes('{{.var.sku}}') && materializationEditor.getValue().startsWith(materializationSource),
     'Materialization must change the network payload, not the editable Console template');
   await testDriver.checkConsoleFolding(materializationEditor);
   assert(nativeProbe.clipboardReads === 0, 'Startup and requests must not read clipboard');
   await testDriver.openPanel('dictionary');
   await click(testid('dictionary-set-default'));
-  await wait(() => editorOf('console-dictionary').getValue().includes('{{second:TOKEN}}'),
+  await wait(() => editorOf('console-dictionary').getValue().includes('{{.second.TOKEN}}'),
     'Variable reference fixture must be present');
   let variables = editorOf('console-dictionary');
   testid('console-service-rest').focus();
   const cursor = JSON.stringify(variables.getCursor());
   const lines = variables.getValue().split('\n');
-  const line = lines.findIndex(text => text.includes('{{second:TOKEN}}'));
+  const line = lines.findIndex(text => text.includes('{{.second.TOKEN}}'));
   assert(line >= 0, 'Variable reference fixture must be present');
-  const start = lines[line].indexOf('{{second:TOKEN}}');
+  const start = lines[line].indexOf('{{.second.TOKEN}}');
   variables.scrollIntoView({ line, ch: start }, 20);
   assert(!variables.hasFocus(), 'Hover must work without focus');
-  for (let offset = 0; offset < '{{second:TOKEN}}'.length; offset++) {
+  for (let offset = 0; offset < '{{.second.TOKEN}}'.length; offset++) {
     const box = variables.charCoords({ line, ch: start + offset }, 'window');
     for (const fraction of [0.2, 0.8]) {
       await move(box.left + (box.right - box.left) * fraction, (box.top + box.bottom) / 2);
-      await wait(() => document.querySelector('.gw-var-tooltip')?.textContent === '{{second:TOKEN}} = resolved-fixture');
+      await wait(() => document.querySelector('.gw-var-tooltip')?.textContent === '{{.second.TOKEN}} = ••••••');
     }
   }
   assert(!variables.hasFocus() && JSON.stringify(variables.getCursor()) === cursor, 'Hover must not focus or move cursor');
@@ -496,8 +496,8 @@
   await type('NEW_ENTRY: ');
   await key('Control+Space');
   assert(candidates().length === 0, 'Variable value must not offer HTTP/SQL syntax');
-  await type('{{second:');
-  await wait(() => candidates().length === 1 && candidates()[0] === '{{second:TOKEN}}');
+  await type('{{.second.');
+  await wait(() => candidates().length === 1 && candidates()[0] === '{{.second.TOKEN}}');
   await key('Escape');
   for (const suffix of ['\n\n', '\n#', '\nAc', '\nSEL', '\nqu', '\nNAME: ']) {
     setSource(variables, original + suffix);
@@ -508,21 +508,21 @@
   await wait(() => variables.getValue() === original, 'The restored variables must stay');
   await sleep(1500);
   setSource(variables, `${original}\n\nPROBE: `);
-  await type('{{env:');
-  await wait(() => candidates().includes('{{env:HOME}}'));
+  await type('{{.env.');
+  await wait(() => candidates().includes('{{.env.HOME}}'));
   await sleep(1500);
   await key('Escape');
   await key('Control+Space');
-  await wait(() => candidates().includes('{{env:HOME}}'));
-  assert(variables.getValue() === `${original}\n\nPROBE: {{env:`, 'Autosave must preserve draft and blank lines');
+  await wait(() => candidates().includes('{{.env.HOME}}'));
+  assert(variables.getValue() === `${original}\n\nPROBE: {{.env.`, 'Autosave must preserve draft and blank lines');
   await key('Escape');
   for (let i = 0; i < 4; i++) await key('Backspace');
-  await type('second:');
-  await wait(() => candidates().includes('{{second:TOKEN}}'));
+  await type('second.');
+  await wait(() => candidates().includes('{{.second.TOKEN}}'));
   await sleep(1500);
   await key('Escape');
   await key('Control+Space');
-  await wait(() => candidates().includes('{{second:TOKEN}}'));
+  await wait(() => candidates().includes('{{.second.TOKEN}}'));
   await key('Escape');
   setSource(variables, original);
   await sleep(1500);

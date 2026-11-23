@@ -14,11 +14,9 @@
     await click(testid(`templates-section-${section}`));
     await wait(()=>testid(`templates-section-${section}`).getAttribute('aria-selected')==='true');
   };
-  const drafts=()=>JSON.parse(localStorage.getItem('module:templates:drafts')||'{}');
   const save=async(service,section,text)=>{
     setSource(editorOf('templates-editor'),text);
-    await wait(()=>!drafts()[`${service}/${section}`]
-      &&status().textContent.includes('Templates saved · OK'),
+    await wait(()=>status().textContent.includes('Templates saved · OK'),
       ()=>`Templates did not autosave: ${status().textContent}; ${testid('templates-panel').textContent}`);
   };
   const entries=()=>editorOf('console-editor').state.completionActive?.data?.list||[];
@@ -31,32 +29,25 @@
     await key('Enter');
   };
   const source=editorOf('console-editor');
-  const body='{\n  "id": 123,\n  "title": "Example Book Title",\n  "token": "{{var:TOKEN}}"\n}';
+  const body='{\n  "id": 123,\n  "title": "Example Book Title",\n  "token": "{{.var.TOKEN}}"\n}';
   const body2='{\n  "id": 1,\n  "title": "Example Book Title",\n}';
   const definitions=`@my_create_book bla bla comment\n${body}\n@my_create_book2 another comment\n${body2}`;
-  // A module removed with its data kept leaves its draft behind; it must neither block nor lose the others.
-  const unloaded='@kept\n/kept';
-  localStorage.setItem('module:templates:drafts',JSON.stringify({'removed-module/check':unloaded}));
   const first=Number(testid('console-session-name').dataset.sessionId);
   await activateSession(first===0?1:0);
   await activateSession(first);
   await click(testid('console-service-graphql'));
   await open();
-  assert(!testid('templates-panel').textContent.includes('Invalid Templates draft')
-    &&!status().textContent.includes('ERROR'),
-    'A draft of an unloaded module must not break Templates');
+  assert(!status().textContent.includes('ERROR'),'Templates must open without an error');
   assert(!testid('templates-panel').querySelector('.agent-intro'),'Templates must not show an introductory heading above the editor');
-  assert(status().textContent.includes('@@ = @'),'The short escaping hint must live in the status strip');
-  assert([...testid('templates-sections').querySelectorAll('[role="tab"]')].map(tab=>tab.textContent).join(',')==='check,target,metadata,variables,payload,options',
+  assert(status().textContent.includes('\\@ = @'),'The short escaping hint must live in the status strip');
+  assert([...testid('templates-sections').querySelectorAll('[role="tab"]')].map(tab=>tab.textContent).join(',')==='check,target,metadata,variables,payload,options,Global',
     `GraphQL Templates must expose exactly its own section tabs: ${[...testid('templates-sections').querySelectorAll('[role="tab"]')].map(tab=>tab.textContent)}`);
   await select('variables');
   await save('graphql','variables',definitions);
-  assert(drafts()['removed-module/check']===unloaded,
-    'Saving another draft must keep the draft of an unloaded module until it is installed again');
   const tokens=(editor,line)=>editor.getLineTokens(line,true).map(token=>[token.string,token.type]);
   assert(editorOf('templates-editor').getOption('mode').name==='services-console-graphql',
     'GraphQL templates must use the same syntax mode as the main GraphQL Console');
-  assert(editorOf('templates-editor').getLineTokens(0,true).every(token=>token.type?.includes('comment')),
+  assert(editorOf('templates-editor').getLineTokens(0,true)[1]?.type?.includes('def'),
     'Template definition headers must be styled separately from their body');
   setSource(source,'#check Highlight\n#variables\n'+body);
   await wait(()=>(source.getOption('servicesResponses')||[]).length===0,
@@ -68,38 +59,45 @@
       text:source.getValue(),
     })}`);
   const prefix=`#check Template body\n#target\n${fixtureUrl}/template\n#variables `;
-  setSource(source,prefix.trimEnd());
+  const call=prefix.trimEnd();
+  const expand=async()=>{
+    editorOf('console-editor').setCursor(editorOf('console-editor').lastLine(),editorOf('console-editor').getLine(editorOf('console-editor').lastLine()).length);
+    await key('Enter');
+  };
+  setSource(source,call);
   await key('Space');
-  await pick('@my_create_book2');
-  assert(source.getValue()===prefix.trimEnd()+'\n'+body2,
-    'Pressing Space after #variables must automatically offer templates and insert only their body');
+  await pick('my_create_book2');
+  assert(source.getValue()===call+' @my_create_book2',
+    'Choosing a template after #variables must only insert the call on the section line');
+  await expand();
+  assert(source.getValue()===call+' @my_create_book2\n'+body2,
+    'Enter on the section line must replace the section body with the expansion');
   setSource(source,prefix);
   await type('@');
-  await wait(()=>entries().filter(item=>item.literal).length===2,'Typing @ must automatically show both body template names');
-  assert(entries().every(item=>item.displayText.startsWith('@my_create_book')),
-    'The menu must display template names, not their JSON bodies');
-  await pick('@my_create_book');
-  assert(source.getValue()===prefix.trimEnd()+'\n'+body,'Inline #variables template must insert only literal content on a new line');
+  await wait(()=>entries().filter(item=>item.literal).length===2,'Typing @ must automatically show both template names');
+  assert(entries().every(item=>item.displayText.startsWith('my_create_book')),
+    'The menu must display template signatures, not their JSON bodies');
+  await pick('my_create_book');
+  assert(source.getValue()===call+' @my_create_book','The call must replace the typed @');
+  await expand();
+  assert(source.getValue()===call+' @my_create_book\n'+body,'Enter must insert the literal body on a new line');
   source.execCommand('undo');
-  assert(source.getValue()===prefix+'@','Template insertion must be a single undoable editor change');
+  assert(source.getValue()===call+' @my_create_book','Expansion must be a single undoable editor change');
   source.execCommand('redo');
-  assert(source.getValue()===prefix.trimEnd()+'\n'+body,'Redo must restore exact multiline content and variable placeholders');
-  setSource(source,prefix+'@my_create_book2');
-  await key('Control+Space');
-  await pick('@my_create_book2');
-  assert(source.getValue()===prefix.trimEnd()+'\n'+body2,'Template insertion must preserve raw content, including trailing JSON commas');
+  assert(source.getValue()===call+' @my_create_book\n'+body,'Redo must restore exact multiline content and variable placeholders');
   setSource(source,prefix.trimEnd()+'\n');
   await type('@');
-  await holds(()=>!entries().some(item=>item.displayText?.startsWith('@')),'A standalone @ inside a section must not automatically suggest templates',100);
+  await holds(()=>!entries().some(item=>item.displayText?.startsWith('my_create_book')),'A standalone @ inside a section must not automatically suggest templates',100);
   await key('Control+Space');
-  await holds(()=>!entries().some(item=>item.displayText?.startsWith('@')),'Manual completion inside section content must not suggest templates',100);
+  await holds(()=>!entries().some(item=>item.displayText?.startsWith('my_create_book')),'Manual completion inside section content must not suggest templates',100);
   await select('metadata');
   await save('graphql','metadata','@auth Auth headers\nX-Template: yes\nContent-Type: application/json');
   setSource(source,'#check Headers\n#metadata ');
   await type('@');
-  await pick('@auth');
-  assert(source.getValue()==='#check Headers\n#metadata\nX-Template: yes\nContent-Type: application/json',
-    'Header templates must not duplicate the section marker');
+  await pick('auth');
+  await expand();
+  assert(source.getValue()==='#check Headers\n#metadata @auth\nX-Template: yes\nContent-Type: application/json',
+    'A header template must expand under its own section marker');
   await select('check');
   const full=`#check Full book\n#target\n${fixtureUrl}/template-full\n#metadata\nAccept: application/json\n#variables\n${body}`;
   const implicit=`#target\n${fixtureUrl}/api/v1/Books/123\n#metadata\nContent-Type: application/json\nAccept: application/json\n#variables\n${body2}`;
@@ -135,19 +133,24 @@
   await click(testid('console-service-mysql'));
   await wait(()=>document.querySelector('[data-testid="templates-section-payload"]'));
   await select('payload');
-  await save('mysql','payload','@my_create_book SQL query\nSELECT 123 AS id;');
+  await save('mysql','payload','@my_create_book SQL query\nSELECT 123 AS id;\n@by_id(id: "1" | "2" = "1") Row by id\nSELECT {{id}} AS id;');
   setSource(editorOf('console-editor'),'#check SQL\n#payload ');
   await type('@');
-  await pick('@my_create_book');
-  assert(editorOf('console-editor').getValue()==='#check SQL\n#payload\nSELECT 123 AS id;',
+  await pick('my_create_book');
+  await expand();
+  assert(editorOf('console-editor').getValue()==='#check SQL\n#payload @my_create_book\nSELECT 123 AS id;',
     'Same template name must resolve independently for each service/section');
   assert(editorOf('templates-editor').getOption('mode').name==='services-console-mysql',
     'MySQL templates must switch to the MySQL Console syntax mode');
   assert(JSON.stringify(tokens(editorOf('templates-editor'),1))===JSON.stringify(tokens(editorOf('console-editor'),2)),
     'MySQL templates must use the exact main Console SQL token styles');
+  setSource(editorOf('console-editor'),'#check SQL\n#payload @by_id("2")');
+  await expand();
+  assert(editorOf('console-editor').getValue()==='#check SQL\n#payload @by_id("2")\nSELECT 2 AS id;',
+    'Enter on a call with arguments must expand the parametrized body');
   await click(testid('console-service-splunk'));
   await wait(()=>document.querySelector('[data-testid="templates-section-options"]'));
-  assert([...testid('templates-sections').querySelectorAll('[role="tab"]')].map(tab=>tab.textContent).join(',')==='check,target,metadata,options,payload',
+  assert([...testid('templates-sections').querySelectorAll('[role="tab"]')].map(tab=>tab.textContent).join(',')==='check,target,metadata,options,payload,Global',
     'Splunk Templates must not duplicate options as empty from/to/app/count tabs');
   setSource(editorOf('console-editor'),'#check Splunk sections\n#');
   await key('Control+Space');
@@ -184,9 +187,10 @@
     assert([...panel.children].filter(visible).length===1,
       'Only the selected right tool may occupy space; hidden panels must not split the pane');
   };
-  setSource(editorOf('templates-editor'),'@dup\nfirst\n@dup\nsecond');
-  await wait(()=>drafts()['graphql/variables']?.includes('@dup')&&status().textContent.includes('duplicate template'),
-    'An invalid template must stay a draft with its error in the status');
+  const invalid='@dup\nfirst\n@dup\nsecond';
+  setSource(editorOf('templates-editor'),invalid);
+  await wait(()=>status().textContent.includes('duplicate template'),
+    'An invalid template must be saved with its error in the status');
   await click(testid('console-sessions-toggle'));
   await wait(()=>testid('console-sessions-toggle').getAttribute('aria-pressed')==='true');
   assert(!visible(document.querySelector('[data-testid="templates-panel"]')),
@@ -196,20 +200,20 @@
     'An unseen error in hidden Templates must keep a red error indicator');
   await open();
   await wait(()=>status().textContent.includes('duplicate template'));
-  assert(editorOf('templates-editor').getValue()==='@dup\nfirst\n@dup\nsecond','Reopening must retain invalid global drafts');
+  assert(editorOf('templates-editor').getValue()===invalid,'Reopening must show the saved invalid templates');
   for(const tool of ['sessions','hints','variables','dictionary','agent']) {
     await click(testid(`console-${tool}-toggle`));
     await wait(()=>testid(`console-${tool}-toggle`).getAttribute('aria-pressed')==='true');
     assertExclusivePanel();
     assert(!visible(document.querySelector('[data-testid="templates-panel"]')),
-      `${tool} must replace Templates even when its draft has validation errors`);
+      `${tool} must replace Templates even when its templates have errors`);
     await open();
     assertExclusivePanel();
-    assert(editorOf('templates-editor').getValue()==='@dup\nfirst\n@dup\nsecond',
-      'Right-panel switching must preserve the invalid template draft');
+    assert(editorOf('templates-editor').getValue()===invalid,
+      'Right-panel switching must keep the invalid templates');
   }
-  await click(testid('templates-discard'));
-  await wait(()=>editorOf('templates-editor').getValue()===globalText && !drafts()['graphql/variables']);
+  assert(!document.querySelector('[data-testid="templates-discard"]'),'Templates have no Discard draft button');
+  await save('graphql','variables',globalText);
   assert(!JSON.stringify(await testDriver.sessionLibrary()).includes('bla bla comment'),
     'Template definitions/descriptions must not be copied into Console session snapshots');
   await click(testid('console-templates-toggle'));

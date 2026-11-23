@@ -7,7 +7,6 @@ pub mod extension;
 pub mod fold;
 pub mod highlight;
 mod history;
-pub mod hover;
 mod json;
 pub mod layout;
 pub mod model;

@@ -134,7 +134,7 @@ pub fn resolve(harness: &mut Harness, cmds: &[Cmd], vars: &[(&str, &str)]) -> Ve
         } else {
             value
         };
-        text = text.replace(&format!("{{{{{name}}}}}"), value);
+        text = text.replace(&format!("{{{{:{name}}}}}"), value);
     }
     harness.reply(&resolve.tag, json!(text))
 }

@@ -8,7 +8,7 @@ Use one command per check:
 ```text
 #check Get game
 #target
-{{VALKEY_URL}}
+{{:VALKEY_URL}}
 #action
 GET game:1
 ```
@@ -21,7 +21,7 @@ DevTools variables are resolved after parsing, preserving one argument per value
 Use separate checks for separate commands; connections are fresh for each check.
 Select the database in the URL, not in an earlier SELECT check.
 
-Optional #metadata: CA-Certificate: {{VALKEY_CA}}.
+Optional #metadata: CA-Certificate: {{:VALKEY_CA}}.
 CA-Certificate is certificate text, not a file path; it requires rediss://.
 Certificate/hostname verification stays enabled. AUTH/SELECT must succeed before
 the command is sent. Stop and timeout do not roll back writes; do not retry an

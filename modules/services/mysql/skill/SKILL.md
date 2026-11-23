@@ -8,7 +8,7 @@ description: "MySQL checks in the Services DevTools Console: the mysql:// #targe
 ```text
 #check Product example
 #target
-mysql://{{store:USER}}:{{store:PASSWORD}}@{{store:HOST}}/{{store:DATABASE}}
+mysql://{{.store.USER}}:{{.store.PASSWORD}}@{{.store.HOST}}/{{.store.DATABASE}}
 #payload
 SELECT * FROM catalog_product_entity LIMIT 10;
 ```

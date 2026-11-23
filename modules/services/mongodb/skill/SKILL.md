@@ -8,7 +8,7 @@ description: "MongoDB checks in the Services DevTools Console: the mongodb:// #t
 ```text
 #check Adult users
 #target
-mongodb://{{mongo:USER}}:{{mongo:PASSWORD}}@{{mongo:HOST}}/app
+mongodb://{{.mongo.USER}}:{{.mongo.PASSWORD}}@{{.mongo.HOST}}/app
 #collection
 users
 #action
@@ -26,7 +26,7 @@ skeletons from them.
 
 ## Sections
 
-- `#target`: a `mongodb://` or `mongodb+srv://` URI; `{{VARIABLE}}` works. The database
+- `#target`: a `mongodb://` or `mongodb+srv://` URI; `{{:VARIABLE}}` works. The database
   is the URI path. Credentials belong in the URI (or in
   variables); they are never shown in results, hints or errors. Read preference, TLS and
   replica set come from the URI query.

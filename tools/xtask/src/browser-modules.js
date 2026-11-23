@@ -97,7 +97,7 @@
   await click(tab('terminal'));
   const editor = editorOf('console-editor');
   assert(editor.getValue() === kept, `The console of a removed module must come back: ${JSON.stringify(editor.getValue())}`);
-  setSource(editor, '#check installed\n#target\nbash -c\n#payload\necho "{{var:sku}}"');
+  setSource(editor, '#check installed\n#target\nbash -c\n#payload\necho "{{.var.sku}}"');
   await key('Shift+Enter');
   await wait(() => editor.getValue().includes('#responce') && editor.getValue().includes('fixture-materialized-sku'),
     () => `The installed module must run requests: ${editor.getValue().slice(-500)}`);

@@ -61,7 +61,7 @@ impl Runner {
                     for (name, value) in &self.variables {
                         let escaped = serde_json::to_string(value).unwrap();
                         text = text
-                            .replace(&format!("{{{{{name}}}}}"), &escaped[1..escaped.len() - 1]);
+                            .replace(&format!("{{{{:{name}}}}}"), &escaped[1..escaped.len() - 1]);
                     }
                     cmds.extend(self.module.reply(&cmd.tag, json!(text)));
                 }
@@ -399,7 +399,7 @@ async fn discovery_feeds_key_and_hash_completion_with_cache_refresh_and_acl_fall
 
     runner.command(&url, "HSET game:late title new").await;
     runner.variables.push(("HASH".into(), "game:2".into()));
-    let variable = format!("#target\n{url}\n#action\nHGET {{{{HASH}}}} ");
+    let variable = format!("#target\n{url}\n#action\nHGET {{{{:HASH}}}} ");
     runner.discover(&variable, false).await;
     assert!(
         runner
@@ -482,7 +482,7 @@ async fn pubsub_is_live_plain_and_tls_validates_ca_hostname_and_stop() {
         (plain.as_str(), "", "test:plain-news"),
         (
             tls.as_str(),
-            "#metadata\nCA-Certificate: {{VALKEY_CA}}\n",
+            "#metadata\nCA-Certificate: {{:VALKEY_CA}}\n",
             "test:tls-news",
         ),
     ] {
@@ -546,7 +546,7 @@ async fn pubsub_is_live_plain_and_tls_validates_ca_hostname_and_stop() {
     let wrong_host = tls.replace("localhost", "127.0.0.1");
     runner
         .start(&format!(
-            "#target\n{wrong_host}\n#metadata\nCA-Certificate: {{{{VALKEY_CA}}}}\n#action\nPING"
+            "#target\n{wrong_host}\n#metadata\nCA-Certificate: {{{{:VALKEY_CA}}}}\n#action\nPING"
         ))
         .await;
     while runner.result.is_none() {
@@ -555,7 +555,7 @@ async fn pubsub_is_live_plain_and_tls_validates_ca_hostname_and_stop() {
     assert_eq!(runner.result.as_ref().unwrap()["outcome"], "ERROR");
     runner
         .start(&format!(
-            "#target\n{tls}\n#metadata\nCA-Certificate: {{{{VALKEY_CA}}}}\n#action\nPING"
+            "#target\n{tls}\n#metadata\nCA-Certificate: {{{{:VALKEY_CA}}}}\n#action\nPING"
         ))
         .await;
     while runner.result.is_none() {

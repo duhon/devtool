@@ -3,6 +3,8 @@
 use super::{Candidate, Completion, Services, fuzzy_match};
 use crate::document::check_at;
 use serde_json::Value;
+use services_contracts::templates::Library;
+use services_sdk::refs::Root;
 use std::collections::BTreeSet;
 
 fn utf16_prefix(text: &str, count: usize) -> String {
@@ -79,6 +81,7 @@ fn hint_sections(
 /// `field` is empty for Console documents; otherwise the editor holds one
 /// section and `field` names its marker (`headers`, `body`, `variables`, ...).
 /// The Hints editor uses `service` "hints" with the edited service as `field`.
+#[allow(clippy::too_many_arguments)]
 pub fn suggest(
     services: &dyn Services,
     service: &str,
@@ -87,59 +90,32 @@ pub fn suggest(
     line: usize,
     ch: usize,
     hints: &[(String, String)],
+    library: &Library,
+    root: &Root,
 ) -> Completion {
     let lines: Vec<_> = source.split('\n').collect();
     let full = lines.get(line).copied().unwrap_or("");
     let before = utf16_prefix(full, ch);
-    if let Some(start) = before.rfind("{{").filter(|i| !before[*i..].contains("}}")) {
-        let suffix = &full[before.len()..];
-        let to = suffix
-            .find("}}")
-            .map(|n| ch + suffix[..n + 2].encode_utf16().count())
-            .unwrap_or(ch);
-        let fragment = &before[start + 2..];
-        let candidates = if !fragment.contains(':') {
-            let mut owners = BTreeSet::new();
-            hints
-                .iter()
-                .filter_map(|(s, _)| s.strip_prefix("{{"))
-                .filter_map(|s| s.split_once(':'))
-                .filter_map(|(owner, _)| {
-                    if owners.insert(owner.to_string()) {
-                        Some((
-                            format!("{{{{{owner}:"),
-                            match owner {
-                                "" => "Search Variables, Dictionary sets and env".into(),
-                                "var" => "Variables".into(),
-                                "env" => "Environment".into(),
-                                set => format!("Dictionary set {set}"),
-                            },
-                        ))
-                    } else {
-                        None
-                    }
-                })
-                .collect()
+    if let Some(start) = before
+        .rfind("{{")
+        .filter(|i| !before[*i..].contains("}}") && !services_sdk::refs::escaped(&before, *i))
+    {
+        let section = if field.is_empty() {
+            (0..=line)
+                .rev()
+                .find_map(|at| crate::document::marker(lines[at]))
+                .map_or_else(|| "leftover".to_owned(), |(name, _)| name)
         } else {
-            let owner = fragment.split(':').next().unwrap_or("");
-            hints
-                .iter()
-                .filter(|(s, _)| s.starts_with(&format!("{{{{{owner}:")))
-                .map(|(s, detail)| {
-                    let detail = if detail.starts_with(SAVED) {
-                        SAVED.into()
-                    } else {
-                        detail.clone()
-                    };
-                    (s.clone(), detail)
-                })
-                .collect()
+            field.to_owned()
         };
-        return finish(
-            before[..start].encode_utf16().count(),
-            to,
-            &before[start..],
-            candidates,
+        return super::references::complete(
+            root,
+            library,
+            service,
+            &section,
+            (full, &before),
+            (start, ch),
+            services.is_service(service),
         );
     }
     if service == "hints" {

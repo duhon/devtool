@@ -787,13 +787,13 @@ impl Component for View {
                 };
                 let (x, y) = point(&scroller, &metrics, &event);
                 let text = handle.read(|session| {
-                    let hints = &session.context().hints;
-                    if hints.is_empty() || x < 0.0 {
+                    if x < 0.0 {
                         return None;
                     }
                     let at = render::char_at(session.state(), &metrics, x, y)?;
-                    crate::editor::hover::hover_at(session.state().line(at.line), at.ch, hints)
-                        .map(|hover| format!("{} = {}", hover.key, hover.value))
+                    session
+                        .extension()
+                        .hover(session.state().line(at.line), at.ch)
                 });
                 let Some(text) = text else {
                     hide_tooltip(&tooltip);

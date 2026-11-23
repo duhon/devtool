@@ -59,7 +59,9 @@
 
 .ui-panel-tabs .tab-label { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 
-.ui-panel-actions { display: flex; flex: 0 1 auto; align-self: center; align-items: center; gap: 2px; min-width: 0; padding-left: 4px; overflow-x: auto; }
+/* The actions keep their width; the tabs shrink and ellipsize instead. A scrollbar on a row
+   of the actions' 20px height would cover the buttons and take their clicks. */
+.ui-panel-actions { display: flex; flex: none; align-self: center; align-items: center; gap: 2px; padding-left: 4px; }
 
 .ui-panel-actions > *, .ui-panel-actions > .ui-row > * { flex: none; white-space: nowrap; }
 

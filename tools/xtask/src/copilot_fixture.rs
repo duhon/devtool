@@ -888,7 +888,7 @@ Raw HTML: <img src="https://images.fixture.invalid/raw" onerror="globalThis.agen
                     .context("Missing variable guide")?;
                 ensure!(
                     result["topic"] == "variables"
-                        && content.contains("{{<set>:NAME}}")
+                        && content.contains("{{.var.")
                         && content.contains("Dictionary sets")
                         && content.contains("read-only")
                 );

@@ -69,14 +69,37 @@ pub fn contributions(key: &str) -> Vec<Value> {
     })
 }
 
-/// The `{{…}}` references the editors complete, with their values.
-pub fn variables() -> Vec<(String, String)> {
-    contributions("variables")
-        .iter()
-        .flat_map(|list| {
-            serde_json::from_value::<Vec<(String, String)>>(list.clone()).unwrap_or_default()
-        })
-        .collect()
+/// The variable tree every reference resolves against. Each panel contributes
+/// `{"tree": {"first": [[name, {…}], …], "last": [[name, {…}], …]}}`: the root holds every
+/// `first` panel (`var`, then the Dictionary sets in their order), then every `last` one
+/// (`env`), panels by `order`.
+pub fn root() -> services_sdk::refs::Root {
+    type Panels = Vec<(String, serde_json::Map<String, Value>)>;
+    let trees = contributions("tree");
+    let part = |key: &str| -> Panels {
+        trees
+            .iter()
+            .filter_map(|tree| tree.get(key))
+            .flat_map(|list| serde_json::from_value::<Panels>(list.clone()).unwrap_or_default())
+            .collect()
+    };
+    let mut panels = part("first");
+    panels.extend(part("last"));
+    services_sdk::refs::Root::new(panels)
+}
+
+/// Every template the modules contribute (`{"templates": {service: {section: text}}}`), merged;
+/// service `*` holds the global ones.
+pub fn templates() -> services_contracts::templates::Library {
+    let mut library = services_contracts::templates::Library::new();
+    for value in contributions("templates") {
+        if let Ok(part) = serde_json::from_value::<services_contracts::templates::Library>(value) {
+            for (service, sections) in part {
+                library.entry(service).or_default().extend(sections);
+            }
+        }
+    }
+    library
 }
 
 /// The modules that are part of the App rather than declared by the Host: the built-in

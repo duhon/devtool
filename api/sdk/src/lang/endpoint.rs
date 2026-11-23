@@ -173,7 +173,7 @@ mod tests {
 
     #[test]
     fn path_parameters_are_distinct_from_variables_and_query_values() {
-        let line = "http://{{var:magento}}/rest/default/V1/categories/{categoryId}/move/{имя-id}?filter={query}";
+        let line = "http://{{.var.magento}}/rest/default/V1/categories/{categoryId}/move/{имя-id}?filter={query}";
         assert_eq!(
             kinds(line, true, "rest-path-param"),
             ["{categoryId}", "{имя-id}"]
@@ -201,8 +201,8 @@ mod tests {
     #[test]
     fn tokens_never_split_characters() {
         for line in [
-            "\u{a0}https://пример.рф/api/{x}?é={{a}}$b",
-            "{{base}}/x",
+            "\u{a0}https://пример.рф/api/{x}?é={{:a}}$b",
+            "{{:base}}/x",
             "{{",
             "GET",
             "$ { ? é",
@@ -221,14 +221,14 @@ mod tests {
 
     #[test]
     fn urls() {
-        let url = Url::parse("HTTP://{{var:host}}:80/a/b?x=1#f").unwrap();
-        assert_eq!(url.origin(), "http://{{var:host}}:80");
+        let url = Url::parse("HTTP://{{.var.host}}:80/a/b?x=1#f").unwrap();
+        assert_eq!(url.origin(), "http://{{.var.host}}:80");
         assert_eq!((url.path, url.query), ("/a/b", "x=1"));
         assert_eq!(Url::parse("https://h").unwrap().path, "/");
         for bad in ["https://", "https://h:/x", "h/x", "https://a b", "1x://h"] {
             assert_eq!(Url::parse(bad), None, "{bad}");
         }
-        assert_eq!(path("{{var:base}}/rest/V1?x"), "/rest/V1");
+        assert_eq!(path("{{.var.base}}/rest/V1?x"), "/rest/V1");
         assert_eq!(path("https://h/p#x"), "/p");
         assert_eq!(path("/p?q"), "/p");
     }

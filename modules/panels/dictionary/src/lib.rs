@@ -1,7 +1,8 @@
 //! The Dictionary panel: named sets of variables. They are the Local source's
 //! `dictionary.json` (`{"order": [..], "sets": {"<set>": {"<VAR>": "value"}}}`), saved as
-//! they are edited; sources sync with it in Settings. It resolves `{{set:NAME}}` of its sets
-//! and `{{:NAME}}` from the first set, in order, that has it.
+//! they are edited; sources sync with it in Settings. It only holds the data: every set is a
+//! first-level node of the variable tree the Kernel resolves (`{{.dev.NAME}}`, `{{:NAME}}`
+//! from the first set, in order, that has it); values are strings or nested hashes.
 //!
 //! Every window of the App edits the same file, so changes go through a transaction under a
 //! shared lock on the freshly read file; a draft started before another window saved the set
@@ -11,7 +12,7 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
-use services_sdk::{Cmd, Event, Module, Resolution, Subscriptions, cmd, refs, ui};
+use services_sdk::{Cmd, Event, Module, Subscriptions, cmd, refs, ui};
 
 /// The kv key of the edits not saved yet: `{"texts": {"<set>": ..}, "bases": {"<set>": ..}}`.
 pub const DRAFTS: &str = "drafts";
@@ -283,24 +284,19 @@ impl Dictionary {
         ]
     }
 
+    /// The sets as the first-level nodes of the variable tree, in order.
     fn contribution(&self) -> Cmd {
-        let mut hints: Vec<(String, String)> = Vec::new();
-        for name in &self.state.order {
-            for (variable, value) in self.state.vars(name) {
-                if !variable.starts_with('#') {
-                    hints.push((format!("{{{{{name}:{variable}}}}}"), refs::text(&value)));
-                }
-            }
-        }
-        for name in &self.state.order {
-            for (variable, value) in self.state.vars(name) {
-                let bare = format!("{{{{:{variable}}}}}");
-                if !variable.starts_with('#') && !hints.iter().any(|(key, _)| *key == bare) {
-                    hints.push((bare, refs::text(&value)));
-                }
-            }
-        }
-        cmd::contribute(&json!({ "variables": hints }))
+        let sets: Vec<(&String, Map<String, Value>)> = self
+            .state
+            .order
+            .iter()
+            .map(|name| {
+                let mut vars = self.state.vars(name);
+                vars.retain(|variable, _| !variable.starts_with('#'));
+                (name, vars)
+            })
+            .collect();
+        cmd::contribute(&json!({"tree": {"first": sets}}))
     }
 
     fn put_drafts(&self) -> Cmd {
@@ -543,54 +539,6 @@ impl Dictionary {
         self.enqueue(Op::Reorder(order))
     }
 
-    /// The value of `name` in `set` with the references the Dictionary owns resolved.
-    fn own(
-        &self,
-        set: &str,
-        name: &str,
-        chain: &mut Vec<String>,
-    ) -> Result<Option<String>, String> {
-        let Some(value) = self.state.sets.get(set).and_then(|vars| vars.get(name)) else {
-            return Ok(None);
-        };
-        let link = format!("{set}:{name}");
-        if chain.contains(&link) {
-            return Err(format!(
-                "Circular variable reference: {} -> {link}",
-                chain.join(" -> ")
-            ));
-        }
-        chain.push(link);
-        let out = refs::replace(&refs::text(value), |set, name| {
-            self.reference(set, name, chain)
-        });
-        chain.pop();
-        out.map(Some)
-    }
-
-    fn reference(
-        &self,
-        set: &str,
-        name: &str,
-        chain: &mut Vec<String>,
-    ) -> Result<Option<String>, String> {
-        if set.is_empty() {
-            for owner in &self.state.order {
-                if let Some(value) = self.own(owner, name, chain)? {
-                    return Ok(Some(value));
-                }
-            }
-            return Ok(None);
-        }
-        if !self.state.sets.contains_key(set) {
-            return Ok(None);
-        }
-        match self.own(set, name, chain)? {
-            Some(value) => Ok(Some(value)),
-            None => Err(format!("Unknown variable \"{name}\" in {set}")),
-        }
-    }
-
     /// The header items of the set: a draft that conflicts can be discarded.
     fn origin(&self, name: &str) -> Vec<ui::Node> {
         let mut header = Vec::new();
@@ -607,7 +555,7 @@ impl Dictionary {
     fn view_set(&self, name: &str) -> Vec<ui::Node> {
         vec![
             ui::editor("headers", self.shown(name), &Msg::Edit)
-                .placeholder("# comments start with #\nNAME: value\nlocale: en_US")
+                .placeholder("# comments start with #\nlocale: en_US\nhosts:\n  catalog: catalog.example.com")
                 .label(format!("Dictionary · {name}"))
                 .debounce(600)
                 .key("console-dictionary"),
@@ -801,27 +749,6 @@ impl Module for Dictionary {
         } else {
             panel.actions(vec![ui::row(header).key("dictionary-origin")])
         })
-    }
-
-    fn resolve(&self, text: &str, json: bool, _last: bool) -> Option<Result<Resolution, String>> {
-        let mut secrets = Vec::new();
-        let result = refs::replace(text, |set, name| {
-            let value = self.reference(set, name, &mut Vec::new())?;
-            if let Some(value) = &value
-                && refs::sensitive(name)
-                && refs::find(value).is_empty()
-            {
-                secrets.push(value.clone());
-            }
-            Ok(value.map(|value| {
-                if json {
-                    refs::escape_json(&value)
-                } else {
-                    value
-                }
-            }))
-        });
-        Some(result.map(|text| Resolution { text, secrets }))
     }
 }
 

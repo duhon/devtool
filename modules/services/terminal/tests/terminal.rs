@@ -78,7 +78,7 @@ fn argv_quotes_and_env_match_the_shell_contract() {
 #[test]
 fn checks_become_process_driver_calls() {
     let call = request(&check(
-        "#check indexer\n#target\ndocker exec fixture bash -c\n#payload\nbin/magento indexer:status\n#metadata\nA: 1\nB: {{store:B}}",
+        "#check indexer\n#target\ndocker exec fixture bash -c\n#payload\nbin/magento indexer:status\n#metadata\nA: 1\nB: {{:B}}",
     ))
     .unwrap()
     .call();
@@ -87,7 +87,7 @@ fn checks_become_process_driver_calls() {
     assert_eq!(
         request,
         json!({"program":"docker","args":["exec","fixture","bash","-c",
-            "export A='1' B='{{store:B}}'; bin/magento indexer:status"],
+            "export A='1' B='{{:B}}'; bin/magento indexer:status"],
             "env":[],"text":true})
     );
     assert_eq!(

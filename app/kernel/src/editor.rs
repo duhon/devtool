@@ -4,14 +4,17 @@
 //! the results into the editor widget's props.
 
 pub mod completion;
+pub mod references;
 pub mod templates;
 
 pub use completion::{kernel_check, saved_hints};
+pub use templates::{Expansion, expand_call};
 
 use crate::document::{self, Position, ResponseRegion, is_check};
 use serde_json::Value;
+use services_contracts::templates::Library;
+use services_sdk::refs::Root;
 use services_sdk::{Check, ColumnType, Completions, Fold, Line, LineColumns, Token};
-use std::collections::BTreeMap;
 
 /// Lines past this many UTF-16 units stay unstyled.
 pub const MAX_HIGHLIGHT: usize = 10_000;
@@ -72,6 +75,137 @@ pub fn section_state(services: &dyn Services, service: &str, section: Option<&st
         .map_or_else(Vec::new, |line| line.state)
 }
 
+/// Whether `text` is a template definition line: `@name(…) description`.
+pub fn is_definition(text: &str) -> bool {
+    text.starts_with('@')
+}
+
+/// The tokens of a template definition line `@name(params) description`, as `(byte end,
+/// kind)`: the name, the parameter names, operators, strings and the description; `problems`
+/// (byte ranges of references that offer no options) are marked over the references.
+pub fn definition_tokens(text: &str, problems: &[(usize, usize)]) -> Vec<(usize, Option<String>)> {
+    definition(text, problems).0
+}
+
+/// The parameter names of a template definition line.
+pub fn definition_params(text: &str) -> Vec<String> {
+    definition(text, &[]).1
+}
+
+/// The marks of the parameter uses `{{name}}` of `params` in a template body line.
+pub fn parameter_marks(text: &str, params: &[String]) -> Vec<Token> {
+    let mut marks = Vec::new();
+    let mut from = 0;
+    while let Some(offset) = text[from..].find("{{") {
+        let start = from + offset;
+        let inner = &text[start + 2..];
+        let Some(close) = inner.find("}}") else {
+            break;
+        };
+        if !services_sdk::refs::escaped(text, start)
+            && params.iter().any(|param| param == inner[..close].trim())
+        {
+            let len = (close + 4) as u32;
+            marks.push(Token {
+                start: start as u32,
+                len,
+                kind: "tpl-arg".into(),
+            });
+            from = start + close + 4;
+        } else {
+            from = start + 2;
+        }
+    }
+    marks
+}
+
+/// The style of `@`, brackets and commas in a definition: that of a reference's separators.
+const MARK: &str = "gw-placeholder-colon";
+
+fn definition(
+    text: &str,
+    problems: &[(usize, usize)],
+) -> (Vec<(usize, Option<String>)>, Vec<String>) {
+    let mut tokens: Vec<(usize, Option<String>)> = Vec::new();
+    let mut names = Vec::new();
+    let mut push = |end: usize, kind: Option<&str>| {
+        if tokens.last().is_some_and(|(at, _)| *at >= end) {
+            return;
+        }
+        match tokens.last_mut() {
+            Some((at, last)) if last.as_deref() == kind => *at = end,
+            _ => tokens.push((end, kind.map(str::to_owned))),
+        }
+    };
+    let word = |at: usize, name: fn(char) -> bool| {
+        text[at..]
+            .find(|c: char| !name(c))
+            .map_or(text.len(), |n| at + n)
+    };
+    let template_name = |c: char| c.is_alphanumeric() || matches!(c, '_' | '-' | '.');
+    let param_name = |c: char| c.is_alphanumeric() || matches!(c, '_' | '-');
+    let mut at = word(1, template_name);
+    push(1, Some(MARK));
+    push(at, Some("def"));
+    if text[at..].starts_with('(') {
+        let spans = services_sdk::refs::scan(text);
+        push(at + 1, Some(MARK));
+        at += 1;
+        let mut expect_name = true;
+        while let Some(c) = text[at..].chars().next() {
+            if let Some(span) = spans.iter().find(|span| span.start == at) {
+                let problem = problems.contains(&(span.start, span.end));
+                push(span.end, problem.then_some("tpl-problem"));
+                at = span.end;
+                continue;
+            }
+            let next = at + c.len_utf8();
+            match c {
+                '"' => {
+                    let mut escaped = false;
+                    let end = text[next..]
+                        .char_indices()
+                        .find(|&(_, ch)| {
+                            let close = ch == '"' && !escaped;
+                            escaped = ch == '\\' && !escaped;
+                            close
+                        })
+                        .map_or(text.len(), |(index, _)| next + index + 1);
+                    push(end, Some("string"));
+                    at = end;
+                }
+                ')' => {
+                    push(next, Some(MARK));
+                    break;
+                }
+                ',' => {
+                    push(next, Some(MARK));
+                    expect_name = true;
+                    at = next;
+                }
+                ':' | '=' | '|' => {
+                    push(next, Some("operator"));
+                    expect_name = false;
+                    at = next;
+                }
+                c if expect_name && param_name(c) => {
+                    let end = word(at, param_name);
+                    names.push(text[at..end].to_owned());
+                    push(end, Some("tpl-arg"));
+                    expect_name = false;
+                    at = end;
+                }
+                _ => {
+                    push(next, None);
+                    at = next;
+                }
+            }
+        }
+    }
+    push(text.len(), Some("comment"));
+    (tokens, names)
+}
+
 /// One line of a service document from `state`: `#check` and template `@` lines are the
 /// console's, the rest the module's, with the module's `marks` of the line laid over.
 /// `region` is the response the line is in.
@@ -95,9 +229,9 @@ pub fn highlight(
         })
         .unwrap_or_default();
     let whole = |kind: Option<&str>| vec![(text.len(), kind.map(str::to_owned))];
-    if section.is_some() && text.starts_with('@') && !text.starts_with("@@") {
+    if section.is_some() && is_definition(text) {
         return (
-            whole(Some("comment")),
+            definition_tokens(text, &[]),
             section_state(services, service, section),
         );
     }
@@ -333,10 +467,16 @@ pub fn suggest(
     source: &str,
     (line, ch): (usize, usize),
     hints: &[(String, String)],
-    templates: &BTreeMap<String, String>,
+    library: &Library,
+    root: &Root,
 ) -> Completion {
-    templates::suggest(services, service, field, source, line, ch, templates)
-        .unwrap_or_else(|| completion::suggest(services, service, field, source, line, ch, hints))
+    templates::suggest(services, service, field, source, line, ch, library, root).unwrap_or_else(
+        || {
+            completion::suggest(
+                services, service, field, source, line, ch, hints, library, root,
+            )
+        },
+    )
 }
 
 /// The check and offset hints were asked for in a console of a module service, so its
@@ -407,6 +547,61 @@ mod tests {
             len,
             kind: kind.into(),
         }
+    }
+
+    #[test]
+    fn definition_lines_color_their_parts() {
+        let line = "@t(a: {{:x}}, b: \"q,)\" | \"s\" = \"q\") Desc";
+        let mut start = 0;
+        let pieces: Vec<(&str, Option<String>)> = definition_tokens(line, &[(6, 12)])
+            .into_iter()
+            .map(|(end, kind)| {
+                let piece = &line[start..end];
+                start = end;
+                (piece, kind)
+            })
+            .collect();
+        let expected = [
+            ("@", Some("gw-placeholder-colon")),
+            ("t", Some("def")),
+            ("(", Some("gw-placeholder-colon")),
+            ("a", Some("tpl-arg")),
+            (":", Some("operator")),
+            (" ", None),
+            ("{{:x}}", Some("tpl-problem")),
+            (",", Some("gw-placeholder-colon")),
+            (" ", None),
+            ("b", Some("tpl-arg")),
+            (":", Some("operator")),
+            (" ", None),
+            ("\"q,)\"", Some("string")),
+            (" ", None),
+            ("|", Some("operator")),
+            (" ", None),
+            ("\"s\"", Some("string")),
+            (" ", None),
+            ("=", Some("operator")),
+            (" ", None),
+            ("\"q\"", Some("string")),
+            (")", Some("gw-placeholder-colon")),
+            (" Desc", Some("comment")),
+        ];
+        let expected: Vec<_> = expected
+            .into_iter()
+            .map(|(piece, kind)| (piece, kind.map(str::to_owned)))
+            .collect();
+        assert_eq!(pieces, expected);
+        assert_eq!(definition_params(line), ["a", "b"]);
+        assert_eq!(
+            definition_tokens("@t", &[]),
+            vec![
+                (1, Some("gw-placeholder-colon".to_owned())),
+                (2, Some("def".to_owned()))
+            ]
+        );
+        let marks = parameter_marks("x{{a}}{{:a}}{{ b }}{{c}}", &["a".into(), "b".into()]);
+        let spans: Vec<_> = marks.iter().map(|mark| (mark.start, mark.len)).collect();
+        assert_eq!(spans, [(1, 5), (12, 7)]);
     }
 
     #[test]

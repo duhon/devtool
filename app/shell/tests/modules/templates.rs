@@ -1,7 +1,9 @@
 //! Templates panel: inserting template bodies and checks from `@` and section
 //! markers. UI-behaviour tests.
 
+use services_contracts::templates::Library;
 use services_kernel::editor::Completion;
+use services_sdk::refs::Root;
 use services_shell::language::Modules;
 use std::collections::BTreeMap;
 
@@ -13,13 +15,21 @@ fn suggest(
     ch: usize,
     templates: &BTreeMap<String, String>,
 ) -> Option<Completion> {
+    let library = Library::from([(service.to_owned(), templates.clone())]);
     services_kernel::editor::templates::suggest(
-        &Modules, service, field, source, line, ch, templates,
+        &Modules,
+        service,
+        field,
+        source,
+        line,
+        ch,
+        &library,
+        &Root::default(),
     )
 }
 
 #[test]
-fn inserts_only_payload_and_normalizes_inline_sections() {
+fn lists_section_templates_and_normalizes_inline_sections() {
     services_shell::link();
     let templates = BTreeMap::from([(
         "payload".into(),
@@ -27,10 +37,10 @@ fn inserts_only_payload_and_normalizes_inline_sections() {
     )]);
     let completion = suggest("artemis", "", "#check test\n#payload @", 1, 10, &templates).unwrap();
     assert_eq!((completion.from, completion.to), (8, 10));
-    assert_eq!(completion.candidates[0].text, "\n{\n  \"id\": 123\n}");
+    assert_eq!(completion.candidates[0].text, " @my_create_book");
     assert_eq!(
         completion.candidates[0].label.as_deref(),
-        Some("@my_create_book")
+        Some("my_create_book")
     );
     assert!(suggest("artemis", "", "#payload\n@m", 1, 2, &templates).is_none());
     assert!(suggest("artemis", "", "#metadata\n@", 1, 1, &templates).is_none());
@@ -133,7 +143,7 @@ fn templates_are_only_suggested_after_a_section_marker_on_the_same_line() {
     }
     assert!(suggest("artemis", "payload", "#payload @", 0, 10, &templates).is_none());
     let completion = suggest("artemis", "", "  #payload \t@", 0, 13, &templates).unwrap();
-    assert_eq!(completion.candidates[0].text, "\n{}");
+    assert_eq!(completion.candidates[0].text, " @example");
     assert_eq!((completion.from, completion.to), (10, 13));
 }
 
@@ -150,8 +160,8 @@ fn space_after_section_marker_offers_templates_without_an_at_sign() {
     let completion = suggest("artemis", "", "#payload ", 0, 9, &templates).unwrap();
     assert!(completion.automatic);
     assert_eq!((completion.from, completion.to), (8, 9));
-    assert_eq!(completion.candidates[0].text, "\n{}");
-    assert_eq!(completion.candidates[0].label.as_deref(), Some("@example"));
+    assert_eq!(completion.candidates[0].text, " @example");
+    assert_eq!(completion.candidates[0].label.as_deref(), Some("example"));
     assert_eq!(
         suggest("artemis", "", "#check ", 0, 7, &templates)
             .unwrap()
@@ -175,4 +185,316 @@ fn space_after_section_marker_offers_templates_without_an_at_sign() {
             "{source}"
         );
     }
+}
+
+const SPEC: &str = "@host(service: {{:services}}) Host name\n{{service}}.{{:base_domain}}\n\n@url_shared(service: {{:services}}, type: {{.*.type}} = \"qa\") Service URL\nhttps://{{@host(service)}}.{{.var.region}}.{{type}}.example\n\n@order Zero-parameter template\n{ \"x\": 1 }";
+
+fn spec_library() -> Library {
+    Library::from([
+        (
+            "rest".to_owned(),
+            BTreeMap::from([
+                ("target".to_owned(), SPEC.to_owned()),
+                ("payload".to_owned(), SPEC.to_owned()),
+            ]),
+        ),
+        (
+            "*".to_owned(),
+            BTreeMap::from([("*".to_owned(), "@glob Global only\nG".to_owned())]),
+        ),
+    ])
+}
+
+fn dictionary() -> Root {
+    let parse = |text| services_sdk::refs::parse_lines(text).unwrap();
+    Root::new(vec![
+        (
+            "var".into(),
+            parse("type: qa\nregion: eu\nbase_domain: site.example"),
+        ),
+        (
+            "dev".into(),
+            parse(
+                "type: dev\nservices:\n  1: catalog\n  2: checkout\nenvs:\n  qa: a.example\n  prod: b.example",
+            ),
+        ),
+    ])
+}
+
+fn complete(source: &str, library: &Library) -> Option<Completion> {
+    let line = source.lines().count() - 1;
+    let ch = source.lines().last().unwrap().encode_utf16().count();
+    services_kernel::editor::templates::suggest(
+        &Modules,
+        "rest",
+        "",
+        source,
+        line,
+        ch,
+        library,
+        &dictionary(),
+    )
+}
+
+#[test]
+fn at_lists_section_templates_with_signatures_and_searches_descriptions() {
+    services_shell::link();
+    let library = spec_library();
+    let completion = complete("#check\n#target @", &library).unwrap();
+    let items: Vec<_> = completion
+        .candidates
+        .iter()
+        .map(|c| {
+            (
+                c.label.clone().unwrap(),
+                c.text.as_str(),
+                c.detail.as_str(),
+                c.continue_hint,
+            )
+        })
+        .collect();
+    assert_eq!(
+        items,
+        [
+            ("host(service)".into(), " @host(", "Host name", true),
+            ("order".into(), " @order", "Zero-parameter template", false),
+            (
+                "url_shared(service, type = \"qa\")".into(),
+                " @url_shared(",
+                "Service URL",
+                true
+            ),
+        ]
+    );
+    let found = complete("#check\n#target @zero", &library).unwrap();
+    assert_eq!(found.candidates.len(), 1);
+    assert_eq!(found.candidates[0].label.as_deref(), Some("order"));
+}
+
+#[test]
+fn arguments_offer_domain_options_as_quoted_literals() {
+    services_shell::link();
+    let library = spec_library();
+    let first = complete("#check\n#target @url_shared(", &library).unwrap();
+    let texts: Vec<_> = first.candidates.iter().map(|c| c.text.as_str()).collect();
+    assert_eq!(texts, ["\"catalog\", ", "\"checkout\", "]);
+    assert_eq!(first.from, 20);
+    let second = complete("#check\n#target @url_shared(\"catalog\", ", &library).unwrap();
+    let texts: Vec<_> = second.candidates.iter().map(|c| c.text.as_str()).collect();
+    assert_eq!(texts, ["\"qa\")", "\"dev\")"]);
+    let filtered = complete("#check\n#target @url_shared(\"che", &library).unwrap();
+    assert_eq!(filtered.candidates.len(), 1);
+    assert_eq!(filtered.candidates[0].label.as_deref(), Some("checkout"));
+    assert!(complete("#check\n#target @url_shared(\"a\", \"b\", ", &library).is_none());
+
+    let hash = Library::from([(
+        "rest".to_owned(),
+        BTreeMap::from([(
+            "target".to_owned(),
+            "@env(name: {{:envs}}) Pick\n{{name}}".to_owned(),
+        )]),
+    )]);
+    let named = complete("#check\n#target @env(", &hash).unwrap();
+    assert_eq!(named.candidates[0].label.as_deref(), Some("qa — a.example"));
+    assert_eq!(named.candidates[0].text, "\"a.example\")");
+    // A domain that is no list shows why instead of an empty list.
+    let nested = Library::from([(
+        "rest".to_owned(),
+        BTreeMap::from([(
+            "target".to_owned(),
+            "@env(name: {{:envs}}) Pick\n{{name}}\n\n@bad(name: {{:nope}}) Bad\nx".to_owned(),
+        )]),
+    )]);
+    let root = Root::new(vec![(
+        "var".into(),
+        services_sdk::refs::parse_lines("envs:\n  qa:\n    1: catalog").unwrap(),
+    )]);
+    let error = |source: &str| {
+        let line = source.lines().count() - 1;
+        let ch = source.lines().last().unwrap().encode_utf16().count();
+        let completion = services_kernel::editor::templates::suggest(
+            &Modules, "rest", "", source, line, ch, &nested, &root,
+        )
+        .unwrap();
+        assert_eq!(completion.candidates.len(), 1);
+        assert_eq!(completion.candidates[0].badge, Some('!'));
+        completion.candidates[0].label.clone().unwrap()
+    };
+    assert!(error("#check\n#target @env(").contains("envs.qa is a hash"));
+    assert!(error("#check\n#target @bad(").contains("unknown variable"));
+}
+
+#[test]
+fn live_calls_in_a_body_complete_their_names_and_arguments() {
+    services_shell::link();
+    let library = spec_library();
+    let suggest = |source: &str| {
+        let line = source.lines().count() - 1;
+        let ch = source.lines().last().unwrap().encode_utf16().count();
+        services_kernel::editor::completion::suggest(
+            &Modules,
+            "rest",
+            "",
+            source,
+            line,
+            ch,
+            &[],
+            &library,
+            &dictionary(),
+        )
+    };
+    let names = suggest("#check\n#target\nhttps://{{@");
+    assert_eq!(names.candidates[0].text, "{{@glob}}");
+    assert_eq!(names.candidates[1].text, "{{@host(");
+    assert_eq!((names.from, names.to), (8, 11));
+    let args = suggest("#check\n#target\nhttps://{{@host(");
+    assert_eq!(args.candidates[0].text, "\"catalog\")}}");
+}
+
+fn expand(source: &str, line: usize) -> Option<Result<String, String>> {
+    let lines: Vec<String> = source.split('\n').map(str::to_owned).collect();
+    services_kernel::editor::expand_call(&Modules, "rest", &lines, line, &[], &spec_library()).map(
+        |result| {
+            result.map(|edit| {
+                let mut out = lines.clone();
+                let tail = out.split_off(edit.to.line + 1);
+                out.truncate(edit.from.line);
+                if edit.from.ch > 0 {
+                    out.push(lines[edit.from.line].clone());
+                }
+                let mut text: Vec<String> = edit.text.split('\n').map(str::to_owned).collect();
+                if edit.from.ch > 0 {
+                    text.remove(0);
+                }
+                out.extend(text);
+                out.extend(tail);
+                out.join("\n")
+            })
+        },
+    )
+}
+
+#[test]
+fn enter_replaces_the_section_body_and_regenerates_after_edits() {
+    services_shell::link();
+    let call = "#check\n#target @url_shared(\"checkout\", \"qa\")";
+    let expanded = format!(
+        "{call}\nhttps://checkout.{{{{:base_domain}}}}.{{{{.var.region}}}}.qa.example"
+    );
+    assert_eq!(expand(call, 1).unwrap().unwrap(), expanded);
+    // Edited arguments overwrite manual changes of the body; later sections stay.
+    let edited =
+        "#check\n#target @url_shared(\"search\")\nhttps://manual\n\n#metadata\nA: b".to_string();
+    let regenerated = expand(&edited, 1).unwrap().unwrap();
+    assert_eq!(
+        regenerated,
+        "#check\n#target @url_shared(\"search\")\nhttps://search.{{:base_domain}}.{{.var.region}}.qa.example\n\n#metadata\nA: b"
+    );
+    // Nothing to change: Enter stays a line break.
+    assert!(expand(&expanded, 1).is_none());
+}
+
+#[test]
+fn enter_reports_wrong_calls_and_leaves_plain_text_alone() {
+    services_shell::link();
+    let error = |source: &str| expand(source, 1).unwrap().unwrap_err();
+    assert!(error("#check\n#target @nope(\"a\")").contains("Unknown template @nope"));
+    // Global templates are for live calls only.
+    assert!(error("#check\n#target @glob()").contains("Unknown template @glob"));
+    // A section template's body may call them.
+    let lines: Vec<String> = ["#check", "#target @wrap()"].map(str::to_owned).to_vec();
+    let mut library = spec_library();
+    library.get_mut("rest").unwrap().insert(
+        "target".to_owned(),
+        "@wrap Uses a global one\n[{{@glob}}]".to_owned(),
+    );
+    let edit = services_kernel::editor::expand_call(&Modules, "rest", &lines, 1, &[], &library)
+        .unwrap()
+        .unwrap();
+    assert_eq!(edit.text, "\n[G]");
+    assert!(error("#check\n#target @url_shared()").contains("missing argument"));
+    assert!(error("#check\n#target @host(\"a\", \"b\")").contains("takes 1 argument"));
+    for source in [
+        "#check\n#target @file",
+        "#check\n#target \\@host(\"a\")",
+        "#check\n#target https://a",
+        "#check\n#target\n@host(\"a\")",
+    ] {
+        assert!(expand(source, 1).is_none(), "{source}");
+    }
+    // A bare name of a known template expands it.
+    assert_eq!(
+        expand("#check\n#payload @order", 1).unwrap().unwrap(),
+        "#check\n#payload @order\n{ \"x\": 1 }"
+    );
+}
+
+#[test]
+fn check_templates_with_parameters_ask_for_arguments_and_expand_on_enter() {
+    services_shell::link();
+    let check = "@pair(a: \"p\" | \"q\", b = \"y\") Pair\n#check Own\n#target\n{{@glob}}/{{a}}/{{b}}\n#action\nGET\n@plain Plain\n#target\n/x";
+    let templates = BTreeMap::from([("check".to_owned(), check.to_owned())]);
+    let names = suggest("rest", "", "#check @", 0, 8, &templates).unwrap();
+    assert_eq!(names.candidates[0].text, "#check Pair @pair(");
+    assert!(names.candidates[0].continue_hint);
+    assert_eq!(names.candidates[1].text, "#check Plain\n#target\n/x");
+    let source = "#check Pair @pair(";
+    let args = suggest("rest", "", source, 0, source.len(), &templates).unwrap();
+    assert_eq!(args.candidates[0].text, "\"p\", ");
+    assert_eq!(args.from, source.len());
+
+    let mut library = spec_library();
+    library
+        .get_mut("rest")
+        .unwrap()
+        .insert("check".to_owned(), check.to_owned());
+    let expand = |source: &str| {
+        let lines: Vec<String> = source.split('\n').map(str::to_owned).collect();
+        services_kernel::editor::expand_call(&Modules, "rest", &lines, 0, &[], &library)
+            .map(|edit| edit.map(|edit| (edit.from.line, edit.to.line, edit.text)))
+    };
+    let body = "#target\nG/q/y\n#action\nGET".to_owned();
+    assert_eq!(
+        expand("#check Pair @pair(\"q\")\n#check next"),
+        Some(Ok((0, 0, format!("\n{body}"))))
+    );
+    // Enter again regenerates the whole check, up to the next one.
+    assert_eq!(
+        expand("#check Pair @pair(\"q\")\n#target\nold\n#metadata\nA: b\n\n#check next"),
+        Some(Ok((1, 4, body.clone())))
+    );
+    assert!(expand(&format!("#check @pair(\"q\")\n{body}")).is_none());
+    assert!(expand("#check Pair @pair()").unwrap().is_err());
+    assert!(expand("#check title").is_none());
+    assert!(expand("#check mail@pair(\"q\")").is_none());
+}
+
+#[test]
+fn template_editors_band_each_template() {
+    use services_widgets::editor::extension::Extension;
+    let text = "\n@a One\nbody\n\\@literal\n@b(x) Two\n  @indented\n@c";
+    for language in [
+        services_shell::language::Language::new(
+            "console-rest",
+            "templates",
+            "definitions",
+            "target",
+        ),
+        services_shell::language::Language::of_tree("*/*").1,
+    ] {
+        language.synchronize(text, 0);
+        let bands: Vec<_> = (0..7).map(|line| language.line_class(line)).collect();
+        let (even, odd) = (Some("editor-band-even"), Some("editor-band-odd"));
+        assert_eq!(bands, [None, even, even, even, odd, odd, even]);
+    }
+    let global = services_shell::language::Language::of_tree("*/*").1;
+    let lines: Vec<String> = ["@a(x) A", "https://h/{{x}}//{{y}}"]
+        .map(str::to_owned)
+        .to_vec();
+    let (tokens, _) = global.highlight(&[], &lines, 1).unwrap();
+    let kind = |kind: &str| Some(kind.to_owned());
+    assert_eq!(tokens, [(10, None), (15, kind("tpl-arg")), (22, None)]);
+    let plain = services_shell::language::Language::new("console-rest", "rest", "payload", "");
+    plain.synchronize(text, 0);
+    assert_eq!(plain.line_class(1), None);
 }

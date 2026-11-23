@@ -117,7 +117,7 @@ impl App {
                 if service == self.console_service {
                     editor.set_context(EditorContext {
                         hints: self.completions(service),
-                        templates: self.template_entries(service),
+                        templates: self.template_entries(),
                         discovery: self.editor_discovery(service),
                     });
                 }
@@ -546,11 +546,11 @@ impl App {
         }
         value
     }
-    pub(super) fn template_entries(&self, service: &str) -> BTreeMap<String, String> {
-        self.templates.get(service).cloned().unwrap_or_default()
+    pub(super) fn template_entries(&self) -> services_contracts::templates::Library {
+        self.templates.clone()
     }
     pub(super) fn completions(&self, service: &str) -> Vec<(String, String)> {
-        let mut hints = self.vars.clone();
+        let mut hints = Vec::new();
         if !services_kernel::modules::services::contains(service) {
             return hints;
         }

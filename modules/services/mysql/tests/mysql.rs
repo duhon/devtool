@@ -144,7 +144,7 @@ fn backslash_g_requests_vertical_results() {
 fn checks_become_mysql_driver_calls() {
     let call = run(
         &mut Mysql::default(),
-        &check("#target\nmysql://{{store:USER}}@db/shop\n#payload\nSELECT * FROM t\\G"),
+        &check("#target\nmysql://{{:USER}}@db/shop\n#payload\nSELECT * FROM t\\G"),
     )
     .unwrap();
     assert_eq!(call.driver, "mysql");
@@ -152,7 +152,7 @@ fn checks_become_mysql_driver_calls() {
     let request: Value = serde_json::from_slice(&call.request).unwrap();
     assert_eq!(
         request,
-        json!({"url":"mysql://{{store:USER}}@db/shop","sql":"SELECT * FROM t","console":{"vertical":true}})
+        json!({"url":"mysql://{{:USER}}@db/shop","sql":"SELECT * FROM t","console":{"vertical":true}})
     );
     assert_eq!(
         build("#target\nhttp://db\n#payload\nSELECT 1").unwrap_err(),
@@ -546,7 +546,7 @@ fn hints_discover_the_schema_once_and_feed_completion() {
 #[test]
 fn discovery_resolves_variables_through_the_app_and_reports_failures() {
     let mut mysql = Mysql::default();
-    let text = "#target\nmysql://{{store:DSN}}\n#payload\nSELECT 1";
+    let text = "#target\nmysql://{{:DSN}}\n#payload\nSELECT 1";
     let cmds = mysql.update(Event::Document(check(text)));
     let resolve = cmds.iter().find(|cmd| cmd.name == "vars.resolve").unwrap();
     assert!(
