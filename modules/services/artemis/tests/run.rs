@@ -72,9 +72,14 @@ impl Module {
     }
 
     fn run(&self, text: &str) -> Cmds {
+        self.start(text, false)
+    }
+
+    fn start(&self, text: &str, transform: bool) -> Cmds {
         self.send(event::Kind::Run(wire::RunEvent {
             tag: RUN.into(),
             check: Some(check(text)),
+            transform,
         }))
     }
 
@@ -141,6 +146,59 @@ fn queues_finds_the_broker_then_lists_and_shows_a_table() {
             .unwrap()
             .starts_with("Showing 1 of 2 queues")
     );
+}
+
+#[test]
+fn a_transform_gets_the_grid_and_its_rows_show_as_the_table() {
+    let module = Module::default();
+    let cmds = module.start("#target\nhttp://a:8161\n#action\nQUEUES", true);
+    module.resolve(&cmds, &[]);
+    module.reply(
+        "console:artemis:1:call:0",
+        answer(json!({"status":200,"value":[BROKER]})),
+    );
+    let listed = json!({"count":"2","data":[
+        {"name":"one","address":"one","messageCount":"4","routingType":"ANYCAST"},
+        {"name":"two","address":"two","messageCount":"0","routingType":"ANYCAST"}]});
+    let cmds = module.reply(
+        "console:artemis:1:call:1",
+        answer(json!({"status":200,"value":listed.to_string()})),
+    );
+    assert_eq!(names(&cmds), [(RUN, "run.data")]);
+    let grid = &cmds[0].2["data"];
+    assert_eq!(grid["rows"].as_array().unwrap().len(), 2);
+    assert!(
+        grid["columns"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("queue")),
+        "{grid}"
+    );
+
+    let cmds = module.reply("console:artemis:1:data", json!([{"queue": "one", "x": 4}]));
+    assert_eq!(names(&cmds), [(RUN, "status.set"), (RUN, "run.result")]);
+    assert_eq!(cmds[0].2["text"], "1 row");
+    let text = cmds[1].2["body"].as_str().unwrap();
+    assert!(
+        text.contains("| queue | x |") && text.contains("| one   | 4 |"),
+        "{text}"
+    );
+    assert!(!text.contains("two"), "{text}");
+
+    let cmds = module.start("#target\nhttp://a:8161\n#action\nQUEUES", true);
+    module.resolve(&cmds, &[]);
+    module.reply(
+        "console:artemis:1:call:0",
+        answer(json!({"status":200,"value":[BROKER]})),
+    );
+    module.reply(
+        "console:artemis:1:call:1",
+        answer(json!({"status":200,"value":listed.to_string()})),
+    );
+    let cmds = module.reply("console:artemis:1:data", json!(2));
+    assert_eq!(names(&cmds), [(RUN, "run.result")]);
+    assert_eq!(cmds[0].2["body"], "2");
+    assert_eq!(cmds[0].2["language"], "json");
 }
 
 #[test]

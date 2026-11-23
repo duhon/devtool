@@ -1,3 +1,5 @@
+- `Transform: {{$name(args)}}` in `#options` works here: `.` is the decoded reply; a string shows as text, anything else as JSON. A stopped `SUBSCRIBE` is transformed as text.
+
 ## 2.0.0
 
 - `Timeout` moved to the console (global `#options` key); the module no longer parses it.

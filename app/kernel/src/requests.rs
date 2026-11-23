@@ -60,6 +60,99 @@ pub struct RunOptions {
     /// `Timeout: 30`: seconds (1 to 3600, here in milliseconds) after which the console stops
     /// the run, like Stop.
     pub timeout: Option<u32>,
+    /// `Transform: {{$name(args)}}`: the jq function call, as written, that reshapes the
+    /// driver's answer before the module renders it ([`Transform`]).
+    pub transform: Option<String>,
+}
+
+/// A `Transform` option: one jq function call whose input `.` is the driver's answer. Its
+/// arguments resolve when the run is sent; it runs on the answer before the module renders
+/// it, so the console, History and `Repeat-Until` see what it gives.
+#[derive(Clone, Debug)]
+pub struct Transform {
+    /// The call as written, like `{{$even()}}`.
+    pub call: String,
+    name: String,
+    args: Vec<Value>,
+    defs: String,
+    /// The module's data was transformed (`run.data`).
+    pub applied: bool,
+    /// What the module's data became, for Debug.
+    pub shaped: Option<Value>,
+}
+
+impl Transform {
+    /// The call `call` of `service` with its arguments resolved, and the secrets they hold.
+    fn resolve(call: &str, service: Option<&str>) -> Result<(Self, Vec<String>), String> {
+        let defs = crate::modules::registry::function_defs(service);
+        let root = crate::modules::registry::root();
+        let mut called = None;
+        let resolution = services_sdk::refs::resolve_with(
+            call,
+            &root,
+            false,
+            &mut |_, _| Err("Transform takes a jq function, not a template".into()),
+            &mut |name, args| {
+                called = Some((name.to_owned(), args.to_vec()));
+                Ok(String::new())
+            },
+        )
+        .map_err(|error| format!("Transform: {error}"))?;
+        let (name, args) = called.ok_or("Transform takes a jq function call")?;
+        if !services_jq::names(&defs)
+            .iter()
+            .any(|(known, _)| *known == name)
+        {
+            return Err(format!("Transform {call}: Unknown function ${name}"));
+        }
+        let transform = Self {
+            call: call.to_owned(),
+            name,
+            args,
+            defs,
+            applied: false,
+            shaped: None,
+        };
+        Ok((transform, resolution.secrets))
+    }
+
+    /// `answer` reshaped: the one output, several as an array, none as `null`.
+    pub fn apply(&self, answer: &Value) -> Result<Value, String> {
+        let mut outputs = crate::editor::functions::run(&self.defs, &self.name, &self.args, answer)
+            .map_err(|error| format!("Transform {}: {error}", self.call))?;
+        Ok(match outputs.len() {
+            0 => Value::Null,
+            1 => outputs.pop().expect("one output"),
+            _ => Value::Array(outputs),
+        })
+    }
+
+    /// The text a stopped run showed, reshaped (its module cannot hand data once stopped):
+    /// `.` is the text; a string shows as it is, strings as lines, anything else as JSON
+    /// (`true`).
+    pub fn text(&self, text: &str) -> Result<(String, bool), String> {
+        Ok(match self.apply(&json!(text))? {
+            Value::String(text) => (text, false),
+            Value::Array(lines) if lines.iter().all(Value::is_string) => {
+                let lines: Vec<&str> = lines.iter().filter_map(Value::as_str).collect();
+                (lines.join("\n"), false)
+            }
+            other => (
+                serde_json::to_string_pretty(&other).expect("JSON values serialize"),
+                true,
+            ),
+        })
+    }
+}
+
+/// Whether `value` is exactly one jq function call `{{$name(args)}}`.
+fn function_call(value: &str) -> bool {
+    matches!(
+        services_sdk::refs::scan(value).as_slice(),
+        [found] if found.start == 0
+            && found.end == value.len()
+            && matches!(found.reference, services_sdk::refs::Ref::Function { .. })
+    )
 }
 
 /// The console's keys of an `#options` text and the lines left for the module.
@@ -92,6 +185,12 @@ fn console_options(text: &str, name: &str) -> Result<RunOptions, String> {
                         * 1000,
                 );
             }
+            "transform" if function_call(value) => options.transform = Some(value.to_owned()),
+            "transform" => {
+                return Err(format!(
+                    "Transform takes one jq function call, like {{{{$name(args)}}}}, not {value:?}"
+                ));
+            }
             "repeat-until" if value.eq_ignore_ascii_case("changed") => options.until_changed = true,
             "repeat-until" => {
                 return Err(format!("Repeat-Until takes \"changed\", not {value:?}"));
@@ -108,15 +207,15 @@ fn console_options(text: &str, name: &str) -> Result<RunOptions, String> {
             .map_or(*line, |(option, _)| option)
             .trim();
         return Err(format!(
-            "Unknown option {option:?}; {name} takes Repeat, Repeat-Until and Timeout"
+            "Unknown option {option:?}; {name} takes Repeat, Repeat-Until, Timeout and Transform"
         ));
     }
     Ok(options)
 }
 
 /// A Kernel service's check (the text after its `#check` line) as its module gets it, and
-/// the options the console runs it with. The console owns Repeat, Repeat-Until and Timeout; a module
-/// that runs its checks itself gets the rest of `#options`, others none.
+/// the options the console runs it with. The console owns Repeat, Repeat-Until, Timeout and
+/// Transform; a module that runs its checks itself gets the rest of `#options`, others none.
 pub fn kernel_run(
     service: &str,
     source: &str,
@@ -142,7 +241,7 @@ pub fn kernel_run(
         let console = line.split_once(':').is_some_and(|(name, _)| {
             matches!(
                 name.trim().to_ascii_lowercase().as_str(),
-                "repeat" | "repeat-until" | "timeout"
+                "repeat" | "repeat-until" | "timeout" | "transform"
             )
         });
         if in_options && (console || !runs) {
@@ -257,6 +356,8 @@ pub struct Run {
     pub started: bool,
     /// The module's status text for the run, like `3 rows`.
     pub summary: Option<String>,
+    /// The `Transform` of the run (`message["transform"]`), once resolved.
+    pub transform: Option<Transform>,
 }
 
 impl Run {
@@ -266,10 +367,12 @@ impl Run {
             resolved: None,
             started: false,
             summary: None,
+            transform: None,
         }
     }
 
-    /// Resolves the variables of the source and title History gets.
+    /// Resolves the variables of the source and title History gets, and the arguments of
+    /// the run's `Transform`.
     pub fn resolve(&mut self) -> Result<(), String> {
         let history = &self.message["history"];
         let service = self.message["service"].as_str();
@@ -283,8 +386,17 @@ impl Run {
                 secrets.extend(more);
                 Ok((source, title, secrets))
             });
-        self.resolved =
-            Some(resolved.map_err(|error| format!("Variables could not be resolved: {error}"))?);
+        let (source, title, mut secrets) =
+            resolved.map_err(|error| format!("Variables could not be resolved: {error}"))?;
+        if let Some(call) = self.message["transform"].as_str() {
+            let (transform, more) = Transform::resolve(call, service)?;
+            secrets.extend(more);
+            secrets.retain(|secret| !secret.is_empty());
+            secrets.sort();
+            secrets.dedup();
+            self.transform = Some(transform);
+        }
+        self.resolved = Some((source, title, secrets));
         Ok(())
     }
 
@@ -315,6 +427,21 @@ impl Run {
                 let mut result = json!({"cancelled":true,"warning":STOPPED,"request":call});
                 if self.started && !stdout.is_empty() {
                     result["body"] = json!(stdout);
+                    if let Some(transform) = self
+                        .transform
+                        .as_ref()
+                        .filter(|transform| !transform.applied)
+                    {
+                        match transform.text(stdout) {
+                            Ok((text, json)) => {
+                                result["body"] = json!(text);
+                                if json {
+                                    result["language"] = json!("json");
+                                }
+                            }
+                            Err(error) => result["warning"] = json!(format!("{error}. {STOPPED}")),
+                        }
+                    }
                 }
                 (
                     Ok(result),
@@ -323,7 +450,14 @@ impl Run {
                     STOPPED.to_owned(),
                 )
             }
-            Finish::Ran(result) => {
+            Finish::Ran(mut result) => {
+                if let Some(transform) = &self.transform {
+                    transformed_run(transform, &mut result);
+                }
+                let shaped = self
+                    .transform
+                    .as_ref()
+                    .and_then(|transform| transform.shaped.clone());
                 let debug = &result["debug"];
                 let request = if debug["request"].is_null() {
                     call.clone()
@@ -347,6 +481,9 @@ impl Run {
                     if let Some(summary) = &self.summary {
                         reply["summary"] = json!(summary);
                     }
+                    if let Some(shaped) = shaped {
+                        reply["transformed"] = shaped;
+                    }
                     let status = if outcome == "ERROR" {
                         "error"
                     } else {
@@ -363,40 +500,53 @@ impl Run {
                 error,
             ),
             Finish::Answered(response) => {
-                let chunk = services_sdk::Chunk {
-                    call: Some(driver_call.clone()),
-                    response: serde_json::to_vec(&response).unwrap_or_default(),
-                    index: 0,
-                    last: true,
-                };
-                match crate::modules::registry::with(|modules| modules.render(service, chunk)) {
+                let shaped = self
+                    .transform
+                    .as_ref()
+                    .map(|transform| transform.apply(&response))
+                    .transpose();
+                let rendered = shaped.clone().and_then(|shaped| {
+                    let chunk = services_sdk::Chunk {
+                        call: Some(driver_call.clone()),
+                        response: serde_json::to_vec(shaped.as_ref().unwrap_or(&response))
+                            .unwrap_or_default(),
+                        index: 0,
+                        last: true,
+                    };
+                    crate::modules::registry::with(|modules| modules.render(service, chunk))
+                        .map_err(|error| match &self.transform {
+                            Some(transform) => format!(
+                                "The response could not be shown after Transform {}: {error}",
+                                transform.call
+                            ),
+                            None => format!("The response could not be shown: {error}"),
+                        })
+                });
+                match rendered {
                     Ok(rendered) => {
                         let status = if rendered.outcome == "ERROR" {
                             "error"
                         } else {
                             "success"
                         };
-                        (
-                            Ok(json!({"body":rendered.text,"outcome":rendered.outcome,
-                                "language":rendered.language,"durationMs":ended - started,
-                                "request":call,"response":response,
-                                "columns":rendered.columns.iter()
-                                    .map(|column| [&column.name, &column.kind])
-                                    .collect::<Vec<_>>()})),
-                            status,
-                            rendered.outcome,
-                            rendered.text,
-                        )
+                        let mut reply = json!({"body":rendered.text,"outcome":rendered.outcome,
+                            "language":rendered.language,"durationMs":ended - started,
+                            "request":call,"response":response,
+                            "columns":rendered.columns.iter()
+                                .map(|column| [&column.name, &column.kind])
+                                .collect::<Vec<_>>()});
+                        if let Ok(Some(shaped)) = shaped {
+                            reply["transformed"] = shaped;
+                        }
+                        (Ok(reply), status, rendered.outcome, rendered.text)
                     }
                     Err(error) => {
-                        let error = format!("The response could not be shown: {error}");
-                        (
-                            Err(json!({"error":error,"request":call,"response":response,
-                                "durationMs":ended - started})),
-                            "error",
-                            "ERROR".to_owned(),
-                            error,
-                        )
+                        let mut reply = json!({"error":error,"request":call,"response":response,
+                            "durationMs":ended - started});
+                        if let Ok(Some(shaped)) = shaped {
+                            reply["transformed"] = shaped;
+                        }
+                        (Err(reply), "error", "ERROR".to_owned(), error)
                     }
                 }
             }
@@ -417,6 +567,17 @@ impl Run {
         let effects =
             crate::modules::registry::with(|modules| modules.finished(&driver_call, &record));
         (reply, effects)
+    }
+}
+
+/// The result of a module's own run with a `Transform`: an error its module gave after the
+/// transformed data says so.
+fn transformed_run(transform: &Transform, result: &mut Value) {
+    if let Some(error) = result["error"].as_str()
+        && transform.applied
+        && !error.starts_with("Transform")
+    {
+        result["error"] = json!(format!("{error} (after Transform {})", transform.call));
     }
 }
 

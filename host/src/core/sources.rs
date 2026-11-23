@@ -1,10 +1,11 @@
 //! Sources: an ordered list of named places that supply module packages and shared
-//! configuration (Dictionary sets, templates, hints and Agent skills): GitHub
+//! configuration (Dictionary sets, templates, functions, hints and Agent skills): GitHub
 //! repositories and local folders. A source is laid out as
 //!
 //! ```text
 //! dictionary.json          {"order"?: [...], "sets": {"<set>": {"<VAR>": value}}} (or "profiles")
 //! templates.json           {"<module>": {"<section>": "<templates text>"}}
+//! functions.json           {"<module>" | "*": "<jq definitions>"}
 //! hints/<module>.md        the module's hints
 //! skills/<name>/SKILL.md   Agent skills, with their files
 //! modules/*.module.tgz     module packages, `<id>-<version>[-<platform>].module.tgz`
@@ -56,6 +57,7 @@ const LOCK_FILE: &str = ".lock";
 const MODULES_FILE: &str = ".module-sources.json";
 pub const DICTIONARY: &str = "dictionary.json";
 pub const TEMPLATES: &str = "templates.json";
+pub const FUNCTIONS: &str = "functions.json";
 pub const HINTS: &str = "hints";
 /// The field of dictionary.json with its sets.
 const DICTIONARY_SETS: &str = "sets";
@@ -428,7 +430,7 @@ pub fn write(data: &Path, name: &str, text: &str) -> Result<()> {
         Ok(true) if !is_skill(name) => {}
         _ => {
             return Err(Error::new(format!(
-                "{name} is not a Dictionary, Templates or Hints file"
+                "{name} is not a Dictionary, Templates, Functions or Hints file"
             )));
         }
     }
@@ -475,7 +477,7 @@ fn config_file(path: &str) -> std::result::Result<bool, String> {
         return Ok(false);
     }
     match parts.as_slice() {
-        [DICTIONARY] | [TEMPLATES] => Ok(true),
+        [DICTIONARY] | [TEMPLATES] | [FUNCTIONS] => Ok(true),
         [HINTS, file] => match file.strip_suffix(".md") {
             Some(module) if package::check_id(module).is_ok() => Ok(true),
             Some(module) => Err(format!("{path}: \"{module}\" is not a module id")),
@@ -521,7 +523,7 @@ fn fetch_folder(root: &Path) -> Result<Fetched> {
         )));
     }
     let mut found = Vec::new();
-    for name in [DICTIONARY, TEMPLATES] {
+    for name in [DICTIONARY, TEMPLATES, FUNCTIONS] {
         if root.join(name).is_file() {
             found.push(name.to_owned());
         }
@@ -1287,7 +1289,7 @@ impl GitHub {
         };
         for (name, kind, sha, size) in entries(&root) {
             match (name.as_str(), kind.as_str()) {
-                (DICTIONARY | TEMPLATES, "blob") => blobs.push((name, sha, size)),
+                (DICTIONARY | TEMPLATES | FUNCTIONS, "blob") => blobs.push((name, sha, size)),
                 (MODULES, "tree") => fetched.modules = Some(sha),
                 (HINTS | SKILLS, "tree") => {
                     let tree = self
@@ -1477,6 +1479,12 @@ fn validate_config(path: &str, bytes: &[u8]) -> std::result::Result<(), String> 
             services_contracts::templates::validate(&library)
                 .map_err(|e| format!("{path}: {e}"))?;
         }
+        // Saved even when the definitions do not compile; the panel shows the error.
+        FUNCTIONS => {
+            serde_json::from_str::<BTreeMap<String, String>>(text).map_err(|e| {
+                format!("{path} must hold {{\"<module>\": \"<jq definitions>\"}}: {e}")
+            })?;
+        }
         _ => {}
     }
     Ok(())
@@ -1534,7 +1542,7 @@ fn apply_snapshot(data: &Path, source: &Source, fetched: &Fetched) -> Result<()>
     }
     let _stage = Remove(stage.clone());
     fs::create_dir_all(&stage)?;
-    for name in [DICTIONARY, TEMPLATES] {
+    for name in [DICTIONARY, TEMPLATES, FUNCTIONS] {
         if let Ok(bytes) = fs::read(current.join(name)) {
             fs::write(stage.join(name), bytes)?;
         }
@@ -3340,6 +3348,16 @@ mod tests {
         sources.sync("team").await.unwrap();
         assert!(!team.path().join("hints/rest.md").exists());
         assert!(!team.path().join(TEMPLATES).exists());
+    }
+
+    #[test]
+    fn local_functions_save_even_when_they_do_not_compile() {
+        let data = tempfile::tempdir().unwrap();
+        let text = r#"{"*": "def broken(: ;", "alpha": "def a: 1;"}"#;
+        super::write(data.path(), FUNCTIONS, text).unwrap();
+        assert_eq!(local(&data, FUNCTIONS), text);
+        let error = super::write(data.path(), FUNCTIONS, r#"{"*": 1}"#).unwrap_err();
+        assert!(error.message.contains(FUNCTIONS), "{}", error.message);
     }
 
     #[tokio::test]

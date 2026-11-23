@@ -7,6 +7,7 @@ description = "App Kernel: loads wasm modules, runs their commands, no UI"
 
 [dependencies]
 services-sdk = { path = "../../api/sdk" }
+services-jq = { path = "../../api/jq" }
 prost = "0.13"
 serde.workspace = true
 serde_json.workspace = true

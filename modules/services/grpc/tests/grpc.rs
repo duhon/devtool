@@ -20,6 +20,7 @@ fn build(grpc: &mut Grpc, check: &Check, vars: &[(&str, &str)]) -> Result<Driver
     let cmds = grpc.update(Event::Run {
         tag: RUN.into(),
         check: check.clone(),
+        transform: false,
     });
     let failed = |cmd: &Cmd| -> Result<DriverCall, String> {
         assert_eq!(cmd.name, "run.result");

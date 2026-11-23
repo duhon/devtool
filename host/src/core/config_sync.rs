@@ -1,13 +1,13 @@
 //! The three-way comparison of a configuration file between the local source, a shared
 //! source and the cache (the shared source as of the last sync, the common base). Files are
 //! compared by record: a Dictionary by set and variable, Templates by service and section,
-//! hints line by line. A record both sides changed differently is a conflict; the rest merges
+//! Functions by service, hints line by line. A record both sides changed differently is a conflict; the rest merges
 //! by itself.
 //!
 //! Texts come out in a stable form (sorted keys, one record per line) so a difference shown
 //! to the user is a record.
 
-use super::sources::{DICTIONARY, HINTS, TEMPLATES};
+use super::sources::{DICTIONARY, FUNCTIONS, HINTS, TEMPLATES};
 use serde_json::{Map, Value};
 use similar::{Algorithm, capture_diff_slices};
 use std::collections::{BTreeMap, BTreeSet};
@@ -16,6 +16,7 @@ use std::collections::{BTreeMap, BTreeSet};
 pub enum Kind {
     Dictionary,
     Templates,
+    Functions,
     Hints,
 }
 
@@ -25,6 +26,7 @@ impl Kind {
         match path.split('/').collect::<Vec<_>>().as_slice() {
             [DICTIONARY] => Some(Self::Dictionary),
             [TEMPLATES] => Some(Self::Templates),
+            [FUNCTIONS] => Some(Self::Functions),
             [HINTS, file] if file.ends_with(".md") => Some(Self::Hints),
             _ => None,
         }
@@ -89,6 +91,13 @@ fn parse(kind: Kind, text: &str) -> Result<Document, String> {
                     "The Dictionary must hold {\"sets\": {\"<set>\": {\"<VARIABLE>\": value}}}",
                 )?
         }
+        // One group of records: the services.
+        Kind::Functions => {
+            document
+                .groups
+                .insert(String::new(), object.clone().into_iter().collect());
+            return Ok(document);
+        }
         _ => object,
     };
     for (name, records) in sets {
@@ -107,6 +116,16 @@ fn parse(kind: Kind, text: &str) -> Result<Document, String> {
 }
 
 fn render(kind: Kind, order: &[String], groups: &Groups) -> String {
+    if kind == Kind::Functions {
+        let services: Map<String, Value> = groups
+            .values()
+            .flatten()
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
+        let mut text = serde_json::to_string_pretty(&Value::Object(services)).unwrap_or_default();
+        text.push('\n');
+        return text;
+    }
     let sets: Map<String, Value> = groups
         .iter()
         .map(|(name, records)| {
@@ -540,6 +559,23 @@ mod tests {
         );
         let clash = library("@a\nx3\n", "@b\ny\n");
         let merged = merge(Kind::Templates, Some(&base), &local, &clash).unwrap();
+        assert_eq!(merged.conflicts, 1);
+    }
+
+    #[test]
+    fn functions_merge_by_service() {
+        let library = |global: &str, alpha: &str| {
+            serde_json::to_string(&json!({"*": global, "alpha": alpha})).unwrap()
+        };
+        let base = library("def a: 1;", "def b: 2;");
+        let local = library("def a: 10;", "def b: 2;");
+        let source = library("def a: 1;", "def b: 20;");
+        let merged = merge(Kind::Functions, Some(&base), &local, &source).unwrap();
+        assert_eq!(merged.conflicts, 0);
+        let value: Value = serde_json::from_str(&merged.left).unwrap();
+        assert_eq!(value, json!({"*": "def a: 10;", "alpha": "def b: 20;"}));
+        let clash = library("def a: 30;", "def b: 2;");
+        let merged = merge(Kind::Functions, Some(&base), &local, &clash).unwrap();
         assert_eq!(merged.conflicts, 1);
     }
 

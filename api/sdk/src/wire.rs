@@ -332,6 +332,10 @@ pub struct Subscriptions {
     /// The module runs its checks itself: `Run` and `Cancel` instead of `build`.
     #[prost(bool, tag = "8")]
     pub run: bool,
+    /// A run with a `Transform` (`RunEvent::transform`) hands its final data to the Kernel
+    /// (`run.data`) instead of rendering it, then renders what comes back.
+    #[prost(bool, tag = "9")]
+    pub transform: bool,
 }
 
 /// An event from the Kernel (the `Msg` table of the design).
@@ -397,6 +401,9 @@ pub struct RunEvent {
     pub tag: String,
     #[prost(message, optional, tag = "2")]
     pub check: Option<Check>,
+    /// The run has a `Transform` (`#options`).
+    #[prost(bool, tag = "3")]
+    pub transform: bool,
 }
 
 #[derive(Clone, PartialEq, Message)]

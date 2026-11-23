@@ -191,6 +191,47 @@ pub fn json(columns: &[Column], rows: &[Vec<Value>]) -> String {
     serde_json::to_string_pretty(&rows).expect("JSON values serialize")
 }
 
+/// The column names and rows of a table in `value`, as a `Transform` may give one back:
+/// `{"columns": [names], "rows": [objects]}` or an array of objects. Without `columns`, the
+/// keys of the rows in the order they first appear. `None` for anything else.
+pub fn grid(value: &Value) -> Option<(Vec<String>, Vec<Vec<Value>>)> {
+    let (named, rows) = match value {
+        Value::Array(rows) => (None, rows),
+        Value::Object(map) => (map.get("columns"), map.get("rows")?.as_array()?),
+        _ => return None,
+    };
+    let rows = rows
+        .iter()
+        .map(Value::as_object)
+        .collect::<Option<Vec<_>>>()?;
+    let names: Vec<String> = match named {
+        Some(names) => names
+            .as_array()?
+            .iter()
+            .map(|name| name.as_str().map(str::to_owned))
+            .collect::<Option<_>>()?,
+        None => {
+            let mut names: Vec<String> = Vec::new();
+            for key in rows.iter().flat_map(|row| row.keys()) {
+                if !names.contains(key) {
+                    names.push(key.clone());
+                }
+            }
+            names
+        }
+    };
+    let cells = rows
+        .iter()
+        .map(|row| {
+            names
+                .iter()
+                .map(|name| row.get(name).cloned().unwrap_or(Value::Null))
+                .collect()
+        })
+        .collect();
+    Some((names, cells))
+}
+
 /// How a table response shows (`Format:` in `#options`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Format {
@@ -997,6 +1038,24 @@ mod tests {
     use super::*;
     use crate::lang::styled;
     use serde_json::json;
+
+    #[test]
+    fn a_grid_is_rows_of_objects_with_or_without_their_columns() {
+        let rows = json!([{"a": 1}, {"x": "one", "a": 2}]);
+        let expected = (
+            vec!["a".to_owned(), "x".to_owned()],
+            vec![vec![json!(1), Value::Null], vec![json!(2), json!("one")]],
+        );
+        assert_eq!(grid(&rows), Some(expected));
+        let named = json!({"columns": ["x"], "rows": [{"x": "two", "a": 3}]});
+        assert_eq!(
+            grid(&named),
+            Some((vec!["x".to_owned()], vec![vec![json!("two")]]))
+        );
+        for other in [json!("a"), json!([1]), json!({"rows": 1}), json!({"a": []})] {
+            assert_eq!(grid(&other), None, "{other}");
+        }
+    }
 
     #[test]
     fn a_json_document_reply_is_styled_and_folds() {

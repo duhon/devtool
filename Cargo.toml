@@ -1,6 +1,7 @@
 [workspace]
-members = ["api/protocol", "api/sdk", "app/kernel", "modules/services/rest", "modules/services/graphql", "modules/services/grpc", "modules/services/mysql", "modules/services/splunk", "modules/services/terminal", "modules/services/artemis", "modules/services/opensearch", "modules/services/valkey", "modules/services/mongodb", "modules/services/kubernetes", "modules/panels/variables", "modules/panels/history", "modules/panels/dictionary", "modules/panels/hints", "modules/panels/templates", "modules/panels/sessions", "modules/panels/diff", "modules/panels/agent", "modules/panels/settings", "examples/echo", "host", "app/widgets", "app/shell", "installer", "tools/testkit", "tools/xtask"]
+members = ["api/protocol", "api/sdk", "api/jq", "app/kernel", "modules/services/rest", "modules/services/graphql", "modules/services/grpc", "modules/services/mysql", "modules/services/splunk", "modules/services/terminal", "modules/services/artemis", "modules/services/opensearch", "modules/services/valkey", "modules/services/mongodb", "modules/services/kubernetes", "modules/panels/variables", "modules/panels/history", "modules/panels/dictionary", "modules/panels/hints", "modules/panels/templates", "modules/panels/functions", "modules/panels/sessions", "modules/panels/diff", "modules/panels/agent", "modules/panels/settings", "examples/echo", "host", "app/widgets", "app/shell", "installer", "tools/testkit", "tools/xtask"]
 resolver = "3"
+exclude = ["vendor"]
 
 [workspace.package]
 version = "5.1.0"
@@ -12,3 +13,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 similar = "2"
 services-contracts = { path = "api/protocol" }
+
+# Bounded evaluation (step budget, depth guard); see vendor/jaq-core/PATCH.md.
+[patch.crates-io]
+jaq-core = { path = "vendor/jaq-core" }

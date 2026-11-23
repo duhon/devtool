@@ -1,4 +1,6 @@
 # Kubernetes module release notes
+- `Transform: {{$name(args)}}` in `#options` works here: `.` is the rows as objects keyed by column header (with the whole API object behind each row under `object`), the log lines (or log objects) or text lines, or with `Format: json|yaml` the API object; an array of objects shows as a table, lines as text. `logs -f` and `watch` are transformed when they end; on Stop the output so far is transformed as text.
+- `Format: table` shows the wide columns of the server table too (`IP`, `NODE`… like `kubectl -o wide`); the default view keeps hiding them.
 
 ## 1.0.0
 

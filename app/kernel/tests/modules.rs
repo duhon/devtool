@@ -728,6 +728,29 @@ fn live_template_calls_expand_at_resolve_time() {
     );
 }
 
+#[test]
+fn function_calls_run_on_the_variable_tree_at_resolve_time() {
+    let mut modules = modules();
+    tree();
+    registry::contribute(
+        "functions",
+        &json!({"functions": {
+            "*": "def pick(k): .var[k];",
+            "rest": "def joined: \"a \" + .var.token;"}}),
+    );
+    registry::contribute(
+        "templates",
+        &json!({"templates": {"*": {"*": "@t(k) T\n<{{$pick(k)}}>"}}}),
+    );
+    assert_eq!(text(&mut modules, "{{$pick(\"host\")}}").unwrap(), "x.test");
+    assert_eq!(text(&mut modules, "{{@t(\"host\")}}").unwrap(), "<x.test>");
+    let resolution = modules.resolve("{\"a\":\"{{$joined}}\"}", true).unwrap();
+    assert_eq!(resolution.text, "{\"a\":\"a p\\\"w\"}");
+    assert_eq!(resolution.secrets, ["p\"w"]);
+    let error = text(&mut modules, "{{$nope}}").unwrap_err();
+    assert!(error.contains("Unknown function $nope"), "{error}");
+}
+
 /// A service that runs its checks: a lock, a call, output, then a result.
 #[derive(Default)]
 struct Runner {
@@ -738,7 +761,7 @@ impl Module for Runner {
     type Msg = ();
     fn update(&mut self, event: Event<()>) -> Vec<Cmd> {
         match event {
-            Event::Run { tag, check } => vec![
+            Event::Run { tag, check, .. } => vec![
                 cmd::lock(format!("{tag}:lock"), "pace"),
                 cmd::output(&tag, &format!("at {} ", services_sdk::now())),
                 Cmd::new(&tag, "log", &json!({"level":"info","text":check.text})),
@@ -801,7 +824,7 @@ fn a_run_owns_its_calls_and_locks_until_it_finishes_or_stops() {
         text: "go".into(),
         ..Check::default()
     };
-    let effects = modules.start_run("runner", "r1", check.clone());
+    let effects = modules.start_run("runner", "r1", check.clone(), false);
     assert_eq!(
         effects,
         vec![
@@ -845,7 +868,7 @@ fn a_run_owns_its_calls_and_locks_until_it_finishes_or_stops() {
         ]
     );
 
-    modules.start_run("runner", "r2", check);
+    modules.start_run("runner", "r2", check, false);
     modules.reply("runner", "r2:lock", Ok(json!({})));
     let effects = modules.cancel_run("runner", "r2");
     assert_eq!(

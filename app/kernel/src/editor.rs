@@ -4,11 +4,12 @@
 //! the results into the editor widget's props.
 
 pub mod completion;
+pub mod functions;
 pub mod references;
 pub mod templates;
 
 pub use completion::{kernel_check, saved_hints};
-pub use templates::{Expansion, expand_call};
+pub use templates::{Expansion, expand_call, expand_eager};
 
 use crate::document::{self, Position, ResponseRegion, is_check};
 use serde_json::Value;
@@ -458,7 +459,8 @@ pub fn module_fold(
 }
 
 /// Completion at `line`/`ch` of `source` (response regions masked out). `field` is empty
-/// for a console; otherwise the editor holds one section and `field` names it.
+/// for a console; otherwise the editor holds one section and `field` names it. `scope` is
+/// the variable tree and the jq definitions a `{{$name(…)}}` call sees.
 #[allow(clippy::too_many_arguments)]
 pub fn suggest(
     services: &dyn Services,
@@ -468,12 +470,12 @@ pub fn suggest(
     (line, ch): (usize, usize),
     hints: &[(String, String)],
     library: &Library,
-    root: &Root,
+    scope: (&Root, &str),
 ) -> Completion {
-    templates::suggest(services, service, field, source, line, ch, library, root).unwrap_or_else(
+    templates::suggest(services, service, field, source, line, ch, library, scope).unwrap_or_else(
         || {
             completion::suggest(
-                services, service, field, source, line, ch, hints, library, root,
+                services, service, field, source, line, ch, hints, library, scope,
             )
         },
     )

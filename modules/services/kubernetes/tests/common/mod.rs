@@ -31,6 +31,8 @@ pub fn check(text: &str) -> Check {
 pub struct Harness {
     linked: Linked<Kubernetes>,
     pub now: f64,
+    /// Runs have a `Transform`.
+    pub transform: bool,
 }
 
 impl Default for Harness {
@@ -38,6 +40,7 @@ impl Default for Harness {
         Self {
             linked: Linked::default(),
             now: 1_000.0,
+            transform: false,
         }
     }
 }
@@ -87,6 +90,7 @@ impl Harness {
         self.send(event::Kind::Run(wire::RunEvent {
             tag: "run:1".into(),
             check: Some(check(text)),
+            transform: self.transform,
         }))
     }
 

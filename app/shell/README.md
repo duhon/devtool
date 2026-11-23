@@ -90,8 +90,16 @@ offers Splunk's `options` block instead of separate `from`, `to`, `app`, and `co
 sections. Separate `#from`, `#to`, `#app`, and `#count` sections are rejected;
 their parameters belong only in `#options`, including in templates.
 Every service has `#options`: the Kernel (`requests::markers`) adds the section
-unless the module has its own. Its `Repeat` and `Repeat-Until`
+unless the module has its own. Its `Repeat`, `Repeat-Until`, `Timeout` and `Transform`
 keys belong to the Console (the Kernel's `requests::parse_run`) and are removed before the module request.
+`Transform: {{$name(args)}}` (exactly one jq function call) resolves its arguments at send
+time (`requests::Transform`) and runs on the data before it is shown: for a service the Kernel
+renders, on the driver's answer in `requests::Run::finish`; for a module's run, the Kernel
+tells the module (`RunEvent.transform`), the module hands the data it would render with
+`run.data`, the Kernel's `run_data` replies `{run}:data` with the jq result and the module
+renders that. A module that does not subscribe `transform` is refused at dispatch. A stopped
+run's streamed output is transformed as text (`Transform::text`). One output replaces the
+data, several an array, none `null`; the console, History and `Repeat-Until` see the result.
 `Repeat: 5s` (`s`, `m` or `h`, 1s to 24h) runs again after each response until Stop, an edit
 of the check or a hidden panel, or with `Repeat-Until: changed` until the response changes;
 completion offers Repeat-Until only under a Repeat line;
@@ -107,6 +115,18 @@ template's own check header), keeping the call as the check header.
 Template suggestions open on Space immediately after a section marker; `@name`
 on the same marker line filters them. Standalone references and ordinary section
 content do not trigger template suggestions.
+`{{$name(args)}}` (experimental) runs a jq definition contributed under
+`editor.contribute {"functions": {service|"*": defs}}` (`services-jq`) with the
+variable tree as input; the Kernel resolves it at send time, completes names after
+`{{$` (and `{{$!`), shows the signature with the current parameter marked inside the
+arguments (a single item that inserts nothing), hovers the result and accepts it as a
+parameter domain. An eager call `{{$!name(args)}}` is replaced by its result
+(`editor::functions::eager`, verbatim, refused when it holds a secret) when a template call
+expands (`expand_call`) and by Enter at the end of a console line (`expand_eager`); an
+error changes nothing and is reported like a template error. The Functions panel
+(`modules/panels/functions`) edits those definitions in a tab for the current
+service and a Global one (`*`), saves them as typed into the Local source's
+`functions.json` and shows the first `services_jq::check` error with its tab and line.
 Template definitions reuse the main service's Console syntax mode, initialized
 to the selected section. Each `@name` definition header is highlighted separately
 and resets the embedded SQL/JSON/language state for the next template body.
@@ -214,7 +234,7 @@ output. Generation snapshots contain only range metadata, not document copies.
 `services_widgets::find_bar` is one find bar for every editor; its root holds the pure
 logic (pattern, UTF-16 offsets, response ranges, replacement templates). A
 shortcut opens it in the editor of the panel holding focus: the focused editor,
-the open side panel's editor (Variables, Dictionary, Templates, Hints, History),
+the open side panel's editor (Variables, Dictionary, Templates, Functions, Hints, History),
 the Export dialog, else the Console. The bar is drawn inside that editor, which
 is outlined, and names it ("Find in Console · REST"); it never searches another
 editor. The window listens in the capture phase, so DevTools doesn't open its

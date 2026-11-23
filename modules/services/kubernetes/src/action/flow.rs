@@ -109,6 +109,8 @@ pub struct Flow {
     pub(super) targets: Vec<(String, String)>,
     /// The columns of a `watch` table.
     pub(super) header: Option<Vec<String>>,
+    /// The run has a `Transform`: table rows bring their whole object, like with `Columns`.
+    pub(super) transform: bool,
 }
 
 impl Flow {
@@ -119,6 +121,7 @@ impl Flow {
         payload: &str,
         catalog: Rc<Vec<Resource>>,
         now: f64,
+        transform: bool,
     ) -> Result<(Self, Step), String> {
         let verb = action.verb.as_str();
         let payload = match verb {
@@ -152,6 +155,7 @@ impl Flow {
             resource: None,
             targets: Vec::new(),
             header: None,
+            transform,
         };
         let step = flow.start()?;
         Ok((flow, step))
@@ -288,10 +292,15 @@ impl Flow {
         query
     }
 
+    /// `Format: table` shows the wide columns of a server Table too.
+    fn wide(&self) -> bool {
+        self.config.options.format == Format::Table
+    }
+
     pub(super) fn table(&self, mut request: Request) -> Request {
         if !self.structured() {
             request.accept = Some(TABLE.into());
-            if !self.config.options.columns.is_empty() {
+            if self.transform || !self.config.options.columns.is_empty() {
                 request
                     .query
                     .insert("includeObject".into(), "Object".into());
@@ -342,7 +351,7 @@ impl Flow {
         } else {
             "No resources found".into()
         };
-        let mut rows = render::server_table(body, self.now, &empty);
+        let mut rows = render::server_table(body, self.now, &empty, self.wide());
         rows.data = body.clone();
         if self.action.verb == "events" {
             let when = |object: &Value| -> String {
@@ -386,7 +395,7 @@ impl Flow {
                 object["metadata"]["name"].as_str().unwrap_or_default()
             )];
         }
-        let rows = render::server_table(object, self.now, "");
+        let rows = render::server_table(object, self.now, "", self.wide());
         let mut lines = Vec::new();
         if self.header.is_none() && !rows.columns.is_empty() {
             let names: Vec<String> = rows

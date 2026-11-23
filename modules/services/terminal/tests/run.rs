@@ -72,9 +72,14 @@ impl Module {
     }
 
     fn run(&self, text: &str) -> Cmds {
+        self.start(text, false)
+    }
+
+    fn start(&self, text: &str, transform: bool) -> Cmds {
         self.send(event::Kind::Run(wire::RunEvent {
             tag: RUN.into(),
             check: Some(check(text)),
+            transform,
         }))
     }
 }
@@ -167,4 +172,27 @@ fn failed_exits_signals_and_errors_finish_the_run() {
     );
     let cmds = module.run("#target\nbash -c");
     assert_eq!(cmds[0].2["error"], "command is required");
+}
+
+#[test]
+fn with_a_transform_the_output_streams_then_its_whole_text_is_reshaped_at_the_end() {
+    let module = Module::default();
+    let cmds = module.start("#target\nbash -c\n#payload\necho", true);
+    let (tag, text) = resolve(&cmds, &[]);
+    module.reply(&tag, text);
+    let call = "console:terminal:1:call";
+    let cmds = module.reply(call, json!({"stdout":"one\n"}));
+    assert_eq!(names(&cmds), [(RUN, "run.output")]);
+    module.reply(call, json!({"stderr":"two\n"}));
+    module.reply(call, json!({"pid":7,"code":0}));
+    let cmds = module.send(event::Kind::End(call.into()));
+    assert_eq!(names(&cmds), [(RUN, "run.data")]);
+    assert_eq!(cmds[0].2["data"], "one\ntwo\n");
+
+    let cmds = module.reply("console:terminal:1:data", json!({"a": ["one"]}));
+    assert_eq!(names(&cmds), [(RUN, "status.set"), (RUN, "run.result")]);
+    assert_eq!(cmds[0].2["text"], "two");
+    assert_eq!(cmds[1].2["body"], "{\n  \"a\": [\n    \"one\"\n  ]\n}");
+    assert_eq!(cmds[1].2["language"], "json");
+    assert_eq!(cmds[1].2["outcome"], "WARNING");
 }

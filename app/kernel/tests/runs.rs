@@ -11,10 +11,10 @@ use services_kernel::runtime::{
 };
 use services_sdk::{
     Check, Chunk, Cmd, DriverCall, Event as ModuleEvent, Failure, Linked, Manifest, Module,
-    Rendered, Subscriptions, cmd, http, tcp,
+    Rendered, Subscriptions, cmd, http, run, tcp,
 };
 use std::cell::{Cell, RefCell};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 fn manifest(id: &str, kind: &str, order: u32) -> Manifest {
@@ -50,18 +50,69 @@ impl Module for Rest {
     }
 }
 
-/// A service that runs its checks itself: a lock, a driver call, output, then a result.
+/// A service like a database: one row of its answer's result sets (`sets[].rows`) a line.
 #[derive(Default)]
-struct Runner;
+struct Table;
+
+impl Module for Table {
+    type Msg = ();
+    fn build(&self, _check: &Check) -> Result<DriverCall, String> {
+        Ok(DriverCall::new("http", &json!({"q": "x"})))
+    }
+    fn render(&self, chunk: &Chunk) -> Result<Rendered, String> {
+        let response = chunk.response();
+        let sets = response["sets"].as_array().ok_or("no result sets")?;
+        let rows: Vec<String> = sets
+            .iter()
+            .flat_map(|set| set["rows"].as_array().into_iter().flatten())
+            .map(Value::to_string)
+            .collect();
+        Ok(Rendered {
+            text: rows.join("\n"),
+            outcome: "OK".into(),
+            ..Rendered::default()
+        })
+    }
+}
+
+/// A service that runs its checks itself: a lock, a driver call, output, then a result. A
+/// run with a `Transform` hands the call's answer to it and shows what comes back.
+#[derive(Default)]
+struct Runner {
+    transforms: BTreeSet<String>,
+    shaping: run::Shaping<()>,
+}
+
+fn shown_body(answer: &Value) -> Result<run::Answer, String> {
+    let text = answer["body"].as_str().ok_or("no body")?;
+    Ok(run::Answer {
+        rendered: Rendered {
+            text: text.into(),
+            language: "text".into(),
+            outcome: "OK".into(),
+            columns: Vec::new(),
+        },
+        status: Some("1 row".into()),
+    })
+}
 
 impl Module for Runner {
     type Msg = ();
     fn update(&mut self, event: ModuleEvent<()>) -> Vec<Cmd> {
         match event {
-            ModuleEvent::Run { tag, .. } => vec![
-                cmd::lock(format!("{tag}:lock"), "pace"),
-                cmd::output(&tag, "partial "),
-            ],
+            ModuleEvent::Run { tag, transform, .. } => {
+                if transform {
+                    self.transforms.insert(tag.clone());
+                }
+                vec![
+                    cmd::lock(format!("{tag}:lock"), "pace"),
+                    cmd::output(&tag, "partial "),
+                ]
+            }
+            ModuleEvent::Reply { tag, result } if self.shaping.owns(&tag) => self
+                .shaping
+                .reply(&tag, result, |(), answer| shown_body(&answer))
+                .unwrap(),
             ModuleEvent::Reply { tag, .. } if tag.ends_with(":lock") => {
                 let run = tag.trim_end_matches(":lock");
                 vec![cmd::driver(
@@ -71,21 +122,22 @@ impl Module for Runner {
             }
             ModuleEvent::Reply { tag, result } if tag.ends_with(":call") => {
                 let run = tag.trim_end_matches(":call");
+                let result = match result {
+                    Ok(result) => result,
+                    Err(failure) => return vec![cmd::fail(run, &failure.message, &json!({}))],
+                };
+                if self.transforms.remove(run) {
+                    return vec![self.shaping.hand(run, &result, json!({}), ())];
+                }
+                let shown = shown_body(&result).unwrap();
                 vec![
                     cmd::run_status(run, "1 row"),
-                    cmd::result(
-                        run,
-                        &Rendered {
-                            text: result.unwrap()["body"].as_str().unwrap().into(),
-                            language: "text".into(),
-                            outcome: "OK".into(),
-                            columns: Vec::new(),
-                        },
-                        &json!({}),
-                    ),
+                    cmd::result(run, &shown.rendered, &json!({})),
                 ]
             }
             ModuleEvent::Cancel { tag } => {
+                self.transforms.remove(&tag);
+                self.shaping.cancel(&tag);
                 vec![cmd::result(&tag, &Rendered::default(), &json!({}))]
             }
             _ => Vec::new(),
@@ -94,6 +146,7 @@ impl Module for Runner {
     fn subscriptions(&self) -> Subscriptions {
         Subscriptions {
             run: true,
+            transform: true,
             ..Subscriptions::default()
         }
     }
@@ -114,7 +167,11 @@ impl Module for Pinger {
             )],
             ModuleEvent::Reply { tag, result } => {
                 let run = tag.trim_end_matches(":s");
-                match tcp::Event::parse(&result.unwrap()) {
+                let result = match result {
+                    Ok(result) => result,
+                    Err(failure) => return vec![cmd::fail(run, &failure.message, &json!({}))],
+                };
+                match tcp::Event::parse(&result) {
                     Ok(tcp::Event::Connected { .. }) => vec![cmd::write(&tag, b"PING\r\n")],
                     Ok(tcp::Event::ChunkBase64(chunk)) => {
                         let text = String::from_utf8(services_sdk::driver::decode(&chunk).unwrap());
@@ -176,6 +233,10 @@ fn linked() -> Vec<registry::Module> {
         (
             manifest("pinger", "service", 3),
             Box::new(Linked::<Pinger>::default()),
+        ),
+        (
+            manifest("table", "service", 4),
+            Box::new(Linked::<Table>::default()),
         ),
         (
             manifest("history", "panel", 1),
@@ -693,4 +754,117 @@ fn hiding_the_console_stops_every_run_an_agent_run_too() {
     assert!(window.kernel.running().is_empty());
     // Hidden, the console runs nothing.
     assert_eq!(window.run("rest", GET, "a"), None);
+}
+
+/// The jq functions of the Transform runs, global.
+fn functions() {
+    let defs = "def even: .sets |= map(.rows |= [to_entries[] | select(.key % 2 == 1) | .value]);
+        def up(suffix): .body |= ascii_upcase + suffix; def bad: error(\"boom\");
+        def flat: [.sets[].rows[]]; def drop: del(.body); def shout: ascii_upcase;";
+    registry::contribute("functions", &json!({"functions": {"*": defs}}));
+}
+
+#[test]
+fn a_transform_reshapes_the_driver_answer_before_its_module_renders_it() {
+    let window = Window::new();
+    functions();
+    window.kernel.set_service("table");
+    let check = "#target x\n#options\nTransform: {{$even}}";
+    window.run("table", check, "t").unwrap();
+    let rows = json!({"sets": [{"rows": [["one"], ["two"], ["three"], ["four"]]}]});
+    window
+        .fake
+        .answer(window.fake.last(), Reply::Result(rows.clone()));
+    let (_, responses) = window.heard();
+    let (status, body) = responses.last().unwrap();
+    assert!(status.contains("OK"), "{status}");
+    assert_eq!(body, "[\"two\"]\n[\"four\"]");
+    // History keeps what the console shows.
+    assert_eq!(
+        window.fake.to("history")[0]["text"],
+        "[\"two\"]\n[\"four\"]"
+    );
+
+    // An answer the module cannot show once transformed, and a jq error, end the run.
+    for (call, error) in [
+        (
+            "{{$flat}}",
+            "could not be shown after Transform {{$flat}}: no result sets",
+        ),
+        ("{{$bad}}", "Transform {{$bad}}: \"boom\""),
+    ] {
+        window.run(
+            "table",
+            &format!("#target x\n#options\nTransform: {call}"),
+            "t",
+        );
+        window
+            .fake
+            .answer(window.fake.last(), Reply::Result(rows.clone()));
+        let (_, responses) = window.heard();
+        let (status, body) = responses.last().unwrap();
+        assert!(status.contains("ERROR"), "{status}");
+        assert!(body.contains(error), "{body}");
+    }
+}
+
+#[test]
+fn a_module_run_hands_its_data_to_the_transform_and_shows_what_comes_back() {
+    let window = Window::new();
+    functions();
+    window.kernel.set_service("runner");
+    for (call, shown) in [
+        ("{{$up(\"!\")}}", "ROWS!"),
+        ("{{$bad}}", "Transform {{$bad}}: \"boom\""),
+        (
+            "{{$drop}}",
+            "The response could not be shown: no body (after Transform {{$drop}})",
+        ),
+    ] {
+        window.run(
+            "runner",
+            &format!("#payload x\n#options\nTransform: {call}"),
+            "r",
+        );
+        window.fake.answer(
+            window.fake.last(),
+            Reply::Result(json!({"status": 200, "body": "rows"})),
+        );
+        let (_, responses) = window.heard();
+        let body = &responses.last().unwrap().1;
+        assert!(body.contains(shown), "{body}");
+    }
+    // History keeps what the console shows.
+    let history = window.fake.to("history");
+    assert_eq!(history[0]["text"], "ROWS!");
+
+    // A module that does not hand its data refuses the run: nothing is sent.
+    window.kernel.set_service("pinger");
+    window.run("pinger", "#payload x\n#options\nTransform: {{$bad}}", "p");
+    let (_, responses) = window.heard();
+    let body = &responses.last().unwrap().1;
+    assert!(
+        body.contains("Transform is not available for pinger"),
+        "{body}"
+    );
+    let drivers = window.fake.to("drivers");
+    assert!(
+        drivers.iter().all(|call| call["module"] != "pinger"),
+        "{drivers:?}"
+    );
+}
+
+#[test]
+fn a_stopped_run_shows_its_output_so_far_transformed() {
+    let window = Window::new();
+    functions();
+    window.kernel.set_service("runner");
+    let key = window
+        .run("runner", "#payload x\n#options\nTransform: {{$shout}}", "r")
+        .unwrap();
+    window.kernel.stop(&key);
+    let (_, responses) = window.heard();
+    let (status, body) = responses.last().unwrap();
+    assert!(status.contains("Stopped"), "{status}");
+    assert!(body.starts_with("PARTIAL \nWarning: "), "{body}");
 }

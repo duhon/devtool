@@ -88,6 +88,12 @@ pub enum Effect {
         run: String,
         text: String,
     },
+    /// A run hands its final data to its `Transform` (`run.data`); the reply is `{run}:data`.
+    Data {
+        module: String,
+        run: String,
+        data: Value,
+    },
     /// A run finished (`run.result`): `body`, `outcome`, `language`, `debug`, or `error`.
     Finished {
         module: String,
@@ -614,6 +620,16 @@ impl Modules {
                 run: cmd.tag,
                 text: text("text"),
             }],
+            "run.data" if module.runs.contains_key(&cmd.tag) => {
+                module
+                    .owners
+                    .insert(format!("{}:data", cmd.tag), cmd.tag.clone());
+                vec![Effect::Data {
+                    module: owner,
+                    run: cmd.tag,
+                    data: args.get("data").cloned().unwrap_or(Value::Null),
+                }]
+            }
             "run.result" if module.runs.contains_key(&cmd.tag) => {
                 let mut effects = Self::stop(module, &cmd.tag);
                 effects.push(Effect::Finished {
@@ -624,7 +640,7 @@ impl Modules {
                 effects
             }
             // A run already stopped.
-            "run.output" | "run.result" => Vec::new(),
+            "run.output" | "run.result" | "run.data" => Vec::new(),
             "status.set" => {
                 let indicator = text("indicator");
                 let since = (indicator == "busy").then(|| {
@@ -798,6 +814,16 @@ impl Modules {
         }
     }
 
+    /// The run of `id` that the command `tag` was made for, if any.
+    pub fn owner(&self, id: &str, tag: &str) -> Option<String> {
+        let module = self.loaded.get(id)?;
+        module
+            .owners
+            .get(tag)
+            .filter(|run| module.runs.contains_key(*run))
+            .cloned()
+    }
+
     /// Whether `service` runs its checks itself (`Run`) instead of building one call.
     pub fn runs(&self, service: &str) -> bool {
         self.loaded
@@ -805,8 +831,22 @@ impl Modules {
             .is_some_and(|module| module.subscriptions.run)
     }
 
-    /// Starts the run `tag` of `check`; it ends with [`Effect::Finished`].
-    pub fn start_run(&mut self, service: &str, tag: &str, check: Check) -> Vec<Effect> {
+    /// Whether `service` hands the final data of a run to its `Transform` (`run.data`).
+    pub fn transforms(&self, service: &str) -> bool {
+        self.loaded
+            .get(service)
+            .is_some_and(|module| module.subscriptions.transform)
+    }
+
+    /// Starts the run `tag` of `check`; it ends with [`Effect::Finished`]. `transform`: the
+    /// run has a `Transform`.
+    pub fn start_run(
+        &mut self,
+        service: &str,
+        tag: &str,
+        check: Check,
+        transform: bool,
+    ) -> Vec<Effect> {
         let Some(module) = self.loaded.get_mut(service) else {
             return Vec::new();
         };
@@ -814,6 +854,7 @@ impl Modules {
         let event = kind(event::Kind::Run(wire::RunEvent {
             tag: tag.into(),
             check: Some(check),
+            transform,
         }));
         self.send(service, event)
     }
@@ -1106,14 +1147,16 @@ impl Modules {
 
     /// The `{{…}}` references of `text` resolved against the variable tree the panels contribute
     /// (`var`, the Dictionary sets, `env`), and the live `{{@name(args)}}` template calls expanded
-    /// first, among the templates of every service ([`Modules::resolve_in`] without one). In
+    /// first, among the templates of every service ([`Modules::resolve_in`] without one); the
+    /// `{{$name(args)}}` jq function calls run on the variable tree. In
     /// `json` mode each value is escaped as the content of a JSON string.
     pub fn resolve(&mut self, text: &str, json: bool) -> Result<services_sdk::Resolution, String> {
         self.resolve_in(text, json, None)
     }
 
     /// [`Modules::resolve`] for text of `service`: a live call sees the global templates and
-    /// those of that service (the section of the text is not known here, so any section of it).
+    /// those of that service (the section of the text is not known here, so any section of it),
+    /// a function call the global functions and those of that service.
     pub fn resolve_in(
         &mut self,
         text: &str,
@@ -1131,6 +1174,9 @@ impl Modules {
                 &BTreeMap::new(),
             )
         };
+        let defs = registry::function_defs(service);
+        let mut outputs = Vec::new();
+        let mut function = crate::editor::functions::runner(&defs, &root, &mut outputs);
         let document = json
             .then(|| serde_json::from_str::<Value>(text).ok())
             .flatten();
@@ -1140,7 +1186,13 @@ impl Modules {
             Some(document) => {
                 let mut secrets = Vec::new();
                 let document = resolve_json_strings(&document, &mut |text| {
-                    let resolved = services_sdk::refs::resolve(text, &root, false, &mut expand)?;
+                    let resolved = services_sdk::refs::resolve_with(
+                        text,
+                        &root,
+                        false,
+                        &mut expand,
+                        &mut function,
+                    )?;
                     secrets.extend(resolved.secrets);
                     Ok(resolved.text)
                 })?;
@@ -1150,7 +1202,7 @@ impl Modules {
                 }
             }
             // Not JSON (a GraphQL `#variables` like `{"id": {{:id}}}`): resolved as text.
-            _ => services_sdk::refs::resolve(text, &root, json, &mut expand)?,
+            _ => services_sdk::refs::resolve_with(text, &root, json, &mut expand, &mut function)?,
         };
         let mut secrets = resolved.secrets;
         secrets.retain(|secret| !secret.is_empty());

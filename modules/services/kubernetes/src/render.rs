@@ -122,9 +122,10 @@ fn kind_of(kind: &str) -> Kind {
     }
 }
 
-/// The rows of a server `Table` (`Accept: …;as=Table`) without its wide columns; a plain
-/// object or list becomes `NAME` and `AGE`.
-pub fn server_table(body: &Value, now: f64, empty: &str) -> Rows {
+/// The rows of a server `Table` (`Accept: …;as=Table`), its wide columns (`priority` > 0)
+/// only when `wide` (`Format: table`, like `kubectl -o wide`); a plain object or list
+/// becomes `NAME` and `AGE`.
+pub fn server_table(body: &Value, now: f64, empty: &str, wide: bool) -> Rows {
     if body["kind"] != "Table" {
         return plain_table(body, now, empty);
     }
@@ -133,7 +134,7 @@ pub fn server_table(body: &Value, now: f64, empty: &str) -> Rows {
         .map(Vec::as_slice)
         .unwrap_or(&[]);
     let shown: Vec<usize> = (0..definitions.len())
-        .filter(|at| definitions[*at]["priority"].as_i64().unwrap_or(0) == 0)
+        .filter(|at| wide || definitions[*at]["priority"].as_i64().unwrap_or(0) == 0)
         .collect();
     let columns = shown
         .iter()
@@ -599,6 +600,136 @@ fn logs_text(display: &Display, mut logs: Logs) -> Result<(Rendered, String), St
         .collect();
     lines.extend(logs.notes);
     Ok((plain(lines.join("\n"), outcome), status))
+}
+
+/// What a `Transform` gets of `content` (`.`), and the notes shown after what it gives back.
+/// `Format: json|yaml` give the answer's JSON; otherwise rows are objects keyed by column
+/// name, with the whole API object behind the row under `object`, logs are their lines (objects as a table, `Logs-JSON` or `Columns` show them), and
+/// text is its lines.
+pub fn data(display: &Display, content: &Content) -> (Value, Vec<String>) {
+    let options = &display.options;
+    match content {
+        Content::Rows(rows) if display.structured() => (rows.data.clone(), Vec::new()),
+        Content::Rows(rows) => {
+            let objects = rows
+                .rows
+                .iter()
+                .map(|row| {
+                    let mut object: serde_json::Map<String, Value> = rows
+                        .columns
+                        .iter()
+                        .zip(&row.cells)
+                        .map(|(column, cell)| (column.name.clone(), cell.clone()))
+                        .collect();
+                    if !row.object.is_null() {
+                        object.insert("object".into(), row.object.clone());
+                    }
+                    Value::Object(object)
+                })
+                .collect();
+            (Value::Array(objects), Vec::new())
+        }
+        Content::Logs(logs) => {
+            let objects = display.structured()
+                || options.logs_json
+                || options.format == Format::Table
+                || !options.columns.is_empty();
+            let lines = logs
+                .lines
+                .iter()
+                .map(|line| {
+                    if objects {
+                        log_object(line, options.logs_json, logs.multi)
+                    } else if logs.multi {
+                        json!(format!("[{}/{}] {}", line.pod, line.container, line.text))
+                    } else {
+                        json!(line.text)
+                    }
+                })
+                .collect();
+            (Value::Array(lines), logs.notes.clone())
+        }
+        Content::Text(text) if display.structured() => (text.data.clone(), Vec::new()),
+        Content::Text(text) => (json!(text.lines), Vec::new()),
+    }
+}
+
+/// What a `Transform` gave back for [`data`], shown by the `#options`: `Format: json|yaml`
+/// print it; an array of objects (or `{"columns", "rows"}`) is a table whose `Columns`
+/// paths read the objects; lines and a string are text; anything else is JSON.
+pub fn shaped(
+    display: &Display,
+    data: Value,
+    outcome: &str,
+    notes: &[String],
+) -> Result<(Rendered, String), String> {
+    let count = |data: &Value| data.as_array().map_or(0, Vec::len);
+    let (mut rendered, status) = if display.structured() {
+        let mut rendered = plain(structured(display, &data), "OK");
+        if display.options.format == Format::Json {
+            rendered.language = "json".into();
+        }
+        (rendered, format!("{} rows", count(&data)))
+    } else if let Some((names, cells)) = table::grid(&data) {
+        let objects = match &data {
+            Value::Array(objects) => objects.clone(),
+            _ => data["rows"].as_array().cloned().unwrap_or_default(),
+        };
+        let columns = names
+            .into_iter()
+            .enumerate()
+            .map(|(i, name)| {
+                let kind = cells
+                    .iter()
+                    .filter_map(|row| row.get(i))
+                    .find(|cell| !cell.is_null())
+                    .map_or(Kind::Text, |cell| match cell {
+                        Value::Number(_) => Kind::Number,
+                        Value::Bool(_) => Kind::Boolean,
+                        _ => Kind::Text,
+                    });
+                Column::new(name, kind)
+            })
+            .collect();
+        let rows = cells
+            .into_iter()
+            .zip(objects)
+            .map(|(cells, object)| Row { cells, object })
+            .collect();
+        let rows = Rows {
+            columns,
+            rows,
+            data: Value::Null,
+            empty: String::new(),
+        };
+        rows_text(display, rows, true)?
+    } else {
+        match data {
+            Value::String(text) => (plain(text, "OK"), String::new()),
+            Value::Array(items) if items.iter().all(Value::is_string) => {
+                let lines: Vec<&str> = items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .filter(|line| display.keeps(line))
+                    .collect();
+                let count = lines.len();
+                let status = format!("{count} {}", if count == 1 { "line" } else { "lines" });
+                (plain(lines.join("\n"), "OK"), status)
+            }
+            other => {
+                let mut rendered = plain(pretty(&other), "OK");
+                rendered.language = "json".into();
+                (rendered, String::new())
+            }
+        }
+    };
+    if !notes.is_empty() {
+        rendered.text.push_str(&format!("\n{}", notes.join("\n")));
+    }
+    if outcome != "OK" {
+        rendered.outcome = outcome.into();
+    }
+    Ok((rendered, status))
 }
 
 /// The answer as text with its column types, and the run's status. `outcome` is `OK`, `WARNING`

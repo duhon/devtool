@@ -26,7 +26,7 @@ fn suggest(
         ch,
         hints,
         &Default::default(),
-        &Default::default(),
+        (&Default::default(), ""),
     )
 }
 
@@ -272,7 +272,7 @@ fn tree_suggest(
         ch,
         &[],
         &Default::default(),
-        &root,
+        (&root, ""),
     )
 }
 

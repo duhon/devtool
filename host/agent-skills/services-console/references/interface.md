@@ -74,6 +74,31 @@ Undock into separate window.
   remain global when switching Console sessions, including session 0, unlike Hints.
   When editing, preserve section-line calls, `{{@...}}` calls and references
   instead of inlining their results.
+- `{{$name(args)}}` (experimental) calls a jq function from the Functions panel
+  (`def name(a; b): ...;` text per service plus Global; the service's defs follow
+  the Global ones, so they win on a clash). The input `.` is the whole variable
+  tree; arguments use the template call syntax and become JSON: a literal is a
+  string, a `:path` / `.path` that selects one string is that string, a hash is an
+  object, several matches are an array. String outputs are inserted as is, other
+  outputs as compact JSON, several outputs joined by newlines; the result is data
+  (not resolved again) and JSON-escaped in JSON bodies. A result containing a
+  secret value is masked in History. Inside a template body a bare parameter
+  argument (`{{$f(param)}}`) is bound like `{{@other(param)}}`, and a parameter
+  domain may be `{{$f(earlier)}}`: its list output (an array's items) gives the
+  options once the earlier parameter is typed. The Functions panel has a tab for
+  the current service and a Global tab, saves every edit into the Local source's
+  `functions.json` (`{"<service>" | "*": defs}`) even when it does not compile, and
+  shows the first error in its status with the tab and line. In `#options`,
+  `Transform: {{$name(args)}}` runs a function on the run's result instead (`.` is the
+  data the service is about to show); see Console options in the services topic.
+  Inside the arguments completion shows only the signature (`target($s; «$e»; $n)`,
+  the current parameter marked). `{{$!name(args)}}` is an eager call: when a template
+  expands (`#section @name(...)` or `#check ... @name(...)` + Enter) and on Enter at
+  the end of a console line holding it, it is replaced by its result (inserted
+  verbatim: `{{...}}` in the result stay references). A failing call, unresolved
+  argument or a result holding a secret value replaces nothing and shows the error
+  (use `{{$name(args)}}` for secrets); left in the text it resolves at send time
+  like `{{$name(args)}}`.
 - Variables contains the session's variables and the read-only Environment.
   Dictionary contains named sets. Read the variables topic before explaining their behavior.
 - The main status strip and Debug belong only to the highlighted check in the

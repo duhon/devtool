@@ -12,7 +12,7 @@ impl Module for Echo {
 
     fn update(&mut self, event: Event<()>) -> Vec<Cmd> {
         match event {
-            Event::Run { tag, check } => {
+            Event::Run { tag, check, .. } => {
                 let endpoint = check.text_of("target").trim();
                 if endpoint.is_empty() {
                     return vec![cmd::fail(&tag, "#target is required", &json!({}))];

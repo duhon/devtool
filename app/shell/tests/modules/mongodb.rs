@@ -65,7 +65,7 @@ fn options_offer_the_console_then_the_module_and_a_saved_hint_is_the_default() {
             lines.len(),
             hints,
             &Default::default(),
-            &Default::default(),
+            (&Default::default(), ""),
         )
         .candidates
         .into_iter()
@@ -92,7 +92,7 @@ fn options_offer_the_console_then_the_module_and_a_saved_hint_is_the_default() {
             lines.len(),
             hints,
             &Default::default(),
-            &Default::default(),
+            (&Default::default(), ""),
         )
         .candidates
         .into_iter()
@@ -127,7 +127,7 @@ fn options_offer_the_console_then_the_module_and_a_saved_hint_is_the_default() {
             lines.len(),
             &[],
             &Default::default(),
-            &Default::default(),
+            (&Default::default(), ""),
         )
         .candidates
         .into_iter()

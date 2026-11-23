@@ -69,6 +69,7 @@ pub const NAMES: &[&str] = &[
     "status.set",
     "run.output",
     "run.result",
+    "run.data",
     "notify",
     "log",
     "diagnostics",
@@ -147,6 +148,12 @@ pub fn result(run: &str, rendered: &crate::Rendered, debug: &Value) -> Cmd {
     )
 }
 
+/// Hands the final data of the run `run` to its `Transform`: the reply `{run}:data` is the
+/// data reshaped, or the Transform's error. See [`crate::run::Shaping`].
+pub fn data(run: &str, data: &Value) -> Cmd {
+    Cmd::new(run, "run.data", &json!({"data": data}))
+}
+
 /// Finishes the run `run` with an error.
 pub fn fail(run: &str, error: &str, debug: &Value) -> Cmd {
     Cmd::new(
@@ -183,8 +190,8 @@ pub fn sources_read(tag: impl Into<String>, name: &str) -> Cmd {
     Cmd::new(tag, "sources.read", &json!({"name": name}))
 }
 
-/// Saves the file `name` of the Local source (`dictionary.json`, `templates.json` or
-/// `hints/<module>.md`): the reply is `{}`.
+/// Saves the file `name` of the Local source (`dictionary.json`, `templates.json`,
+/// `functions.json` or `hints/<module>.md`): the reply is `{}`.
 pub fn sources_write(tag: impl Into<String>, name: &str, text: &str) -> Cmd {
     Cmd::new(tag, "sources.write", &json!({"name": name, "text": text}))
 }
@@ -258,7 +265,9 @@ pub fn diff_cancel() -> Cmd {
 }
 
 /// What the module adds to the editors: `{"tree": {"first": […], "last": […]}}` (the variable
-/// tree of `{{…}}`), `{"templates": {service: {section: text}}}` or `{"hints": {service: text}}`. Replaces what the module contributed before under that key.
+/// tree of `{{…}}`), `{"templates": {service: {section: text}}}`, `{"functions": {service: jq_defs}}` (`"*"` is
+/// Global; `{{$name(args)}}` calls see Global first, then the service's defs) or
+/// `{"hints": {service: text}}`. Replaces what the module contributed before under that key.
 pub fn contribute(contribution: &Value) -> Cmd {
     Cmd::new("", "editor.contribute", contribution)
 }

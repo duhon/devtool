@@ -889,7 +889,14 @@ impl Module for Grpc {
             Event::Hints { check, pos } => self.hints(&check, pos as usize),
             Event::Discover(check) => self.manual(&check),
             Event::Reply { tag, result } => self.reply(&tag, result),
-            Event::Run { tag, check } => self.run(tag, check),
+            Event::Run {
+                tag,
+                check,
+                transform,
+            } => {
+                self.calls.transform(&tag, transform);
+                self.run(tag, check)
+            }
             Event::Cancel { tag } => {
                 self.resolving.remove(&tag);
                 self.calls.cancel(&tag);
@@ -905,6 +912,7 @@ impl Module for Grpc {
             hints: true,
             discover: true,
             run: true,
+            transform: true,
             ..Subscriptions::default()
         }
     }

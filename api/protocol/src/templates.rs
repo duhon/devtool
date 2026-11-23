@@ -514,7 +514,7 @@ fn substitute(
             continue;
         }
         let after = &rest[open + 2..];
-        let call = after.trim_start().starts_with('@');
+        let call = after.trim_start().starts_with(['@', '$']);
         let close = if call {
             reference_end(after)
         } else {
@@ -528,6 +528,18 @@ fn substitute(
         if let Some(call_text) = inner.strip_prefix('@') {
             let nested = parse_call(call_text).map_err(|error| format!("@{name}: {error}"))?;
             output.push_str(&expand_inner(view, &nested, values, stack)?);
+        } else if let Some(call_text) = inner.strip_prefix('$') {
+            let bound = bind_function(call_text, &|param| {
+                values.get(param).map(|value| as_argument(value))
+            })
+            .map_err(|error| match error {
+                Ok(missing) => format!(
+                    "@{name}: `{}` is not a parameter in scope (use \"{0}\" for text or :{0} for a variable)",
+                    missing[0]
+                ),
+                Err(error) => format!("@{name}: {error}"),
+            })?;
+            output.push_str(&bound);
         } else if let Some(value) = values.get(inner) {
             output.push_str(value);
         } else {
@@ -540,8 +552,50 @@ fn substitute(
     Ok(output)
 }
 
-/// The reference domain `text` with its parameters `{{param}}` replaced by `values`, or the
-/// names of those that have no value yet.
+/// A parameter's value as an argument of a function call: a whole variable reference stays
+/// a variable, anything else is a literal.
+fn as_argument(value: &str) -> Arg {
+    value
+        .strip_prefix("{{")
+        .and_then(|inner| inner.strip_suffix("}}"))
+        .and_then(|inner| match parse_arg(inner) {
+            Ok(arg @ Arg::Variable { .. }) => Some(arg),
+            _ => None,
+        })
+        .unwrap_or_else(|| Arg::Literal(value.to_owned()))
+}
+
+/// The function call `name(args)` (after `$`, or `!name(args)` for an eager one) as
+/// `{{$name(args)}}` with each bare parameter replaced by `lookup` of it; the names `lookup`
+/// has no value for, or a syntax error.
+fn bind_function(
+    call_text: &str,
+    lookup: &dyn Fn(&str) -> Option<Arg>,
+) -> Result<String, Result<Vec<String>, String>> {
+    let (bang, call_text) = match call_text.strip_prefix('!') {
+        Some(rest) => ("!", rest),
+        None => ("", call_text),
+    };
+    let mut call = parse_call(call_text).map_err(Err)?;
+    let mut missing = Vec::new();
+    for arg in &mut call.args {
+        if let Arg::Param(name) = arg {
+            match lookup(name) {
+                Some(value) => *arg = value,
+                None => missing.push(name.clone()),
+            }
+        }
+    }
+    if missing.is_empty() {
+        Ok(format!("{{{{${bang}{}}}}}", render_call(&call)))
+    } else {
+        Err(Ok(missing))
+    }
+}
+
+/// The reference domain `text` with its parameters `{{param}}` (and those passed to a
+/// function, `{{$name(param)}}`) replaced by `values`, or the names of those that have no
+/// value yet.
 pub fn fill_domain(text: &str, values: &BTreeMap<String, String>) -> Result<String, Vec<String>> {
     let (mut output, mut missing) = (String::new(), Vec::new());
     let mut rest = text;
@@ -557,7 +611,14 @@ pub fn fill_domain(text: &str, values: &BTreeMap<String, String>) -> Result<Stri
             }
         };
         let inner = after[..close].trim();
-        if is_ident(inner) {
+        if let Some(call_text) = inner.strip_prefix('$') {
+            let lookup = |name: &str| values.get(name).cloned().map(Arg::Literal);
+            match bind_function(call_text, &lookup) {
+                Ok(bound) => output.push_str(&bound),
+                Err(Ok(names)) => missing.extend(names),
+                Err(Err(_)) => output.push_str(&rest[open..open + 2 + close + 2]),
+            }
+        } else if is_ident(inner) {
             match values.get(inner) {
                 Some(value) => output.push_str(value),
                 None => missing.push(inner.to_owned()),
@@ -603,7 +664,7 @@ fn closing(tail: &str) -> Option<usize> {
 
 /// Offset of the closing `}}` of a reference; a call's quoted literals may contain `}}`.
 fn reference_end(text: &str) -> Option<usize> {
-    let is_call = text.trim_start().starts_with('@');
+    let is_call = text.trim_start().starts_with(['@', '$']);
     let (mut quoted, mut escaped) = (false, false);
     let mut previous_brace = None;
     for (index, ch) in text.char_indices() {
@@ -870,6 +931,37 @@ mod tests {
             Err(vec!["b".to_owned()])
         );
         assert_eq!(fill_domain("{{.t.{{a}}~}}", &values).unwrap(), "{{.t.x~}}");
+    }
+
+    #[test]
+    fn parameters_passed_to_functions_are_bound() {
+        let text = "@a(x, y) d\n{{$f(x, \"x\", y, :z)}} {{$g}}\n\n@b(x) d\n{{$f(q)}}";
+        assert_eq!(
+            run(text, "@a(\"o\\\"ne\", :w.v)").unwrap(),
+            "{{$f(\"o\\\"ne\", \"x\", :w.v, :z)}} {{$g}}"
+        );
+        assert_eq!(
+            run("@a(x) d\n{{$!f(x)}} {{$!g}}", "@a(\"one\")").unwrap(),
+            "{{$!f(\"one\")}} {{$!g}}"
+        );
+        assert!(
+            run(text, "@b(\"1\")")
+                .unwrap_err()
+                .contains("`q` is not a parameter in scope")
+        );
+        let values = BTreeMap::from([("a".to_owned(), "one".to_owned())]);
+        assert_eq!(
+            fill_domain("{{$f(a, \"b\")}}", &values).unwrap(),
+            "{{$f(\"one\", \"b\")}}"
+        );
+        assert_eq!(
+            fill_domain("{{$f(a, b)}}", &values),
+            Err(vec!["b".to_owned()])
+        );
+        assert_eq!(
+            parse("@t(a: {{$f(x)}}) d\nx").unwrap()[0].params[0].domain,
+            Some(Domain::Reference("{{$f(x)}}".into()))
+        );
     }
 
     #[test]

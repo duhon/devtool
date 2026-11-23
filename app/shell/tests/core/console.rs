@@ -41,11 +41,19 @@ fn console_options_run_the_check_and_never_reach_the_module() {
             repeat: Some(120_000),
             until_changed: true,
             timeout: None,
+            transform: None,
         }
     );
     let (params, options) = parse_run("rest", "#target\nhttps://a\n#options\nTimeout: 45").unwrap();
     assert_eq!(params, parse("rest", "#target\nhttps://a").unwrap());
     assert_eq!(options.timeout, Some(45_000));
+    let (params, options) = parse_run(
+        "rest",
+        "#target\nhttps://a\n#options\nTransform: {{$f(\"x\", :a)}}",
+    )
+    .unwrap();
+    assert_eq!(params, parse("rest", "#target\nhttps://a").unwrap());
+    assert_eq!(options.transform.as_deref(), Some("{{$f(\"x\", :a)}}"));
     // A module with its own options keeps them; the console's are taken out first.
     let (params, options) = parse_run(
         "artemis",
@@ -76,9 +84,25 @@ fn console_options_run_the_check_and_never_reach_the_module() {
         (
             "rest",
             "Repeat: 5s\nUntil: changed",
-            "Unknown option \"Until\"; REST takes Repeat, Repeat-Until and Timeout",
+            "Unknown option \"Until\"; REST takes Repeat, Repeat-Until, Timeout and Transform",
         ),
         ("rest", "X-Debug: 1", "Unknown option \"X-Debug\""),
+        // Transform takes exactly one jq function call.
+        (
+            "rest",
+            "Transform: .body",
+            "Transform takes one jq function call, like {{$name(args)}}, not \".body\"",
+        ),
+        (
+            "rest",
+            "Transform: {{$a}} {{$b}}",
+            "Transform takes one jq function call",
+        ),
+        (
+            "rest",
+            "Transform: {{:a}}",
+            "Transform takes one jq function call",
+        ),
     ] {
         let source = format!("#target\nhttps://a\n#options\n{options}");
         let result = parse_run(service, &source).unwrap_err();

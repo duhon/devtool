@@ -4,9 +4,11 @@
 //! [`Event::Response`].
 
 use super::{Core, Event, Input};
+use crate::Effect;
 use crate::host::Reply;
 use crate::requests::{self, Finish, RunOptions, strip};
 use serde_json::{Value, json};
+use services_sdk::Failure;
 
 /// A check to run.
 #[derive(Clone, Debug)]
@@ -243,6 +245,9 @@ impl Core {
             ..Default::default()
         };
         let mut message = json!({"service":service,"params":params});
+        if let Some(call) = &options.transform {
+            message["transform"] = json!(call);
+        }
         if let Some(history) = request.history {
             message["history"] = history;
             if options.repeat.is_some() {
@@ -361,8 +366,22 @@ impl Core {
         }
         if let Some(text) = module_runs {
             let check = crate::document::check(&service, &text, &json!({}));
-            let effects =
-                crate::modules::registry::with(|modules| modules.start_run(&service, key, check));
+            let transform = run
+                .pipeline
+                .as_ref()
+                .is_some_and(|pipeline| pipeline.transform.is_some());
+            if transform && !crate::modules::registry::with(|modules| modules.transforms(&service))
+            {
+                let name = crate::modules::registry::manifest(&service)
+                    .map_or_else(|| service.clone(), |manifest| manifest.name);
+                let error = format!(
+                    "Transform is not available for {name}: it does not hand its data to a Transform"
+                );
+                return self.finish(key, Finish::Failed(error, Value::Null));
+            }
+            let effects = crate::modules::registry::with(|modules| {
+                modules.start_run(&service, key, check, transform)
+            });
             return self.apply(effects);
         }
         let owner = key.to_owned();
@@ -386,6 +405,27 @@ impl Core {
             }
         };
         self.finish(key, finish);
+    }
+
+    /// The final data of the run `run` of `module` (`run.data`) reshaped by its `Transform`;
+    /// the module hears of it as the reply `{run}:data`.
+    pub(super) fn run_data(&mut self, module: &str, run: &str, data: Value) -> Vec<Effect> {
+        let transform = self
+            .runs
+            .get_mut(run)
+            .and_then(|state| state.pipeline.as_mut())
+            .and_then(|pipeline| pipeline.transform.as_mut());
+        let result = match transform {
+            Some(transform) => {
+                transform.applied = true;
+                let shaped = transform.apply(&data);
+                transform.shaped = shaped.as_ref().ok().cloned();
+                shaped.map_err(|error| Failure::new(&error))
+            }
+            None => Ok(data),
+        };
+        let tag = format!("{run}:data");
+        crate::modules::registry::with(|modules| modules.reply(module, &tag, result))
     }
 
     /// The end of a run: its module renders the answer, the panels hear of it

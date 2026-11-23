@@ -1,5 +1,6 @@
 //! `{{…}}` references in the editors: completion (`{{.` walks the variable tree, `{{:` searches
-//! every leaf, `{{@` calls a template) and the hover that shows what a reference resolves to.
+//! every leaf, `{{@` calls a template, `{{$` a jq function) and the hover that shows what a
+//! reference resolves to.
 use super::templates::{argument_completion, built, name_candidates};
 use super::{Candidate, Completion, fuzzy_match};
 use services_contracts::templates::{self, Library};
@@ -44,7 +45,8 @@ fn reference_end(full: &str, before: &str, ch: usize) -> usize {
     match suffix.find("}}") {
         Some(n)
             if suffix[..n].chars().all(|c| {
-                c.is_alphanumeric() || matches!(c, '_' | '-' | '.' | ':' | '*' | '~' | '@')
+                c.is_alphanumeric()
+                    || matches!(c, '_' | '-' | '.' | ':' | '*' | '~' | '@' | '$' | '!')
             }) =>
         {
             ch + utf16(&suffix[..n + 2])
@@ -130,10 +132,11 @@ fn search(root: &Root, query: &str) -> Vec<Candidate> {
 }
 
 /// What the open `{{` at byte `start` of `before` completes at `ch`; `section` is the section
-/// the cursor is in, for the templates a live call may name.
+/// the cursor is in, for the templates a live call may name; `defs` are the jq functions a
+/// `{{$` call may name.
 #[allow(clippy::too_many_arguments)]
 pub fn complete(
-    root: &Root,
+    (root, defs): (&Root, &str),
     library: &Library,
     service: &str,
     section: &str,
@@ -154,10 +157,42 @@ pub fn complete(
                 .into_iter()
                 .find(|template| template.name == name);
             return template
-                .and_then(|template| argument_completion(&template, root, site, suffix, ")}}", ch))
+                .and_then(|template| {
+                    argument_completion(&template, (root, defs), site, suffix, ")}}", ch)
+                })
                 .unwrap_or_default();
         } else {
             name_candidates(library, service, section, call, "{{@", "}}")
+        }
+    } else if let Some(call) = fragment.strip_prefix('$') {
+        let (open, call) = match call.strip_prefix('!') {
+            Some(call) => ("{{$!", call),
+            None => ("{{$", call),
+        };
+        let name_end = call.find(|c: char| !refs_word(c)).unwrap_or(call.len());
+        match call[name_end..].strip_prefix('(') {
+            // Inside the arguments: the signature, its current parameter marked; the item
+            // inserts nothing.
+            Some(args) => {
+                return super::functions::current_argument(args)
+                    .and_then(|index| {
+                        super::functions::signature_hint(defs, &call[..name_end], index)
+                    })
+                    .map(|signature| Completion {
+                        from: ch,
+                        to: ch,
+                        candidates: vec![candidate(
+                            String::new(),
+                            Some(signature),
+                            "jq function".into(),
+                            false,
+                        )],
+                        comma: None,
+                        automatic: true,
+                    })
+                    .unwrap_or_default();
+            }
+            None => super::functions::name_candidates(defs, call, open),
         }
     } else if let Some(path) = fragment.strip_prefix('.') {
         tree(root, path)
@@ -183,6 +218,20 @@ pub fn complete(
                 "{{@".into(),
                 Some("{{@".into()),
                 "Call a template".into(),
+                true,
+            ));
+        }
+        if !services_jq::names(defs).is_empty() {
+            starters.push(candidate(
+                "{{$".into(),
+                Some("{{$".into()),
+                "Call a jq function".into(),
+                true,
+            ));
+            starters.push(candidate(
+                "{{$!".into(),
+                Some("{{$!".into()),
+                "Insert a jq function's result on Enter".into(),
                 true,
             ));
         }
@@ -275,14 +324,34 @@ fn offered(root: &Root, reference: &refs::Ref) -> Result<Result<String, String>,
     }))
 }
 
+/// What a function call domain offers, shown `a | b`, or the error, or the parameters it
+/// depends on.
+fn function_offered(
+    root: &Root,
+    defs: &str,
+    reference: &refs::Ref,
+) -> Result<Result<String, String>, Vec<String>> {
+    let text = templates::fill_domain(&reference.to_string(), &BTreeMap::new())?;
+    Ok(super::functions::options(&text, root, defs).map(|items| {
+        items
+            .iter()
+            .map(|item| item.value.as_str())
+            .collect::<Vec<_>>()
+            .join(" | ")
+    }))
+}
+
 /// The byte ranges of the references in the parameters of a template definition `line`
-/// that offer no options.
-pub fn definition_problems(root: &Root, line: &str) -> Vec<(usize, usize)> {
+/// that offer no options; `defs` are the jq functions a `{{$name(…)}}` domain may name.
+pub fn definition_problems(root: &Root, defs: &str, line: &str) -> Vec<(usize, usize)> {
     refs::scan(line)
         .into_iter()
         .filter(|found| in_params(line, found.start))
         .filter(|found| match &found.reference {
             refs::Ref::Dynamic(_) => matches!(offered(root, &found.reference), Ok(Err(_))),
+            refs::Ref::Function { .. } => {
+                matches!(function_offered(root, defs, &found.reference), Ok(Err(_)))
+            }
             reference => {
                 refs::eval(root, reference).is_none_or(|selection| list(&selection).is_err())
             }
@@ -291,9 +360,10 @@ pub fn definition_problems(root: &Root, line: &str) -> Vec<(usize, usize)> {
         .collect()
 }
 
-/// The value (or the error) of the variable reference at column `ch` of `line`; in the
-/// parameters of a template definition, its options.
-pub fn hover(root: &Root, line: &str, ch: usize) -> Option<Hover> {
+/// The value (or the error) of the variable reference or function call at column `ch` of
+/// `line`; in the parameters of a template definition, its options. `defs` are the jq
+/// functions a call may name.
+pub fn hover(root: &Root, defs: &str, line: &str, ch: usize) -> Option<Hover> {
     for found in refs::scan(line) {
         let start = utf16(&line[..found.start]);
         let end = utf16(&line[..found.end]);
@@ -301,10 +371,35 @@ pub fn hover(root: &Root, line: &str, ch: usize) -> Option<Hover> {
             continue;
         }
         let reference = found.reference.to_string();
+        if let refs::Ref::Function { .. } = &found.reference {
+            let transform = line
+                .split_once(':')
+                .is_some_and(|(key, _)| key.trim().eq_ignore_ascii_case("transform"));
+            let text = if transform {
+                // A `Transform` option runs on the response, which is not known here.
+                format!("{reference}: applies to the response (`.` is the driver's answer)")
+            } else if in_params(line, found.start) {
+                match function_offered(root, defs, &found.reference) {
+                    Err(names) => format!("{reference}: depends on {}", names.join(", ")),
+                    Ok(Ok(values)) => format!("{reference} = {values}"),
+                    Ok(Err(error)) => error,
+                }
+            } else {
+                match super::functions::resolve(&reference, root, defs) {
+                    Ok(resolved) if !resolved.secrets.is_empty() => format!("{reference} = {MASK}"),
+                    Ok(resolved) => format!("{reference} = {}", shorten(&resolved.text)),
+                    Err(error) => error,
+                }
+            };
+            return Some(Hover { start, end, text });
+        }
         if let refs::Ref::Dynamic(body) = &found.reference {
             let offset = found.start + 2;
             let inner = utf16(&line[..offset]);
-            if let Some(mut hover) = ch.checked_sub(inner).and_then(|ch| hover(root, body, ch)) {
+            if let Some(mut hover) = ch
+                .checked_sub(inner)
+                .and_then(|ch| hover(root, defs, body, ch))
+            {
                 hover.start += inner;
                 hover.end += inner;
                 return Some(hover);
@@ -367,21 +462,21 @@ mod tests {
         let root = root();
         let line = "😀 {{:region}} {{.dev.region}} {{:hosts}} {{:nope}} {{:token}} {{:auth}}";
         let at = |needle: &str| line[..line.find(needle).unwrap()].encode_utf16().count() + 2;
-        let text = |needle: &str| hover(&root, line, at(needle)).unwrap().text;
+        let text = |needle: &str| hover(&root, "", line, at(needle)).unwrap().text;
         assert_eq!(text("{{:region}}"), "{{:region}} = eu");
         assert_eq!(text("{{.dev"), "{{.dev.region}} = us");
         assert!(text("{{:hosts}}").contains("expected a string, got a hash"));
         assert!(text("{{:nope}}").contains("Unknown variable"));
         assert!(text("{{:token}}").ends_with(MASK));
         assert_eq!(text("{{:auth}}"), format!("{{{{:auth}}}} = {MASK}"));
-        assert!(hover(&root, line, 0).is_none());
+        assert!(hover(&root, "", line, 0).is_none());
         let nested = "{{:hosts.{{:region}}}}";
-        let inner = hover(&root, nested, 10).unwrap();
+        let inner = hover(&root, "", nested, 10).unwrap();
         assert_eq!(
             (inner.start, inner.end, inner.text.as_str()),
             (9, 20, "{{:region}} = eu")
         );
-        let outer = hover(&root, nested, 3).unwrap();
+        let outer = hover(&root, "", nested, 3).unwrap();
         assert_eq!((outer.start, outer.end), (0, nested.len()));
         assert!(
             outer.text.contains("Unknown variable {{:hosts.eu}}"),
@@ -395,33 +490,116 @@ mod tests {
         let root = root();
         let line = "@t(a: {{:hosts}}, b: \"x)\" | {{:region}}, c: {{:envs}}) d {{:hosts}}";
         let at = |needle: &str| line[..line.find(needle).unwrap()].encode_utf16().count() + 2;
-        let text = |needle: &str| hover(&root, line, at(needle)).unwrap().text;
+        let text = |needle: &str| hover(&root, "", line, at(needle)).unwrap().text;
         assert_eq!(text("{{:hosts}},"), "{{:hosts}} = x");
         assert_eq!(text("{{:region}}"), "{{:region}} = eu");
         assert!(text("{{:envs}}").contains("envs.qa is a hash"));
         let after = line.rfind("{{:hosts}}").unwrap() + 2;
         assert!(
-            hover(&root, line, after)
+            hover(&root, "", line, after)
                 .unwrap()
                 .text
                 .contains("expected a string")
         );
         let envs = line.find("{{:envs}}").unwrap();
         assert_eq!(
-            definition_problems(&root, line),
+            definition_problems(&root, "", line),
             vec![(envs, envs + "{{:envs}}".len())]
         );
         assert_eq!(
-            definition_problems(&root, "@t(a: {{:nope}})"),
+            definition_problems(&root, "", "@t(a: {{:nope}})"),
             vec![(6, 15)]
         );
-        assert!(definition_problems(&root, "@t(a) {{:envs}}").is_empty());
+        assert!(definition_problems(&root, "", "@t(a) {{:envs}}").is_empty());
         let line = "@t(a: {{:envs~}}, b: {{:envs.{{a}}~}}) d";
-        assert!(definition_problems(&root, line).is_empty());
+        assert!(definition_problems(&root, "", line).is_empty());
         let b = line.find("{{:envs.").unwrap() + 3;
         assert_eq!(
-            hover(&root, line, b).unwrap().text,
+            hover(&root, "", line, b).unwrap().text,
             "{{:envs.{{a}}~}}: depends on a"
         );
+    }
+
+    #[test]
+    fn functions_hover_complete_and_flag_unknown_names() {
+        let root = root();
+        let defs = "def sub(k): .var[k] | keys; def first: .var.hosts.a; def tok: .var.token;";
+        let text = |line: &str| hover(&root, defs, line, 3).unwrap().text;
+        assert_eq!(text(r#"{{$sub("hosts")}}"#), r#"{{$sub("hosts")}} = ["a"]"#);
+        assert_eq!(text("{{$first}} tail"), "{{$first()}} = x");
+        assert!(text("{{$nope()}}").contains("Unknown function $nope"));
+        assert!(text(r#"{{$sub("region")}}"#).contains("cannot"));
+        assert_eq!(text("{{$tok}}"), format!("{{{{$tok()}}}} = {MASK}"));
+        assert_eq!(
+            hover(&root, defs, "Transform: {{$first}}", 12)
+                .unwrap()
+                .text,
+            "{{$first()}}: applies to the response (`.` is the driver's answer)"
+        );
+        let line = "@t(a, b: {{$sub(a)}}, c: {{$sub(\"envs\")}}, d: {{$nope}}) d";
+        let at = |needle: &str| line.find(needle).unwrap();
+        assert_eq!(
+            hover(&root, defs, line, at("{{$sub(a)") + 3).unwrap().text,
+            "{{$sub(a)}}: depends on a"
+        );
+        assert_eq!(
+            hover(&root, defs, line, at("{{$sub(\"envs") + 3)
+                .unwrap()
+                .text,
+            r#"{{$sub("envs")}} = qa"#
+        );
+        let nope = at("{{$nope");
+        assert_eq!(
+            definition_problems(&root, defs, line),
+            vec![(nope, nope + "{{$nope}}".len())]
+        );
+        let complete_at = |typed: &str| {
+            complete(
+                (&root, defs),
+                &Library::new(),
+                "alpha",
+                "body",
+                (typed, typed),
+                (0, utf16(typed)),
+                true,
+            )
+            .candidates
+            .into_iter()
+            .map(|candidate| candidate.text)
+            .collect::<Vec<_>>()
+        };
+        assert_eq!(complete_at("{{$"), ["{{$sub(", "{{$first}}", "{{$tok}}"]);
+        assert_eq!(complete_at("{{$fi"), ["{{$first}}"]);
+        assert!(complete_at("{{").contains(&"{{$".to_owned()));
+        let hint = |typed: &str| {
+            complete(
+                (&root, defs),
+                &Library::new(),
+                "alpha",
+                "body",
+                (typed, typed),
+                (0, utf16(typed)),
+                true,
+            )
+            .candidates
+            .into_iter()
+            .map(|candidate| (candidate.text, candidate.label.unwrap_or_default()))
+            .collect::<Vec<_>>()
+        };
+        assert_eq!(hint("{{$sub("), [(String::new(), "sub(«k»)".to_owned())]);
+        assert_eq!(
+            hint("{{$!sub(\"a, b"),
+            [(String::new(), "sub(«k»)".to_owned())]
+        );
+        assert!(hint("{{$sub(\"a\")").is_empty());
+        assert!(hint("{{$nope(").is_empty());
+        assert_eq!(
+            complete_at("{{$!f"),
+            ["{{$!first}}"],
+            "an eager call offers the names too"
+        );
+        assert!(complete_at("{{").contains(&"{{$!".to_owned()));
+        assert_eq!(text("{{$!first}}"), "{{$!first()}} = x");
+        assert_eq!(text("{{$!tok}}"), format!("{{{{$!tok()}}}} = {MASK}"));
     }
 }

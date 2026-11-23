@@ -49,11 +49,12 @@ service or a panel module with the SDK:
 
 A team can share modules and settings through **Settings** → **Sources**: add a
 GitHub repository or a local folder, then install its modules, sync its
-Dictionary sets, templates and hints, and apply its Agent skills. A source is laid out as
+Dictionary sets, templates, functions and hints, and apply its Agent skills. A source is laid out as
 
 ```text
 dictionary.json          {"sets": {"<set>": {"<VAR>": "value"}}}
 templates.json           {"<module>": {"<section>": "<templates text>"}}
+functions.json           {"<module>" | "*": "<jq definitions>"}
 hints/<module>.md        a module's hints
 skills/<name>/SKILL.md   Agent skills
 modules/*.module.tgz     module packages, <id>-<version>.module.tgz
@@ -77,7 +78,7 @@ newest of each module. Commit the package files where suits the team:
 The Standard source is the `modules` branch of `duhon/devtool`, which CI
 replaces with the newest package of each standard module.
 
-Panels save your Dictionary, templates and hints into the **Local** source, the
+Panels save your Dictionary, templates, functions and hints into the **Local** source, the
 first row of Settings → Sources. **Sync** on a source's row merges it with Local
 file by file, both ways: a folder source gets the files written, a GitHub source
 a commit. A file only the source has is copied into Local; a change made on both

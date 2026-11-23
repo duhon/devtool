@@ -37,7 +37,12 @@ pub fn signature(template: &Template) -> String {
 
 /// `name` and the text between the parentheses of an unfinished call `@name(args`.
 pub fn open_call(text: &str) -> Option<(&str, &str)> {
-    let rest = text.strip_prefix('@')?;
+    open_with(text, '@')
+}
+
+/// [`open_call`] of a call that starts with `sigil` (`$` for a function).
+pub fn open_with(text: &str, sigil: char) -> Option<(&str, &str)> {
+    let rest = text.strip_prefix(sigil)?;
     let end = rest.find(|c| !name_char(c))?;
     let args = rest[end..].strip_prefix('(')?;
     let (mut quote, mut escape) = (false, false);
@@ -136,12 +141,14 @@ pub fn built(root: &Root, reference: &refs::Ref) -> Result<refs::Ref, String> {
 
 /// The options of one parameter: its domain (its `{{param}}` replaced by `values`; none while
 /// one of them has no value), or its default when it has none; an error when the domain does
-/// not evaluate to a list.
+/// not evaluate to a list. A function call domain (`{{$name(args)}}`, among `defs`) offers
+/// its output.
 fn options(
     template: &Template,
     index: usize,
     root: &Root,
     values: &BTreeMap<String, String>,
+    defs: &str,
 ) -> Result<Vec<refs::ListItem>, String> {
     let param = &template.params[index];
     let plain = |value: &String| refs::ListItem {
@@ -157,6 +164,9 @@ fn options(
             let Some(found) = refs::scan(&text).into_iter().next() else {
                 return Ok(Vec::new());
             };
+            if let refs::Ref::Function { .. } = found.reference {
+                return super::functions::options(&text, root, defs);
+            }
             let reference = built(root, &found.reference)?;
             let shown = reference.to_string();
             let selection = refs::eval(root, &reference)
@@ -193,7 +203,7 @@ fn current_argument(args: &str) -> (usize, usize) {
 /// the cursor and `close` ends the call after its last argument.
 pub fn argument_completion(
     template: &Template,
-    root: &Root,
+    (root, defs): (&Root, &str),
     (args_col, args): (usize, &str),
     suffix: &str,
     close: &str,
@@ -217,7 +227,7 @@ pub fn argument_completion(
     };
     let mut seen = std::collections::BTreeSet::new();
     let values = typed_values(template, &args[..start], root);
-    let options = match options(template, index, root, &values) {
+    let options = match options(template, index, root, &values, defs) {
         Ok(options) => options,
         // The error is shown as the only item; choosing it leaves the text as it is.
         Err(error) => {
@@ -305,7 +315,7 @@ pub fn suggest(
     line: usize,
     ch: usize,
     library: &Library,
-    root: &Root,
+    scope: (&Root, &str),
 ) -> Option<Completion> {
     if !field.is_empty() {
         return None;
@@ -336,7 +346,7 @@ pub fn suggest(
         let args_at = before.len() - args.len();
         return argument_completion(
             &template,
-            root,
+            scope,
             (utf16(&before[..args_at]), args),
             &current[before.len()..],
             ")",
@@ -434,9 +444,10 @@ pub struct Expansion {
 }
 
 /// Enter at the end of `lines[line]`, a `#section @name(args)` line of a console document: the
-/// section's body (up to the next marker or response) becomes the call's expansion. `None`
-/// when the line holds no call, or the body already is the expansion; an error when the call
-/// is wrong, and then nothing changes.
+/// section's body (up to the next marker or response) becomes the call's expansion, its eager
+/// calls `{{$!name(args)}}` replaced by their results (`scope`: the variable tree and the jq
+/// functions). `None` when the line holds no call, or the body already is the expansion; an
+/// error when the call (or an eager call) is wrong, and then nothing changes.
 pub fn expand_call(
     services: &dyn Services,
     service: &str,
@@ -444,6 +455,7 @@ pub fn expand_call(
     line: usize,
     regions: &[ResponseRegion],
     library: &Library,
+    (root, defs): (&Root, &str),
 ) -> Option<Result<Expansion, String>> {
     let current = lines.get(line)?;
     let (section, rest) = document::marker(current)?;
@@ -497,6 +509,12 @@ pub fn expand_call(
             .map_or("", |(_, body)| body)
             .to_owned();
     }
+    if super::functions::has_eager(&text) {
+        text = match super::functions::eager(&text, root, defs) {
+            Ok(text) => text,
+            Err(error) => return Some(Err(error)),
+        };
+    }
     let start = line + 1;
     let mut end = (start..lines.len())
         .find(|&at| {
@@ -538,6 +556,34 @@ pub fn expand_call(
     Some(Ok(edit))
 }
 
+/// Enter at the end of `lines[line]` of a console document (outside the responses) holding
+/// eager calls `{{$!name(args)}}`: the line with each replaced by its result. `None` when it
+/// holds none; an error when one fails or its result holds a secret, and then nothing changes.
+pub fn expand_eager(
+    (lines, line): (&[String], usize),
+    regions: &[ResponseRegion],
+    (root, defs): (&Root, &str),
+) -> Option<Result<Expansion, String>> {
+    let current = lines.get(line)?;
+    if !super::functions::has_eager(current)
+        || regions
+            .iter()
+            .any(|region| (region.header..region.end).contains(&line))
+    {
+        return None;
+    }
+    Some(
+        super::functions::eager(current, root, defs).map(|text| Expansion {
+            from: Position { line, ch: 0 },
+            to: Position {
+                line,
+                ch: utf16(current),
+            },
+            text,
+        }),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -559,7 +605,7 @@ mod tests {
         .unwrap()
         .remove(0);
         let offered = |args: &str| -> Vec<String> {
-            argument_completion(&template, &root, (0, args), "", ")", utf16(args))
+            argument_completion(&template, (&root, ""), (0, args), "", ")", utf16(args))
                 .map(|completion| completion.candidates)
                 .unwrap_or_default()
                 .into_iter()
@@ -577,5 +623,35 @@ mod tests {
         assert_eq!(offered("\"b\", \"x\", "), ["1"]);
         assert_eq!(offered(":g, \"y\", "), ["1"]);
         assert!(offered(", ").is_empty());
+    }
+
+    #[test]
+    fn a_function_domain_runs_on_the_arguments_typed_before_it() {
+        let parse = |text| refs::parse_lines(text).unwrap();
+        let root = Root::new(vec![(
+            "tree".into(),
+            parse("alpha:\n  one: 1\n  two: 2\nbeta:\n  x: 3"),
+        )]);
+        let defs = "def sub(k): .tree[k] | keys; def bad: error(\"boom\");";
+        let template = templates::parse("@t(a: {{.tree~}}, b: {{$sub(a)}}, c: {{$bad}}) D\nx")
+            .unwrap()
+            .remove(0);
+        let offered = |args: &str| -> Vec<(String, Option<char>)> {
+            argument_completion(&template, (&root, defs), (0, args), "", ")", utf16(args))
+                .map(|completion| completion.candidates)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|candidate| (candidate.label.unwrap_or_default(), candidate.badge))
+                .collect()
+        };
+        let plain = |items: &[&str]| -> Vec<(String, Option<char>)> {
+            items.iter().map(|item| (item.to_string(), None)).collect()
+        };
+        assert_eq!(offered("\"alpha\", "), plain(&["one", "two"]));
+        assert_eq!(offered("\"beta\", "), plain(&["x"]));
+        assert!(offered(", ").is_empty());
+        let error = offered("\"beta\", \"x\", ");
+        assert_eq!(error[0].1, Some('!'));
+        assert!(error[0].0.contains("boom"), "{error:?}");
     }
 }

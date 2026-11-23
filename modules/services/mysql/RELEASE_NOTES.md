@@ -1,4 +1,5 @@
 # MySQL module release notes
+- `Transform: {{$name(args)}}` in `#options`: the module hands its driver answer to the Transform and shows what comes back.
 - `Format: vertical` is removed: `Format` takes `table` or `json`. MySQL keeps `\G` after the query.
 
 ## 4.1.0

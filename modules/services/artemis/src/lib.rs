@@ -13,7 +13,7 @@ use services_sdk::lang::table::{self, Column, Format, Kind};
 use services_sdk::{
     Check, Cmd, Completions, Event, Failure, Line, Module, Rendered, Subscriptions, cmd, run,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Commands that send `#payload`.
 const WITH_BODY: [&str; 3] = ["SEND", "PUBLISH", "JOLOKIA"];
@@ -228,6 +228,32 @@ fn render(request: &Request, grid: &Value, format: Option<Format>) -> Result<Ren
     })
 }
 
+/// What a `Transform` gave back for a grid (`.` is `{columns, columnTypes, rows, warning?}`),
+/// as text: a grid, or an array of objects (columns from their keys), is a table; anything
+/// else is JSON.
+fn shaped(request: &Request, data: &Value, format: Option<Format>) -> Result<run::Answer, String> {
+    let Some((names, _)) = table::grid(data) else {
+        let rendered = Rendered {
+            text: serde_json::to_string_pretty(data).expect("JSON values serialize"),
+            language: "json".into(),
+            outcome: "OK".into(),
+            columns: Vec::new(),
+        };
+        return Ok(rendered.into());
+    };
+    let mut grid = if data.is_array() {
+        json!({"rows": data})
+    } else {
+        data.clone()
+    };
+    grid["columns"] = json!(names);
+    let count = grid["rows"].as_array().map_or(0, Vec::len);
+    Ok(run::Answer {
+        rendered: render(request, &grid, format)?,
+        status: Some(rows(count)),
+    })
+}
+
 fn rows(count: usize) -> String {
     format!("{count} {}", if count == 1 { "row" } else { "rows" })
 }
@@ -243,6 +269,9 @@ struct Discovery {
 #[derive(Debug, Default)]
 pub struct Artemis {
     runs: BTreeMap<String, Stage>,
+    /// The runs with a `Transform`, and those waiting for their grid back from it.
+    transforms: BTreeSet<String>,
+    shaping: run::Shaping<(Box<Calls>, Option<Format>)>,
     /// `(connection, names)` of discovered brokers, the most recent last.
     discovered: Vec<(String, Value)>,
     /// Connections discovered or tried, so hints do not retry them.
@@ -348,6 +377,12 @@ impl Artemis {
                 error.message(),
                 &jolokia::debugged(&error, debug),
             )],
+            Ok(grid) if self.transforms.remove(run) => {
+                if let Some(warning) = grid.get("warning") {
+                    debug["warning"] = warning.clone();
+                }
+                vec![self.shaping.hand(run, &grid, debug, (calls, format))]
+            }
             Ok(grid) => match render(&calls.request, &grid, format) {
                 Ok(rendered) => {
                     if let Some(warning) = grid.get("warning") {
@@ -477,6 +512,14 @@ impl Artemis {
         if let Some(step) = tag.strip_prefix(DISCOVER) {
             return self.discovering(step, result);
         }
+        if self.shaping.owns(tag) {
+            return self
+                .shaping
+                .reply(tag, result, |(calls, format), data| {
+                    shaped(&calls.request, &data, format)
+                })
+                .unwrap_or_default();
+        }
         match self.owner(tag) {
             Some((run, step)) => self.step(&run, &step, result),
             None => vec![],
@@ -489,10 +532,23 @@ impl Module for Artemis {
 
     fn update(&mut self, event: Event<()>) -> Vec<Cmd> {
         match event {
-            Event::Run { tag, check } => self.start(tag, &check),
+            Event::Run {
+                tag,
+                check,
+                transform,
+            } => {
+                if transform {
+                    self.transforms.insert(tag.clone());
+                } else {
+                    self.transforms.remove(&tag);
+                }
+                self.start(tag, &check)
+            }
             Event::Reply { tag, result } => self.reply(&tag, result),
             Event::Cancel { tag } => {
                 self.runs.remove(&tag);
+                self.transforms.remove(&tag);
+                self.shaping.cancel(&tag);
                 vec![]
             }
             Event::Hints { check, .. } => self.hints(&check),
@@ -504,6 +560,7 @@ impl Module for Artemis {
     fn subscriptions(&self) -> Subscriptions {
         Subscriptions {
             run: true,
+            transform: true,
             hints: true,
             discover: true,
             ..Subscriptions::default()

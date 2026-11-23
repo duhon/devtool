@@ -8,6 +8,15 @@ use services_sdk::Cmd;
 fn reply_of(path: &str, query: &Value, request: &Value) -> Value {
     let status = |code: u16, body: Value| json!({"status": code, "body": body});
     let name = |n: &str| json!({"metadata": {"name": n}});
+    let objects = query["includeObject"] == "Object";
+    let pod = |n: &str, version: &str| {
+        if objects {
+            json!({"metadata": {"name": n}, "spec": {"containers": [{"name": "app",
+                "env": [{"name": "APP_VERSION", "value": version}]}]}})
+        } else {
+            json!({"metadata": {"name": n}})
+        }
+    };
     match path {
         "/api" => status(200, json!({"kind": "APIVersions", "versions": ["v1"]})),
         "/apis" => status(
@@ -45,7 +54,8 @@ fn reply_of(path: &str, query: &Value, request: &Value) -> Value {
                 {"name": "Name", "type": "string", "priority": 0},
                 {"name": "Status", "type": "string", "priority": 0},
                 {"name": "Node", "type": "string", "priority": 1}],
-                "rows": [{"cells": ["feed-1", "Running", "n1"]}, {"cells": ["web", "Pending", "n2"]}]}),
+                "rows": [{"cells": ["feed-1", "Running", "n1"], "object": pod("feed-1", "1.42.0")},
+                    {"cells": ["web", "Pending", "n2"], "object": pod("web", "2.0.0")}]}),
         ),
         "/api/v1/namespaces/shop/pods/missing" => json!({"status": 404, "body": {},
             "error": {"reason": "NotFound", "code": 404,
@@ -66,7 +76,14 @@ fn reply_of(path: &str, query: &Value, request: &Value) -> Value {
 
 /// Runs `text` against the fake cluster; returns the final cmd and the driver requests made.
 fn serve(text: &str) -> (Cmd, Vec<Value>) {
+    serve_shaped(text, None)
+}
+
+/// Like [`serve`], for a run with a `Transform` that turns the data the run hands into
+/// what `shape` gives back.
+fn serve_shaped(text: &str, shape: Option<&dyn Fn(Value) -> Value>) -> (Cmd, Vec<Value>) {
     let mut module = Harness::default();
+    module.transform = shape.is_some();
     let mut pending = module.run(text);
     let mut requests = Vec::new();
     for _ in 0..40 {
@@ -83,6 +100,11 @@ fn serve(text: &str) -> (Cmd, Vec<Value>) {
                     let path = request["path"].as_str().unwrap_or_default();
                     let reply = reply_of(path, &json!(request["query"]), &request);
                     next.extend(module.reply(&cmd.tag, reply));
+                }
+                "run.data" => {
+                    let shape = shape.expect("a Transform");
+                    let data = shape(cmd.args()["data"].clone());
+                    next.extend(module.reply(&format!("{}:data", cmd.tag), data));
                 }
                 "run.result" => return (cmd, requests),
                 _ => {}
@@ -218,4 +240,83 @@ fn the_table_format_renders_columns_and_greps_rows() {
     assert_eq!(result.args()["language"], "kubernetes");
     assert!(body(&result).contains("web"), "{}", body(&result));
     assert!(!body(&result).contains("feed-1"), "{}", body(&result));
+}
+
+#[test]
+fn the_table_format_shows_the_wide_columns_too() {
+    let (result, _) = serve(&check("get pods", "", "Format: table"));
+    assert!(
+        body(&result).contains("| NAME   | STATUS  | NODE |"),
+        "{}",
+        body(&result)
+    );
+    let (result, _) = serve(&check("get pods", "", ""));
+    assert!(!body(&result).contains("NODE"), "{}", body(&result));
+}
+
+#[test]
+fn a_transform_reshapes_the_rows_logs_and_json_before_they_show() {
+    let rows = |data: Value| {
+        let pod = |n: &str, v: &str| {
+            json!({"metadata": {"name": n}, "spec": {"containers": [
+            {"name": "app", "env": [{"name": "APP_VERSION", "value": v}]}]}})
+        };
+        assert_eq!(
+            data,
+            json!([{"NAME": "feed-1", "STATUS": "Running", "object": pod("feed-1", "1.42.0")},
+                {"NAME": "web", "STATUS": "Pending", "object": pod("web", "2.0.0")}])
+        );
+        json!([{"a": "one", "x": 1}, {"a": "two", "x": 22}])
+    };
+    let (result, _) = serve_shaped(&check("get pods", "", ""), Some(&rows));
+    assert_eq!(body(&result), "a     x\none   1\ntwo   22");
+
+    let lines = |data: Value| {
+        assert_eq!(
+            data,
+            json!(["[feed-1/app] one", "[feed-1/app] two", "[feed-2/app] three"])
+        );
+        json!(["one", "two"])
+    };
+    let (result, _) = serve_shaped(
+        &check("logs deploy/feed", "Tail: 10", "Grep: o"),
+        Some(&lines),
+    );
+    assert_eq!(body(&result), "one\ntwo");
+
+    let (result, _) = serve_shaped(
+        &check("get pods", "", "Format: json"),
+        Some(&|_| json!({"a": 1})),
+    );
+    assert_eq!(body(&result), "{\n  \"a\": 1\n}");
+    let (result, _) = serve_shaped(&check("get pods", "", ""), Some(&|_| json!(1)));
+    assert_eq!(body(&result), "1");
+}
+
+#[test]
+fn a_transform_gets_the_whole_object_behind_each_row() {
+    let version = |data: Value| {
+        let rows = data.as_array().unwrap().iter().map(|row| {
+            let env = &row["object"]["spec"]["containers"][0]["env"][0];
+            json!({"NAME": row["NAME"], "VERSION": env["value"]})
+        });
+        Value::Array(rows.collect())
+    };
+    let (result, requests) = serve_shaped(&check("get pods", "", ""), Some(&version));
+    let list = requests
+        .iter()
+        .find(|request| request["path"] == "/api/v1/namespaces/shop/pods")
+        .expect("the pods list");
+    assert_eq!(list["query"]["includeObject"], "Object");
+    assert_eq!(
+        body(&result),
+        "NAME     VERSION\nfeed-1   1.42.0\nweb      2.0.0"
+    );
+
+    let (_, requests) = serve(&check("get pods", "", ""));
+    let list = requests
+        .iter()
+        .find(|request| request["path"] == "/api/v1/namespaces/shop/pods")
+        .expect("the pods list");
+    assert!(list["query"]["includeObject"].is_null(), "{list}");
 }

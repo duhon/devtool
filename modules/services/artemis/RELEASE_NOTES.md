@@ -1,4 +1,5 @@
 # Artemis module release notes
+- `Transform: {{$name(args)}}` in `#options` works here: `.` is `{columns, columnTypes, rows}` of the action; an array of objects or `{columns, rows}` shows as a table, anything else as JSON.
 - A `Format: json` reply is highlighted as JSON and folds by brackets.
 - `Format: vertical` is removed: `Format` takes `table` or `json`.
 

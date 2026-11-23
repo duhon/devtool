@@ -84,6 +84,7 @@ impl Run {
         self.send(event::Kind::Run(wire::RunEvent {
             tag: RUN.into(),
             check: Some(check),
+            transform: false,
         }))
     }
 

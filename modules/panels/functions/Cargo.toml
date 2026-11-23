@@ -1,0 +1,15 @@
+[package]
+name = "services-module-functions"
+version = "1.0.0"
+edition.workspace = true
+publish.workspace = true
+description = "Functions panel module: the jq functions {{$name(args)}} calls, of each service and global"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+services-sdk = { path = "../../../api/sdk" }
+services-jq = { path = "../../../api/jq" }
+serde.workspace = true
+serde_json.workspace = true

@@ -655,7 +655,14 @@ impl Module for Mysql {
             Event::Hints { check, .. } => self.hints(&check),
             Event::Discover(check) => self.manual(&check),
             Event::Reply { tag, result } => self.reply(&tag, result),
-            Event::Run { tag, check } => self.run(tag, check),
+            Event::Run {
+                tag,
+                check,
+                transform,
+            } => {
+                self.calls.transform(&tag, transform);
+                self.run(tag, check)
+            }
             Event::Cancel { tag } => {
                 self.resolving.remove(&tag);
                 self.calls.cancel(&tag);
@@ -671,6 +678,7 @@ impl Module for Mysql {
             hints: true,
             discover: true,
             run: true,
+            transform: true,
             ..Subscriptions::default()
         }
     }

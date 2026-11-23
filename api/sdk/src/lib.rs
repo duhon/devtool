@@ -97,10 +97,12 @@ pub enum Event<M> {
     },
     /// Run `check` (for a module that subscribes `run`): call drivers, then finish with
     /// [`cmd::result`] under `tag`. Commands sent while handling this event or a reply to
-    /// a call made for it belong to the run.
+    /// a call made for it belong to the run. `transform`: the run has a `Transform`; a module
+    /// that subscribes `transform` hands its final data to it ([`run::Shaping`]).
     Run {
         tag: String,
         check: Check,
+        transform: bool,
     },
     /// The user stopped the run `tag`. Its locks are still held while this is handled; then
     /// the Kernel cancels the run's calls and releases them.
@@ -253,6 +255,7 @@ fn decode_event<M: DeserializeOwned>(event: wire::Event) -> Result<Event<M>, Str
         event::Kind::Run(run) => Event::Run {
             tag: run.tag,
             check: run.check.unwrap_or_default(),
+            transform: run.transform,
         },
         event::Kind::Cancel(tag) => Event::Cancel { tag },
     })

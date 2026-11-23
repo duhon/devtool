@@ -603,6 +603,9 @@ impl Core {
                 Effect::Command { module, cmd } => queue.extend(self.command(&module, cmd)),
                 Effect::Output { run, text, .. } => self.output(&run, text),
                 Effect::RunStatus { run, text, .. } => self.summary(&run, text),
+                Effect::Data { module, run, data } => {
+                    queue.extend(self.run_data(&module, &run, data));
+                }
                 Effect::Finished { run, result, .. } => self.finish(&run, Finish::Ran(result)),
                 Effect::Changed { module } => {
                     changed.insert(module);

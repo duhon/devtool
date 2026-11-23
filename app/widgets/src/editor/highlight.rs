@@ -278,7 +278,8 @@ const REFERENCE: &str = "gw-placeholder";
 const MARK: &str = "gw-placeholder-colon";
 
 /// `{{reference}}` everywhere (separators `.` `:` `*` `~` in a paler style) and live calls
-/// `{{@name(args)}}` by their parts; the overlay's style replaces the base style.
+/// `{{@name(args)}}` and jq function calls `{{$name(args)}}` by their parts; the overlay's
+/// style replaces the base style.
 fn overlay(text: &str) -> Vec<(usize, usize, &'static str)> {
     let mut out = Vec::new();
     let (mut pos, mut depth) = (0, 0usize);
@@ -287,7 +288,7 @@ fn overlay(text: &str) -> Vec<(usize, usize, &'static str)> {
         if rest.starts_with("{{") && !text[..pos].ends_with('\\') {
             out.push((pos, pos + 2, REFERENCE));
             pos += 2;
-            if text[pos..].starts_with('@') {
+            if text[pos..].starts_with(['@', '$']) {
                 pos = call(text, pos, &mut out);
             } else {
                 depth += 1;
@@ -326,19 +327,20 @@ fn overlay(text: &str) -> Vec<(usize, usize, &'static str)> {
     out
 }
 
-/// The parts of the live call `@name(args)}}` at `pos`: `@`, brackets and commas as
-/// separators, the name as a definition, a `"literal"` as a string, a bare parameter as a
-/// template argument and a `:path`/`.path` as a reference. Returns where it ends.
+/// The parts of the live call `@name(args)}}` (or `$name(args)}}`, `$!name(args)}}`) at
+/// `pos`: the sigil, brackets and commas as separators, the name as a definition, a `"literal"` as a string,
+/// a bare parameter as a template argument and a `:path`/`.path` as a reference. Returns where it ends.
 fn call(text: &str, mut pos: usize, out: &mut Vec<(usize, usize, &'static str)>) -> usize {
     let word = |at: usize, dot: bool| {
         text[at..]
             .find(|c: char| !(c.is_alphanumeric() || matches!(c, '_' | '-') || dot && c == '.'))
             .map_or(text.len(), |n| at + n)
     };
-    out.push((pos, pos + 1, MARK));
-    let name = word(pos + 1, true);
-    if name > pos + 1 {
-        out.push((pos + 1, name, "def"));
+    let sigil = if text[pos..].starts_with("$!") { 2 } else { 1 };
+    out.push((pos, pos + sigil, MARK));
+    let name = word(pos + sigil, true);
+    if name > pos + sigil {
+        out.push((pos + sigil, name, "def"));
     }
     pos = name;
     let mut variable = false;
@@ -601,6 +603,14 @@ mod tests {
             ]
         );
         assert_eq!(parts("{{:e~}}")[3], ("~", mark));
+        assert_eq!(
+            parts("{{$f(t)}}")[1..5],
+            [("$", mark), ("f", "def"), ("(", mark), ("t", "tpl-arg")]
+        );
+        assert_eq!(
+            parts("{{$!f(t)}}")[1..5],
+            [("$!", mark), ("f", "def"), ("(", mark), ("t", "tpl-arg")]
+        );
         let nested = parts("{{.a.{{b}}}}");
         assert_eq!(nested.last(), Some(&("}}", "gw-placeholder")));
         assert_eq!(nested.iter().filter(|(text, _)| *text == "}}").count(), 2);

@@ -24,7 +24,7 @@ fn suggest(
         line,
         ch,
         &library,
-        &Root::default(),
+        (&Root::default(), ""),
     )
 }
 
@@ -232,7 +232,7 @@ fn complete(source: &str, library: &Library) -> Option<Completion> {
         line,
         ch,
         library,
-        &dictionary(),
+        (&dictionary(), ""),
     )
 }
 
@@ -313,7 +313,14 @@ fn arguments_offer_domain_options_as_quoted_literals() {
         let line = source.lines().count() - 1;
         let ch = source.lines().last().unwrap().encode_utf16().count();
         let completion = services_kernel::editor::templates::suggest(
-            &Modules, "rest", "", source, line, ch, &nested, &root,
+            &Modules,
+            "rest",
+            "",
+            source,
+            line,
+            ch,
+            &nested,
+            (&root, ""),
         )
         .unwrap();
         assert_eq!(completion.candidates.len(), 1);
@@ -340,7 +347,7 @@ fn live_calls_in_a_body_complete_their_names_and_arguments() {
             ch,
             &[],
             &library,
-            &dictionary(),
+            (&dictionary(), ""),
         )
     };
     let names = suggest("#check\n#target\nhttps://{{@");
@@ -353,25 +360,32 @@ fn live_calls_in_a_body_complete_their_names_and_arguments() {
 
 fn expand(source: &str, line: usize) -> Option<Result<String, String>> {
     let lines: Vec<String> = source.split('\n').map(str::to_owned).collect();
-    services_kernel::editor::expand_call(&Modules, "rest", &lines, line, &[], &spec_library()).map(
-        |result| {
-            result.map(|edit| {
-                let mut out = lines.clone();
-                let tail = out.split_off(edit.to.line + 1);
-                out.truncate(edit.from.line);
-                if edit.from.ch > 0 {
-                    out.push(lines[edit.from.line].clone());
-                }
-                let mut text: Vec<String> = edit.text.split('\n').map(str::to_owned).collect();
-                if edit.from.ch > 0 {
-                    text.remove(0);
-                }
-                out.extend(text);
-                out.extend(tail);
-                out.join("\n")
-            })
-        },
+    services_kernel::editor::expand_call(
+        &Modules,
+        "rest",
+        &lines,
+        line,
+        &[],
+        &spec_library(),
+        (&dictionary(), ""),
     )
+    .map(|result| {
+        result.map(|edit| {
+            let mut out = lines.clone();
+            let tail = out.split_off(edit.to.line + 1);
+            out.truncate(edit.from.line);
+            if edit.from.ch > 0 {
+                out.push(lines[edit.from.line].clone());
+            }
+            let mut text: Vec<String> = edit.text.split('\n').map(str::to_owned).collect();
+            if edit.from.ch > 0 {
+                text.remove(0);
+            }
+            out.extend(text);
+            out.extend(tail);
+            out.join("\n")
+        })
+    })
 }
 
 #[test]
@@ -408,9 +422,17 @@ fn enter_reports_wrong_calls_and_leaves_plain_text_alone() {
         "target".to_owned(),
         "@wrap Uses a global one\n[{{@glob}}]".to_owned(),
     );
-    let edit = services_kernel::editor::expand_call(&Modules, "rest", &lines, 1, &[], &library)
-        .unwrap()
-        .unwrap();
+    let edit = services_kernel::editor::expand_call(
+        &Modules,
+        "rest",
+        &lines,
+        1,
+        &[],
+        &library,
+        (&dictionary(), ""),
+    )
+    .unwrap()
+    .unwrap();
     assert_eq!(edit.text, "\n[G]");
     assert!(error("#check\n#target @url_shared()").contains("missing argument"));
     assert!(error("#check\n#target @host(\"a\", \"b\")").contains("takes 1 argument"));
@@ -450,8 +472,16 @@ fn check_templates_with_parameters_ask_for_arguments_and_expand_on_enter() {
         .insert("check".to_owned(), check.to_owned());
     let expand = |source: &str| {
         let lines: Vec<String> = source.split('\n').map(str::to_owned).collect();
-        services_kernel::editor::expand_call(&Modules, "rest", &lines, 0, &[], &library)
-            .map(|edit| edit.map(|edit| (edit.from.line, edit.to.line, edit.text)))
+        services_kernel::editor::expand_call(
+            &Modules,
+            "rest",
+            &lines,
+            0,
+            &[],
+            &library,
+            (&dictionary(), ""),
+        )
+        .map(|edit| edit.map(|edit| (edit.from.line, edit.to.line, edit.text)))
     };
     let body = "#target\nG/q/y\n#action\nGET".to_owned();
     assert_eq!(
@@ -467,6 +497,118 @@ fn check_templates_with_parameters_ask_for_arguments_and_expand_on_enter() {
     assert!(expand("#check Pair @pair()").unwrap().is_err());
     assert!(expand("#check title").is_none());
     assert!(expand("#check mail@pair(\"q\")").is_none());
+}
+
+fn tree() -> Root {
+    let parse = |text| services_sdk::refs::parse_lines(text).unwrap();
+    Root::new(vec![(
+        "tree".into(),
+        parse("alpha:\n  one: x\n  two: y\nsecret: abc"),
+    )])
+}
+
+const DEFS: &str = r#"def pick(k): .tree.alpha[k]; def keys_of(k): .tree[k] | keys; def ref: "{{.a.x}}"; def hidden: .tree.secret; def bad: error("boom");"#;
+
+#[test]
+fn eager_function_calls_are_replaced_by_their_results_on_expansion() {
+    services_shell::link();
+    let mut library = spec_library();
+    library.get_mut("rest").unwrap().insert(
+        "target".to_owned(),
+        "@e(p) E\n{{$!pick(p)}}/{{$!keys_of(\"alpha\")}}/{{$!ref}}/{{$pick(p)}}\n@bad() B\n<{{$!bad}}>\n@hidden() H\n<{{$!hidden}}>".to_owned(),
+    );
+    let (root, lines) = (tree(), |source: &str| {
+        source.split('\n').map(str::to_owned).collect::<Vec<_>>()
+    });
+    let expand = |source: &str| {
+        services_kernel::editor::expand_call(
+            &Modules,
+            "rest",
+            &lines(source),
+            1,
+            &[],
+            &library,
+            (&root, DEFS),
+        )
+        .unwrap()
+        .map(|edit| edit.text)
+    };
+    // The result is inserted verbatim: a reference it holds stays one.
+    assert_eq!(
+        expand("#check\n#target @e(\"one\")").unwrap(),
+        "\nx/[\"one\",\"two\"]/{{.a.x}}/{{$pick(\"one\")}}"
+    );
+    // A failing call, or one whose result holds a secret, expands nothing.
+    assert!(
+        expand("#check\n#target @bad()")
+            .unwrap_err()
+            .contains("boom")
+    );
+    assert_eq!(
+        expand("#check\n#target @hidden()").unwrap_err(),
+        "{{$!hidden()}}: the result holds a secret; use {{$hidden()}} to resolve it at send time"
+    );
+}
+
+#[test]
+fn enter_on_a_line_with_eager_calls_replaces_them() {
+    services_shell::link();
+    let root = tree();
+    let enter = |source: &str, line: usize| {
+        let lines: Vec<String> = source.split('\n').map(str::to_owned).collect();
+        services_kernel::editor::expand_eager((&lines, line), &[], (&root, DEFS))
+    };
+    let edit = enter("#check\n#target\nhttps://{{$!pick(\"two\")}}/{{:a}}", 2)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (edit.from.line, edit.from.ch, edit.to.line, edit.to.ch),
+        (2, 0, 2, 32)
+    );
+    assert_eq!(edit.text, "https://y/{{:a}}");
+    assert!(enter("#check\n#target\nhttps://{{$pick(\"two\")}}", 2).is_none());
+    assert!(enter("#check\n#target\nhttps://\\{{$!pick(\"two\")}}", 2).is_none());
+    assert!(
+        enter("#check\n#target\n{{$!bad}}", 2)
+            .unwrap()
+            .unwrap_err()
+            .contains("boom")
+    );
+    assert!(
+        enter("#check\n#target\n{{$!hidden}}", 2)
+            .unwrap()
+            .unwrap_err()
+            .contains("holds a secret")
+    );
+    // Inside the arguments, the signature shows with the current parameter marked, past
+    // quotes and nested references.
+    let suggest = |source: &str| {
+        let line = source.lines().count() - 1;
+        let ch = source.lines().last().unwrap().encode_utf16().count();
+        services_kernel::editor::completion::suggest(
+            &Modules,
+            "rest",
+            "",
+            source,
+            line,
+            ch,
+            &[],
+            &Library::new(),
+            (&root, "def target($s; $e; $n): .;"),
+        )
+        .candidates
+        .into_iter()
+        .map(|candidate| (candidate.text, candidate.label.unwrap_or_default()))
+        .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        suggest("#check\n#target\n{{$!target(\"a, b\", {{:a}}, "),
+        [(String::new(), "target($s; $e; «$n»)".to_owned())]
+    );
+    assert_eq!(
+        suggest("#check\n#target\n{{$target(\"{{:a}}\", "),
+        [(String::new(), "target($s; «$e»; $n)".to_owned())]
+    );
 }
 
 #[test]

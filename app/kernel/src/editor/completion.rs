@@ -7,6 +7,23 @@ use services_contracts::templates::Library;
 use services_sdk::refs::Root;
 use std::collections::BTreeSet;
 
+/// The start of the innermost `{{$name(` call of `before` whose arguments are still open, past
+/// the nested references they hold.
+fn open_function(before: &str) -> Option<usize> {
+    before.rmatch_indices("{{$").find_map(|(start, _)| {
+        if services_sdk::refs::escaped(before, start) {
+            return None;
+        }
+        let call = &before[start + 3..];
+        let call = call.strip_prefix('!').unwrap_or(call);
+        let name = call
+            .find(|c: char| !(c.is_alphanumeric() || matches!(c, '_' | '-')))
+            .unwrap_or(call.len());
+        let args = call[name..].strip_prefix('(')?;
+        (name > 0 && super::functions::current_argument(args).is_some()).then_some(start)
+    })
+}
+
 fn utf16_prefix(text: &str, count: usize) -> String {
     let mut n = 0;
     text.chars()
@@ -91,7 +108,7 @@ pub fn suggest(
     ch: usize,
     hints: &[(String, String)],
     library: &Library,
-    root: &Root,
+    scope: (&Root, &str),
 ) -> Completion {
     let lines: Vec<_> = source.split('\n').collect();
     let full = lines.get(line).copied().unwrap_or("");
@@ -99,6 +116,7 @@ pub fn suggest(
     if let Some(start) = before
         .rfind("{{")
         .filter(|i| !before[*i..].contains("}}") && !services_sdk::refs::escaped(&before, *i))
+        .or_else(|| open_function(&before))
     {
         let section = if field.is_empty() {
             (0..=line)
@@ -109,7 +127,7 @@ pub fn suggest(
             field.to_owned()
         };
         return super::references::complete(
-            root,
+            scope,
             library,
             service,
             &section,

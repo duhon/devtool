@@ -25,7 +25,7 @@ use services_sdk::{
     Check, Cmd, Completions, DriverCall, Event, Failure, Line, LineColumns, Module, Subscriptions,
     cmd,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 const RESOLVE: &str = ":resolve";
 const CALL: &str = ":call";
@@ -74,6 +74,9 @@ pub struct Mongodb {
     resolver: Resolver<Need>,
     resolving: BTreeMap<String, Check>,
     calls: BTreeMap<String, Pending>,
+    /// The runs with a `Transform`, and those waiting for their answer back from it.
+    transforms: BTreeSet<String>,
+    shaping: run::Shaping<Pending>,
     cache: Vec<Entry>,
     jobs: BTreeMap<u64, Job>,
     count: u64,
@@ -364,11 +367,10 @@ impl Mongodb {
         match result {
             Ok(value) => {
                 let debug = json!({"request": pending.request, "response": value});
-                let request: Request =
-                    serde_json::from_value(pending.request.clone()).expect("a request");
-                match Response::parse(&value)
-                    .and_then(|response| render::render(&pending.display, &request, &response))
-                {
+                if self.transforms.remove(run) {
+                    return vec![self.shaping.hand(run, &value, debug, pending)];
+                }
+                match shown(&pending, &value) {
                     Ok((rendered, status)) => {
                         vec![
                             cmd::run_status(run, &status),
@@ -393,6 +395,16 @@ impl Mongodb {
     fn reply(&mut self, tag: &str, result: Result<Value, Failure>) -> Vec<Cmd> {
         if let Some(run) = tag.strip_suffix(RESOLVE) {
             return self.resolved(run, result);
+        }
+        if self.shaping.owns(tag) {
+            let rendered = self.shaping.reply(tag, result, |pending, value| {
+                let (rendered, status) = shown(&pending, &value)?;
+                Ok(run::Answer {
+                    rendered,
+                    status: Some(status),
+                })
+            });
+            return rendered.unwrap_or_default();
         }
         if let Some(run) = tag.strip_suffix(CALL) {
             return self.answered(run, result);
@@ -423,6 +435,13 @@ impl Mongodb {
     }
 }
 
+/// The driver's answer `value` to the call of `pending` as the console shows it.
+fn shown(pending: &Pending, value: &Value) -> Result<(services_sdk::Rendered, String), String> {
+    let request: Request = serde_json::from_value(pending.request.clone()).expect("a request");
+    Response::parse(value)
+        .and_then(|response| render::render(&pending.display, &request, &response))
+}
+
 impl Module for Mongodb {
     type Msg = ();
 
@@ -432,10 +451,23 @@ impl Module for Mongodb {
             Event::Document(check) => self.hints(&check, None, false),
             Event::Discover(check) => self.hints(&check, None, true),
             Event::Reply { tag, result } => self.reply(&tag, result),
-            Event::Run { tag, check } => self.run(tag, check),
+            Event::Run {
+                tag,
+                check,
+                transform,
+            } => {
+                if transform {
+                    self.transforms.insert(tag.clone());
+                } else {
+                    self.transforms.remove(&tag);
+                }
+                self.run(tag, check)
+            }
             Event::Cancel { tag } => {
                 self.resolving.remove(&tag);
                 self.calls.remove(&tag);
+                self.transforms.remove(&tag);
+                self.shaping.cancel(&tag);
                 vec![]
             }
             Event::Workspace => {
@@ -454,6 +486,7 @@ impl Module for Mongodb {
             document: true,
             discover: true,
             run: true,
+            transform: true,
             workspace: true,
             ..Subscriptions::default()
         }

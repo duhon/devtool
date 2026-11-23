@@ -231,24 +231,55 @@ impl Plan {
 
     /// The rows as the response shows them.
     pub fn render(&self, export: &Export) -> Result<Rendered, String> {
-        let mut columns: Vec<Column> = export
-            .columns
-            .iter()
-            .map(|name| Column::new(name, Kind::Text))
-            .collect();
-        self.columns.apply(&mut columns)?;
         let rows: Vec<Vec<Value>> = export
             .rows
             .iter()
             .map(|row| {
-                columns
+                export
+                    .columns
                     .iter()
-                    .map(|column| row.get(&column.name).cloned().unwrap_or(Value::Null))
+                    .map(|name| row.get(name).cloned().unwrap_or(Value::Null))
                     .collect()
             })
             .collect();
-        let mut text = table::show(&columns, &rows, self.format, false);
-        let preview = export.preview == Some(true);
+        self.table(&export.columns, &rows, export.preview == Some(true))
+    }
+
+    /// What a `Transform` gets of the rows (`.`): the column names and the rows as objects.
+    pub fn data(export: &Export) -> Value {
+        json!({"columns": export.columns, "rows": export.rows})
+    }
+
+    /// What a `Transform` gave back for [`Plan::data`], and its row count: a table of
+    /// `{"columns", "rows"}` or of an array of objects (columns from their keys), anything
+    /// else as JSON.
+    pub fn shaped(&self, data: &Value, preview: bool) -> Result<(Rendered, usize), String> {
+        if let Some((names, rows)) = table::grid(data) {
+            let count = rows.len();
+            return Ok((self.table(&names, &rows, preview)?, count));
+        }
+        let text = serde_json::to_string_pretty(data).expect("JSON values serialize");
+        let rendered = Rendered {
+            text,
+            language: "json".into(),
+            outcome: if preview { "WARNING" } else { "OK" }.into(),
+            columns: Vec::new(),
+        };
+        Ok((rendered, data.as_array().map_or(0, Vec::len)))
+    }
+
+    fn table(
+        &self,
+        names: &[String],
+        rows: &[Vec<Value>],
+        preview: bool,
+    ) -> Result<Rendered, String> {
+        let mut columns: Vec<Column> = names
+            .iter()
+            .map(|name| Column::new(name, Kind::Text))
+            .collect();
+        self.columns.apply(&mut columns)?;
+        let mut text = table::show(&columns, rows, self.format, false);
         if preview {
             text = format!("{PREVIEW_WARNING}\n\n{text}");
         }
@@ -274,6 +305,8 @@ enum Stage {
     Waiting,
     /// The export call `n` runs.
     Calling(u32),
+    /// The rows went to the run's `Transform` (`run.data`).
+    Shaping,
     Done,
 }
 
@@ -293,6 +326,8 @@ pub struct Search {
     error_body: Vec<u8>,
     bytes: usize,
     debug: Value,
+    /// The run has a `Transform`: the rows go to it before they are shown.
+    pub transform: bool,
 }
 
 fn key(origin: &str) -> String {
@@ -314,6 +349,7 @@ impl Search {
             error_body: vec![],
             bytes: 0,
             debug: json!({"connection": {"events": []}}),
+            transform: false,
         }
     }
 
@@ -394,6 +430,17 @@ impl Search {
                     Some(Err(failure)) => self.fail(run, &failure.message),
                     None => self.ended(run),
                 }
+            }
+            ("data", Some(Ok(data))) if self.stage == Stage::Shaping => {
+                let preview = self
+                    .export
+                    .as_ref()
+                    .is_some_and(|e| e.preview == Some(true));
+                let shown = self
+                    .plan()
+                    .shaped(&data, preview)
+                    .map_err(|error| format!("The response could not be shown: {error}"));
+                self.shown(run, shown)
             }
             (_, Some(Err(failure))) => self.fail(run, &failure.message),
             _ => vec![],
@@ -646,10 +693,18 @@ impl Search {
     fn done(&mut self, run: &str) -> Vec<Cmd> {
         self.export_debug();
         let export = self.export.as_ref().expect("an export");
-        let rendered = self.plan().render(export);
+        if self.transform {
+            self.stage = Stage::Shaping;
+            return vec![cmd::data(run, &Plan::data(export))];
+        }
         let rows = export.rows.len();
+        let rendered = self.plan().render(export).map(|rendered| (rendered, rows));
+        self.shown(run, rendered)
+    }
+
+    fn shown(&mut self, run: &str, rendered: Result<(Rendered, usize), String>) -> Vec<Cmd> {
         match rendered {
-            Ok(rendered) => {
+            Ok((rendered, rows)) => {
                 self.stage = Stage::Done;
                 let status = format!("{rows} {}", if rows == 1 { "row" } else { "rows" });
                 vec![
@@ -723,6 +778,33 @@ mod tests {
             &json!({"target": "https://splunk.fixture", "headers": metadata,
             "options": options, "payload": "index=main"}),
         )
+    }
+
+    #[test]
+    fn a_transform_gets_the_columns_and_rows_and_its_result_shows_as_a_table() {
+        let mut export = Export::new(None, 0, false);
+        export.columns = vec!["a".into(), "x".into()];
+        export.rows = vec![json!({"a": "one", "x": "1"}), json!({"a": "two", "x": "2"})];
+        assert_eq!(
+            Plan::data(&export),
+            json!({"columns": ["a", "x"], "rows": [{"a": "one", "x": "1"}, {"a": "two", "x": "2"}]})
+        );
+        let plan = plan("").unwrap();
+        let named = json!({"columns": ["x"], "rows": [{"a": "one", "x": "1"}]});
+        let (shown, rows) = plan.shaped(&named, false).unwrap();
+        assert_eq!(
+            (shown.text.as_str(), rows),
+            ("+---+\n| x |\n+---+\n| 1 |\n+---+", 1)
+        );
+        let (shown, _) = plan.shaped(&json!([{"a": "two"}]), true).unwrap();
+        assert!(shown.text.starts_with(PREVIEW_WARNING), "{}", shown.text);
+        assert!(shown.text.contains("| two |"), "{}", shown.text);
+        assert_eq!(shown.outcome, "WARNING");
+        let (shown, _) = plan.shaped(&json!(2), false).unwrap();
+        assert_eq!(
+            (shown.text.as_str(), shown.language.as_str()),
+            ("2", "json")
+        );
     }
 
     #[test]

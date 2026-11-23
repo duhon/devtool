@@ -91,6 +91,7 @@ impl Harness {
         self.send(event::Kind::Run(wire::RunEvent {
             tag: "run:1".into(),
             check: Some(check(text)),
+            transform: false,
         }))
     }
 

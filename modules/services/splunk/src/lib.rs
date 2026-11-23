@@ -32,13 +32,14 @@ impl Splunk {
         })
     }
 
-    fn start(&mut self, run: String, check: &Check) -> Vec<Cmd> {
+    fn start(&mut self, run: String, check: &Check, transform: bool) -> Vec<Cmd> {
         if let Err(error) = search::check_markers(&check.text) {
             return vec![cmd::fail(&run, &error, &serde_json::Value::Null)];
         }
         let sections = search::sections(check);
-        self.searches
-            .insert(run.clone(), search::Search::new(services_sdk::now()));
+        let mut search = search::Search::new(services_sdk::now());
+        search.transform = transform;
+        self.searches.insert(run.clone(), search);
         vec![run::resolve_value(format!("{run}:resolve"), &sections)]
     }
 
@@ -64,7 +65,11 @@ impl Module for Splunk {
 
     fn update(&mut self, event: Event<()>) -> Vec<Cmd> {
         match event {
-            Event::Run { tag, check } => self.start(tag, &check),
+            Event::Run {
+                tag,
+                check,
+                transform,
+            } => self.start(tag, &check, transform),
             Event::Reply { tag, result } => match self.owner(&tag) {
                 Some((run, step)) => self.step(&run, &step, Some(result)),
                 None => vec![],
@@ -85,6 +90,7 @@ impl Module for Splunk {
     fn subscriptions(&self) -> Subscriptions {
         Subscriptions {
             run: true,
+            transform: true,
             ..Subscriptions::default()
         }
     }

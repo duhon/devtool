@@ -17,6 +17,7 @@ fn build(
     let cmds = graphql.update(Event::Run {
         tag: RUN.into(),
         check: check.clone(),
+        transform: false,
     });
     let failed = |cmd: &Cmd| -> Result<DriverCall, String> {
         assert_eq!(cmd.name, "run.result");
@@ -545,6 +546,7 @@ fn linked_module_answers_requests_and_events() {
         kind: Some(event::Kind::Run(wire::RunEvent {
             tag: RUN.into(),
             check: Some(check(&format!("{CONNECTION}{{ pets }}"))),
+            transform: false,
         })),
         now: 0.0,
     };

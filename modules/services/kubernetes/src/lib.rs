@@ -55,7 +55,11 @@ impl Module for Kubernetes {
             Event::Reply { tag, result } if discovering(&tag) => self.discovery.reply(&tag, result),
             Event::Reply { tag, result } => self.runs.reply(&tag, result),
             Event::End { tag } => self.runs.end(&tag),
-            Event::Run { tag, check } => self.runs.run(tag, check),
+            Event::Run {
+                tag,
+                check,
+                transform,
+            } => self.runs.run(tag, check, transform),
             Event::Cancel { tag } => self.runs.cancel(&tag),
             Event::Workspace => self.discovery.reset(),
             _ => vec![],
@@ -69,6 +73,7 @@ impl Module for Kubernetes {
             discover: true,
             run: true,
             workspace: true,
+            transform: true,
             ..Subscriptions::default()
         }
     }

@@ -1,4 +1,5 @@
 # MongoDB module release notes
+- `Transform: {{$name(args)}}` in `#options`: the module hands its driver answer to the Transform and shows what comes back.
 
 ## 1.1.0
 

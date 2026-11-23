@@ -177,7 +177,14 @@ impl Module for Graphql {
             Event::Hints { check, .. } => self.discovery.hints(&check),
             Event::Discover(check) => self.discovery.manual(&check),
             Event::Reply { tag, result } => self.reply(&tag, result),
-            Event::Run { tag, check } => self.run(tag, check),
+            Event::Run {
+                tag,
+                check,
+                transform,
+            } => {
+                self.calls.transform(&tag, transform);
+                self.run(tag, check)
+            }
             Event::Cancel { tag } => {
                 self.resolving.remove(&tag);
                 self.calls.cancel(&tag);
@@ -192,6 +199,7 @@ impl Module for Graphql {
             hints: true,
             discover: true,
             run: true,
+            transform: true,
             ..Subscriptions::default()
         }
     }

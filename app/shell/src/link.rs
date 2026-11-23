@@ -53,6 +53,7 @@ fn linked() -> Vec<Module> {
         "panels/variables" => services_module_variables::Variables,
         "panels/history" => services_module_history::History,
         "panels/templates" => services_module_templates::Templates,
+        "panels/functions" => services_module_functions::Functions,
         "panels/hints" => services_module_hints::Hints,
         "panels/dictionary" => services_module_dictionary::Dictionary,
         "panels/sessions" => services_module_sessions::Sessions,

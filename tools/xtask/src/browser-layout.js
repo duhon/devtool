@@ -265,7 +265,7 @@
   await open('history');
   assert(Math.abs(width()-410)<1&&testid('console-check-menu').getBoundingClientRect().width===36,
     'Switching sessions must restore their independent left and right widths');
-  for(const panel of ['history','templates','hints','variables','dictionary','agent','sessions','settings']){
+  for(const panel of ['history','templates','functions','hints','variables','dictionary','agent','sessions','settings']){
     await open(panel);
     const handle=testid('console-pane-resizer');
     handle.focus();

@@ -330,10 +330,43 @@ struct Running {
     output: String,
     stderr: String,
     exit: Option<Exit>,
+    /// The run has a `Transform`: the final text goes to it before it is shown.
+    transform: bool,
+}
+
+/// What a run waiting for its text back from the `Transform` shows with it.
+#[derive(Debug)]
+struct Shown {
+    outcome: String,
+    status: Option<String>,
+}
+
+/// The text a `Transform` gave back: a string as it is, lines joined, anything else as JSON.
+fn shaped(shown: Shown, data: Value) -> run::Answer {
+    let (text, language) = match data {
+        Value::String(text) => (text, "text"),
+        Value::Array(lines) if lines.iter().all(Value::is_string) => {
+            let lines: Vec<&str> = lines.iter().filter_map(Value::as_str).collect();
+            (lines.join("\n"), "text")
+        }
+        other => (
+            serde_json::to_string_pretty(&other).expect("JSON values serialize"),
+            "json",
+        ),
+    };
+    run::Answer {
+        rendered: Rendered {
+            text,
+            language: language.into(),
+            outcome: shown.outcome,
+            columns: Vec::new(),
+        },
+        status: shown.status,
+    }
 }
 
 impl Running {
-    fn finish(self, run: &str) -> Vec<Cmd> {
+    fn finish(self, run: &str, shaping: &mut run::Shaping<Shown>) -> Vec<Cmd> {
         let Some(mut exit) = self.exit else {
             let debug = json!({"request": self.request});
             return vec![cmd::fail(
@@ -348,6 +381,13 @@ impl Running {
         debug["request"] = self.request;
         let mut text = self.output;
         warn(&exit, &mut text);
+        if self.transform {
+            let shown = Shown {
+                outcome: outcome(&exit).into(),
+                status: exit_summary(&exit, &self.stderr),
+            };
+            return vec![shaping.hand(run, &json!(text), debug, shown)];
+        }
         let rendered = Rendered {
             text,
             language: "text".into(),
@@ -366,6 +406,7 @@ impl Running {
 #[derive(Debug, Default)]
 pub struct Terminal {
     runs: BTreeMap<String, Running>,
+    shaping: run::Shaping<Shown>,
 }
 
 impl Terminal {
@@ -377,10 +418,14 @@ impl Terminal {
         })
     }
 
-    fn start(&mut self, run: String, check: &Check) -> Vec<Cmd> {
+    fn start(&mut self, run: String, check: &Check, transform: bool) -> Vec<Cmd> {
         match plan(check) {
             Ok(plan) => {
-                self.runs.insert(run.clone(), Running::default());
+                let running = Running {
+                    transform,
+                    ..Running::default()
+                };
+                self.runs.insert(run.clone(), running);
                 vec![run::resolve_value(format!("{run}:resolve"), &plan)]
             }
             Err(error) => vec![cmd::fail(&run, &error, &Value::Null)],
@@ -443,7 +488,15 @@ impl Module for Terminal {
 
     fn update(&mut self, event: Event<()>) -> Vec<Cmd> {
         match event {
-            Event::Run { tag, check } => self.start(tag, &check),
+            Event::Run {
+                tag,
+                check,
+                transform,
+            } => self.start(tag, &check, transform),
+            Event::Reply { tag, result } if self.shaping.owns(&tag) => self
+                .shaping
+                .reply(&tag, result, |shown, data| Ok(shaped(shown, data)))
+                .unwrap_or_default(),
             Event::Reply { tag, result } => match self.owner(&tag) {
                 Some((run, step)) => self.reply(&run, &step, result),
                 None => vec![],
@@ -452,12 +505,13 @@ impl Module for Terminal {
                 Some((run, step)) if step == "call" => self
                     .runs
                     .remove(&run)
-                    .map(|running| running.finish(&run))
+                    .map(|running| running.finish(&run, &mut self.shaping))
                     .unwrap_or_default(),
                 _ => vec![],
             },
             Event::Cancel { tag } => {
                 self.runs.remove(&tag);
+                self.shaping.cancel(&tag);
                 vec![]
             }
             _ => vec![],
@@ -467,6 +521,7 @@ impl Module for Terminal {
     fn subscriptions(&self) -> Subscriptions {
         Subscriptions {
             run: true,
+            transform: true,
             ..Subscriptions::default()
         }
     }

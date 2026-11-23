@@ -318,3 +318,37 @@ fn malformed_commands_are_rejected_before_io_and_no_manual_discovery_exists() {
             .is_err()
     );
 }
+
+#[test]
+fn a_transform_gets_the_decoded_reply_and_a_string_result_shows_as_text() {
+    let mut module = Harness::default();
+    let cmds = module.send(event::Kind::Run(wire::RunEvent {
+        tag: "run:1".into(),
+        check: Some(check("#target\nredis://localhost:6380/0\n#action\nKEYS *")),
+        transform: true,
+    }));
+    let cmds = resolve(&mut module, &cmds, &[]);
+    let tag = cmds
+        .iter()
+        .find(|cmd| cmd.name == "driver.stream")
+        .unwrap()
+        .tag
+        .clone();
+    module.reply(&tag, json!({"connected": {"remote": null}}));
+    let cmds = frame(&mut module, &tag, b"*2\r\n$1\r\na\r\n$1\r\nx\r\n");
+    let data = cmds.iter().find(|cmd| cmd.name == "run.data").unwrap();
+    assert_eq!(data.args()["data"], json!(["a", "x"]));
+    assert!(cmds.iter().all(|cmd| cmd.name != "run.result"));
+
+    let cmds = module.reply("run:1:data", json!("a,x"));
+    let result = cmds
+        .iter()
+        .find(|cmd| cmd.name == "run.result")
+        .unwrap()
+        .args();
+    assert_eq!(
+        (result["body"].clone(), result["language"].clone()),
+        (json!("a,x"), json!("text"))
+    );
+    assert_eq!(result["outcome"], "OK");
+}

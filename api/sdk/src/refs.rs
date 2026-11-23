@@ -2,8 +2,8 @@
 //!
 //! Variables are strings or hashes (`Name: value` lines with indented nested hashes). Every
 //! panel is a first-level key of one tree ([`Root`]); a reference is an absolute (`{{.var.x}}`)
-//! or relative (`{{:x}}`) path in it, a template parameter (`{{name}}`) or a template call
-//! (`{{@name(args)}}`).
+//! or relative (`{{:x}}`) path in it, a template parameter (`{{name}}`), a template call
+//! (`{{@name(args)}}`) or a jq function call (`{{$name(args)}}`).
 
 use serde_json::{Map, Value};
 use std::borrow::Cow;
@@ -222,6 +222,14 @@ pub enum Ref {
     Param(String),
     /// `{{@name(args)}}`; `args_text` is the text between the parentheses, unparsed.
     Call { name: String, args_text: String },
+    /// `{{$name(args)}}`, a jq function of the Functions panel; `args_text` as for a call.
+    /// `eager` for `{{$!name(args)}}`, which the editor replaces by its result on Enter (or
+    /// when a template expands); left in the text it resolves like `{{$name(args)}}`.
+    Function {
+        name: String,
+        args_text: String,
+        eager: bool,
+    },
     /// `{{.a.{{:b}}}}`: a variable path built from other references, the text between the
     /// outer braces; it is resolved first, then read as a variable.
     Dynamic(String),
@@ -235,6 +243,14 @@ impl fmt::Display for Ref {
             Ref::Relative(path) => write!(f, "{{{{:{path}}}}}"),
             Ref::Param(name) => write!(f, "{{{{{name}}}}}"),
             Ref::Call { name, args_text } => write!(f, "{{{{@{name}({args_text})}}}}"),
+            Ref::Function {
+                name,
+                args_text,
+                eager,
+            } => {
+                let bang = if *eager { "!" } else { "" };
+                write!(f, "{{{{${bang}{name}({args_text})}}}}")
+            }
             Ref::Dynamic(body) => write!(f, "{{{{{body}}}}}"),
         }
     }
@@ -294,27 +310,34 @@ pub fn closing(tail: &str) -> Option<usize> {
 
 /// The reference at the start of `tail` (just after `{{`) and its length up to and including `}}`.
 fn at(tail: &str) -> Option<(Ref, usize)> {
-    if let Some(call) = tail.strip_prefix('@') {
+    if let Some(call) = tail.strip_prefix(['@', '$']) {
+        let eager = tail.starts_with('$') && call.starts_with('!');
+        let call = if eager { &call[1..] } else { call };
+        let sigil = 1 + usize::from(eager);
         let name_end = call.find(|c| !word(c))?;
         let name = &call[..name_end];
         if name.is_empty() {
             return None;
         }
+        let made = |args_text: &str| {
+            let (name, args_text) = (name.to_owned(), args_text.to_owned());
+            if tail.starts_with('@') {
+                Ref::Call { name, args_text }
+            } else {
+                Ref::Function {
+                    name,
+                    args_text,
+                    eager,
+                }
+            }
+        };
         let rest = &call[name_end..];
         if rest.starts_with("}}") {
-            let reference = Ref::Call {
-                name: name.into(),
-                args_text: String::new(),
-            };
-            return Some((reference, 1 + name_end + 2));
+            return Some((made(""), sigil + name_end + 2));
         }
         let args = rest.strip_prefix('(')?;
         let end = call_end(args)?;
-        let reference = Ref::Call {
-            name: name.into(),
-            args_text: args[..end].to_owned(),
-        };
-        return Some((reference, 1 + name_end + 1 + end + 1 + 2));
+        return Some((made(&args[..end]), sigil + name_end + 1 + end + 1 + 2));
     }
     let end = tail.find("}}")?;
     let body = &tail[..end];
@@ -453,6 +476,24 @@ impl Root {
 
     pub fn panels(&self) -> &[(String, Map<String, Value>)] {
         &self.panels
+    }
+
+    /// Every panel as a key of one object, as written (comments and references kept).
+    pub fn tree(&self) -> &Value {
+        &self.tree
+    }
+}
+
+/// `value` without its comment keys, at every depth.
+pub fn without_comments(value: &Value) -> Value {
+    match value {
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .filter(|(key, _)| !comment(key))
+                .map(|(key, value)| (key.clone(), without_comments(value)))
+                .collect(),
+        ),
+        other => other.clone(),
     }
 }
 
@@ -751,6 +792,53 @@ pub fn children_at(root: &Root, path: &str) -> Vec<Child> {
 // Resolver
 // ---------------------------------------------------------------------------------------------
 
+/// The arguments of a call, split on the commas outside quoted literals and `{{ }}`.
+fn split_arguments(text: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let (mut quoted, mut escaped, mut depth, mut start) = (false, false, 0usize, 0);
+    for (index, c) in text.char_indices() {
+        if quoted {
+            match c {
+                _ if escaped => escaped = false,
+                '\\' => escaped = true,
+                '"' => quoted = false,
+                _ => {}
+            }
+        } else {
+            match c {
+                '"' => quoted = true,
+                '{' => depth += 1,
+                '}' => depth = depth.saturating_sub(1),
+                ',' if depth == 0 => {
+                    parts.push(&text[start..index]);
+                    start = index + 1;
+                }
+                _ => {}
+            }
+        }
+    }
+    parts.push(&text[start..]);
+    parts
+}
+
+/// A whole `"…"` literal with its `\"` and `\\` escapes.
+fn parse_literal(text: &str) -> Result<String, String> {
+    let mut value = String::new();
+    let mut chars = text[1..].chars();
+    loop {
+        match chars.next() {
+            None => return Err(format!("unterminated literal {text}")),
+            Some('"') if chars.as_str().is_empty() => return Ok(value),
+            Some('"') => return Err(format!("unexpected text after the literal in `{text}`")),
+            Some('\\') => match chars.next() {
+                Some(c @ ('"' | '\\')) => value.push(c),
+                _ => return Err(format!("only \\\" and \\\\ escapes are allowed in {text}")),
+            },
+            Some(c) => value.push(c),
+        }
+    }
+}
+
 /// The text with every reference resolved and the secret values it holds (to mask in History).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Resolution {
@@ -758,9 +846,13 @@ pub struct Resolution {
     pub secrets: Vec<String>,
 }
 
+/// Runs the function `name` on its arguments; gives its result as text.
+pub type Function<'a> = dyn FnMut(&str, &[Value]) -> Result<String, String> + 'a;
+
 struct Resolver<'a> {
     root: &'a Root,
     expand: &'a mut dyn FnMut(&str, &str) -> Result<String, String>,
+    function: &'a mut Function<'a>,
     chain: Vec<String>,
     secrets: Vec<String>,
 }
@@ -781,6 +873,71 @@ impl Resolver<'_> {
         }
         self.chain.push(link);
         Ok(())
+    }
+
+    /// The values of a function call's arguments: a `"literal"` with its references resolved
+    /// is a string; a `:path`/`.path` is the string it selects, a hash as a JSON object, or
+    /// an array when it selects several nodes.
+    fn arguments(&mut self, args_text: &str) -> Result<Vec<Value>, String> {
+        let mut values = Vec::new();
+        if args_text.trim().is_empty() {
+            return Ok(values);
+        }
+        for arg in split_arguments(args_text) {
+            let arg = arg.trim();
+            if arg.starts_with('"') {
+                let literal = parse_literal(arg)?;
+                values.push(Value::String(self.text(&literal, false)?));
+                continue;
+            }
+            let reference = match arg.chars().next() {
+                Some('.') => Path::parse(&arg[1..]).map(Ref::Absolute),
+                Some(':') => Path::parse(&arg[1..])
+                    .filter(|path| !path.segments.is_empty())
+                    .map(Ref::Relative),
+                _ if is_name(arg) => {
+                    return Err(format!(
+                        "`{arg}` is not a parameter in scope (use \"{arg}\" for text or :{arg} for a variable)"
+                    ));
+                }
+                _ => None,
+            }
+            .ok_or_else(|| {
+                format!("invalid argument `{arg}`: use \"literal\", :path or .path")
+            })?;
+            let selection = eval(self.root, &reference).unwrap_or_default();
+            if selection.items.is_empty() {
+                return Err(format!("Unknown variable {{{{{arg}}}}}"));
+            }
+            let mut items = Vec::new();
+            for item in &selection.items {
+                items.push(match &item.value {
+                    Value::String(value) => {
+                        let resolved = self.text(value, false)?;
+                        if item.secret() {
+                            self.secrets.push(resolved.clone());
+                        }
+                        Value::String(resolved)
+                    }
+                    other => without_comments(other),
+                });
+            }
+            values.push(match <[Value; 1]>::try_from(items) {
+                Ok([value]) => value,
+                Err(items) => Value::Array(items),
+            });
+        }
+        Ok(values)
+    }
+
+    /// The secret values of the tree that `result` holds: a function may read any of them.
+    fn secrets_in(&mut self, result: &str) {
+        for leaf in leaves(self.root) {
+            let secret = sensitive(&leaf.panel) || leaf.path.split('.').any(sensitive);
+            if secret && !leaf.value.is_empty() && result.contains(&leaf.value) {
+                self.secrets.push(leaf.value);
+            }
+        }
     }
 
     fn text(&mut self, text: &str, json: bool) -> Result<String, String> {
@@ -810,6 +967,19 @@ impl Resolver<'_> {
             match &reference {
                 Ref::Param(_) | Ref::Dynamic(_) => {
                     return Err(format!("Unknown reference {shown}"));
+                }
+                Ref::Function {
+                    name, args_text, ..
+                } => {
+                    self.enter(shown.clone())?;
+                    let args = self
+                        .arguments(args_text)
+                        .map_err(|e| format!("{shown}: {e}"))?;
+                    self.chain.pop();
+                    let result =
+                        (self.function)(name, &args).map_err(|e| format!("{shown}: {e}"))?;
+                    self.secrets_in(&result);
+                    out.push_str(&if json { escape_json(&result) } else { result });
                 }
                 Ref::Call { name, args_text } => {
                     let body =
@@ -851,16 +1021,35 @@ impl Resolver<'_> {
 
 /// Resolves every reference of `text`: variables in string context (values are resolved
 /// recursively), template calls through `expand(name, args_text)` (the expansion is resolved
-/// too). With `json` the variable values are escaped for a JSON string.
+/// too). With `json` the variable values are escaped for a JSON string. A function call
+/// `{{$name(args)}}` fails; [`resolve_with`] runs them.
 pub fn resolve(
     text: &str,
     root: &Root,
     json: bool,
     expand_call: &mut dyn FnMut(&str, &str) -> Result<String, String>,
 ) -> Result<Resolution, String> {
+    resolve_with(text, root, json, expand_call, &mut |name, _| {
+        Err(format!("Unknown function ${name}"))
+    })
+}
+
+/// [`resolve`] that runs each function call `{{$name(args)}}` through `function(name, args)`.
+/// An argument is a JSON value: a `"literal"` (its references resolved) or the string a
+/// `:path`/`.path` selects is a string, a selected hash an object, several nodes an array.
+/// The result is data: inserted as it is (escaped with `json`), not resolved again; the
+/// secret values of the tree it holds are masked in History.
+pub fn resolve_with(
+    text: &str,
+    root: &Root,
+    json: bool,
+    expand_call: &mut dyn FnMut(&str, &str) -> Result<String, String>,
+    function: &mut Function<'_>,
+) -> Result<Resolution, String> {
     let mut resolver = Resolver {
         root,
         expand: expand_call,
+        function,
         chain: Vec::new(),
         secrets: Vec::new(),
     };
@@ -1095,6 +1284,85 @@ mod tests {
         assert_eq!(err, "Unknown variable {{.tree.alpha.none}}");
         let err = run("{{.tree.{{.var.first}} z}}", &r).unwrap_err();
         assert!(err.contains("is not a variable reference"), "{err}");
+    }
+
+    #[test]
+    fn functions_get_json_arguments_and_insert_data() {
+        let r = root(&[
+            ("tree", "alpha:\n  one: x\n  # note\n  two: y"),
+            ("var", "name: alpha\nauth:\n  token: t\"k\nraw: {{:name}}"),
+        ]);
+        assert_eq!(
+            scan("{{$f}} {{$g(\"a)}}\", :x)}} \\{{$h()}}")
+                .into_iter()
+                .map(|found| found.reference.to_string())
+                .collect::<Vec<_>>(),
+            ["{{$f()}}", r#"{{$g("a)}}", :x)}}"#]
+        );
+        let mut seen = Vec::new();
+        let mut function = |name: &str, args: &[Value]| {
+            seen.push((name.to_owned(), args.to_vec()));
+            Ok(format!("{{{{:name}}}} \"{}\"", args.len()))
+        };
+        let text = r#"{{$f("{{:name}}-b", :raw, .tree.alpha, :alpha~)}}"#;
+        let out = resolve_with(text, &r, true, &mut no_calls, &mut function).unwrap();
+        assert_eq!(out.text, r#"{{:name}} \"4\""#);
+        assert!(out.secrets.is_empty());
+        assert_eq!(
+            seen[0].1,
+            [
+                Value::from("alpha-b"),
+                Value::from("alpha"),
+                serde_json::json!({"one": "x", "two": "y"}),
+                serde_json::json!(["one", "two"]),
+            ]
+        );
+        let out = resolve_with("{{$s()}}", &r, false, &mut no_calls, &mut |_, _| {
+            Ok("key t\"k".into())
+        });
+        assert_eq!(out.unwrap().secrets, ["t\"k"]);
+        let fail = |text: &str| {
+            resolve_with(
+                text,
+                &r,
+                false,
+                &mut no_calls,
+                &mut |_, _| Ok(String::new()),
+            )
+            .unwrap_err()
+        };
+        assert!(fail("{{$f(x)}}").contains("not a parameter in scope"));
+        assert!(fail("{{$f(:nope)}}").contains("Unknown variable {{:nope}}"));
+        assert_eq!(
+            run("{{$f()}}", &r).unwrap_err(),
+            "{{$f()}}: Unknown function $f"
+        );
+    }
+
+    #[test]
+    fn eager_function_calls_parse_round_trip_and_resolve_like_lazy_ones() {
+        let r = root(&[("tree", "a: x")]);
+        let found = scan(r#"<{{$!f("a")}}> {{$!g}} {{$!}} {{$!!h()}}"#);
+        assert_eq!(found.len(), 2);
+        assert_eq!(
+            found[0].reference,
+            Ref::Function {
+                name: "f".into(),
+                args_text: "\"a\"".into(),
+                eager: true,
+            }
+        );
+        assert_eq!((found[0].start, found[0].end), (1, 13));
+        assert_eq!(found[0].reference.to_string(), r#"{{$!f("a")}}"#);
+        assert_eq!(found[1].reference.to_string(), "{{$!g()}}");
+        let out = resolve_with(
+            "{{$!f(:a)}}",
+            &r,
+            false,
+            &mut no_calls,
+            &mut |name, args| Ok(format!("{name}={}", args[0])),
+        );
+        assert_eq!(out.unwrap().text, "f=\"x\"");
     }
 
     #[test]

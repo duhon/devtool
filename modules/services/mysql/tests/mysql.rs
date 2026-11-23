@@ -14,6 +14,7 @@ fn run(mysql: &mut Mysql, check: &Check) -> Result<DriverCall, String> {
     let cmds = mysql.update(Event::Run {
         tag: RUN.into(),
         check: check.clone(),
+        transform: false,
     });
     let failed = |cmd: &Cmd| -> Result<DriverCall, String> {
         assert_eq!(cmd.name, "run.result");

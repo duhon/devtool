@@ -247,6 +247,12 @@ impl Language {
             .any(|region| line >= region.header && line < region.end)
     }
 
+    /// The jq definitions a `{{$name(…)}}` call of this editor sees.
+    fn function_defs(&self) -> String {
+        let service = self.module.as_deref().unwrap_or(&self.service);
+        kernel::function_defs((!service.is_empty()).then_some(service))
+    }
+
     fn masked(&self, source: &str) -> String {
         document::mask_output(source, &self.state.borrow().regions)
     }
@@ -516,7 +522,8 @@ impl Extension for Language {
         let text = lines[line].as_str();
         if (self.section.is_some() || self.global) && language::is_definition(text) {
             let problems = if text.contains("{{") {
-                language::references::definition_problems(&kernel::root(), text)
+                let defs = self.function_defs();
+                language::references::definition_problems(&kernel::root(), &defs, text)
             } else {
                 Vec::new()
             };
@@ -604,6 +611,7 @@ impl Extension for Language {
 
     fn suggest(&self, source: &str, line: usize, ch: usize, context: &Context) -> Completion {
         let masked = self.masked(source);
+        let (root, defs) = (kernel::root(), self.function_defs());
         let completion = language::suggest(
             &Modules,
             &self.service,
@@ -612,7 +620,7 @@ impl Extension for Language {
             (line, ch),
             &context.hints,
             &context.templates,
-            &kernel::root(),
+            (&root, &defs),
         );
         Completion {
             from: completion.from,
@@ -646,6 +654,7 @@ impl Extension for Language {
             return None;
         }
         let state = self.state.borrow();
+        let (root, defs) = (kernel::root(), self.function_defs());
         let expansion = language::expand_call(
             &Modules,
             service,
@@ -653,7 +662,9 @@ impl Extension for Language {
             cursor.line,
             &state.regions,
             &context.templates,
-        )?;
+            (&root, &defs),
+        )
+        .or_else(|| language::expand_eager((lines, cursor.line), &state.regions, (&root, &defs)))?;
         Some(expansion.map(|expansion| {
             let rows: Vec<&str> = expansion.text.split('\n').collect();
             let last = rows.last().map_or(0, |row| row.encode_utf16().count());
@@ -677,7 +688,8 @@ impl Extension for Language {
     }
 
     fn hover(&self, line: &str, ch: usize) -> Option<String> {
-        language::references::hover(&kernel::root(), line, ch).map(|hover| hover.text)
+        let defs = self.function_defs();
+        language::references::hover(&kernel::root(), &defs, line, ch).map(|hover| hover.text)
     }
 
     fn insertion(&self, candidate: &str, line: &str) -> Option<String> {

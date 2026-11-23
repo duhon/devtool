@@ -34,6 +34,7 @@ services-module-artemis = { path = "../../modules/services/artemis" }
 services-module-variables = { path = "../../modules/panels/variables" }
 services-module-history = { path = "../../modules/panels/history" }
 services-module-templates = { path = "../../modules/panels/templates" }
+services-module-functions = { path = "../../modules/panels/functions" }
 services-module-hints = { path = "../../modules/panels/hints" }
 services-module-dictionary = { path = "../../modules/panels/dictionary" }
 services-module-sessions = { path = "../../modules/panels/sessions" }

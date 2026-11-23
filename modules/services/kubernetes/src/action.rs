@@ -19,7 +19,7 @@ use flow::{Answer, Flow, Step, status_error};
 use serde_json::{Value, json};
 use services_sdk::kubernetes::{Event as StreamEvent, Request, Response};
 use services_sdk::{Check, Cmd, Failure, cmd, run};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 pub const RESOLVE: &str = ":resolve";
@@ -429,6 +429,10 @@ impl Job {
 pub struct Runs {
     jobs: BTreeMap<String, Job>,
     catalogs: BTreeMap<String, (f64, Rc<Vec<Resource>>)>,
+    /// The runs with a `Transform`: their data goes to it before it is shown.
+    transforms: BTreeSet<String>,
+    /// Display, outcome and notes of the runs waiting for their data back.
+    shaping: run::Shaping<(Rc<Display>, &'static str, Vec<String>)>,
 }
 
 fn failed(run: &str, job: &Job, error: &str) -> Vec<Cmd> {
@@ -436,7 +440,10 @@ fn failed(run: &str, job: &Job, error: &str) -> Vec<Cmd> {
 }
 
 impl Runs {
-    pub fn run(&mut self, run: String, check: Check) -> Vec<Cmd> {
+    pub fn run(&mut self, run: String, check: Check, transform: bool) -> Vec<Cmd> {
+        if transform {
+            self.transforms.insert(run.clone());
+        }
         let sections = ["target", "action", "metadata", "options", "payload"];
         if !sections
             .iter()
@@ -456,6 +463,8 @@ impl Runs {
 
     pub fn cancel(&mut self, run: &str) -> Vec<Cmd> {
         self.jobs.remove(run);
+        self.transforms.remove(run);
+        self.shaping.cancel(run);
         vec![]
     }
 
@@ -469,6 +478,18 @@ impl Runs {
     pub fn reply(&mut self, tag: &str, result: Result<Value, Failure>) -> Vec<Cmd> {
         if let Some(run) = tag.strip_suffix(RESOLVE) {
             return self.resolved(run, result);
+        }
+        if self.shaping.owns(tag) {
+            let shown = self
+                .shaping
+                .reply(tag, result, |(display, outcome, notes), data| {
+                    let (rendered, status) = render::shaped(&display, data, outcome, &notes)?;
+                    Ok(run::Answer {
+                        rendered,
+                        status: Some(status),
+                    })
+                });
+            return shown.unwrap_or_default();
         }
         let Some((run, number)) = call_of(tag) else {
             return vec![];
@@ -523,6 +544,7 @@ impl Runs {
             &setup.payload,
             catalog,
             services_sdk::now(),
+            self.transforms.contains(run),
         );
         match started {
             Ok((flow, step)) => {
@@ -545,6 +567,12 @@ impl Runs {
                 job.requests.clear();
                 job.slots.clear();
                 let display = job.setup.as_ref().expect("a setup").display.clone();
+                if self.transforms.remove(run) {
+                    let (data, notes) = render::data(&display, &done.content);
+                    let debug = Value::Array(job.debug.clone());
+                    let keep = (display, done.outcome, notes);
+                    return vec![self.shaping.hand(run, &data, debug, keep)];
+                }
                 match render::render(&display, done.content, done.outcome) {
                     Ok((rendered, status)) => vec![
                         cmd::run_status(run, &status),

@@ -1,4 +1,5 @@
 # gRPC module release notes
+- `Transform: {{$name(args)}}` in `#options`: the module hands its driver answer to the Transform and shows what comes back.
 
 ## 5.0.0
 

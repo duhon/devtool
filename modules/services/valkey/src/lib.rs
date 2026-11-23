@@ -11,7 +11,7 @@ use services_sdk::{
     Check, Cmd, Completions, Event, Failure, Line, LineColumns, Module, Rendered, Subscriptions,
     cmd, driver, run, tcp,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 enum Purpose {
     Run(String),
@@ -84,6 +84,27 @@ pub struct Valkey {
     jobs: BTreeMap<u64, Job>,
     cache: Vec<Cached>,
     identities: BTreeMap<String, String>,
+    /// The runs with a `Transform`, and those waiting for their reply back from it.
+    transforms: BTreeSet<String>,
+    shaping: run::Shaping<()>,
+}
+
+/// A reply as text: a string as it is, anything else as JSON. A `Transform` gets the
+/// reply's JSON ([`Resp::json`]) and its result shows the same way.
+fn shown(reply: Value) -> Rendered {
+    let (text, language) = match reply {
+        Value::String(text) => (text, "text"),
+        other => (
+            serde_json::to_string_pretty(&other).expect("JSON values serialize"),
+            "json",
+        ),
+    };
+    Rendered {
+        text,
+        language: language.into(),
+        outcome: "OK".into(),
+        columns: vec![],
+    }
 }
 
 impl Valkey {
@@ -267,8 +288,7 @@ impl Valkey {
                 if subscription {
                     return self.subscription(id, frame);
                 }
-                let text = frame.display();
-                self.finish(id, text)
+                self.finish(id, &frame)
             }
             _ => self.fail(id, "Unexpected response before a command was sent".into()),
         }
@@ -334,25 +354,24 @@ impl Valkey {
         ]
     }
 
-    fn finish(&mut self, id: u64, text: String) -> Vec<Cmd> {
+    fn finish(&mut self, id: u64, frame: &Resp) -> Vec<Cmd> {
         let job = self.jobs.remove(&id).unwrap();
         let debug = job.debug();
         let Purpose::Run(run) = job.purpose else {
             unreachable!()
         };
-        vec![
-            cmd::cancel(&tag(id, "tcp")),
-            cmd::result(
-                &run,
-                &Rendered {
-                    text,
-                    language: "text".into(),
-                    outcome: "OK".into(),
-                    columns: vec![],
-                },
-                &debug,
-            ),
-        ]
+        let done = if self.transforms.remove(&run) {
+            self.shaping.hand(&run, &frame.json(), debug, ())
+        } else {
+            let rendered = Rendered {
+                text: frame.display(),
+                language: "text".into(),
+                outcome: "OK".into(),
+                columns: vec![],
+            };
+            cmd::result(&run, &rendered, &debug)
+        };
+        vec![cmd::cancel(&tag(id, "tcp")), done]
     }
 
     fn fail(&mut self, id: u64, error: String) -> Vec<Cmd> {
@@ -466,11 +485,28 @@ impl Module for Valkey {
 
     fn update(&mut self, event: Event<()>) -> Vec<Cmd> {
         match event {
-            Event::Run { tag, check } => match Plan::from_check(&check, true) {
-                Ok(plan) => self.start(Purpose::Run(tag), plan),
+            Event::Reply { tag, result } if self.shaping.owns(&tag) => self
+                .shaping
+                .reply(&tag, result, |(), reply| Ok(shown(reply).into()))
+                .unwrap_or_default(),
+            Event::Run {
+                tag,
+                check,
+                transform,
+            } => match Plan::from_check(&check, true) {
+                Ok(plan) => {
+                    if transform {
+                        self.transforms.insert(tag.clone());
+                    } else {
+                        self.transforms.remove(&tag);
+                    }
+                    self.start(Purpose::Run(tag), plan)
+                }
                 Err(error) => vec![cmd::fail(&tag, &error, &Value::Null)],
             },
             Event::Cancel { tag: run } => {
+                self.transforms.remove(&run);
+                self.shaping.cancel(&run);
                 let ids: Vec<_> = self
                     .jobs
                     .iter()
@@ -523,6 +559,7 @@ impl Module for Valkey {
     fn subscriptions(&self) -> Subscriptions {
         Subscriptions {
             run: true,
+            transform: true,
             hints: true,
             discover: true,
             workspace: true,

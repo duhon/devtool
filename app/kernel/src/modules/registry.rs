@@ -102,6 +102,24 @@ pub fn templates() -> services_contracts::templates::Library {
     library
 }
 
+/// Every jq function text the modules contribute (`{"functions": {service: text}}`), merged;
+/// service `*` holds the global ones.
+pub fn functions() -> crate::editor::functions::Library {
+    let mut library = crate::editor::functions::Library::new();
+    for value in contributions("functions") {
+        if let Ok(part) = serde_json::from_value::<crate::editor::functions::Library>(value) {
+            library.extend(part);
+        }
+    }
+    library
+}
+
+/// The jq definitions a `{{$name(args)}}` in text of `service` sees (of every service
+/// without one); see [`crate::editor::functions::scoped`].
+pub fn function_defs(service: Option<&str>) -> String {
+    crate::editor::functions::scoped(&functions(), service)
+}
+
 /// The modules that are part of the App rather than declared by the Host: the built-in
 /// Settings panel on every target and, natively, every module linked in (tests run them
 /// without a browser). The Shell links them before the Kernel starts.
