@@ -83,7 +83,16 @@ fn producer_distinguishes_tombstones_binary_and_empty_values() {
 #[test]
 fn invalid_actions_options_and_ignored_producer_inputs_fail_explicitly() {
     for action in [
-        "PURGE /orders",
+        "PURGE /orders LIMIT 5",
+        "RESET /svc /orders",
+        "RESET /svc /orders TO LAST 3",
+        "COMMIT /svc /orders",
+        "ALTER /orders",
+        "ALTER CONFIG /orders",
+        "ALTER CONFIG /orders =1",
+        "CREATE /orders REPLICAS x",
+        "DELETE /orders REPLICAS 1",
+        "READ /orders BEFORE OFFSET 1",
         "READ /orders LIMIT 0",
         "READ /orders FROM OFFSET -1",
         "READ /orders PARTITIONS 0,0",
@@ -115,6 +124,70 @@ fn invalid_actions_options_and_ignored_producer_inputs_fail_explicitly() {
     let mut input = source("PRODUCE /orders");
     input.metadata = "Key: a\nKey-Base64: Yg==".into();
     assert!(action::plan(input).is_err());
+}
+
+#[test]
+fn write_commands_parse_into_admin_operations() {
+    let plan = |action: &str| action::plan(source(action)).unwrap().request.operation;
+    let mut input = source("CREATE /orders PARTITIONS 3 REPLICAS 1");
+    input.payload = "retention.ms=60000\ncleanup.policy = compact\n".into();
+    let Operation::CreateTopic {
+        topic,
+        partitions,
+        replicas,
+        configs,
+    } = action::plan(input).unwrap().request.operation
+    else {
+        panic!()
+    };
+    assert_eq!(
+        (topic.as_str(), partitions, replicas),
+        ("orders", Some(3), Some(1))
+    );
+    assert_eq!(configs["cleanup.policy"], "compact");
+    assert!(
+        matches!(plan("DELETE /orders"), Operation::DeleteTopic { topic } if topic == "orders")
+    );
+    assert!(
+        matches!(plan("delete group /svc"), Operation::DeleteGroup { group } if group == "svc")
+    );
+    assert!(matches!(
+        plan("ALTER /orders PARTITIONS 6"),
+        Operation::CreatePartitions { total: 6, .. }
+    ));
+    let Operation::AlterConfigs { changes, .. } =
+        plan("ALTER CONFIG /orders cleanup.policy=compact,delete retention.ms=")
+    else {
+        panic!()
+    };
+    assert_eq!(changes[0].name, "cleanup.policy");
+    assert_eq!(changes[0].value.as_deref(), Some("compact,delete"));
+    assert_eq!(changes[1].value, None);
+    let Operation::DeleteRecords {
+        partitions, before, ..
+    } = plan("PURGE /orders PARTITIONS 0, 1 BEFORE OFFSET 10")
+    else {
+        panic!()
+    };
+    assert_eq!(partitions, Some(vec![0, 1]));
+    assert_eq!(before.unwrap().value(), 10);
+    let Operation::AlterGroupOffsets {
+        group, topic, to, ..
+    } = plan("RESET /svc /orders TO BEGINNING")
+    else {
+        panic!()
+    };
+    assert_eq!(
+        (group.as_str(), topic.as_str(), to),
+        ("svc", "orders", Start::Beginning)
+    );
+    let Operation::AlterGroupOffsets { partitions, to, .. } =
+        plan("COMMIT /svc /orders PARTITION 2 OFFSET 42")
+    else {
+        panic!()
+    };
+    assert_eq!(partitions, Some(vec![2]));
+    assert!(matches!(to, Start::Offset(offset) if offset.value() == 42));
 }
 
 #[test]

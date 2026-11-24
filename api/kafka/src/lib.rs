@@ -2,7 +2,7 @@
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Deserializer, Serialize, de};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub const DRIVER: &str = "kafka";
 pub const VERSION: u32 = 1;
@@ -311,6 +311,49 @@ pub enum Operation {
     DescribeConfigs {
         topic: String,
     },
+    /// Broker defaults for an unset partition count or replication factor.
+    CreateTopic {
+        topic: String,
+        partitions: Option<i32>,
+        replicas: Option<i16>,
+        configs: BTreeMap<String, String>,
+    },
+    DeleteTopic {
+        topic: String,
+    },
+    /// Grows the topic to `total` partitions.
+    CreatePartitions {
+        topic: String,
+        total: i32,
+    },
+    /// A change without a value resets the key to its default.
+    AlterConfigs {
+        topic: String,
+        changes: Vec<ConfigChange>,
+    },
+    /// Deletes the records below `before`, or every record when it is unset.
+    DeleteRecords {
+        topic: String,
+        partitions: Option<Vec<i32>>,
+        before: Option<Offset>,
+    },
+    /// Sets an empty group's committed offsets to the beginning, end, an offset or the first
+    /// offset at a timestamp (the end when there is none).
+    AlterGroupOffsets {
+        group: String,
+        topic: String,
+        partitions: Option<Vec<i32>>,
+        to: Start,
+    },
+    DeleteGroup {
+        group: String,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConfigChange {
+    pub name: String,
+    pub value: Option<String>,
 }
 
 impl Operation {
@@ -326,7 +369,28 @@ impl Operation {
             Self::DescribeGroups { .. } => "describeGroups",
             Self::ListGroupOffsets { .. } => "listGroupOffsets",
             Self::DescribeConfigs { .. } => "describeConfigs",
+            Self::CreateTopic { .. } => "createTopic",
+            Self::DeleteTopic { .. } => "deleteTopic",
+            Self::CreatePartitions { .. } => "createPartitions",
+            Self::AlterConfigs { .. } => "alterConfigs",
+            Self::DeleteRecords { .. } => "deleteRecords",
+            Self::AlterGroupOffsets { .. } => "alterGroupOffsets",
+            Self::DeleteGroup { .. } => "deleteGroup",
         }
+    }
+
+    /// Whether the operation changes the cluster; it answers [`Response::Changed`].
+    pub fn changes(&self) -> bool {
+        matches!(
+            self,
+            Self::CreateTopic { .. }
+                | Self::DeleteTopic { .. }
+                | Self::CreatePartitions { .. }
+                | Self::AlterConfigs { .. }
+                | Self::DeleteRecords { .. }
+                | Self::AlterGroupOffsets { .. }
+                | Self::DeleteGroup { .. }
+        )
     }
 }
 
@@ -370,8 +434,61 @@ impl Request {
                     name(group)?;
                 }
             }
-            Operation::ListGroupOffsets { group } => name(group)?,
-            Operation::DescribeConfigs { topic } => name(topic)?,
+            Operation::ListGroupOffsets { group } | Operation::DeleteGroup { group } => {
+                name(group)?
+            }
+            Operation::DescribeConfigs { topic } | Operation::DeleteTopic { topic } => name(topic)?,
+            Operation::CreateTopic {
+                topic,
+                partitions,
+                replicas,
+                configs,
+            } => {
+                name(topic)?;
+                if partitions.is_some_and(|n| n < 1) || replicas.is_some_and(|n| n < 1) {
+                    return Err("Partitions and replicas must be positive".into());
+                }
+                if configs.keys().any(|k| k.trim().is_empty()) {
+                    return Err("Config names must be non-empty".into());
+                }
+            }
+            Operation::CreatePartitions { topic, total } => {
+                name(topic)?;
+                if *total < 1 {
+                    return Err("The partition total must be positive".into());
+                }
+            }
+            Operation::AlterConfigs { topic, changes } => {
+                name(topic)?;
+                let unique: BTreeSet<_> = changes.iter().map(|c| &c.name).collect();
+                if changes.is_empty()
+                    || unique.len() != changes.len()
+                    || changes.iter().any(|c| c.name.trim().is_empty())
+                {
+                    return Err("Use one or more distinct, non-empty config names".into());
+                }
+            }
+            Operation::DeleteRecords {
+                topic, partitions, ..
+            } => {
+                name(topic)?;
+                partition_list(partitions.as_deref())?;
+            }
+            Operation::AlterGroupOffsets {
+                group,
+                topic,
+                partitions,
+                to,
+            } => {
+                name(group)?;
+                name(topic)?;
+                partition_list(partitions.as_deref())?;
+                if matches!(to, Start::Last(_)) {
+                    return Err(
+                        "Group offsets go to beginning, end, an offset or a timestamp".into(),
+                    );
+                }
+            }
             Operation::ListOffsets {
                 topic,
                 partitions,
@@ -385,19 +502,7 @@ impl Request {
                 ..
             } => {
                 name(topic)?;
-                if let Some(partitions) = partitions {
-                    let unique: BTreeSet<_> = partitions.iter().collect();
-                    if partitions.is_empty()
-                        || partitions.len() > 1024
-                        || partitions.iter().any(|p| *p < 0)
-                        || unique.len() != partitions.len()
-                    {
-                        return Err(
-                            "Partitions must be unique non-negative integers (1-1024 entries)"
-                                .into(),
-                        );
-                    }
-                }
+                partition_list(partitions.as_deref())?;
                 if matches!(start, Start::Last(0)) {
                     return Err("LAST requires a positive offset range".into());
                 }
@@ -430,6 +535,20 @@ impl Request {
         }
         Ok(())
     }
+}
+
+fn partition_list(partitions: Option<&[i32]>) -> Result<(), String> {
+    if let Some(partitions) = partitions {
+        let unique: BTreeSet<_> = partitions.iter().collect();
+        if partitions.is_empty()
+            || partitions.len() > 1024
+            || partitions.iter().any(|p| *p < 0)
+            || unique.len() != partitions.len()
+        {
+            return Err("Partitions must be unique non-negative integers (1-1024 entries)".into());
+        }
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -598,6 +717,17 @@ impl<T> From<Vec<T>> for Batch<T> {
     }
 }
 
+/// One resource a change touched: a topic, a group or a config key, with the partition and
+/// resulting offset (new log start or committed offset) or value where they apply.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Change {
+    pub resource: String,
+    pub partition: Option<i32>,
+    pub offset: Option<Offset>,
+    pub value: Option<String>,
+    pub error: Option<KafkaError>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data", rename_all = "camelCase")]
 pub enum Response {
@@ -609,6 +739,7 @@ pub enum Response {
     Configs(Batch<ConfigEntry>),
     Produced(Delivery),
     Fetched(FetchSummary),
+    Changed(Batch<Change>),
     Error(KafkaError),
 }
 

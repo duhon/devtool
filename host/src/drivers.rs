@@ -42,7 +42,7 @@ pub fn versions() -> Value {
     json!({
         services_sdk::http::DRIVER: "1",
         services_sdk::grpc::DRIVER: "1",
-        kafka_contract::DRIVER: "1",
+        kafka_contract::DRIVER: "1.1",
         services_sdk::kubernetes::DRIVER: "1",
         services_sdk::mongodb::DRIVER: "1",
         services_sdk::mysql::DRIVER: "1",

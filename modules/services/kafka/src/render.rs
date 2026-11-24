@@ -291,6 +291,47 @@ pub fn response(response: &Response, operation: &Operation, format: Format) -> R
                 columns: Vec::new(),
             };
         }
+        Response::Changed(changes) => {
+            let done = match operation {
+                Operation::CreateTopic { .. } => "created",
+                Operation::DeleteTopic { .. } | Operation::DeleteGroup { .. } => "deleted",
+                Operation::CreatePartitions { .. } | Operation::AlterConfigs { .. } => "altered",
+                Operation::DeleteRecords { .. } => "purged",
+                _ => "committed",
+            };
+            let failed = changes.items.iter().filter(|c| c.error.is_some()).count();
+            let mut result = grid(
+                columns(&[
+                    ("resource", T),
+                    ("partition", N),
+                    ("offset", T),
+                    ("value", T),
+                    ("status", T),
+                    ("error", T),
+                ]),
+                changes
+                    .items
+                    .iter()
+                    .map(|c| {
+                        vec![
+                            json!(c.resource),
+                            json!(c.partition),
+                            json!(c.offset),
+                            json!(c.value),
+                            json!(if c.error.is_some() { "failed" } else { done }),
+                            error(&c.error),
+                        ]
+                    })
+                    .collect(),
+                format,
+                response,
+                changes.truncated || failed > 0,
+            );
+            if failed > 0 && failed == changes.items.len() {
+                result.outcome = "ERROR".into();
+            }
+            return result;
+        }
         Response::Fetched(_) => return Rendered::default(),
     };
     grid(cols, rows, format, response, warning)

@@ -2,9 +2,9 @@
 //! `KAFKA_TEST_BOOTSTRAP` (see `scripts/kafka-integration.sh`) every operation against a real one.
 
 use kafka_contract::{
-    Batch, Bytes, Connection, DeliveryStatus, EndReason, FetchMode, Header, Isolation, Limits,
-    Offset, Operation, ProducerRecord, Record, Request, Response, Sasl, Security, Start,
-    StreamEvent, Tls,
+    Batch, Bytes, ConfigChange, Connection, DeliveryStatus, EndReason, FetchMode, Header,
+    Isolation, Limits, Offset, Operation, ProducerRecord, Record, Request, Response, Sasl,
+    Security, Start, StreamEvent, Tls,
 };
 use serde_json::json;
 use services_native::drivers::{
@@ -148,6 +148,35 @@ async fn kafka_requests_fail_validation_before_any_connection() {
             fetch("alpha", Start::Last(0), FetchMode::Snapshot),
         ),
         request("user@kafka.fixture.invalid:9092", Operation::ListTopics),
+        request(
+            unreachable,
+            Operation::CreatePartitions {
+                topic: "alpha".into(),
+                total: 0,
+            },
+        ),
+        request(
+            unreachable,
+            Operation::AlterConfigs {
+                topic: "alpha".into(),
+                changes: Vec::new(),
+            },
+        ),
+        request(
+            unreachable,
+            Operation::AlterGroupOffsets {
+                group: "g1".into(),
+                topic: "alpha".into(),
+                partitions: None,
+                to: Start::Last(1),
+            },
+        ),
+        request(
+            unreachable,
+            Operation::DeleteGroup {
+                group: String::new(),
+            },
+        ),
     ] {
         let started = Instant::now();
         let Err(failure) = run(&driver, request).await.1 else {
@@ -886,4 +915,108 @@ async fn kafka_broker_sasl_mechanisms_and_a_wrong_password() {
     assert_eq!(failure.failure.stage, Stage::Auth, "{}", failure.message);
     let all = format!("{} {:?}", failure.message, failure.failure.causes);
     assert!(!all.contains(wrong) && !all.contains(&password), "{all}");
+}
+
+/// Every write command on a throwaway topic and group, removed again at the end.
+#[tokio::test]
+async fn kafka_broker_write_commands() {
+    let Some(broker) = broker() else { return };
+    let driver = Kafka::default();
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let topic = format!("devtool-write-{unique}");
+    let group = format!("devtool-group-{unique}");
+    let changed = |response: Response| match response {
+        Response::Changed(changes) => {
+            assert!(
+                changes.items.iter().all(|c| c.error.is_none()),
+                "{changes:?}"
+            );
+            changes.items
+        }
+        other => panic!("{other:?}"),
+    };
+    let ask = |operation| answer(&driver, request(&broker, operation));
+
+    let create = Operation::CreateTopic {
+        topic: topic.clone(),
+        partitions: Some(1),
+        replicas: Some(1),
+        configs: [("retention.ms".into(), "600000".into())].into(),
+    };
+    assert_eq!(changed(ask(create.clone()).await)[0].resource, topic);
+    assert!(matches!(ask(create).await, Response::Error(_)));
+    changed(
+        ask(Operation::CreatePartitions {
+            topic: topic.clone(),
+            total: 2,
+        })
+        .await,
+    );
+    changed(
+        ask(Operation::AlterConfigs {
+            topic: topic.clone(),
+            changes: vec![
+                ConfigChange {
+                    name: "retention.ms".into(),
+                    value: Some("120000".into()),
+                },
+                ConfigChange {
+                    name: "cleanup.policy".into(),
+                    value: None,
+                },
+            ],
+        })
+        .await,
+    );
+
+    for value in ["a", "b", "c"] {
+        let mut operation = produce(&topic, None, Some(value));
+        if let Operation::Produce { record } = &mut operation {
+            record.partition = Some(0);
+        }
+        let Response::Produced(delivery) = ask(operation).await else {
+            panic!("a delivery")
+        };
+        assert_eq!(delivery.status, DeliveryStatus::Confirmed);
+    }
+    let purged = changed(
+        ask(Operation::DeleteRecords {
+            topic: topic.clone(),
+            partitions: Some(vec![0]),
+            before: Some(Offset::new(2).unwrap()),
+        })
+        .await,
+    );
+    assert_eq!(purged[0].offset, Some(Offset::new(2).unwrap()));
+
+    let committed = changed(
+        ask(Operation::AlterGroupOffsets {
+            group: group.clone(),
+            topic: topic.clone(),
+            partitions: Some(vec![0]),
+            to: Start::Offset(Offset::new(3).unwrap()),
+        })
+        .await,
+    );
+    assert_eq!(committed[0].offset, Some(Offset::new(3).unwrap()));
+    let reset = changed(
+        ask(Operation::AlterGroupOffsets {
+            group: group.clone(),
+            topic: topic.clone(),
+            partitions: None,
+            to: Start::Beginning,
+        })
+        .await,
+    );
+    let offsets: Vec<_> = reset
+        .iter()
+        .map(|c| (c.partition, c.offset.as_ref().map(Offset::value)))
+        .collect();
+    assert_eq!(offsets, [(Some(0), Some(2)), (Some(1), Some(0))]);
+
+    changed(ask(Operation::DeleteGroup { group }).await);
+    changed(ask(Operation::DeleteTopic { topic }).await);
 }

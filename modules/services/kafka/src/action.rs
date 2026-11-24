@@ -1,7 +1,7 @@
 use chrono::DateTime;
 use kafka_contract::{
-    Bytes, Connection, FetchMode, Header, Isolation, Limits, Offset, Operation, ProducerRecord,
-    Request, Sasl, Security, Start, Tls, VERSION,
+    Bytes, ConfigChange, Connection, FetchMode, Header, Isolation, Limits, Offset, Operation,
+    ProducerRecord, Request, Sasl, Security, Start, Tls, VERSION,
 };
 use serde::{Deserialize, Serialize};
 use services_sdk::Check;
@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub const COMMANDS: &[&str] = &[
     "BROKERS", "TOPICS", "DESCRIBE", "OFFSETS", "READ", "TAIL", "PRODUCE", "GROUPS", "GROUP",
-    "LAG", "CONFIG",
+    "LAG", "CONFIG", "CREATE", "DELETE", "ALTER", "PURGE", "RESET", "COMMIT",
 ];
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -345,11 +345,7 @@ pub fn plan_prepared(source: PreparedSource) -> Result<Plan, String> {
         None
     };
     let connection = Connection {
-        brokers: source
-            .target
-            .split(',')
-            .map(|b| b.trim().to_owned())
-            .collect(),
+        brokers: source.target.split(',').map(broker).collect(),
         security,
         sasl,
         tls,
@@ -406,6 +402,53 @@ pub fn plan_prepared(source: PreparedSource) -> Result<Plan, String> {
                 headers: Vec::new(),
             },
         },
+        "CREATE" => Operation::CreateTopic {
+            topic: resource(&words, &mut at)?,
+            partitions: None,
+            replicas: None,
+            configs: topic_configs(&source.payload)?,
+        },
+        "DELETE" if keyword(&words, at, "GROUP") => {
+            at += 1;
+            Operation::DeleteGroup {
+                group: resource(&words, &mut at)?,
+            }
+        }
+        "DELETE" => Operation::DeleteTopic {
+            topic: resource(&words, &mut at)?,
+        },
+        "ALTER" if keyword(&words, at, "CONFIG") => {
+            at += 1;
+            let topic = resource(&words, &mut at)?;
+            let changes = config_changes(&words[at..])?;
+            at = words.len();
+            Operation::AlterConfigs { topic, changes }
+        }
+        "ALTER" => {
+            let topic = resource(&words, &mut at)?;
+            if !keyword(&words, at, "PARTITIONS") {
+                return Err(
+                    "Use ALTER /topic PARTITIONS n or ALTER CONFIG /topic key=value".into(),
+                );
+            }
+            at += 1;
+            let total = take(&words, &mut at)?
+                .parse()
+                .map_err(|_| "PARTITIONS takes the new partition total")?;
+            Operation::CreatePartitions { topic, total }
+        }
+        "PURGE" => Operation::DeleteRecords {
+            topic: resource(&words, &mut at)?,
+            partitions: None,
+            before: None,
+        },
+        "RESET" | "COMMIT" => Operation::AlterGroupOffsets {
+            group: resource(&words, &mut at)?,
+            topic: resource(&words, &mut at)?,
+            partitions: None,
+            // Replaced by the required TO or OFFSET clause.
+            to: Start::Last(0),
+        },
         _ => {
             return Err(format!(
                 "Unknown Kafka command; use {}",
@@ -427,10 +470,45 @@ pub fn plan_prepared(source: PreparedSource) -> Result<Plan, String> {
             return Err(format!("Duplicate clause {clause}"));
         }
         match clause.as_str() {
-            "LIMIT" if command != "PRODUCE" => {
+            "LIMIT" if command != "PRODUCE" && !command_changes(&command) => {
                 limit = take(&words, &mut at)?
                     .parse()
                     .map_err(|_| "LIMIT takes a positive integer")?;
+            }
+            "REPLICAS" => match &mut operation {
+                Operation::CreateTopic { replicas, .. } => {
+                    *replicas = Some(
+                        take(&words, &mut at)?
+                            .parse()
+                            .map_err(|_| "REPLICAS takes the replication factor")?,
+                    )
+                }
+                _ => return Err("REPLICAS takes CREATE".into()),
+            },
+            "BEFORE" => match &mut operation {
+                Operation::DeleteRecords { before, .. } if keyword(&words, at, "OFFSET") => {
+                    at += 1;
+                    *before = Some(Offset::new(
+                        take(&words, &mut at)?
+                            .parse()
+                            .map_err(|_| "Invalid offset")?,
+                    )?);
+                }
+                _ => return Err("BEFORE OFFSET n takes PURGE".into()),
+            },
+            "TO" if command == "RESET" => {
+                if let Operation::AlterGroupOffsets { to, .. } = &mut operation {
+                    *to = start(&words, &mut at)?;
+                }
+            }
+            "OFFSET" if command == "COMMIT" => {
+                if let Operation::AlterGroupOffsets { to, .. } = &mut operation {
+                    *to = Start::Offset(Offset::new(
+                        take(&words, &mut at)?
+                            .parse()
+                            .map_err(|_| "Invalid offset")?,
+                    )?);
+                }
             }
             "PARTITION" | "PARTITIONS" => {
                 let mut ids = vec![
@@ -450,11 +528,23 @@ pub fn plan_prepared(source: PreparedSource) -> Result<Plan, String> {
                 }
                 match &mut operation {
                     Operation::Fetch { partitions, .. }
-                    | Operation::ListOffsets { partitions, .. } => *partitions = Some(ids),
+                    | Operation::ListOffsets { partitions, .. }
+                    | Operation::DeleteRecords { partitions, .. }
+                    | Operation::AlterGroupOffsets { partitions, .. } => *partitions = Some(ids),
                     Operation::Produce { record } if ids.len() == 1 => {
                         record.partition = Some(ids[0])
                     }
-                    _ => return Err("PARTITION(S) takes READ, TAIL, OFFSETS or PRODUCE".into()),
+                    Operation::CreateTopic { partitions, .. }
+                        if clause == "PARTITIONS" && ids.len() == 1 =>
+                    {
+                        *partitions = Some(ids[0])
+                    }
+                    _ => {
+                        return Err(
+                            "PARTITION(S) takes READ, TAIL, OFFSETS, PRODUCE, CREATE, PURGE, RESET or COMMIT"
+                                .into(),
+                        );
+                    }
                 }
             }
             "FROM" => match &mut operation {
@@ -480,6 +570,19 @@ pub fn plan_prepared(source: PreparedSource) -> Result<Plan, String> {
     }
     if limit == 0 || limit > kafka_contract::MAX_RECORDS {
         return Err(format!("LIMIT must be 1-{}", kafka_contract::MAX_RECORDS));
+    }
+    if matches!(
+        operation,
+        Operation::AlterGroupOffsets {
+            to: Start::Last(0),
+            ..
+        }
+    ) {
+        return Err(if command == "COMMIT" {
+            "COMMIT takes OFFSET n".into()
+        } else {
+            "RESET takes TO BEGINNING, END, OFFSET n or TIMESTAMP value".into()
+        });
     }
     if scan_limit == 0 || scan_limit > kafka_contract::MAX_RECORDS {
         return Err(format!(
@@ -557,12 +660,12 @@ pub fn plan_prepared(source: PreparedSource) -> Result<Plan, String> {
                 },
             );
         }
-    } else if !source.payload.trim().is_empty()
+    } else if !source.payload.trim().is_empty() && command != "CREATE"
         || !source.metadata.is_empty()
         || config.contains_key("tombstone")
         || config.contains_key("payload-encoding")
     {
-        return Err("Payload, metadata and producer options take PRODUCE only".into());
+        return Err("Payload, metadata and producer options take PRODUCE only (CREATE reads topic configs from #payload)".into());
     }
     limits.max_records = if filter.is_some() {
         if scan_limit < limit {
@@ -586,4 +689,79 @@ pub fn plan_prepared(source: PreparedSource) -> Result<Plan, String> {
         filter,
         lag: command == "LAG",
     })
+}
+
+/// A bootstrap address: `host:port`, also accepted as `kafka://host:port`.
+fn broker(address: &str) -> String {
+    let address = address.trim();
+    let address = match address.get(..8) {
+        Some(scheme) if scheme.eq_ignore_ascii_case("kafka://") => &address[8..],
+        _ => address,
+    };
+    address.trim_end_matches('/').to_owned()
+}
+
+/// Whether the command changes the cluster.
+fn command_changes(command: &str) -> bool {
+    matches!(
+        command,
+        "CREATE" | "DELETE" | "ALTER" | "PURGE" | "RESET" | "COMMIT"
+    )
+}
+
+/// The word at `at` is the bare keyword (a `/`-prefixed name never is).
+fn keyword(words: &[String], at: usize, keyword: &str) -> bool {
+    words
+        .get(at)
+        .is_some_and(|w| w.eq_ignore_ascii_case(keyword))
+}
+
+/// The topic configs of a CREATE: one `key=value` per #payload line.
+fn topic_configs(payload: &str) -> Result<BTreeMap<String, String>, String> {
+    let mut configs = BTreeMap::new();
+    for line in payload.lines().map(str::trim).filter(|l| !l.is_empty()) {
+        let (key, value) = line
+            .split_once('=')
+            .filter(|(key, _)| !key.trim().is_empty())
+            .ok_or("CREATE takes topic configs as key=value lines in #payload")?;
+        if configs
+            .insert(key.trim().to_owned(), value.trim().to_owned())
+            .is_some()
+        {
+            return Err(format!("Duplicate topic config {:?}", key.trim()));
+        }
+    }
+    Ok(configs)
+}
+
+/// `key=value` sets a key, `key=` resets it to the default. A value may hold commas
+/// (`cleanup.policy=compact,delete`).
+fn config_changes(words: &[String]) -> Result<Vec<ConfigChange>, String> {
+    let mut joined: Vec<String> = Vec::new();
+    let mut glue = false;
+    for word in words {
+        match joined.last_mut() {
+            Some(last) if word == "," || glue => {
+                last.push_str(word);
+                glue = word == ",";
+            }
+            _ => joined.push(word.clone()),
+        }
+    }
+    if joined.is_empty() {
+        return Err("ALTER CONFIG takes one or more key=value".into());
+    }
+    joined
+        .into_iter()
+        .map(|pair| {
+            let (name, value) = pair
+                .split_once('=')
+                .filter(|(name, _)| !name.is_empty())
+                .ok_or("ALTER CONFIG takes key=value; key= resets the default")?;
+            Ok(ConfigChange {
+                name: name.into(),
+                value: (!value.is_empty()).then(|| value.into()),
+            })
+        })
+        .collect()
 }

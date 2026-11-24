@@ -18,10 +18,12 @@ use std::{
     hash::BuildHasher,
 };
 
-const CACHE_MS: f64 = 60_000.0;
+/// How long discovered names count as fresh. Older ones are still served (to completions
+/// and the agent) while the next discovery refreshes them.
+const CACHE_MS: f64 = 600_000.0;
 const MAX_JOBS: usize = 16;
 const DRIVER_NOTICE: &str =
-    "Kafka requires native driver kafka:1. This package does not install or simulate a driver.";
+    "Kafka requires native driver kafka 1.1. This package does not install or simulate a driver.";
 
 #[derive(Clone, Serialize, Deserialize)]
 pub enum Msg {
@@ -55,6 +57,7 @@ struct Cached {
     raw: u64,
     resolved: u64,
     topics: Vec<String>,
+    groups: Vec<String>,
     at: f64,
 }
 
@@ -218,9 +221,6 @@ impl Kafka {
             self.jobs.remove(&id);
             return vec![cmd::relight()];
         }
-        if let Purpose::Discovery { raw, .. } = self.jobs[&id].purpose {
-            self.cache.retain(|cached| cached.raw != raw);
-        }
         let operation = plan.request.operation.clone();
         let timeout = plan.request.limits.timeout_ms;
         self.jobs.get_mut(&id).unwrap().plan = Some(plan);
@@ -272,6 +272,10 @@ impl Kafka {
                 redact_rendered(&mut rendered, job.plan.as_ref());
                 rendered.outcome = "ERROR".into();
                 commands.push(cmd::result(run, &rendered, &debug));
+            }
+            // Topics are already cached; groups are best effort.
+            Purpose::Discovery { .. } if matches!(job.active, Some(Operation::ListGroups)) => {
+                commands.push(cmd::relight())
             }
             Purpose::Discovery { .. } => {
                 commands.push(cmd::notify(&format!("Kafka discovery: {error}"), "warning"))
@@ -479,6 +483,12 @@ impl Kafka {
         let plan = job.plan.as_ref().unwrap();
         let active = job.active.as_ref().unwrap();
         if let Response::Error(error) = &response {
+            if matches!(job.purpose, Purpose::Discovery { .. })
+                && matches!(active, Operation::ListGroups)
+            {
+                self.jobs.remove(&id);
+                return vec![cmd::relight()];
+            }
             if !job.records.is_empty() || matches!(job.purpose, Purpose::Discovery { .. }) {
                 return self.fail(id, format!("{}: {}", error.code, error.message));
             }
@@ -505,7 +515,7 @@ impl Kafka {
                 | (Operation::DescribeConfigs { .. }, Response::Configs(_))
                 | (Operation::Produce { .. }, Response::Produced(_))
                 | (Operation::Fetch { .. }, Response::Fetched(_))
-        );
+        ) || active.changes() && matches!(response, Response::Changed(_));
         if !expected {
             return self.fail(id, "Kafka driver returned the wrong response type".into());
         }
@@ -595,6 +605,20 @@ impl Kafka {
                 _ => {}
             }
         }
+        if let Purpose::Discovery { raw, .. } = job.purpose
+            && let Response::Groups(groups) = &response
+        {
+            if let Some(cached) = self.cache.iter_mut().find(|c| c.raw == raw) {
+                cached.groups = groups
+                    .items
+                    .iter()
+                    .filter(|g| g.error.is_none())
+                    .map(|g| g.id.clone())
+                    .collect();
+            }
+            self.jobs.remove(&id);
+            return vec![cmd::relight()];
+        }
         if let Purpose::Discovery { raw, .. } = job.purpose {
             let Response::Topics(topics) = response else {
                 return self.fail(id, "Discovery requires topic metadata".into());
@@ -611,7 +635,13 @@ impl Kafka {
             let resolved = self
                 .hashes
                 .hash_one(serde_json::to_string(&plan.request.connection).unwrap());
-            self.cache.retain(|c| c.raw != raw);
+            // Groups follow in a second call; until then the previous ones stand.
+            let groups = self
+                .cache
+                .iter()
+                .position(|c| c.raw == raw)
+                .map(|i| self.cache.remove(i).groups)
+                .unwrap_or_default();
             if self.cache.len() >= 16 {
                 self.cache.remove(0);
             }
@@ -619,10 +649,18 @@ impl Kafka {
                 raw,
                 resolved,
                 topics,
+                groups,
                 at: services_sdk::now(),
             });
-            self.jobs.remove(&id);
-            return vec![cmd::relight()];
+            let mut commands = vec![cmd::relight()];
+            commands.extend(self.call(id, Operation::ListGroups));
+            return commands;
+        }
+        if active.changes() {
+            // Still served, but rediscovered on the next edit.
+            for cached in &mut self.cache {
+                cached.at = f64::NEG_INFINITY;
+            }
         }
         let mut limited = false;
         let max = plan.limit as usize;
@@ -786,26 +824,26 @@ impl Kafka {
             return Vec::new();
         };
         let raw = self.raw_identity(&source);
-        if self
-            .jobs
-            .values()
-            .any(|j| matches!(j.purpose, Purpose::Discovery { raw: value, .. } if value == raw))
+        let fresh = !force
+            && self
+                .cache
+                .iter()
+                .any(|c| c.raw == raw && services_sdk::now() - c.at < CACHE_MS);
+        if fresh
+            || self
+                .jobs
+                .values()
+                .any(|j| matches!(j.purpose, Purpose::Discovery { raw: value, .. } if value == raw))
         {
             return Vec::new();
         }
         self.start(Purpose::Discovery { raw, force }, source)
     }
 
-    fn topics(&self, check: &Check) -> Vec<String> {
-        let Some(source) = self.discovery_source(check) else {
-            return Vec::new();
-        };
+    fn discovered(&self, check: &Check) -> Option<&Cached> {
+        let source = self.discovery_source(check)?;
         let raw = self.raw_identity(&source);
-        self.cache
-            .iter()
-            .find(|c| c.raw == raw && services_sdk::now() - c.at < CACHE_MS)
-            .map(|c| c.topics.clone())
-            .unwrap_or_default()
+        self.cache.iter().find(|c| c.raw == raw)
     }
 
     fn ui(&mut self, msg: Msg, value: Option<String>) -> Vec<Cmd> {
@@ -914,6 +952,11 @@ impl Module for Kafka {
                     commands.push(cmd::cancel(&tag(id, "call")));
                     if matches!(job.active, Some(Operation::Produce { .. })) {
                         commands.push(cmd::output(&run, "\nStopped waiting: delivery may continue. Do not resend automatically.\n"));
+                    } else if job.active.as_ref().is_some_and(Operation::changes) {
+                        commands.push(cmd::output(
+                            &run,
+                            "\nStopped waiting: the cluster may still apply the change.\n",
+                        ));
                     }
                 }
                 commands
@@ -928,7 +971,7 @@ impl Module for Kafka {
                     "call" => self.reply(id, result),
                     "deadline" => self.fail(
                         id,
-                        "Kafka request timed out; a queued produce may still be written".into(),
+                        "Kafka request timed out; a queued produce or cluster change may still be applied".into(),
                     ),
                     _ => Vec::new(),
                 }
@@ -947,7 +990,12 @@ impl Module for Kafka {
             Event::Discover(check) => self.discover(&check, true),
             Event::Hints { check, pos } => {
                 let at = services_sdk::lang::check::At::new(&check.text, pos as usize);
-                if at.name() == Some("action") && !at.in_response() && !at.in_placeholder() {
+                // Discover as soon as the check is written past its target (not while the
+                // address is still being typed), so names are known when the action needs them.
+                if at.name().is_some_and(|name| name != "target")
+                    && !at.in_response()
+                    && !at.in_placeholder()
+                {
                     self.discover(&check, false)
                 } else {
                     Vec::new()
@@ -1001,7 +1049,10 @@ impl Module for Kafka {
     }
 
     fn complete(&self, check: &Check, pos: u32) -> Completions {
-        language::complete(check, pos, &self.topics(check))
+        let (topics, groups) = self
+            .discovered(check)
+            .map_or((&[][..], &[][..]), |c| (&c.topics[..], &c.groups[..]));
+        language::complete(check, pos, topics, groups)
     }
 
     fn highlight(&self, state: &[u8], lines: &[String], columns: &[LineColumns]) -> Vec<Line> {
@@ -1009,8 +1060,9 @@ impl Module for Kafka {
     }
 
     fn schema(&self, check: &Check) -> Option<Value> {
-        let topics = self.topics(check);
-        (!topics.is_empty()).then(|| json!({"topics": topics}))
+        let cached = self.discovered(check)?;
+        (!cached.topics.is_empty() || !cached.groups.is_empty())
+            .then(|| json!({"topics": cached.topics, "groups": cached.groups}))
     }
 
     fn fold(&self, check: &Check) -> Vec<services_sdk::Fold> {

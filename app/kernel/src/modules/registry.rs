@@ -199,7 +199,7 @@ fn native_drivers() -> BTreeMap<String, String> {
     return [
         ("grpc", "1"),
         ("http", "1"),
-        ("kafka", "1"),
+        ("kafka", "1.1"),
         ("kubernetes", "1"),
         ("mongodb", "1"),
         ("mysql", "1"),

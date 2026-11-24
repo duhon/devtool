@@ -5,17 +5,20 @@
 
 use super::{CONNECT_MS, Failure, emit, millis};
 use kafka_contract::{
-    Batch, Broker, Bytes, Cluster, ConfigEntry, Connection, Cursor, Delivery, DeliveryStatus,
-    EndReason, FetchMode, FetchSummary, Group, GroupOffset, Header, Isolation, KafkaError, Limits,
-    Member, Offset, Operation, Partition, PartitionOffset, ProducerRecord, Record, Request,
-    Response, Sasl, Security, Start, StreamEvent, Tls, Topic, TopicPartition,
+    Batch, Broker, Bytes, Change, Cluster, ConfigChange, ConfigEntry, Connection, Cursor, Delivery,
+    DeliveryStatus, EndReason, FetchMode, FetchSummary, Group, GroupOffset, Header, Isolation,
+    KafkaError, Limits, Member, Offset, Operation, Partition, PartitionOffset, ProducerRecord,
+    Record, Request, Response, Sasl, Security, Start, StreamEvent, Tls, Topic, TopicPartition,
 };
 use krafka::{
     Kafka as Client, KrafkaError,
     admin::{
-        AdminClient, ConfigResource, DescribeClusterOptions, DescribeConfigsOptions,
-        DescribeConsumerGroupsOptions, DescribeTopicsOptions, ListConsumerGroupOffsetsOptions,
-        ListConsumerGroupsOptions, ListOffsetsOptions, ListTopicsOptions, OffsetSpec,
+        AdminClient, AlterConsumerGroupOffsetsOptions, ConfigOp, ConfigResource,
+        CreatePartitionsOptions, CreateTopicsOptions, DeleteConsumerGroupsOptions,
+        DeleteRecordsOptions, DeleteTopicsOptions, DescribeClusterOptions, DescribeConfigsOptions,
+        DescribeConsumerGroupsOptions, DescribeTopicsOptions, IncrementalAlterConfigsOptions,
+        ListConsumerGroupOffsetsOptions, ListConsumerGroupsOptions, ListOffsetsOptions,
+        ListTopicsOptions, NewTopic, OffsetSpec,
     },
     auth::{AuthConfig, TlsConfig},
     consumer::{AutoOffsetReset, Consumer, ConsumerRecord, IsolationLevel},
@@ -208,6 +211,35 @@ impl Kafka {
             Operation::DescribeConfigs { topic } => {
                 describe_configs(&admin, topic, limits, soft).await
             }
+            Operation::CreateTopic {
+                topic,
+                partitions,
+                replicas,
+                configs,
+            } => create_topic(&admin, topic, *partitions, *replicas, configs, soft).await,
+            Operation::DeleteTopic { topic } => delete_topic(&admin, topic, soft).await,
+            Operation::CreatePartitions { topic, total } => {
+                create_partitions(&admin, topic, *total, soft).await
+            }
+            Operation::AlterConfigs { topic, changes } => {
+                alter_configs(&admin, topic, changes, soft).await
+            }
+            Operation::DeleteRecords {
+                topic,
+                partitions,
+                before,
+            } => delete_records(&admin, topic, partitions.as_deref(), before.as_ref(), soft)
+                .await
+                .unwrap_or_else(Response::Error),
+            Operation::AlterGroupOffsets {
+                group,
+                topic,
+                partitions,
+                to,
+            } => alter_group_offsets(&admin, group, topic, partitions.as_deref(), to, soft)
+                .await
+                .unwrap_or_else(Response::Error),
+            Operation::DeleteGroup { group } => delete_group(&admin, group, soft).await,
         };
         if let Response::Error(error) = &response
             && matches!(error.code.as_str(), "AUTHENTICATION" | "CLOSED")
@@ -927,6 +959,248 @@ async fn describe_configs(
             Some(topic.to_owned()),
         )),
     }
+}
+
+/// The answer of a change to one resource: its error alone, else the changed items.
+fn changed<K: Eq + std::hash::Hash>(
+    resource: &str,
+    key: &K,
+    result: krafka::Result<HashMap<K, krafka::Result<()>>>,
+    items: Vec<Change>,
+) -> Response {
+    let failed = match result {
+        Err(e) => Some(e),
+        Ok(mut results) => match results.remove(key) {
+            Some(Ok(())) => None,
+            Some(Err(e)) => Some(e),
+            None => {
+                return Response::Error(error(
+                    "UNKNOWN_SERVER_ERROR",
+                    "The broker did not answer for the resource",
+                    Some(resource.to_owned()),
+                ));
+            }
+        },
+    };
+    match failed {
+        Some(e) => Response::Error(kafka_error(&e, Some(resource.to_owned()))),
+        None => Response::Changed(items.into()),
+    }
+}
+
+fn touched(resource: &str) -> Vec<Change> {
+    vec![Change {
+        resource: resource.to_owned(),
+        partition: None,
+        offset: None,
+        value: None,
+        error: None,
+    }]
+}
+
+async fn create_topic(
+    admin: &AdminClient,
+    topic: &str,
+    partitions: Option<i32>,
+    replicas: Option<i16>,
+    configs: &BTreeMap<String, String>,
+    soft: Instant,
+) -> Response {
+    let mut new = match NewTopic::new(topic, partitions.unwrap_or(-1), replicas.unwrap_or(-1)) {
+        Ok(new) => new,
+        Err(e) => return Response::Error(kafka_error(&e, Some(topic.to_owned()))),
+    };
+    new.configs = configs.clone().into_iter().collect();
+    let result = admin
+        .create_topics(
+            [new],
+            CreateTopicsOptions::default().timeout(remaining(soft)),
+        )
+        .await;
+    changed(topic, &topic.to_owned(), result, touched(topic))
+}
+
+async fn delete_topic(admin: &AdminClient, topic: &str, soft: Instant) -> Response {
+    let result = admin
+        .delete_topics(
+            [topic],
+            DeleteTopicsOptions::default().timeout(remaining(soft)),
+        )
+        .await;
+    changed(topic, &topic.to_owned(), result, touched(topic))
+}
+
+async fn create_partitions(
+    admin: &AdminClient,
+    topic: &str,
+    total: i32,
+    soft: Instant,
+) -> Response {
+    let result = admin
+        .create_partitions(
+            [(topic, total)],
+            CreatePartitionsOptions::default().timeout(remaining(soft)),
+        )
+        .await;
+    let mut items = touched(topic);
+    items[0].value = Some(format!("{total} partitions"));
+    changed(topic, &topic.to_owned(), result, items)
+}
+
+async fn alter_configs(
+    admin: &AdminClient,
+    topic: &str,
+    changes: &[ConfigChange],
+    soft: Instant,
+) -> Response {
+    let resource = ConfigResource::topic(topic);
+    let ops = changes
+        .iter()
+        .map(|c| match &c.value {
+            Some(value) => ConfigOp::set(&c.name, value),
+            None => ConfigOp::delete(&c.name),
+        })
+        .collect();
+    let result = admin
+        .incremental_alter_configs(
+            [(resource.clone(), ops)],
+            IncrementalAlterConfigsOptions::default().timeout(remaining(soft)),
+        )
+        .await;
+    let items = changes
+        .iter()
+        .map(|c| Change {
+            resource: c.name.clone(),
+            partition: None,
+            offset: None,
+            value: c.value.clone(),
+            error: None,
+        })
+        .collect();
+    changed(topic, &resource, result, items)
+}
+
+/// Per partition: the new log start offset, or the partition's error.
+async fn delete_records(
+    admin: &AdminClient,
+    topic: &str,
+    requested: Option<&[i32]>,
+    before: Option<&Offset>,
+    soft: Instant,
+) -> Result<Response, KafkaError> {
+    let ids = partitions(admin, topic, requested, soft).await?;
+    let targets = match before {
+        Some(offset) => ids.iter().map(|p| (*p, offset.value())).collect(),
+        None => bounds(admin, topic, &ids, OffsetSpec::Latest, false, soft).await?,
+    };
+    let mut deleted = admin
+        .delete_records(
+            targets
+                .iter()
+                .map(|(p, offset)| (krafka::admin::TopicPartition::new(topic, *p), *offset)),
+            DeleteRecordsOptions::default().timeout(remaining(soft)),
+        )
+        .await
+        .map_err(|e| kafka_error(&e, Some(topic.to_owned())))?;
+    let items: Vec<Change> = ids
+        .iter()
+        .map(|p| {
+            let resource = Some(format!("{topic}-{p}"));
+            let (offset, error) =
+                match deleted.remove(&krafka::admin::TopicPartition::new(topic, *p)) {
+                    Some(Ok(low)) => (self::offset(low), None),
+                    Some(Err(e)) => (None, Some(kafka_error(&e, resource))),
+                    None => (
+                        None,
+                        Some(error(
+                            "UNKNOWN_SERVER_ERROR",
+                            "The broker did not answer for the partition",
+                            resource,
+                        )),
+                    ),
+                };
+            Change {
+                resource: topic.to_owned(),
+                partition: Some(*p),
+                offset,
+                value: None,
+                error,
+            }
+        })
+        .collect();
+    Ok(Response::Changed(Batch::from(items)))
+}
+
+/// Per partition: the offset committed for the group, or the partition's error.
+async fn alter_group_offsets(
+    admin: &AdminClient,
+    group: &str,
+    topic: &str,
+    requested: Option<&[i32]>,
+    to: &Start,
+    soft: Instant,
+) -> Result<Response, KafkaError> {
+    let ids = partitions(admin, topic, requested, soft).await?;
+    let mut targets = match to {
+        Start::Offset(offset) => ids.iter().map(|p| (*p, offset.value())).collect(),
+        Start::Beginning => bounds(admin, topic, &ids, OffsetSpec::Earliest, false, soft).await?,
+        Start::Timestamp(ms) => {
+            bounds(admin, topic, &ids, OffsetSpec::Timestamp(*ms), false, soft).await?
+        }
+        _ => bounds(admin, topic, &ids, OffsetSpec::Latest, false, soft).await?,
+    };
+    // No record at or after the timestamp: the end, as kafka-consumer-groups does.
+    let past: Vec<i32> = targets
+        .iter()
+        .filter(|(_, offset)| **offset < 0)
+        .map(|(p, _)| *p)
+        .collect();
+    if !past.is_empty() {
+        targets.extend(bounds(admin, topic, &past, OffsetSpec::Latest, false, soft).await?);
+    }
+    let mut altered = admin
+        .alter_consumer_group_offsets(
+            group,
+            targets
+                .iter()
+                .map(|(p, offset)| (krafka::admin::TopicPartition::new(topic, *p), *offset)),
+            AlterConsumerGroupOffsetsOptions::default().timeout(remaining(soft)),
+        )
+        .await
+        .map_err(|e| kafka_error(&e, Some(group.to_owned())))?;
+    let items: Vec<Change> = ids
+        .iter()
+        .map(|p| {
+            let resource = Some(format!("{group}/{topic}-{p}"));
+            let error = match altered.remove(&krafka::admin::TopicPartition::new(topic, *p)) {
+                Some(Ok(())) => None,
+                Some(Err(e)) => Some(kafka_error(&e, resource)),
+                None => Some(error(
+                    "UNKNOWN_SERVER_ERROR",
+                    "The broker did not answer for the partition",
+                    resource,
+                )),
+            };
+            Change {
+                resource: topic.to_owned(),
+                partition: Some(*p),
+                offset: error.is_none().then(|| self::offset(targets[p])).flatten(),
+                value: None,
+                error,
+            }
+        })
+        .collect();
+    Ok(Response::Changed(Batch::from(items)))
+}
+
+async fn delete_group(admin: &AdminClient, group: &str, soft: Instant) -> Response {
+    let result = admin
+        .delete_consumer_groups(
+            [group],
+            DeleteConsumerGroupsOptions::default().timeout(remaining(soft)),
+        )
+        .await;
+    changed(group, &group.to_owned(), result, touched(group))
 }
 
 async fn producer(client: &Client) -> krafka::Result<Producer> {

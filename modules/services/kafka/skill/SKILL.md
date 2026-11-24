@@ -1,11 +1,12 @@
 ---
 name: module-kafka
-description: "Kafka checks in Services DevTools: BROKERS, TOPICS, DESCRIBE, OFFSETS, READ, TAIL, PRODUCE, GROUPS, GROUP, LAG and CONFIG. Load before writing Kafka checks. Runs on the host's native kafka:1 driver."
+description: "Kafka checks in Services DevTools: BROKERS, TOPICS, DESCRIBE, OFFSETS, READ, TAIL, PRODUCE, GROUPS, GROUP, LAG, CONFIG and the admin writes CREATE, DELETE, ALTER, PURGE, RESET, COMMIT. Load before writing Kafka checks. Runs on the host's native kafka 1.1 driver."
 ---
 
 # Kafka service
 
-Use `#target` for comma-separated bootstrap `host:port` addresses, not a URL.
+Use `#target` for comma-separated bootstrap `host:port` addresses (a `kafka://` prefix is
+accepted and ignored), not a URL with credentials or a path.
 Credentials belong in variable references in `#options`, never in the target.
 
 `#action` takes one command:
@@ -18,12 +19,30 @@ Credentials belong in variable references in `#options`, never in the target.
 - `PRODUCE /topic [PARTITION n]` sends exactly one record from `#payload`.
 - `LAG /group` reads committed offsets and log ends; it does not join the group.
 
+Admin writes change the cluster immediately, without confirmation:
+
+- `CREATE /topic [PARTITIONS n] [REPLICAS r]`; topic configs as `key=value`
+  lines in `#payload`. Omitted counts use the broker defaults.
+- `DELETE /topic`; `DELETE GROUP /group` (the group must have no members).
+- `ALTER /topic PARTITIONS n` raises the partition total (never lowers it).
+- `ALTER CONFIG /topic key=value key2=` sets keys; `key=` resets one to its
+  default. Values may hold commas (`cleanup.policy=compact,delete`).
+- `PURGE /topic [PARTITION(S) …] [BEFORE OFFSET n]` deletes records below n,
+  default the log end (everything).
+- `RESET /group /topic TO BEGINNING | END | OFFSET n | TIMESTAMP value [PARTITION(S) …]`
+  moves committed offsets; `COMMIT /group /topic [PARTITION(S) …] OFFSET n`
+  sets them. Both need an empty group (stop its consumers first).
+
+Writes report one row per resource or partition: status created, deleted,
+altered, purged, committed or failed. On a timeout the change may still be
+applied; inspect before repeating. Discovery completes topics and consumer groups.
+
 Quote arguments with single/double quotes; double the quote to include it.
 Timestamp is epoch milliseconds or RFC3339 with a timezone.
 LAST is an offset range per partition, not an exact count of existing records.
 There is no global order across partitions.
 
-`#metadata` is for PRODUCE only:
+`#metadata` is for PRODUCE only; `#payload` is for PRODUCE and CREATE:
 
     Key: order-123
     Header: content-type=application/json
@@ -66,8 +85,6 @@ Scan-Limit, not a broker query. A filtered run can return fewer than LIMIT.
 JSON output preserves key/value/header bytes as base64 and offsets as decimal
 strings. Table/vertical output decodes UTF-8 and JSON for display.
 
-Stop does not undo queued production. Unknown delivery means the record may
-have been written. An offset outside retention must fail, not reset silently.
-
-Do not use PURGE, DELETE, RESET, COMMIT or other administrative writes: they
-are not supported.
+Stop does not undo queued production or an admin write. Unknown delivery means
+the record may have been written. An offset outside retention must fail, not
+reset silently.

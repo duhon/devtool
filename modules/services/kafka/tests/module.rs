@@ -722,6 +722,8 @@ fn manifest_requires_the_future_driver_instead_of_silently_loading_as_a_mock() {
             .contains("Host has none")
     );
     drivers.insert("kafka".into(), "1".into());
+    assert!(manifest.check("5.1.0", &drivers).is_err());
+    drivers.insert("kafka".into(), "1.1".into());
     manifest.check("5.1.0", &drivers).unwrap();
 }
 
@@ -749,4 +751,188 @@ fn init_leaves_the_hints_contribution_to_the_hints_panel() {
         .args();
     assert!(contribution.get("hints").is_none(), "{contribution}");
     assert!(contribution["templates"]["kafka"]["action"].is_string());
+}
+
+fn complete(h: &Harness, text: &str) -> Vec<String> {
+    let bytes = wire::Request {
+        kind: Some(request::Kind::Complete(wire::CompleteRequest {
+            check: Some(check(text)),
+            pos: text.len() as u32,
+        })),
+    }
+    .encode_to_vec();
+    let answer = wire::Answer::decode(h.0.call(&bytes).as_slice()).unwrap();
+    let Some(answer::Kind::Completions(completions)) = answer.kind else {
+        panic!()
+    };
+    completions
+        .items
+        .into_iter()
+        .map(|item| item.insert)
+        .collect()
+}
+
+#[test]
+fn discovery_adds_groups_to_group_slots_and_survives_a_group_listing_error() {
+    let h = Harness::default();
+    let text = "#target\nlocalhost:9092\n#action\nRESET ";
+    let cmds = h.send(event::Kind::Discover(check(text)));
+    let cmds = h.resolve(&cmds, &[]);
+    let cmds = h.reply(&named(&cmds, "driver.call").tag, &topics(&["orders"]));
+    let call = named(&cmds, "driver.call");
+    let request: Request = serde_json::from_value(call.args()["request"].clone()).unwrap();
+    assert_eq!(request.operation, Operation::ListGroups);
+    let group = Group {
+        id: "billing".into(),
+        state: "Empty".into(),
+        protocol: String::new(),
+        members: Vec::new(),
+        error: None,
+    };
+    h.reply(&call.tag, &Response::Groups(vec![group].into()));
+    let items = complete(&h, text);
+    assert_eq!(items, ["/billing"]);
+    let items = complete(&h, &format!("{text}/billing "));
+    assert!(items.contains(&"/orders".to_owned()) && !items.contains(&"/billing".to_owned()));
+    assert_eq!(
+        complete(&h, "#target\nlocalhost:9092\n#action\nDELETE GROUP "),
+        ["/billing"]
+    );
+
+    let other = "#target\nother:9092\n#action\nREAD ";
+    let cmds = h.send(event::Kind::Discover(check(other)));
+    let cmds = h.resolve(&cmds, &[]);
+    let cmds = h.reply(&named(&cmds, "driver.call").tag, &topics(&["events"]));
+    let cmds = h.failure(&named(&cmds, "driver.call").tag, "denied");
+    assert!(cmds.iter().all(|cmd| cmd.name != "notify"));
+    assert!(complete(&h, other).contains(&"/events".to_owned()));
+}
+
+#[test]
+fn write_results_report_each_change_and_partial_failures() {
+    let h = Harness::default();
+    let tag = h.start("PURGE /orders BEFORE OFFSET 5");
+    let change = |partition, error: Option<&str>| Change {
+        resource: format!("orders-{partition}"),
+        partition: Some(partition),
+        offset: Some(Offset::new(5).unwrap()),
+        value: None,
+        error: error.map(|message| KafkaError {
+            code: "POLICY_VIOLATION".into(),
+            message: message.into(),
+            resource: None,
+            retriable: false,
+            possibly_written: None,
+        }),
+    };
+    let cmds = h.reply(
+        &tag,
+        &Response::Changed(vec![change(0, None), change(1, Some("denied"))].into()),
+    );
+    let rendered = result(&cmds);
+    assert_eq!(rendered["outcome"], "WARNING");
+    let body = rendered["body"].as_str().unwrap();
+    assert!(body.contains("purged") && body.contains("failed") && body.contains("denied"));
+
+    let tag = h.start("DELETE /orders");
+    let cmds = h.reply(
+        &tag,
+        &Response::Changed(
+            vec![Change {
+                resource: "orders".into(),
+                partition: None,
+                offset: None,
+                value: None,
+                error: None,
+            }]
+            .into(),
+        ),
+    );
+    assert_eq!(result(&cmds)["outcome"], "OK");
+    let tag = h.start("DELETE /orders");
+    let cmds = h.reply(&tag, &topics(&["orders"]));
+    assert_eq!(result(&cmds)["outcome"], "ERROR");
+}
+
+#[test]
+fn discovery_starts_once_the_check_is_written_past_its_target() {
+    let h = Harness::default();
+    let hints = |text: &str| {
+        h.send(event::Kind::Hints(wire::CompleteRequest {
+            check: Some(check(text)),
+            pos: text.len() as u32,
+        }))
+    };
+    assert!(hints("#target\nlocalhost:90").is_empty());
+    let text = "#target\nlocalhost:9092\n#action\n";
+    let cmds = hints(text);
+    let cmds = h.resolve(&cmds, &[]);
+    let cmds = h.reply(&named(&cmds, "driver.call").tag, &topics(&["orders"]));
+    h.failure(&named(&cmds, "driver.call").tag, "no groups");
+    assert!(hints(text).is_empty(), "a fresh discovery is not repeated");
+    assert!(complete(&h, &format!("{text}READ ")).contains(&"/orders".to_owned()));
+}
+
+#[test]
+fn action_completions_follow_the_command_grammar() {
+    let h = Harness::default();
+    let at = |action: &str| complete(&h, &format!("#target\nlocalhost:9092\n#action\n{action}"));
+    let first = at("");
+    assert!(first.contains(&"READ ".to_owned()) && !first.iter().any(|i| i.starts_with("FROM")));
+    let read = at("READ /orders ");
+    assert!(read.contains(&"FROM BEGINNING".to_owned()) && read.contains(&"LIMIT ".to_owned()));
+    assert!(!read.iter().any(|i| i.starts_with("TO ") || i == "READ "));
+    let used = at("READ /orders PARTITION 1 FROM END ");
+    assert!(
+        !used
+            .iter()
+            .any(|i| i.starts_with("PARTITION") || i.starts_with("FROM"))
+    );
+    assert_eq!(
+        at("READ /orders FROM "),
+        ["BEGINNING", "END", "LAST ", "OFFSET ", "TIMESTAMP "]
+    );
+    assert!(at("READ /orders LIMIT ").is_empty());
+    assert_eq!(at("PRODUCE /orders "), ["PARTITION "]);
+    assert_eq!(at("DELETE "), ["GROUP "]);
+    assert_eq!(at("CREATE /new "), ["PARTITIONS ", "REPLICAS "]);
+    assert!(at("RESET /svc /orders ").contains(&"TO BEGINNING".to_owned()));
+}
+
+#[test]
+fn a_blank_line_after_a_section_offers_the_unused_sections() {
+    let h = Harness::default();
+    let next = complete(&h, "#target\nkafka://127.0.0.1:9092\n");
+    for section in ["#action", "#metadata", "#options", "#payload"] {
+        assert!(
+            next.iter().any(|i| i.starts_with(section)),
+            "{section}: {next:?}"
+        );
+    }
+    assert!(!next.iter().any(|i| i.starts_with("#target")));
+    let payload = complete(
+        &h,
+        "#target\nlocalhost:9092\n#action\nPRODUCE /o\n#payload\n{}\n",
+    );
+    assert!(!payload.iter().any(|i| i.starts_with('#')));
+}
+
+#[test]
+fn a_failed_or_pending_refresh_keeps_the_names_already_discovered() {
+    let h = Harness::default();
+    let text = "#target\nlocalhost:9092\n#action\nREAD ";
+    let cmds = h.resolve(&h.send(event::Kind::Discover(check(text))), &[]);
+    let cmds = h.reply(&named(&cmds, "driver.call").tag, &topics(&["orders"]));
+    h.failure(&named(&cmds, "driver.call").tag, "no groups");
+    let cmds = h.resolve(&h.send(event::Kind::Discover(check(text))), &[]);
+    let call = named(&cmds, "driver.call").tag.clone();
+    assert!(
+        complete(&h, text).contains(&"/orders".to_owned()),
+        "served while refreshing"
+    );
+    h.failure(&call, "broker down");
+    assert!(
+        complete(&h, text).contains(&"/orders".to_owned()),
+        "kept after a failure"
+    );
 }
