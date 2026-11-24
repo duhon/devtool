@@ -86,25 +86,30 @@ impl Transform {
     fn resolve(call: &str, service: Option<&str>) -> Result<(Self, Vec<String>), String> {
         let defs = crate::modules::registry::function_defs(service);
         let root = crate::modules::registry::root();
-        let mut called = None;
-        let resolution = services_sdk::refs::resolve_with(
-            call,
-            &root,
-            false,
-            &mut |_, _| Err("Transform takes a jq function, not a template".into()),
-            &mut |name, args| {
-                called = Some((name.to_owned(), args.to_vec()));
-                Ok(String::new())
-            },
-        )
-        .map_err(|error| format!("Transform: {error}"))?;
-        let (name, args) = called.ok_or("Transform takes a jq function call")?;
+        let (name, args_text) = services_sdk::refs::scan(call)
+            .into_iter()
+            .find_map(|found| match found.reference {
+                services_sdk::refs::Ref::Function {
+                    name, args_text, ..
+                } => Some((name, args_text)),
+                _ => None,
+            })
+            .ok_or("Transform takes a jq function call")?;
         if !services_jq::names(&defs)
             .iter()
             .any(|(known, _)| *known == name)
         {
             return Err(format!("Transform {call}: Unknown function ${name}"));
         }
+        // The call runs on the response; the functions in its arguments run now.
+        let mut outputs = Vec::new();
+        let (args, secrets) = services_sdk::refs::call_arguments(
+            &args_text,
+            &root,
+            &mut |_, _| Err("Transform takes a jq function, not a template".into()),
+            &mut crate::editor::functions::runner(&defs, &root, &mut outputs),
+        )
+        .map_err(|error| format!("Transform {call}: {error}"))?;
         let transform = Self {
             call: call.to_owned(),
             name,
@@ -113,7 +118,7 @@ impl Transform {
             applied: false,
             shaped: None,
         };
-        Ok((transform, resolution.secrets))
+        Ok((transform, secrets))
     }
 
     /// `answer` reshaped: the one output, several as an array, none as `null`.

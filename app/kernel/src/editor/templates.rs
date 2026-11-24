@@ -215,6 +215,17 @@ pub fn argument_completion(
     }
     let partial = &args[start..];
     let query = partial.strip_prefix('"').unwrap_or(partial);
+    let unquoted = partial.trim_start();
+    if let Some(candidates) = super::references::variable_argument(root, unquoted) {
+        let from = args_col + utf16(&args[..args.len() - unquoted.len()]);
+        return Some(Completion {
+            from,
+            to: ch,
+            candidates: candidates.into_iter().take(100).collect(),
+            comma: None,
+            automatic: true,
+        });
+    }
     if matches!(query.chars().next(), Some(':' | '.')) {
         return None;
     }

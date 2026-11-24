@@ -64,6 +64,18 @@
     editorOf('console-editor').setCursor(editorOf('console-editor').lastLine(),editorOf('console-editor').getLine(editorOf('console-editor').lastLine()).length);
     await key('Enter');
   };
+  setSource(source,'#check Eager\n#target\n{{$!nope()}}');
+  assert(tokens(source,2).some(([,type])=>type?.includes('tpl-problem')),
+    `A call of an unknown function must be underlined: ${JSON.stringify(tokens(source,2))}`);
+  await expand();
+  await wait(()=>testid('console-main-status').textContent.includes('Editor · ERROR · {{$!nope()}}: Unknown function $nope'),
+    ()=>`An eager call that fails must report in the check status: ${testid('console-main-status').textContent}`);
+  assert(!document.querySelector('[data-testid="app-notice"]'),'Editor errors must stay out of the top banner');
+  setSource(source,'#check Arguments\n#target\n');
+  await type('{{$nope(.');
+  await wait(()=>entries().some(item=>item.text==='.var.'),
+    ()=>`A . argument of a function call must complete the variable tree: ${JSON.stringify(entries().map(item=>item.text))}`);
+  await key('Escape');
   setSource(source,call);
   await key('Space');
   await pick('my_create_book2');

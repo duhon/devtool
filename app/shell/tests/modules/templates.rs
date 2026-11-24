@@ -392,9 +392,8 @@ fn expand(source: &str, line: usize) -> Option<Result<String, String>> {
 fn enter_replaces_the_section_body_and_regenerates_after_edits() {
     services_shell::link();
     let call = "#check\n#target @url_shared(\"checkout\", \"qa\")";
-    let expanded = format!(
-        "{call}\nhttps://checkout.{{{{:base_domain}}}}.{{{{.var.region}}}}.qa.example"
-    );
+    let expanded =
+        format!("{call}\nhttps://checkout.{{{{:base_domain}}}}.{{{{.var.region}}}}.qa.example");
     assert_eq!(expand(call, 1).unwrap().unwrap(), expanded);
     // Edited arguments overwrite manual changes of the body; later sections stay.
     let edited =
@@ -601,13 +600,22 @@ fn enter_on_a_line_with_eager_calls_replaces_them() {
         .map(|candidate| (candidate.text, candidate.label.unwrap_or_default()))
         .collect::<Vec<_>>()
     };
+    let kinds = |signature: &str| {
+        std::iter::once((String::new(), signature.to_owned()))
+            .chain([".", ":", "$", "@", "\""].map(|kind| (kind.to_owned(), kind.to_owned())))
+            .collect::<Vec<_>>()
+    };
     assert_eq!(
         suggest("#check\n#target\n{{$!target(\"a, b\", {{:a}}, "),
-        [(String::new(), "target($s; $e; «$n»)".to_owned())]
+        kinds("target($s, $e, «$n»)")
     );
     assert_eq!(
         suggest("#check\n#target\n{{$target(\"{{:a}}\", "),
-        [(String::new(), "target($s; «$e»; $n)".to_owned())]
+        kinds("target($s, «$e», $n)")
+    );
+    assert_eq!(
+        suggest("#check\n#target\n{{$target(1, \"x"),
+        [(String::new(), "target($s, «$e», $n)".to_owned())]
     );
 }
 

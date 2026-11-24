@@ -267,6 +267,43 @@ pub fn highlight(
     (tokens, line.state)
 }
 
+/// `tokens` (each ends at its offset) with `class` added where `ranges` cover them; the
+/// tokens keep their own kinds, so a call stays colored under its underline.
+pub fn mark_ranges(
+    tokens: Vec<(usize, Option<String>)>,
+    ranges: &[(usize, usize)],
+    class: &str,
+) -> Vec<(usize, Option<String>)> {
+    if ranges.is_empty() {
+        return tokens;
+    }
+    let mut out = Vec::with_capacity(tokens.len() + ranges.len() * 2);
+    let mut start = 0;
+    for (end, kind) in tokens {
+        let mut cuts: Vec<usize> = ranges
+            .iter()
+            .flat_map(|&(from, to)| [from, to])
+            .filter(|&cut| cut > start && cut < end)
+            .collect();
+        cuts.push(end);
+        cuts.sort_unstable();
+        cuts.dedup();
+        let mut from = start;
+        for cut in cuts {
+            let marked = ranges.iter().any(|&(a, b)| a <= from && cut <= b);
+            let kind = match (&kind, marked) {
+                (Some(kind), true) => Some(format!("{kind} {class}")),
+                (None, true) => Some(class.to_owned()),
+                (kind, false) => kind.clone(),
+            };
+            out.push((cut, kind));
+            from = cut;
+        }
+        start = end;
+    }
+    out
+}
+
 /// `tokens` with `marks` laid over them: a token keeps its kind outside the marks.
 fn overlay(tokens: Vec<Token>, marks: &[Token]) -> Vec<Token> {
     if marks.is_empty() {
@@ -604,6 +641,22 @@ mod tests {
         let marks = parameter_marks("x{{a}}{{:a}}{{ b }}{{c}}", &["a".into(), "b".into()]);
         let spans: Vec<_> = marks.iter().map(|mark| (mark.start, mark.len)).collect();
         assert_eq!(spans, [(1, 5), (12, 7)]);
+    }
+
+    #[test]
+    fn ranges_add_their_class_and_keep_the_kinds_under_them() {
+        let some = |end: usize, kind: &str| (end, Some(kind.to_owned()));
+        let tokens = vec![some(2, "a"), (5, None), some(9, "b")];
+        assert_eq!(
+            mark_ranges(tokens, &[(1, 7)], "tpl-problem"),
+            [
+                some(1, "a"),
+                some(2, "a tpl-problem"),
+                some(5, "tpl-problem"),
+                some(7, "b tpl-problem"),
+                some(9, "b"),
+            ]
+        );
     }
 
     #[test]

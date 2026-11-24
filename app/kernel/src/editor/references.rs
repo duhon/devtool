@@ -171,26 +171,17 @@ pub fn complete(
         };
         let name_end = call.find(|c: char| !refs_word(c)).unwrap_or(call.len());
         match call[name_end..].strip_prefix('(') {
-            // Inside the arguments: the signature, its current parameter marked; the item
-            // inserts nothing.
+            // Inside the arguments: what the current one completes.
             Some(args) => {
-                return super::functions::current_argument(args)
-                    .and_then(|index| {
-                        super::functions::signature_hint(defs, &call[..name_end], index)
-                    })
-                    .map(|signature| Completion {
-                        from: ch,
-                        to: ch,
-                        candidates: vec![candidate(
-                            String::new(),
-                            Some(signature),
-                            "jq function".into(),
-                            false,
-                        )],
-                        comma: None,
-                        automatic: true,
-                    })
-                    .unwrap_or_default();
+                let col = utf16(&before[..before.len() - args.len()]);
+                return function_argument(
+                    (root, defs),
+                    (library, service, section, calls),
+                    &call[..name_end],
+                    (col, args),
+                    ch,
+                )
+                .unwrap_or_default();
             }
             None => super::functions::name_candidates(defs, call, open),
         }
@@ -248,6 +239,128 @@ pub fn complete(
         comma: None,
         automatic: true,
     }
+}
+
+/// A candidate of a reference without its braces: what an argument of a call writes.
+fn bare(mut candidate: Candidate) -> Candidate {
+    if let Some(text) = candidate.text.strip_prefix("{{") {
+        candidate.text = text.strip_suffix("}}").unwrap_or(text).to_owned();
+    }
+    candidate
+}
+
+/// The variables an argument `partial` (`.path` or `:query`) completes, without braces.
+pub(super) fn variable_argument(root: &Root, partial: &str) -> Option<Vec<Candidate>> {
+    let candidates = if let Some(path) = partial.strip_prefix('.') {
+        tree(root, path)
+    } else if let Some(query) = partial.strip_prefix(':') {
+        search(root, query)
+    } else {
+        return None;
+    };
+    Some(candidates.into_iter().map(bare).collect())
+}
+
+/// What the current argument of the call of the jq function `name` completes, `args` being
+/// the text after its `(` up to the cursor, from UTF-16 column `col`: a variable for `.` and
+/// `:`, a function for `$` and a template for `@` (their own arguments in turn), the kinds of
+/// argument when nothing is typed; the signature, its current parameter marked, otherwise.
+fn function_argument(
+    (root, defs): (&Root, &str),
+    (library, service, section, calls): (&Library, &str, &str, bool),
+    name: &str,
+    (col, args): (usize, &str),
+    ch: usize,
+) -> Option<Completion> {
+    let (index, start) = super::functions::argument_at(args)?;
+    let typed = &args[start..];
+    let partial = typed.trim_start();
+    let from = col + utf16(&args[..start]) + utf16(&typed[..typed.len() - partial.len()]);
+    let signature = super::functions::signature_hint(defs, name, index);
+    let found = |candidates: Vec<Candidate>| {
+        let mut candidates = candidates;
+        candidates.truncate(100);
+        Completion {
+            from,
+            to: ch,
+            candidates,
+            comma: None,
+            automatic: true,
+        }
+    };
+    if let Some(candidates) = variable_argument(root, partial) {
+        return Some(found(candidates));
+    }
+    if let Some(call) = partial.strip_prefix('$') {
+        let name_end = call.find(|c: char| !refs_word(c)).unwrap_or(call.len());
+        return Some(match call[name_end..].strip_prefix('(') {
+            Some(inner) => {
+                let col = from + utf16(&partial[..partial.len() - inner.len()]);
+                return function_argument(
+                    (root, defs),
+                    (library, service, section, calls),
+                    &call[..name_end],
+                    (col, inner),
+                    ch,
+                );
+            }
+            None => found(
+                super::functions::name_candidates(defs, call, "$")
+                    .into_iter()
+                    .map(|mut candidate| {
+                        if let Some(text) = candidate.text.strip_suffix("}}") {
+                            candidate.text = text.to_owned();
+                        }
+                        candidate
+                    })
+                    .collect(),
+            ),
+        });
+    }
+    if let Some(call) = partial.strip_prefix('@').filter(|_| calls) {
+        if let Some((template, inner)) = super::templates::open_call(partial) {
+            let col = from + utf16(&partial[..partial.len() - inner.len()]);
+            let template = templates::visible(library, service, section)
+                .into_iter()
+                .find(|known| known.name == template)?;
+            return argument_completion(&template, (root, defs), (col, inner), "", ")", ch);
+        }
+        return Some(found(name_candidates(
+            library, service, section, call, "@", "",
+        )));
+    }
+    if partial.is_empty() {
+        let mut candidates: Vec<Candidate> = signature
+            .map(|signature| candidate(String::new(), Some(signature), "jq function".into(), false))
+            .into_iter()
+            .collect();
+        let mut kinds = vec![
+            (".", "Walk the variable tree"),
+            (":", "Search every variable"),
+            ("$", "Call a jq function"),
+            ("\"", "Text"),
+        ];
+        if calls {
+            kinds.insert(3, ("@", "Call a template"));
+        }
+        candidates.extend(kinds.into_iter().map(|(kind, detail)| {
+            candidate(kind.into(), Some(kind.into()), detail.into(), kind != "\"")
+        }));
+        return Some(found(candidates));
+    }
+    let signature = signature?;
+    Some(Completion {
+        from: ch,
+        to: ch,
+        candidates: vec![candidate(
+            String::new(),
+            Some(signature),
+            "jq function".into(),
+            false,
+        )],
+        comma: None,
+        automatic: true,
+    })
 }
 
 /// A reference under the cursor: its UTF-16 columns and what it resolves to.
@@ -360,6 +473,22 @@ pub fn definition_problems(root: &Root, defs: &str, line: &str) -> Vec<(usize, u
         .collect()
 }
 
+/// The byte ranges of the function calls in `line` that name no function of `defs`.
+pub fn unknown_calls(defs: &str, line: &str) -> Vec<(usize, usize)> {
+    if !line.contains("{{$") {
+        return Vec::new();
+    }
+    let known = services_jq::names(defs);
+    refs::scan(line)
+        .into_iter()
+        .filter(|found| {
+            matches!(&found.reference, refs::Ref::Function { name, .. }
+                if !known.iter().any(|(known, _)| known == name))
+        })
+        .map(|found| (found.start, found.end))
+        .collect()
+}
+
 /// The value (or the error) of the variable reference or function call at column `ch` of
 /// `line`; in the parameters of a template definition, its options. `defs` are the jq
 /// functions a call may name.
@@ -443,6 +572,13 @@ pub fn hover(root: &Root, defs: &str, line: &str, ch: usize) -> Option<Hover> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn calls_of_unknown_functions_are_found() {
+        let line = r#"x {{$!k8s("a")}} {{$env()}} {{:token}}"#;
+        assert_eq!(unknown_calls("def env: 1;", line), [(2, 16)]);
+        assert!(unknown_calls("def env: 1; def k8s(a): a;", line).is_empty());
+    }
 
     fn root() -> Root {
         let parse = |text| refs::parse_lines(text).unwrap();
@@ -586,13 +722,27 @@ mod tests {
             .map(|candidate| (candidate.text, candidate.label.unwrap_or_default()))
             .collect::<Vec<_>>()
         };
-        assert_eq!(hint("{{$sub("), [(String::new(), "sub(«k»)".to_owned())]);
+        let kinds = [".", ":", "$", "@", "\""].map(|kind| (kind.to_owned(), kind.to_owned()));
+        let signature = (String::new(), "sub(«k»)".to_owned());
+        assert_eq!(
+            hint("{{$sub("),
+            [vec![signature.clone()], kinds.to_vec()].concat()
+        );
+        assert!(complete_at("{{$sub(.var.ho").contains(&".var.hosts.$0".to_owned()));
+        assert!(complete_at("{{$sub( :reg").contains(&":region".to_owned()));
+        assert_eq!(complete_at("{{$sub($fi"), ["$first"]);
+        assert!(complete_at("{{$sub($sub(:reg").contains(&":region".to_owned()));
+        assert_eq!(
+            hint("{{$sub($sub(\"a\"), ")[0].1,
+            "sub(k) — takes 1 argument(s)",
+            "a closed nested call is one argument"
+        );
         assert_eq!(
             hint("{{$!sub(\"a, b"),
             [(String::new(), "sub(«k»)".to_owned())]
         );
         assert!(hint("{{$sub(\"a\")").is_empty());
-        assert!(hint("{{$nope(").is_empty());
+        assert_eq!(hint("{{$nope("), kinds.to_vec());
         assert_eq!(
             complete_at("{{$!f"),
             ["{{$!first}}"],

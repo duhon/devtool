@@ -796,6 +796,7 @@ pub fn children_at(root: &Root, path: &str) -> Vec<Child> {
 fn split_arguments(text: &str) -> Vec<&str> {
     let mut parts = Vec::new();
     let (mut quoted, mut escaped, mut depth, mut start) = (false, false, 0usize, 0);
+    let mut parens = 0usize;
     for (index, c) in text.char_indices() {
         if quoted {
             match c {
@@ -809,7 +810,9 @@ fn split_arguments(text: &str) -> Vec<&str> {
                 '"' => quoted = true,
                 '{' => depth += 1,
                 '}' => depth = depth.saturating_sub(1),
-                ',' if depth == 0 => {
+                '(' => parens += 1,
+                ')' => parens = parens.saturating_sub(1),
+                ',' if depth == 0 && parens == 0 => {
                     parts.push(&text[start..index]);
                     start = index + 1;
                 }
@@ -846,8 +849,43 @@ pub struct Resolution {
     pub secrets: Vec<String>,
 }
 
-/// Runs the function `name` on its arguments; gives its result as text.
-pub type Function<'a> = dyn FnMut(&str, &[Value]) -> Result<String, String> + 'a;
+/// Runs the function `name` on its arguments; gives its outputs.
+pub type Function<'a> = dyn FnMut(&str, &[Value]) -> Result<Vec<Value>, String> + 'a;
+
+/// Outputs as text: a string as it is, any other value as compact JSON, one per line.
+pub fn outputs_text(outputs: &[Value]) -> String {
+    outputs
+        .iter()
+        .map(|value| match value {
+            Value::String(text) => text.clone(),
+            other => other.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Outputs as one argument value: the single output, or an array of them.
+fn outputs_value(outputs: Vec<Value>) -> Value {
+    match <[Value; 1]>::try_from(outputs) {
+        Ok([value]) => value,
+        Err(outputs) => Value::Array(outputs),
+    }
+}
+
+/// A bare call argument `$name`, `$name(args)`, `@name` or `@name(args)`: its name and the
+/// text between its parentheses.
+fn bare_call(arg: &str) -> Option<(&str, &str)> {
+    let name_end = arg.find(|c| !word(c)).unwrap_or(arg.len());
+    let (name, rest) = arg.split_at(name_end);
+    if name.is_empty() {
+        return None;
+    }
+    if rest.is_empty() {
+        return Some((name, ""));
+    }
+    let args = rest.strip_prefix('(')?.strip_suffix(')')?;
+    Some((name, args))
+}
 
 struct Resolver<'a> {
     root: &'a Root,
@@ -877,7 +915,8 @@ impl Resolver<'_> {
 
     /// The values of a function call's arguments: a `"literal"` with its references resolved
     /// is a string; a `:path`/`.path` is the string it selects, a hash as a JSON object, or
-    /// an array when it selects several nodes.
+    /// an array when it selects several nodes; a `$name(args)` is the function's output (an
+    /// array of several), a `@name(args)` the template's expansion.
     fn arguments(&mut self, args_text: &str) -> Result<Vec<Value>, String> {
         let mut values = Vec::new();
         if args_text.trim().is_empty() {
@@ -888,6 +927,28 @@ impl Resolver<'_> {
             if arg.starts_with('"') {
                 let literal = parse_literal(arg)?;
                 values.push(Value::String(self.text(&literal, false)?));
+                continue;
+            }
+            if let Some(call) = arg.strip_prefix('$') {
+                let (name, args_text) = bare_call(call)
+                    .ok_or_else(|| format!("invalid argument `{arg}`: use $name(args)"))?;
+                self.enter(arg.to_owned())?;
+                let args = self
+                    .arguments(args_text)
+                    .map_err(|e| format!("{arg}: {e}"))?;
+                self.chain.pop();
+                let outputs = (self.function)(name, &args).map_err(|e| format!("{arg}: {e}"))?;
+                values.push(outputs_value(outputs));
+                continue;
+            }
+            if let Some(call) = arg.strip_prefix('@') {
+                let (name, args_text) = bare_call(call)
+                    .ok_or_else(|| format!("invalid argument `{arg}`: use @name(args)"))?;
+                let body = (self.expand)(name, args_text).map_err(|e| format!("{arg}: {e}"))?;
+                self.enter(arg.to_owned())?;
+                let text = self.text(&body, false)?;
+                self.chain.pop();
+                values.push(Value::String(text));
                 continue;
             }
             let reference = match arg.chars().next() {
@@ -903,7 +964,9 @@ impl Resolver<'_> {
                 _ => None,
             }
             .ok_or_else(|| {
-                format!("invalid argument `{arg}`: use \"literal\", :path or .path")
+                format!(
+                    "invalid argument `{arg}`: use \"literal\", :path, .path, $function(…) or @template(…)"
+                )
             })?;
             let selection = eval(self.root, &reference).unwrap_or_default();
             if selection.items.is_empty() {
@@ -976,8 +1039,9 @@ impl Resolver<'_> {
                         .arguments(args_text)
                         .map_err(|e| format!("{shown}: {e}"))?;
                     self.chain.pop();
-                    let result =
+                    let outputs =
                         (self.function)(name, &args).map_err(|e| format!("{shown}: {e}"))?;
+                    let result = outputs_text(&outputs);
                     self.secrets_in(&result);
                     out.push_str(&if json { escape_json(&result) } else { result });
                 }
@@ -1059,6 +1123,26 @@ pub fn resolve_with(
         text,
         secrets: resolver.secrets,
     })
+}
+
+/// The values of a call's arguments, `args_text` being the text between its parentheses, as
+/// [`resolve_with`] passes them to the function; and the secret values they hold.
+pub fn call_arguments(
+    args_text: &str,
+    root: &Root,
+    expand_call: &mut dyn FnMut(&str, &str) -> Result<String, String>,
+    function: &mut Function<'_>,
+) -> Result<(Vec<Value>, Vec<String>), String> {
+    let mut resolver = Resolver {
+        root,
+        expand: expand_call,
+        function,
+        chain: Vec::new(),
+        secrets: Vec::new(),
+    };
+    let values = resolver.arguments(args_text)?;
+    resolver.secrets.dedup();
+    Ok((values, resolver.secrets))
 }
 
 #[cfg(test)]
@@ -1302,7 +1386,10 @@ mod tests {
         let mut seen = Vec::new();
         let mut function = |name: &str, args: &[Value]| {
             seen.push((name.to_owned(), args.to_vec()));
-            Ok(format!("{{{{:name}}}} \"{}\"", args.len()))
+            Ok(vec![Value::from(format!(
+                "{{{{:name}}}} \"{}\"",
+                args.len()
+            ))])
         };
         let text = r#"{{$f("{{:name}}-b", :raw, .tree.alpha, :alpha~)}}"#;
         let out = resolve_with(text, &r, true, &mut no_calls, &mut function).unwrap();
@@ -1318,18 +1405,11 @@ mod tests {
             ]
         );
         let out = resolve_with("{{$s()}}", &r, false, &mut no_calls, &mut |_, _| {
-            Ok("key t\"k".into())
+            Ok(vec![Value::from("key t\"k")])
         });
         assert_eq!(out.unwrap().secrets, ["t\"k"]);
         let fail = |text: &str| {
-            resolve_with(
-                text,
-                &r,
-                false,
-                &mut no_calls,
-                &mut |_, _| Ok(String::new()),
-            )
-            .unwrap_err()
+            resolve_with(text, &r, false, &mut no_calls, &mut |_, _| Ok(Vec::new())).unwrap_err()
         };
         assert!(fail("{{$f(x)}}").contains("not a parameter in scope"));
         assert!(fail("{{$f(:nope)}}").contains("Unknown variable {{:nope}}"));
@@ -1360,9 +1440,39 @@ mod tests {
             &r,
             false,
             &mut no_calls,
-            &mut |name, args| Ok(format!("{name}={}", args[0])),
+            &mut |name, args| Ok(vec![Value::from(format!("{name}={}", args[0]))]),
         );
         assert_eq!(out.unwrap().text, "f=\"x\"");
+    }
+
+    #[test]
+    fn bare_function_and_template_calls_are_arguments() {
+        let r = root(&[("var", "a: x")]);
+        let mut seen = Vec::new();
+        let mut function = |name: &str, args: &[Value]| {
+            seen.push((name.to_owned(), args.to_vec()));
+            Ok(match name {
+                "two" => vec![Value::from(1), Value::from(2)],
+                "obj" => vec![serde_json::json!({"k": args[0]})],
+                _ => vec![Value::from("done")],
+            })
+        };
+        let mut expand = |name: &str, args: &str| Ok(format!("{name}<{args}>{{{{:a}}}}"));
+        let text = r#"{{$f(:a, $obj(:a, "ignored"), $two, @t("p, q"), "{{$two()}}")}}"#;
+        let out = resolve_with(text, &r, false, &mut expand, &mut function).unwrap();
+        assert_eq!(out.text, "done");
+        let (args, _) = call_arguments("$obj(:a), :a", &r, &mut expand, &mut function).unwrap();
+        assert_eq!(args, [serde_json::json!({"k": "x"}), Value::from("x")]);
+        assert_eq!(
+            seen[seen.len() - 2].1,
+            [
+                Value::from("x"),
+                serde_json::json!({"k": "x"}),
+                serde_json::json!([1, 2]),
+                Value::from("t<\"p, q\">x"),
+                Value::from("1\n2"),
+            ]
+        );
     }
 
     #[test]

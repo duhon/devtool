@@ -59,14 +59,13 @@ pub fn runner<'a>(
     defs: &'a str,
     root: &'a Root,
     outputs: &'a mut Vec<Value>,
-) -> impl FnMut(&str, &[Value]) -> Result<String, String> + 'a {
+) -> impl FnMut(&str, &[Value]) -> Result<Vec<Value>, String> + 'a {
     let mut input = None;
     move |name, args| {
         let input = input.get_or_insert_with(|| self::input(root));
         let out = run(defs, name, args, input)?;
-        let text = services_jq::text(&out);
-        outputs.extend(out);
-        Ok(text)
+        outputs.extend(out.iter().cloned());
+        Ok(out)
     }
 }
 
@@ -99,12 +98,12 @@ pub fn options(reference: &str, root: &Root, defs: &str) -> Result<Vec<refs::Lis
         .collect())
 }
 
-/// `name(a; b)` as jq writes the definition.
+/// `name(a, b)`: the function as a call names its parameters.
 fn signature(name: &str, params: &[String]) -> String {
     if params.is_empty() {
         name.to_owned()
     } else {
-        format!("{name}({})", params.join("; "))
+        format!("{name}({})", params.join(", "))
     }
 }
 
@@ -138,10 +137,15 @@ pub fn name_candidates(defs: &str, query: &str, open: &str) -> Vec<Candidate> {
 }
 
 /// The index of the argument the cursor is in, `args` being the text of an unfinished call
-/// after its `(`: commas count outside quoted literals and nested `{{…}}`; `None` once the
-/// call's `)` closes it.
+/// after its `(`: commas count outside quoted literals, nested `{{…}}` and nested calls'
+/// parentheses; `None` once the call's `)` closes it.
 pub fn current_argument(args: &str) -> Option<usize> {
-    let (mut index, mut depth) = (0, 0usize);
+    argument_at(args).map(|(index, _)| index)
+}
+
+/// [`current_argument`] and the byte offset in `args` where that argument starts.
+pub fn argument_at(args: &str) -> Option<(usize, usize)> {
+    let (mut index, mut depth, mut parens, mut start) = (0, 0usize, 0usize, 0);
     let (mut quoted, mut escaped) = (false, false);
     let mut chars = args.char_indices().peekable();
     while let Some((at, c)) = chars.next() {
@@ -164,16 +168,21 @@ pub fn current_argument(args: &str) -> Option<usize> {
                 depth -= 1;
                 chars.next();
             }
-            ',' if depth == 0 => index += 1,
+            '(' if depth == 0 => parens += 1,
+            ')' if depth == 0 && parens > 0 => parens -= 1,
+            ',' if depth == 0 && parens == 0 => {
+                index += 1;
+                start = at + 1;
+            }
             ')' if depth == 0 => return None,
             _ => {}
         }
     }
-    Some(index)
+    Some((index, start))
 }
 
 /// The signature hint of the function `name` of `defs` while argument `index` is typed:
-/// `name(a; «b»; c)`. `None` for an unknown function.
+/// `name(a, «b», c)`. `None` for an unknown function.
 pub fn signature_hint(defs: &str, name: &str, index: usize) -> Option<String> {
     let (_, params) = services_jq::names(defs)
         .into_iter()
@@ -194,7 +203,7 @@ pub fn signature_hint(defs: &str, name: &str, index: usize) -> Option<String> {
     } else {
         String::new()
     };
-    Some(format!("{name}({}){extra}", shown.join("; ")))
+    Some(format!("{name}({}){extra}", shown.join(", ")))
 }
 
 /// `text` with each eager call `{{$!name(args)}}` replaced by its result (a string as it is,
@@ -292,10 +301,13 @@ mod tests {
         assert_eq!(current_argument(r#"{{.a.{{:b}}, x}}, "#), Some(1));
         assert_eq!(current_argument(r#""a")"#), None);
         assert_eq!(current_argument(r#""a)", "#), Some(1));
+        assert_eq!(current_argument("$f(1, 2), @t(x"), Some(1));
+        assert_eq!(current_argument("$f(1))"), None);
+        assert_eq!(argument_at("a, $g(b, c), d"), Some((2, 12)));
         let defs = "def target($s; $e; $n): .; def one: 1;";
         assert_eq!(
             signature_hint(defs, "target", 1).as_deref(),
-            Some("target($s; «$e»; $n)")
+            Some("target($s, «$e», $n)")
         );
         assert_eq!(
             signature_hint(defs, "one", 0).as_deref(),

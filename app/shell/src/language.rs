@@ -573,7 +573,7 @@ impl Extension for Language {
             .checked_sub(1)
             .map(|index| &document.sorted[index])
             .filter(|region| line < region.end);
-        Some(language::highlight(
+        let (tokens, next) = language::highlight(
             &Modules,
             service,
             self.section.as_deref(),
@@ -581,7 +581,14 @@ impl Extension for Language {
             (line, text),
             state,
             &marks,
-        ))
+        );
+        drop(document);
+        let unknown = if self.output(line) || !text.contains("{{$") {
+            Vec::new()
+        } else {
+            language::references::unknown_calls(&self.function_defs(), text)
+        };
+        Some((language::mark_ranges(tokens, &unknown, "tpl-problem"), next))
     }
 
     fn fold(&self, lines: &[String], line: usize) -> Option<Option<Fold>> {

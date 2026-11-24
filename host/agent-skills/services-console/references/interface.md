@@ -79,7 +79,8 @@ Undock into separate window.
   the Global ones, so they win on a clash). The input `.` is the whole variable
   tree; arguments use the template call syntax and become JSON: a literal is a
   string, a `:path` / `.path` that selects one string is that string, a hash is an
-  object, several matches are an array. String outputs are inserted as is, other
+  object, several matches an array; a bare `$g(..)` argument is g's JSON value,
+  a bare `@t(..)` its expansion; commas split arguments. String outputs are inserted as is, other
   outputs as compact JSON, several outputs joined by newlines; the result is data
   (not resolved again) and JSON-escaped in JSON bodies. A result containing a
   secret value is masked in History. Inside a template body a bare parameter
@@ -91,14 +92,13 @@ Undock into separate window.
   shows the first error in its status with the tab and line. In `#options`,
   `Transform: {{$name(args)}}` runs a function on the run's result instead (`.` is the
   data the service is about to show); see Console options in the services topic.
-  Inside the arguments completion shows only the signature (`target($s; «$e»; $n)`,
-  the current parameter marked). `{{$!name(args)}}` is an eager call: when a template
+  In the arguments completion shows the signature (`target($s, «$e», $n)`)
+  plus variables after `.`/`:`, functions after `$`, templates after `@`. `{{$!name(args)}}` is an eager call: when a template
   expands (`#section @name(...)` or `#check ... @name(...)` + Enter) and on Enter at
   the end of a console line holding it, it is replaced by its result (inserted
   verbatim: `{{...}}` in the result stay references). A failing call, unresolved
-  argument or a result holding a secret value replaces nothing and shows the error
-  (use `{{$name(args)}}` for secrets); left in the text it resolves at send time
-  like `{{$name(args)}}`.
+  argument or a result holding a secret replaces nothing and shows the error
+  (use `{{$name(args)}}` for secrets); left in the text it resolves at send time.
 - Variables contains the session's variables and the read-only Environment.
   Dictionary contains named sets. Read the variables topic before explaining their behavior.
 - The main status strip and Debug belong only to the highlighted check in the
@@ -225,8 +225,8 @@ Settings has the tabs Modules, Sources and Agent; without the native host only
 Agent is shown. Settings → Agent holds the defaults for new Agent chats; read the
 `agent` topic.
 Settings → Modules is a table with a row per module and source: installed and
-newest versions with Install, Update and Remove. Its first row is the
-application itself, updated the same way and never removed.
+newest versions with Install, Update and Remove; Update all updates every
+installed one. The first row is the app, updated last, never removed.
 Settings → Sources lists named sources, GitHub repositories or local folders,
 that supply modules and shared Dictionary sets, templates, hints and skills.
 The application checks them automatically; the user applies a source's changes
