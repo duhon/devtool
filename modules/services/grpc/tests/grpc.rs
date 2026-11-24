@@ -10,7 +10,7 @@ use services_sdk::grpc::reflection::{
     ServiceResponse,
 };
 use services_sdk::lang::marker;
-use services_sdk::{Check, Cmd, DriverCall, Event, Failure, Module, Section};
+use services_sdk::{Check, Cmd, DriverCall, Event, Failure, Linked, Module, Section, wire};
 
 const RUN: &str = "console:grpc:1";
 
@@ -507,6 +507,64 @@ fn hints_list_services_and_discover_reports_failures() {
         statuses(&grpc.update(Event::Discover(check(&with_proto("Unary", "{}"))))),
         vec!["Discovery · OK"]
     );
+}
+
+/// Sets [`services_sdk::now`] for this thread: the SDK sets it from each encoded event.
+fn at(now: f64) {
+    let request = wire::Request {
+        kind: Some(wire::request::Kind::Update(wire::UpdateRequest {
+            event: Some(wire::Event {
+                now,
+                ..wire::Event::default()
+            }),
+            view: false,
+        })),
+    };
+    Linked::<Grpc>::default().call(&request.encode_to_vec());
+}
+
+#[test]
+fn stale_reflection_is_served_while_hints_ask_again() {
+    let mut grpc = Grpc::default();
+    let text = "#target\ngrpc://localhost:50051/";
+    let hints = |grpc: &mut Grpc| {
+        grpc.update(Event::Hints {
+            check: check(text),
+            pos: text.len() as u32,
+        })
+    };
+    let services = || ReflectionResponse {
+        list_services_response: Some(ListServiceResponse {
+            service: vec![ServiceResponse {
+                name: "fixture.Echo".into(),
+            }],
+        }),
+        ..ReflectionResponse::default()
+    };
+    at(1000.0);
+    let (tag, _, _) = reflection_call(&hints(&mut grpc));
+    grpc.update(Event::Reply {
+        tag,
+        result: Ok(answer(0, Some(services()))),
+    });
+    at(1000.0 + 599_999.0);
+    assert!(hints(&mut grpc).is_empty());
+    at(1000.0 + 600_000.0);
+    assert_eq!(
+        grpc.services(&check(text), "grpc://localhost:50051"),
+        ["fixture.Echo"]
+    );
+    let (tag, _, ask) = reflection_call(&hints(&mut grpc));
+    assert_eq!(ask, Ask::ListServices("*".into()));
+    grpc.update(Event::Reply {
+        tag,
+        result: Err(Failure::new("connection refused")),
+    });
+    assert_eq!(
+        grpc.services(&check(text), "grpc://localhost:50051"),
+        ["fixture.Echo"]
+    );
+    assert!(hints(&mut grpc).is_empty(), "a failure waits too");
 }
 
 #[test]

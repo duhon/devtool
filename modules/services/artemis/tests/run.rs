@@ -11,8 +11,9 @@ type Cmds = Vec<(String, String, Value)>;
 
 const RUN: &str = "console:artemis:1";
 
+/// The module and how far its clock is past the start.
 #[derive(Default)]
-struct Module(Linked<Artemis>);
+struct Module(Linked<Artemis>, std::cell::Cell<f64>);
 
 fn check(text: &str) -> wire::Check {
     let mut sections: Vec<wire::Section> = vec![];
@@ -43,7 +44,7 @@ impl Module {
             kind: Some(request::Kind::Update(wire::UpdateRequest {
                 event: Some(wire::Event {
                     kind: Some(kind),
-                    now: 1_000.0,
+                    now: 1_000.0 + self.1.get(),
                 }),
                 view: false,
             })),
@@ -297,4 +298,36 @@ fn discovery_feeds_action_completion() {
         pos: source.len() as u32,
     }));
     assert!(again.is_empty());
+    module.1.set(600_000.0);
+    let stale = module.send(event::Kind::Hints(wire::CompleteRequest {
+        check: Some(check(source)),
+        pos: source.len() as u32,
+    }));
+    assert_eq!(stale[0].1, "status.set", "{stale:?}");
+    let cmds = module.resolve(&stale, &[]);
+    assert_eq!(names(&cmds), [("discover:2:call:0", "driver.call")]);
+    let failed = module.send(event::Kind::Reply(wire::Reply {
+        tag: "discover:2:call:0".into(),
+        ok: None,
+        error: Some(services_sdk::Failure::new("down")),
+    }));
+    assert!(failed[0].2["text"].as_str().unwrap().contains("ERROR"));
+    let bytes = wire::Request {
+        kind: Some(request::Kind::Complete(wire::CompleteRequest {
+            check: Some(check(source)),
+            pos: source.len() as u32,
+        })),
+    }
+    .encode_to_vec();
+    let answer = wire::Answer::decode(module.0.call(&bytes).as_slice()).unwrap();
+    let Some(answer::Kind::Completions(completions)) = answer.kind else {
+        panic!("completions: {answer:?}")
+    };
+    assert!(
+        completions
+            .items
+            .iter()
+            .any(|item| item.label.contains("orders")),
+        "{completions:?}"
+    );
 }

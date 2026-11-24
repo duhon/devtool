@@ -4,8 +4,10 @@
 //!
 //! What a check needs is the editor's to say ([`editor::needs`]) from its text and the cursor;
 //! discovery fetches what is missing and asks again after every answer, so a resource found
-//! leads to its object names. A key is tried once per context: a failed call is not repeated
-//! until `Event::Discover` drops the cache of the check's context (and the contexts). Object
+//! leads to its object names. A key is tried once per context per [`CACHE_MS`]: what was found
+//! keeps being served, and the first hints after that fetch it again, replacing it only when
+//! the call succeeds; a failed call is not repeated before then, unless `Event::Discover`
+//! drops the cache of the check's context (and the contexts). Object
 //! lists, container lists and documents are bounded per context, the least recently fetched
 //! first out. A `{{…}}` variable of `#target` or `#action` is resolved through the App first.
 //! Failures never break editing: they go to the log and, for hints, to the status.
@@ -36,6 +38,8 @@ const TRIED: usize = 256;
 /// Objects read per list: names and labels only, the first page.
 const PAGE: &str = "500";
 const TIMEOUT_MS: u64 = 15_000;
+/// How long a tried key counts as known before hints fetch it again.
+const CACHE_MS: f64 = 600_000.0;
 /// Metadata-only lists; a server that does not know the form answers the full list.
 const METADATA: &str =
     "application/json;as=PartialObjectMetadataList;g=meta.k8s.io;v=v1,application/json";
@@ -156,6 +160,23 @@ impl Call {
             Call::Document { api_version, .. } => format!("OpenAPI document of {api_version}"),
         }
     }
+
+    /// The context and the key the call was tried as; `None` for the contexts.
+    fn tried(&self) -> Option<(String, String)> {
+        let (context, key) = match self {
+            Call::Contexts => return None,
+            Call::Namespaces(context) => (context, "namespaces".into()),
+            Call::Api { context, .. } => (context, "resources".into()),
+            Call::Objects { context, path } => (context, format!("objects:{path}")),
+            Call::Containers { context, path } => (context, format!("containers:{path}")),
+            Call::Index(context) => (context, "index".into()),
+            Call::Document {
+                context,
+                api_version,
+            } => (context, format!("document:{api_version}")),
+        };
+        Some((context.clone(), key))
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -170,6 +191,7 @@ enum Group {
 struct Loading {
     core: Part,
     named: Part,
+    failed: bool,
 }
 
 #[derive(Debug)]
@@ -199,7 +221,17 @@ struct Cluster {
     /// The `paths` of the OpenAPI index.
     index: Option<Rc<Value>>,
     documents: Vec<(String, Rc<Document>)>,
-    tried: BTreeSet<String>,
+    /// When each key was last tried, or found.
+    tried: BTreeMap<String, f64>,
+}
+
+impl Cluster {
+    /// Tried longer than [`CACHE_MS`] ago.
+    fn stale(&self, key: &str) -> bool {
+        self.tried
+            .get(key)
+            .is_some_and(|at| services_sdk::now() - at >= CACHE_MS)
+    }
 }
 
 fn remember<T>(list: &mut Vec<(String, T)>, key: String, value: T, bound: usize) {
@@ -230,7 +262,8 @@ pub struct Discovery {
     resolver: Resolver<Mode>,
     contexts: Option<Rc<Vec<String>>>,
     current: Option<String>,
-    contexts_tried: bool,
+    /// When the contexts were last tried, or found.
+    contexts_tried: Option<f64>,
     /// Most recently used last.
     clusters: Vec<(String, Cluster)>,
     pending: BTreeMap<u64, Call>,
@@ -254,7 +287,7 @@ impl Discovery {
     /// The user asked to discover again: forget the cache and fetch.
     pub fn discover(&mut self, check: &Check) -> Vec<Cmd> {
         self.contexts = None;
-        self.contexts_tried = false;
+        self.contexts_tried = None;
         let mode = Mode {
             loud: true,
             reset: true,
@@ -265,7 +298,7 @@ impl Discovery {
     /// A session was restored: drop the cache.
     pub fn reset(&mut self) -> Vec<Cmd> {
         self.contexts = None;
-        self.contexts_tried = false;
+        self.contexts_tried = None;
         self.clusters.clear();
         self.last = None;
         vec![cmd::relight()]
@@ -323,19 +356,26 @@ impl Discovery {
         &mut self.clusters.last_mut().expect("a cluster").1
     }
 
-    /// Marks `key` tried in `context`; whether it was not before.
+    /// Marks `key` tried in `context`; whether it was not, or is stale.
     fn want(&mut self, context: &str, key: String) -> bool {
         let cluster = self.cluster(context);
         if cluster.tried.len() >= TRIED {
             cluster.tried.clear();
         }
-        cluster.tried.insert(key)
+        let wanted = !cluster.tried.contains_key(&key) || cluster.stale(&key);
+        if wanted {
+            cluster.tried.insert(key, services_sdk::now());
+        }
+        wanted
     }
 
     fn issue(&mut self, needs: &Needs, loud: bool) -> Vec<Cmd> {
         let mut calls: Vec<(Call, Request)> = Vec::new();
-        if !self.contexts_tried {
-            self.contexts_tried = true;
+        if self
+            .contexts_tried
+            .is_none_or(|at| services_sdk::now() - at >= CACHE_MS)
+        {
+            self.contexts_tried = Some(services_sdk::now());
             calls.push((Call::Contexts, Request::contexts()));
         }
         if let Some(context) = needs.context.as_deref() {
@@ -377,14 +417,17 @@ impl Discovery {
                     .documents
                     .iter()
                     .any(|(known, _)| known == api_version)
+                    && !cluster.stale(&format!("document:{api_version}"))
                 {
                     continue;
                 }
-                let Some(index) = cluster.index.clone() else {
-                    if self.want(context, "index".into()) {
-                        let request = Request::get(context, openapi::INDEX);
-                        calls.push((Call::Index(context.into()), request));
-                    }
+                let stale = cluster.stale("index");
+                let index = cluster.index.clone();
+                if (index.is_none() || stale) && self.want(context, "index".into()) {
+                    let request = Request::get(context, openapi::INDEX);
+                    calls.push((Call::Index(context.into()), request));
+                }
+                let Some(index) = index else {
                     continue;
                 };
                 if !self.want(context, format!("document:{api_version}")) {
@@ -437,6 +480,7 @@ impl Discovery {
             return vec![];
         };
         let label = call.label();
+        let tried = call.tried();
         let api = match &call {
             Call::Api { context, group } => Some((context.clone(), *group)),
             _ => None,
@@ -454,6 +498,13 @@ impl Discovery {
         };
         match outcome {
             Ok(next) => {
+                let now = services_sdk::now();
+                match tried {
+                    Some((context, key)) => {
+                        self.cluster(&context).tried.insert(key, now);
+                    }
+                    None => self.contexts_tried = Some(now),
+                }
                 follow = next;
                 cmds.push(cmd::relight());
             }
@@ -575,7 +626,10 @@ impl Discovery {
                     next.push((call, Request::get(context, &path)));
                 }
             }
-            Err(message) => failure = Some(message),
+            Err(message) => {
+                loading.failed = true;
+                failure = Some(message);
+            }
         }
         if loading.core.waiting == 0
             && loading.named.waiting == 0
@@ -587,7 +641,9 @@ impl Discovery {
                 .into_iter()
                 .chain(done.named.found)
                 .collect();
-            if !all.is_empty() {
+            // A partial answer fills an empty cache but does not replace a full one.
+            let partial = done.failed && cluster.resources.is_some();
+            if !all.is_empty() && !partial {
                 cluster.resources = Some(Rc::new(all));
             }
         }

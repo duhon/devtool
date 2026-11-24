@@ -352,3 +352,56 @@ fn a_transform_gets_the_decoded_reply_and_a_string_result_shows_as_text() {
     );
     assert_eq!(result["outcome"], "OK");
 }
+
+#[test]
+fn stale_discovery_is_served_and_refreshed_by_the_next_hint() {
+    let mut module = Harness::default();
+    let text = "#target\nredis://localhost:6380/0\n#action\nGET ";
+    let hint = |module: &mut Harness| {
+        let cmds = module.send(event::Kind::Hints(wire::CompleteRequest {
+            check: Some(check(text)),
+            pos: text.len() as u32,
+        }));
+        resolve(module, &cmds, &[])
+    };
+    let offered = |module: &mut Harness| {
+        module
+            .complete(text, text.len())
+            .items
+            .iter()
+            .any(|item| item.label.contains("game:1"))
+    };
+    let cmds = hint(&mut module);
+    let tag = cmds
+        .iter()
+        .find(|cmd| cmd.name == "driver.stream")
+        .unwrap()
+        .tag
+        .clone();
+    module.reply(&tag, json!({"connected": {"remote": null}}));
+    frame(&mut module, &tag, b"*0\r\n");
+    frame(
+        &mut module,
+        &tag,
+        b"*2\r\n$1\r\n0\r\n*1\r\n$6\r\ngame:1\r\n",
+    );
+    let cmds = frame(&mut module, &tag, b"+string\r\n");
+    assert!(
+        cmds.iter().any(|cmd| cmd.name == "editor.relight"),
+        "{cmds:?}"
+    );
+    assert!(offered(&mut module));
+    module.now += 30_000.0;
+    let cmds = hint(&mut module);
+    let tag = &cmds
+        .iter()
+        .find(|cmd| cmd.name == "driver.stream")
+        .unwrap_or_else(|| panic!("No refresh: {cmds:?}"))
+        .tag;
+    module.send(event::Kind::Reply(wire::Reply {
+        tag: tag.clone(),
+        ok: None,
+        error: Some(services_sdk::Failure::new("down")),
+    }));
+    assert!(offered(&mut module));
+}

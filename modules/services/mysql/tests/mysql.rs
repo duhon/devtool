@@ -4,7 +4,7 @@
 use serde_json::{Value, json};
 use services_module_mysql::{DISCOVERY_SQL, Mysql, parse_sql, render};
 use services_sdk::lang::marker;
-use services_sdk::{Check, Cmd, DriverCall, Event, Failure, Module, Section};
+use services_sdk::{Check, Cmd, DriverCall, Event, Failure, Linked, Module, Section};
 
 const RUN: &str = "console:mysql:1";
 
@@ -542,6 +542,63 @@ fn hints_discover_the_schema_once_and_feed_completion() {
         statuses(&mysql.update(Event::Discover(check(text)))),
         vec!["Discovery…"]
     );
+}
+
+/// Sets [`services_sdk::now`] for this thread: the SDK sets it from each encoded event, so
+/// one is sent by hand (`Request.update.event.now`, field 20) to a linked module.
+fn at(now: f64) {
+    let mut event = vec![0xA1, 0x01];
+    event.extend(now.to_le_bytes());
+    let mut update = vec![0x0A, event.len() as u8];
+    update.extend(event);
+    let mut request = vec![0x0A, update.len() as u8];
+    request.extend(update);
+    Linked::<Mysql>::default().call(&request);
+}
+
+#[test]
+fn stale_schemas_are_served_while_hints_discover_them_again() {
+    let mut mysql = Mysql::default();
+    let text = "#target\nmysql://root@db/shop\n#payload\nSELECT * FROM ";
+    let hints = |mysql: &mut Mysql| {
+        mysql.update(Event::Hints {
+            check: check(text),
+            pos: text.len() as u32,
+        })
+    };
+    at(1000.0);
+    let (tag, _) = driver_call(&hints(&mut mysql));
+    mysql.update(Event::Reply {
+        tag,
+        result: Ok(discovery_rows()),
+    });
+    at(1000.0 + 599_999.0);
+    assert!(hints(&mut mysql).is_empty());
+    at(1000.0 + 600_000.0);
+    assert_eq!(
+        mysql.schema(&check(text))["tables"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    let (tag, _) = driver_call(&hints(&mut mysql));
+    let failed = mysql.update(Event::Reply {
+        tag,
+        result: Err(Failure::new("connect ECONNREFUSED")),
+    });
+    assert_eq!(
+        statuses(&failed),
+        vec!["Discovery · ERROR · connect ECONNREFUSED"]
+    );
+    assert_eq!(
+        mysql.schema(&check(text))["tables"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert!(hints(&mut mysql).is_empty(), "a failure waits too");
 }
 
 #[test]

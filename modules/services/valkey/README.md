@@ -112,8 +112,9 @@ result for key/type and field completion (for example `HGET game:2 `).
 GET favors string keys; HGET offers hashes. Keys with spaces are quoted on insertion.
 Other commands do not all have full argument grammars.
 
-Discovery caches live only in memory for 30 seconds, separated by resolved endpoint,
-credentials, database, CA, prefix and requested hash. The existing Discover action
+Discovery caches live only in memory, separated by resolved endpoint, credentials,
+database, CA, prefix and requested hash. After 30 seconds the next hint collects again;
+the old snapshot is still served until the new one succeeds. The existing Discover action
 refreshes the general snapshot. There is **no `#discovery` section**.
 
 Scans return at most 200 names, stop after 32 pages or two seconds of scanning,

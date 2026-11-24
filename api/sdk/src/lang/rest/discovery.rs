@@ -1,6 +1,7 @@
 //! Discovery of a REST-like service: when the user asks for hints the check's address is
 //! probed through the `http` driver by a service's [`Probe`] for a summary completion uses;
-//! summaries are cached per API base and an address is tried once. An address with `{{…}}`
+//! summaries are cached per API base and an address is tried once per [`CACHE_MS`]; an
+//! older summary is still served while hints refresh it. An address with `{{…}}`
 //! variables is resolved through the App first; completion finds the schema of the resolved
 //! address it remembers.
 
@@ -12,6 +13,8 @@ use std::fmt::Debug;
 
 /// Cached schemas, the most addresses remembered as tried and URLs as resolved.
 const CACHE: usize = 32;
+/// How long a discovered or tried address is not discovered again by hints.
+const CACHE_MS: f64 = 600_000.0;
 const ATTEMPTED: usize = 128;
 const RESOLVED: usize = 64;
 const TAG: &str = "discover:";
@@ -86,10 +89,10 @@ struct Resolving {
 #[derive(Debug)]
 pub struct Discovery<P: Probe> {
     probe: P,
-    /// `(base, summary)`, most recent last.
-    schemas: Vec<(String, Value)>,
-    /// Addresses and origins discovery ran for.
-    attempted: Vec<String>,
+    /// `(base, summary, stored at)`, most recent last.
+    schemas: Vec<(String, Value, f64)>,
+    /// Addresses and origins discovery ran for, with when it last did.
+    attempted: Vec<(String, f64)>,
     run: Option<Run<P::Run>>,
     runs: u64,
     /// The latest other address hints asked for while a run was in flight.
@@ -159,6 +162,10 @@ fn schema_base(address: &str, summary: &Value) -> Option<String> {
     Some(format!("{}{path}", url.origin()))
 }
 
+fn fresh(at: f64) -> bool {
+    crate::now() - at < CACHE_MS
+}
+
 fn status(text: &str, indicator: &str) -> Cmd {
     cmd::status(text, indicator)
 }
@@ -209,12 +216,15 @@ impl<P: Probe> Discovery<P> {
 
     /// The schema whose base covers `url`, the longest base first.
     pub fn schema(&self, url: &str) -> Option<&Value> {
+        self.cached(url).map(|(_, schema, _)| schema)
+    }
+
+    fn cached(&self, url: &str) -> Option<&(String, Value, f64)> {
         let address = address(url)?;
         self.schemas
             .iter()
-            .filter(|(base, _)| reuses(base, &address))
-            .max_by_key(|(base, _)| base.len())
-            .map(|(_, schema)| schema)
+            .filter(|(base, ..)| reuses(base, &address))
+            .max_by_key(|(base, ..)| base.len())
     }
 
     /// The schema for `url`, else the latest one of its origin.
@@ -224,8 +234,8 @@ impl<P: Probe> Discovery<P> {
             self.schemas
                 .iter()
                 .rev()
-                .find(|(base, _)| endpoint::Url::parse(base).is_some_and(|b| b.origin() == origin))
-                .map(|(_, schema)| schema)
+                .find(|(base, ..)| endpoint::Url::parse(base).is_some_and(|b| b.origin() == origin))
+                .map(|(_, schema, _)| schema)
         })
     }
 
@@ -240,27 +250,32 @@ impl<P: Probe> Discovery<P> {
     pub fn schemas<'a>(&'a self, url: &str) -> impl Iterator<Item = &'a Value> {
         self.schema(url)
             .into_iter()
-            .chain(self.schemas.iter().rev().map(|(_, schema)| schema))
+            .chain(self.schemas.iter().rev().map(|(_, schema, _)| schema))
     }
 
+    /// `key` was tried within [`CACHE_MS`].
     fn attempted(&self, key: &str) -> bool {
-        self.attempted.iter().any(|tried| tried == key)
+        self.attempted
+            .iter()
+            .any(|(tried, at)| tried == key && fresh(*at))
     }
 
     fn attempt(&mut self, key: String) {
-        if !self.attempted(&key) {
-            self.attempted.push(key);
-        }
+        self.attempted.retain(|(tried, _)| *tried != key);
+        self.attempted.push((key, crate::now()));
         if self.attempted.len() > ATTEMPTED {
             self.attempted.remove(0);
         }
     }
 
+    /// Hints skip the target: tried, or its schema stored, within [`CACHE_MS`].
     fn known(&self, target: &Target) -> bool {
         let origin = endpoint::Url::parse(&target.address).map(|url| url.origin());
         self.attempted(&target.address)
             || origin.is_some_and(|origin| self.attempted(&origin))
-            || self.schema(&target.address).is_some()
+            || self
+                .cached(&target.address)
+                .is_some_and(|(.., at)| fresh(*at))
     }
 
     /// The check changed: an endpoint URL with variables is resolved for completion.
@@ -450,8 +465,8 @@ impl<P: Probe> Discovery<P> {
                 ];
                 self.attempt(run.target.address.clone());
                 if let Some(base) = schema_base(&run.target.address, &summary) {
-                    self.schemas.retain(|(cached, _)| *cached != base);
-                    self.schemas.push((base, summary));
+                    self.schemas.retain(|(cached, ..)| *cached != base);
+                    self.schemas.push((base, summary, crate::now()));
                     if self.schemas.len() > CACHE {
                         self.schemas.remove(0);
                     }

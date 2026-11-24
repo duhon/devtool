@@ -184,3 +184,34 @@ fn the_schema_summarises_the_target_for_the_agent() {
         "{names:?}"
     );
 }
+
+#[test]
+fn stale_discovery_is_still_served_and_refreshed_by_the_next_hints() {
+    let mut cluster = Cluster::default();
+    let text = format!("{TEXT}|");
+    assert!(cluster.offered(&text).iter().any(|label| label == "web-1"));
+    cluster.module.now += 600_000.0;
+    let (source, pos) = support::cursor(&text);
+    let cmds = cluster.module.send(services_sdk::wire::event::Kind::Hints(
+        services_sdk::wire::CompleteRequest {
+            check: Some(check(&source)),
+            pos: pos as u32,
+        },
+    ));
+    let calls: Vec<_> = cmds
+        .iter()
+        .filter(|cmd| cmd.name == "driver.call")
+        .collect();
+    let paths: Vec<_> = calls
+        .iter()
+        .map(|cmd| cmd.args()["request"]["path"].clone())
+        .collect();
+    assert!(
+        paths.contains(&json!("/api/v1/namespaces/default/pods")),
+        "{paths:?}"
+    );
+    for call in calls {
+        cluster.module.fail(&call.tag, "boom");
+    }
+    assert!(cluster.labels(&text).iter().any(|label| label == "web-1"));
+}

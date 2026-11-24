@@ -47,6 +47,13 @@ const RESOLVE: &str = ":resolve";
 /// Reflection results kept, the most recent last.
 const KEPT: usize = 16;
 
+/// How long a reflection result is current; an older one is still used while the next
+/// hint or edit asks the server again.
+const CACHE_MS: f64 = 600_000.0;
+
+/// A reflection result and when it was stored.
+type Kept<T> = (Result<T, String>, f64);
+
 /// `target`, `package.Service` and `Method` of an endpoint; the last two are empty
 /// without a `/Service/Method` path.
 pub fn parse_endpoint(endpoint: &str) -> (String, String, String) {
@@ -298,9 +305,9 @@ fn describe(service: &prost_reflect::ServiceDescriptor) -> Value {
 #[derive(Debug, Default)]
 pub struct Grpc {
     /// Services of servers, the most recent last.
-    services: Vec<(Server, Result<Vec<String>, String>)>,
+    services: Vec<(Server, Kept<Vec<String>>)>,
     /// Descriptors of a server's service, the most recent last.
-    pools: Vec<((Server, String), Result<DescriptorPool, String>)>,
+    pools: Vec<((Server, String), Kept<DescriptorPool>)>,
     runs: Vec<Run>,
     count: u64,
     /// A quiet reflection asked for while another ran.
@@ -318,17 +325,39 @@ fn keep<K: PartialEq, V>(list: &mut Vec<(K, V)>, key: K, value: V) {
     }
 }
 
+/// Stores what a reflection found. A failure keeps what an earlier one found, and waits
+/// [`CACHE_MS`] like a success before hints ask again.
+fn store<K: PartialEq, T>(list: &mut Vec<(K, Kept<T>)>, key: K, found: Result<T, String>) {
+    let now = services_sdk::now();
+    if found.is_err()
+        && let Some((_, (Ok(_), at))) = list.iter_mut().find(|(known, _)| *known == key)
+    {
+        *at = now;
+        return;
+    }
+    keep(list, key, (found, now));
+}
+
+/// Whether a found result is younger than [`CACHE_MS`].
+fn current<T>((found, at): &Kept<T>) -> bool {
+    found.is_ok() && services_sdk::now() - at < CACHE_MS
+}
+
 impl Grpc {
+    fn kept_pool(&self, server: &Server, service: &str) -> Option<&Kept<DescriptorPool>> {
+        self.pools
+            .iter()
+            .rev()
+            .find(|((known, name), _)| known == server && name == service)
+            .map(|(_, kept)| kept)
+    }
+
     fn known_pool(
         &self,
         server: &Server,
         service: &str,
     ) -> Option<&Result<DescriptorPool, String>> {
-        self.pools
-            .iter()
-            .rev()
-            .find(|((known, name), _)| known == server && name == service)
-            .map(|(_, pool)| pool)
+        self.kept_pool(server, service).map(|(pool, _)| pool)
     }
 
     fn running(&self, server: &Server, goal: &Goal) -> bool {
@@ -376,7 +405,7 @@ impl Grpc {
             }
             let server = server(check, &target);
             known = self.services(check, &target);
-            for ((owner, name), pool) in &self.pools {
+            for ((owner, name), (pool, _)) in &self.pools {
                 if *owner == server
                     && let Some(service) =
                         pool.as_ref().ok().and_then(|p| p.get_service_by_name(name))
@@ -398,7 +427,7 @@ impl Grpc {
             .iter()
             .rev()
             .find(|(known, _)| *known == server)
-            .and_then(|(_, services)| services.as_ref().ok().cloned())
+            .and_then(|(_, (services, _))| services.as_ref().ok().cloned())
             .unwrap_or_default()
     }
 
@@ -427,9 +456,9 @@ impl Grpc {
             return vec![];
         }
         let server = server(check, &target);
-        match self.known_pool(&server, &service) {
-            Some(Ok(_)) if !retry => vec![],
-            Some(Err(_)) if !retry => vec![],
+        match self.kept_pool(&server, &service) {
+            Some(kept @ (Ok(_), _)) if !retry && current(kept) => vec![],
+            Some((Err(_), _)) if !retry => vec![],
             _ => self.start(server, Goal::Service(service), loud),
         }
     }
@@ -488,7 +517,7 @@ impl Grpc {
             let known = self
                 .services
                 .iter()
-                .any(|(known, found)| *known == server && found.is_ok());
+                .any(|(known, kept)| *known == server && current(kept));
             return if known {
                 vec![]
             } else {
@@ -538,7 +567,7 @@ impl Grpc {
         let mut cmds = match (step, &run.goal) {
             (Ok(Step::Done(Found::Services(services))), _) => {
                 let count = services.len();
-                keep(&mut self.services, run.server.clone(), Ok(services));
+                store(&mut self.services, run.server.clone(), Ok(services));
                 vec![
                     cmd::status_with("Discovery · OK", "ok", &json!({"services": count})),
                     cmd::log("info", &format!("gRPC reflection found {count} services")),
@@ -548,7 +577,7 @@ impl Grpc {
                 let count = pool
                     .get_service_by_name(service)
                     .map_or(0, |found| found.methods().len());
-                keep(
+                store(
                     &mut self.pools,
                     (run.server.clone(), service.clone()),
                     Ok(pool),
@@ -564,9 +593,9 @@ impl Grpc {
             (Err(message), goal) => {
                 match goal {
                     Goal::Services => {
-                        keep(&mut self.services, run.server.clone(), Err(message.clone()))
+                        store(&mut self.services, run.server.clone(), Err(message.clone()))
                     }
-                    Goal::Service(service) => keep(
+                    Goal::Service(service) => store(
                         &mut self.pools,
                         (run.server.clone(), service.clone()),
                         Err(message.clone()),
@@ -626,7 +655,9 @@ impl Grpc {
         self.pools
             .iter()
             .rev()
-            .find_map(|((_, name), pool)| (name == service).then(|| pool.as_ref().ok()).flatten())
+            .find_map(|((_, name), (pool, _))| {
+                (name == service).then(|| pool.as_ref().ok()).flatten()
+            })
             .cloned()
     }
 }

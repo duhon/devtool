@@ -269,3 +269,70 @@ fn encoded_proxy_mount_is_preserved_and_server_warnings_are_visible() {
         1000
     );
 }
+
+#[test]
+fn values_older_than_ten_minutes_are_served_while_hints_refresh_them() {
+    use prost::Message;
+    use services_module_prometheus::Prometheus;
+    use services_sdk::{Linked, wire};
+    let module = Linked::<Prometheus>::default();
+    let call = |kind: wire::request::Kind| {
+        let bytes = wire::Request { kind: Some(kind) }.encode_to_vec();
+        wire::Answer::decode(module.call(&bytes).as_slice())
+            .unwrap()
+            .kind
+            .unwrap()
+    };
+    let update = |kind: wire::event::Kind, now: f64| {
+        let event = Some(wire::Event {
+            kind: Some(kind),
+            now,
+        });
+        match call(wire::request::Kind::Update(wire::UpdateRequest {
+            event,
+            view: false,
+        })) {
+            wire::answer::Kind::Updated(updated) => updated.cmds,
+            other => panic!("{other:?}"),
+        }
+    };
+    let reply = |tag: &str, ok: Option<Value>, now: f64| {
+        let reply = wire::event::Kind::Reply(wire::Reply {
+            tag: tag.into(),
+            error: ok.is_none().then(|| Failure::new("refused")),
+            ok: ok.map(|value| serde_json::to_vec(&value).unwrap()),
+        });
+        update(reply, now)
+    };
+    let check = check("https://prom.invalid", "", "");
+    // Hints resolve the connection; the driver call is made only if the values are due.
+    let hints = |now: f64| {
+        let hints = wire::event::Kind::Hints(wire::CompleteRequest {
+            check: Some(check.clone()),
+            pos: check.text.len() as u32,
+        });
+        let commands = update(hints, now);
+        let resolve = commands.iter().find(|c| c.name == "vars.resolve").unwrap();
+        let text = resolve.args()["text"].clone();
+        let commands = reply(&resolve.tag, Some(text), now);
+        commands
+            .iter()
+            .find(|c| c.name == "driver.call")
+            .map(|c| c.tag.clone())
+    };
+    let metrics = || match call(wire::request::Kind::Schema(check.clone())) {
+        wire::answer::Kind::Schema(schema) => {
+            serde_json::from_slice::<Value>(&schema.json.unwrap()).unwrap()["metrics"].clone()
+        }
+        other => panic!("{other:?}"),
+    };
+    let tag = hints(1_000.0).unwrap();
+    reply(&tag, Some(success(json!(["up"]))), 1_000.0);
+    assert_eq!(hints(600_999.0), None);
+    // Ten minutes on, hints refresh them; a failed refresh keeps the old values.
+    let tag = hints(601_000.0).unwrap();
+    assert_eq!(metrics(), json!(["up"]));
+    reply(&tag, None, 601_000.0);
+    assert_eq!(metrics(), json!(["up"]));
+    assert_eq!(hints(602_000.0), None);
+}

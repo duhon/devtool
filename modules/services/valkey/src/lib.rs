@@ -183,6 +183,7 @@ impl Valkey {
                 self.identities.clear();
             }
             self.identities.insert(lookup, identity.clone());
+            // A stale cache is collected again, and still served until the new one replaces it.
             if !force
                 && self.cache.iter().any(|cached| {
                     cached.identity == identity
@@ -332,10 +333,8 @@ impl Valkey {
         let Purpose::Discover { raw, scope, .. } = job.purpose else {
             unreachable!()
         };
-        self.cache.retain(|entry| {
-            services_sdk::now() - entry.created < TTL_MS
-                && !(entry.identity == job.identity && entry.scope == scope)
-        });
+        self.cache
+            .retain(|entry| !(entry.identity == job.identity && entry.scope == scope));
         if self.cache.len() >= 16 {
             self.cache.remove(0);
         }
@@ -451,7 +450,6 @@ impl Valkey {
         let valid = |entry: &&Cached| {
             entry.raw == raw
                 && self.identities.get(&scope_key(&raw, &entry.scope)) == Some(&entry.identity)
-                && services_sdk::now() - entry.created < TTL_MS
         };
         self.cache
             .iter()

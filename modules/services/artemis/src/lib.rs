@@ -36,6 +36,9 @@ const MOVED: [(&str, &str); 6] = [
 const DISCOVER: &str = "discover:";
 /// Connections whose names are kept, the most recent last.
 const DISCOVERED: usize = 16;
+/// How long a connection's discovery counts as known; the names keep being served after it,
+/// the next hints discover again.
+const CACHE_MS: f64 = 600_000.0;
 
 /// The parts of a check a run reads, to resolve their variables at once; how it shows.
 struct Plan {
@@ -274,8 +277,8 @@ pub struct Artemis {
     shaping: run::Shaping<(Box<Calls>, Option<Format>)>,
     /// `(connection, names)` of discovered brokers, the most recent last.
     discovered: Vec<(String, Value)>,
-    /// Connections discovered or tried, so hints do not retry them.
-    attempted: Vec<String>,
+    /// Connections discovered or tried and when, so hints do not retry them for [`CACHE_MS`].
+    attempted: Vec<(String, f64)>,
     discovery: Option<Discovery>,
     discoveries: u64,
 }
@@ -401,7 +404,11 @@ impl Artemis {
 
     fn hints(&mut self, check: &Check) -> Vec<Cmd> {
         let key = connection(check);
-        if !discoverable(check) || self.attempted.contains(&key) || self.discovery.is_some() {
+        let known = self
+            .attempted
+            .iter()
+            .any(|(tried, at)| *tried == key && services_sdk::now() - at < CACHE_MS);
+        if !discoverable(check) || known || self.discovery.is_some() {
             return vec![];
         }
         self.discover(check)
@@ -417,8 +424,8 @@ impl Artemis {
         self.discoveries += 1;
         let id = self.discoveries;
         let key = connection(check);
-        self.attempted.retain(|tried| *tried != key);
-        self.attempted.push(key.clone());
+        self.attempted.retain(|(tried, _)| *tried != key);
+        self.attempted.push((key.clone(), services_sdk::now()));
         self.discovery = Some(Discovery {
             id,
             key,
@@ -486,6 +493,11 @@ impl Artemis {
             Ok(names) => {
                 let count = |list: &str| names["names"][list].as_array().map_or(0, Vec::len);
                 let (queues, addresses) = (count("queues"), count("addresses"));
+                for (tried, at) in &mut self.attempted {
+                    if *tried == discovery.key {
+                        *at = services_sdk::now();
+                    }
+                }
                 self.discovered.retain(|(known, _)| *known != discovery.key);
                 self.discovered.push((discovery.key, names));
                 if self.discovered.len() > DISCOVERED {

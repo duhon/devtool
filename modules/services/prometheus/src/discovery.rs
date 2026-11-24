@@ -9,6 +9,7 @@ use url::Url;
 
 const TAG: &str = "prom-discovery:";
 const CACHE: usize = 16;
+const CACHE_MS: f64 = 600_000.0;
 const ITEMS: usize = 1000;
 
 #[derive(Clone, PartialEq, Eq)]
@@ -51,8 +52,10 @@ impl Query {
 
 struct Entry {
     connection: Connection,
-    data: BTreeMap<Query, Vec<String>>,
-    attempted: Vec<Query>,
+    /// Values and when they were stored.
+    data: BTreeMap<Query, (Vec<String>, f64)>,
+    /// Queries and when they were requested.
+    attempted: Vec<(Query, f64)>,
 }
 
 struct Run {
@@ -172,8 +175,8 @@ impl Discovery {
     pub fn schema_of(&self, check: &Check) -> Option<Value> {
         let entry = self.entry(check)?;
         Some(json!({
-            "metrics": entry.data.get(&Query::Metrics).cloned().unwrap_or_default(),
-            "labels": entry.data.get(&Query::Labels(None)).cloned().unwrap_or_default(),
+            "metrics": entry.data.get(&Query::Metrics).map(|(values, _)| values.clone()).unwrap_or_default(),
+            "labels": entry.data.get(&Query::Labels(None)).map(|(values, _)| values.clone()).unwrap_or_default(),
         }))
     }
 
@@ -183,7 +186,7 @@ impl Discovery {
         };
         self.entry(check)
             .and_then(|entry| entry.data.get(&query))
-            .cloned()
+            .map(|(values, _)| values.clone())
             .unwrap_or_default()
     }
 
@@ -239,8 +242,14 @@ impl Discovery {
                 self.cache.len() - 1
             });
             let entry = &mut self.cache[index];
+            // Older values stay served; hints refresh them after ten minutes.
+            let fresh = |at: f64| services_sdk::now() - at < CACHE_MS;
             if !run.manual
-                && (entry.data.contains_key(&run.query) || entry.attempted.contains(&run.query))
+                && (entry.data.get(&run.query).is_some_and(|(_, at)| fresh(*at))
+                    || entry
+                        .attempted
+                        .iter()
+                        .any(|(query, at)| *query == run.query && fresh(*at)))
             {
                 return Some(if entry.data.contains_key(&run.query) {
                     vec![cmd::status("", "idle"), cmd::relight()]
@@ -251,7 +260,10 @@ impl Discovery {
             if entry.attempted.len() >= 64 {
                 entry.attempted.remove(0);
             }
-            entry.attempted.push(run.query.clone());
+            entry.attempted.retain(|(query, _)| *query != run.query);
+            entry
+                .attempted
+                .push((run.query.clone(), services_sdk::now()));
             run.resolved = Some(resolved);
             self.run = Some(run);
             return Some(vec![cmd::driver(
@@ -281,7 +293,7 @@ impl Discovery {
                     {
                         entry.data.remove(&first);
                     }
-                    entry.data.insert(run.query, values);
+                    entry.data.insert(run.query, (values, services_sdk::now()));
                 }
                 Some(vec![
                     cmd::status(

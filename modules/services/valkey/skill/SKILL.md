@@ -39,6 +39,7 @@ are unsupported. The module uses RESP2. Response limit is 16 MiB; subscription
 history limit is 1 MiB and fails explicitly when exceeded.
 
 The editor supplies command, key/type, option and hash-field completion.
-Hints/discovery fetch bounded read-only metadata and cache it for 30 seconds.
+Hints/discovery fetch bounded read-only metadata and cache it; after 30 seconds the next
+hint refreshes it, serving the old snapshot until the refresh succeeds.
 There is no #discovery section. Discovery schemas may be partial or ACL-restricted;
 do not treat them as an exhaustive list or proof of command permission.

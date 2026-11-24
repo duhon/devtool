@@ -589,6 +589,45 @@ fn discovery_caches_each_api_and_tries_a_failed_address_once() {
     );
 }
 
+/// Sets `services_sdk::now()` for this thread, as the Kernel's next event would.
+fn set_now(now: f64) {
+    let event = wire::Event {
+        kind: Some(event::Kind::Document(check(""))),
+        now,
+    };
+    let update = request::Kind::Update(wire::UpdateRequest {
+        event: Some(event),
+        view: false,
+    });
+    Linked::<Rest>::default().call(&wire::Request { kind: Some(update) }.encode_to_vec());
+}
+
+#[test]
+fn a_schema_older_than_ten_minutes_is_served_while_hints_refresh_it() {
+    set_now(0.0);
+    let mut rest = discovered();
+    let text = "#target\nhttp://svc/api/users\n#payload\n";
+    set_now(599_999.0);
+    assert!(hints(&mut rest, text).is_empty());
+
+    set_now(600_000.0);
+    let target = check(text);
+    assert!(rest.schema(&target).unwrap()["paths"].is_array());
+    let cmds = hints(&mut rest, text);
+    assert_eq!(statuses(&cmds), ["Discovery…"]);
+    // A failed refresh keeps serving the old schema, and is not retried at once.
+    for (tag, _) in driver_calls(&cmds) {
+        rest.update(Event::Reply {
+            tag,
+            result: Ok(response(500, "")),
+        });
+    }
+    assert!(rest.schema(&target).unwrap()["paths"].is_array());
+    let (_, c) = complete(&rest, "#target\nhttp://svc/|\n#action\nPOST");
+    assert_eq!(labels(&c), ["/api/users"]);
+    assert!(hints(&mut rest, text).is_empty());
+}
+
 #[test]
 fn hints_for_another_address_during_a_run_discover_it_next() {
     let mut rest = Rest::default();

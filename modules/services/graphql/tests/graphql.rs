@@ -560,6 +560,63 @@ fn linked_module_answers_requests_and_events() {
 }
 
 #[test]
+fn a_schema_older_than_ten_minutes_is_served_while_hints_refresh_it() {
+    let linked = Linked::<Graphql>::default();
+    let call = |kind: request::Kind| {
+        let bytes = wire::Request { kind: Some(kind) }.encode_to_vec();
+        wire::Answer::decode(linked.call(&bytes).as_slice())
+            .unwrap()
+            .kind
+            .unwrap()
+    };
+    let update = |kind: event::Kind, now: f64| {
+        let event = Some(wire::Event {
+            kind: Some(kind),
+            now,
+        });
+        match call(request::Kind::Update(wire::UpdateRequest {
+            event,
+            view: false,
+        })) {
+            answer::Kind::Updated(updated) => updated.cmds,
+            other => panic!("{other:?}"),
+        }
+    };
+    let hints = |now: f64| {
+        let hints = event::Kind::Hints(wire::CompleteRequest {
+            check: Some(check(CONNECTION)),
+            pos: 0,
+        });
+        driver_calls(&update(hints, now))
+    };
+    let reply = |tag: &str, ok: Option<Value>, now: f64| {
+        let reply = event::Kind::Reply(wire::Reply {
+            tag: tag.into(),
+            error: ok.is_none().then(|| wire::Failure::new("refused")),
+            ok: ok.map(|value| serde_json::to_vec(&value).unwrap()),
+        });
+        statuses(&update(reply, now))
+    };
+    let served = || match call(request::Kind::Schema(check(CONNECTION))) {
+        answer::Kind::Schema(schema) => schema.json.is_some(),
+        other => panic!("{other:?}"),
+    };
+    let first = hints(1_000.0);
+    reply(&first[0].0, Some(response(200, &introspection())), 1_000.0);
+    assert!(hints(600_999.0).is_empty());
+    // Ten minutes on, the next hints refresh it; a failed refresh keeps the old schema.
+    let refresh = hints(601_000.0);
+    assert_eq!(refresh.len(), 1);
+    assert!(served());
+    assert_eq!(
+        reply(&refresh[0].0, None, 601_000.0),
+        ["Discovery · ERROR · refused"]
+    );
+    assert!(served());
+    assert!(hints(602_000.0).is_empty());
+}
+
+#[test]
 fn curl_matches_the_original_javascript() {
     let graphql = Graphql::default();
     assert_eq!(

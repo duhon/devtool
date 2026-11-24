@@ -27,6 +27,9 @@ const COLUMNS_TYPE_DETAIL: &str =
 const COLUMNS_SIZE_DETAIL: &str = "column=100 (characters)";
 /// Schemas kept, the most recent last.
 const SCHEMAS: usize = 16;
+/// How long a discovery is current; an older schema is still served while the next hint
+/// discovers it again.
+const CACHE_MS: f64 = 600_000.0;
 const DISCOVER: &str = "discover:";
 
 /// The field of a driver request with how its answer prints (`vertical`, `columnsType`, `columnsSize`):
@@ -281,8 +284,8 @@ enum Purpose {
 pub struct Mysql {
     /// `(url, schema)` of discovered connections, the most recent last.
     schemas: Vec<(String, Value)>,
-    /// URLs discovered or tried, so hints do not retry them.
-    attempted: Vec<String>,
+    /// URLs discovered or tried and when, so hints retry them only after [`CACHE_MS`].
+    attempted: Vec<(String, f64)>,
     /// The discovery in flight: its id and URL.
     run: Option<(u64, String)>,
     runs: u64,
@@ -317,7 +320,9 @@ impl Mysql {
     }
 
     fn known(&self, url: &str) -> bool {
-        self.attempted.iter().any(|tried| tried == url)
+        self.attempted
+            .iter()
+            .any(|(tried, at)| tried == url && services_sdk::now() - at < CACHE_MS)
     }
 
     fn document(&mut self, check: &Check) -> Vec<Cmd> {
@@ -383,8 +388,8 @@ impl Mysql {
         let Some((_, url)) = self.run.take_if(|(run, _)| *run == id) else {
             return vec![];
         };
-        self.attempted.retain(|tried| *tried != url);
-        self.attempted.push(url.clone());
+        self.attempted.retain(|(tried, _)| *tried != url);
+        self.attempted.push((url.clone(), services_sdk::now()));
         let found = result
             .map_err(|failure| failure.message)
             .and_then(|value| schema(&Response::parse(&value)?));

@@ -1,6 +1,7 @@
 //! Introspection: when the user asks for hints (or to discover) the check's endpoint is
 //! asked for its schema through the `http` driver; a schema is kept per endpoint and
-//! headers, and a connection is introspected once until asked again.
+//! headers, and a connection is introspected again by hints once its last attempt is ten
+//! minutes old (or when asked); the old schema is served until a new one arrives.
 
 use serde_json::{Map, Value, json};
 use services_sdk::http::{Request, Response};
@@ -9,6 +10,7 @@ use services_sdk::{Check, Cmd, Failure, cmd};
 
 /// Schemas and connections remembered.
 const CACHE: usize = 16;
+const CACHE_MS: f64 = 600_000.0;
 const ATTEMPTED: usize = 64;
 const TAG: &str = "discover:";
 
@@ -64,9 +66,10 @@ impl Connection {
 
 #[derive(Debug, Default)]
 pub struct Discovery {
-    /// `(connection, schema)`, most recent last.
-    schemas: Vec<(Connection, Value)>,
-    attempted: Vec<Connection>,
+    /// `(connection, schema, stored at)`, most recent last.
+    schemas: Vec<(Connection, Value, f64)>,
+    /// `(connection, replied at)`.
+    attempted: Vec<(Connection, f64)>,
     /// The connection being introspected and its run.
     run: Option<(u64, Connection)>,
     runs: u64,
@@ -195,12 +198,20 @@ impl Discovery {
         self.schemas
             .iter()
             .rev()
-            .find(|(known, _)| *known == connection)
-            .map(|(_, schema)| schema)
+            .find(|(known, _, _)| *known == connection)
+            .map(|(_, schema, _)| schema)
     }
 
+    /// Attempted or introspected within the last ten minutes.
     fn known(&self, connection: &Connection) -> bool {
-        self.attempted.contains(connection) || self.schemas.iter().any(|(c, _)| c == connection)
+        let fresh = |at: f64| services_sdk::now() - at < CACHE_MS;
+        self.attempted
+            .iter()
+            .any(|(c, at)| c == connection && fresh(*at))
+            || self
+                .schemas
+                .iter()
+                .any(|(c, _, at)| c == connection && fresh(*at))
     }
 
     /// The user asked for hints: introspect the check's connection unless it is known.
@@ -251,8 +262,9 @@ impl Discovery {
             .map_err(|failure| failure.message)
             .and_then(|value| Response::parse(&value))
             .and_then(|response| schema(&response));
-        self.attempted.retain(|known| *known != connection);
-        self.attempted.push(connection.clone());
+        self.attempted.retain(|(known, _)| *known != connection);
+        self.attempted
+            .push((connection.clone(), services_sdk::now()));
         if self.attempted.len() > ATTEMPTED {
             self.attempted.remove(0);
         }
@@ -267,8 +279,8 @@ impl Discovery {
                     ),
                     cmd::relight(),
                 ];
-                self.schemas.retain(|(known, _)| *known != connection);
-                self.schemas.push((connection, schema));
+                self.schemas.retain(|(known, _, _)| *known != connection);
+                self.schemas.push((connection, schema, services_sdk::now()));
                 if self.schemas.len() > CACHE {
                     self.schemas.remove(0);
                 }
