@@ -257,7 +257,7 @@ async fn packaged_wasm_runs_full_command_scenario_through_actual_host_tcp_driver
         ("LPUSH queue job1 job2", "2"),
         ("RPOP queue", "job1"),
         ("SADD tags:2 puzzle classic", "2"),
-        ("ZADD top 100 duhon 80 alex", "2"),
+        ("ZADD top 100 ann 80 alex", "2"),
         ("DBSIZE", "6"),
         ("PUBLISH unobserved:news hello", "0"),
         ("TTL visits", "-1"),
@@ -288,7 +288,7 @@ async fn packaged_wasm_runs_full_command_scenario_through_actual_host_tcp_driver
     assert_eq!(members, [json!("classic"), json!("puzzle")]);
     assert_eq!(
         runner.json(&url, "ZREVRANGE top 0 -1 WITHSCORES").await,
-        json!(["duhon", "100", "alex", "80"])
+        json!(["ann", "100", "alex", "80"])
     );
     assert_eq!(runner.json(&url, "KEYS game:*").await, json!(["game:2"]));
     let mut cursor = "0".to_owned();

@@ -173,7 +173,7 @@ mod tests {
 
     #[test]
     fn path_parameters_are_distinct_from_variables_and_query_values() {
-        let line = "http://{{.var.magento}}/rest/default/V1/categories/{categoryId}/move/{имя-id}?filter={query}";
+        let line = "http://{{.var.shop}}/rest/default/V1/categories/{categoryId}/move/{имя-id}?filter={query}";
         assert_eq!(
             kinds(line, true, "rest-path-param"),
             ["{categoryId}", "{имя-id}"]
@@ -181,7 +181,7 @@ mod tests {
         assert!(
             styled(line, &tokens(line, true))
                 .iter()
-                .all(|(text, _)| !text.contains("{{") && !text.contains("magento"))
+                .all(|(text, _)| !text.contains("{{") && !text.contains("shop"))
         );
         for (http, text) in [
             (true, "http://test.com/categories/42/move"),

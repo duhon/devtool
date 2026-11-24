@@ -212,15 +212,15 @@
   assert(restDiscoveryCount() === bookLoaded, 'Book body editing and method changes must not repeat discovery');
   await key('Escape');
   await click(testid('console-service-rest'));
-  const magentoEditor = editorOf('console-editor');
-  const magentoPath = '/rest/default/V1/integration/admin/token';
-  const magentoUrl = `http://{{.var.magento}}${magentoPath}`;
-  const magentoPrefix = endpoint =>
-    `#check magento\n#target\n${endpoint}\n#action\nPOST\n#metadata\nContent-Type: application/json\n#payload\n`;
+  const shopEditor = editorOf('console-editor');
+  const shopPath = '/rest/default/V1/integration/admin/token';
+  const shopUrl = `http://{{.var.shop}}${shopPath}`;
+  const shopPrefix = endpoint =>
+    `#check shop\n#target\n${endpoint}\n#action\nPOST\n#metadata\nContent-Type: application/json\n#payload\n`;
   const credentials = ['"username": ""', '"password": ""'];
   const checkLocalBodyHints = async () => {
-    for (const source of [magentoPrefix(magentoUrl).trimEnd(), magentoPrefix(magentoUrl)]) {
-      setSource(magentoEditor, source);
+    for (const source of [shopPrefix(shopUrl).trimEnd(), shopPrefix(shopUrl)]) {
+      setSource(shopEditor, source);
       await settle();
       await wait(() => !find('.status-bar').classList.contains('is-running'),
         'The focus bootstrap must finish before counting shortcut-triggered discovery');
@@ -230,7 +230,7 @@
         if (event.code === 'Space') keyNames.push([event.shiftKey && 'Shift', event.metaKey && 'Cmd',
           event.ctrlKey && 'Ctrl', event.altKey && 'Alt', 'Space'].filter(Boolean).join('-'));
       };
-      const input = magentoEditor.getInputField();
+      const input = shopEditor.getInputField();
       input.addEventListener('keydown', recordKey, true);
       try {
         for (let index = 0; index < 12; index++) {
@@ -238,67 +238,67 @@
           await settle();
         }
         // Window longer than any discovery debounce: repeated shortcuts must never schedule a discovery.
-        await holds(() => restDiscoveryCount() === count && magentoEditor.getValue() === source,
+        await holds(() => restDiscoveryCount() === count && shopEditor.getValue() === source,
           'Repeated Ctrl-Space on #payload must not discover or modify the request', 650);
         assert(keyNames.length === 12 && keyNames.every(name => name === 'Ctrl-Space'),
           'The repeated shortcut fixture must deliver actual Ctrl-Space events, not Alt-Space');
-        assert(restDiscoveryCount() === count && magentoEditor.getValue() === source,
+        assert(restDiscoveryCount() === count && shopEditor.getValue() === source,
           `Repeated Ctrl-Space on #payload or its empty content must not discover or modify the request: ${JSON.stringify({
-            cursor: magentoEditor.getCursor(), before: count, after: restDiscoveryCount(),
+            cursor: shopEditor.getCursor(), before: count, after: restDiscoveryCount(),
             status: find('.status-bar').textContent, keyNames,
           })}`);
       } finally {
         input.removeEventListener('keydown', recordKey, true);
       }
     }
-    setSource(magentoEditor, magentoPrefix(magentoUrl));
+    setSource(shopEditor, shopPrefix(shopUrl));
   };
-  const beforeMagento = restDiscoveryCount();
-  setSource(magentoEditor, magentoPrefix(magentoUrl));
-  await during(100, () => assert(restDiscoveryCount() === beforeMagento, 'A new variable URL and body must wait for a hint request'));
+  const beforeShop = restDiscoveryCount();
+  setSource(shopEditor, shopPrefix(shopUrl));
+  await during(100, () => assert(restDiscoveryCount() === beforeShop, 'A new variable URL and body must wait for a hint request'));
   await key('Control+Space');
-  const magentoFixtureUrl = fixtureUrl.replace('127.0.0.1', 'localhost');
-  await wait(() => magentoEditor.__servicesCompletion?.discovery?.specUrl === `${magentoFixtureUrl}/rest/default/swagger.json`);
-  const magentoLoaded = restDiscoveryCount();
-  assert(nativeProbe.discoveries.filter(request => request.service === 'rest').at(-1).params.url.startsWith(`${magentoFixtureUrl}/`),
+  const shopFixtureUrl = fixtureUrl.replace('127.0.0.1', 'localhost');
+  await wait(() => shopEditor.__servicesCompletion?.discovery?.specUrl === `${shopFixtureUrl}/rest/default/swagger.json`);
+  const shopLoaded = restDiscoveryCount();
+  assert(nativeProbe.discoveries.filter(request => request.service === 'rest').at(-1).params.url.startsWith(`${shopFixtureUrl}/`),
     'Discovery must probe the variable-based URL with its variables resolved');
   await checkLocalBodyHints();
-  await pick(magentoEditor, '{\n  \n}');
+  await pick(shopEditor, '{\n  \n}');
   await wait(() => credentials.every(field => candidates().includes(field)),
-    'A loaded native Swagger schema must automatically suggest username/password for a variable-based Magento URL');
-  assert(magentoEditor.__servicesCompletion.discovery.specUrl === `${magentoFixtureUrl}/rest/default/swagger.json`,
+    'A loaded native Swagger schema must automatically suggest username/password for a variable-based Shop URL');
+  assert(shopEditor.__servicesCompletion.discovery.specUrl === `${shopFixtureUrl}/rest/default/swagger.json`,
     'The credentials must come from the actual discovered Swagger 2 document, not hardcoded body fields');
   await type('"');
   await wait(() => credentials.every(field => candidates().includes(field)));
-  await pick(magentoEditor, '"username": ""');
+  await pick(shopEditor, '"username": ""');
   await type('fixture-admin');
   await key('ArrowRight');
   await key('Enter');
-  await pick(magentoEditor, '"password": ""');
+  await pick(shopEditor, '"password": ""');
   await type('fixture-password');
   await key('ArrowRight');
-  assert(JSON.stringify(JSON.parse(magentoEditor.getValue().split('#payload\n')[1]))
+  assert(JSON.stringify(JSON.parse(shopEditor.getValue().split('#payload\n')[1]))
     === JSON.stringify({username: 'fixture-admin', password: 'fixture-password'}),
   'Schema hints must create a valid credentials body without sending an authentication request');
-  assert(magentoEditor.getLine(2) === magentoUrl,
+  assert(shopEditor.getLine(2) === shopUrl,
     'Body completion must preserve the raw host variable in the request document');
   for (const endpoint of [
-    `{{.var.magentoBase}}${magentoPath}`,
-    '{{.var.magentoToken}}',
-    `http://{{:magento}}${magentoPath}`,
+    `{{.var.shopBase}}${shopPath}`,
+    '{{.var.shopToken}}',
+    `http://{{:shop}}${shopPath}`,
   ]) {
-    setSource(magentoEditor, `${magentoPrefix(endpoint)}{\n  `);
+    setSource(shopEditor, `${shopPrefix(endpoint)}{\n  `);
     await type('"');
     await wait(() => credentials.every(field => candidates().includes(field)),
       `Cached body hints must also resolve this URL template: ${endpoint}`);
-    assert(magentoEditor.getLine(2) === endpoint,
+    assert(shopEditor.getLine(2) === endpoint,
       'Looking up a body schema must not expand variables inside the editor');
   }
-  await during(650, () => assert(restDiscoveryCount() === magentoLoaded,
+  await during(650, () => assert(restDiscoveryCount() === shopLoaded,
     'Editing credentials and changing equivalent URL templates must not refetch the loaded API schema'));
-  setSource(magentoEditor, magentoPrefix(magentoUrl));
+  setSource(shopEditor, shopPrefix(shopUrl));
   await key('Control+Space');
-  const requiredHint = magentoEditor.state.completionActive?.data?.list.find(item =>
+  const requiredHint = shopEditor.state.completionActive?.data?.list.find(item =>
     item.displayText.endsWith(' — Required fields'));
   assert(requiredHint && !requiredHint.displayText.includes('\n'),
     'Empty REST body must offer a compact required-fields template from discovered Swagger metadata');
@@ -307,32 +307,32 @@
     && requiredBody.username === '' && requiredBody.password === '',
   'The template must include only required request fields, excluding optional and readOnly properties');
   assert(candidates().includes('{\n  \n}'), 'The ordinary empty-object choice must remain available');
-  await pick(magentoEditor, requiredHint.text);
-  let valueCursor = magentoEditor.getCursor();
-  assert(magentoEditor.getLine(valueCursor.line).slice(valueCursor.ch - 1, valueCursor.ch + 1) === '""',
+  await pick(shopEditor, requiredHint.text);
+  let valueCursor = shopEditor.getCursor();
+  assert(shopEditor.getLine(valueCursor.line).slice(valueCursor.ch - 1, valueCursor.ch + 1) === '""',
     'Choosing required fields must put the caret inside the first empty string value');
-  const firstRequired = magentoEditor.getLine(valueCursor.line).match(/"(password|username)":/)[1];
+  const firstRequired = shopEditor.getLine(valueCursor.line).match(/"(password|username)":/)[1];
   await type('first-fixture');
   const otherRequired = firstRequired === 'password' ? 'username' : 'password';
-  const otherLine = magentoEditor.getValue().split('\n').findIndex(line => line.includes(`"${otherRequired}": ""`));
-  magentoEditor.setCursor(otherLine, magentoEditor.getLine(otherLine).indexOf(': ""') + 3);
+  const otherLine = shopEditor.getValue().split('\n').findIndex(line => line.includes(`"${otherRequired}": ""`));
+  shopEditor.setCursor(otherLine, shopEditor.getLine(otherLine).indexOf(': ""') + 3);
   await type('second-fixture');
   await key('ArrowRight');
-  const lastProperty = magentoEditor.getValue().split('\n').findIndex(line => line.includes(`"${Object.keys(requiredBody).at(-1)}":`));
-  magentoEditor.setCursor(lastProperty, magentoEditor.getLine(lastProperty).length);
+  const lastProperty = shopEditor.getValue().split('\n').findIndex(line => line.includes(`"${Object.keys(requiredBody).at(-1)}":`));
+  shopEditor.setCursor(lastProperty, shopEditor.getLine(lastProperty).length);
   await key('Enter');
   await wait(() => candidates().includes('"scope": ""'));
   assert(!candidates().some(text => text.startsWith('"username"') || text.startsWith('"password"') || text.startsWith('"generated"')),
     'After filling the required template, hints must offer optional fields without duplicates or readOnly fields');
-  await pick(magentoEditor, '"scope": ""');
+  await pick(shopEditor, '"scope": ""');
   await type('fixture-scope');
-  const completedCredentials = JSON.parse(magentoEditor.getValue().split('#payload\n')[1]);
+  const completedCredentials = JSON.parse(shopEditor.getValue().split('#payload\n')[1]);
   assert(completedCredentials.scope === 'fixture-scope' && Object.keys(completedCredentials).length === 3,
     'Adding an optional field after the required template must preserve valid JSON and automatic commas');
-  assert(restDiscoveryCount() === magentoLoaded && magentoEditor.getLine(2) === magentoUrl,
+  assert(restDiscoveryCount() === shopLoaded && shopEditor.getLine(2) === shopUrl,
     'Required-template selection and filling must not rediscover or rewrite the connection URL');
   await key('Escape');
-  const enumUrl = `http://{{.var.magento}}/rest/default/V1/enum-test`;
+  const enumUrl = `http://{{.var.shop}}/rest/default/V1/enum-test`;
   const enumLoaded = restDiscoveryCount();
   const checkRestEnums = async (editor, prefix) => {
     setSource(editor, prefix);
@@ -393,7 +393,7 @@
   await click(testid('console-service-rest'));
   const categoryPath = '/rest/default/V1/categories/{categoryId}/move';
   const pathEditor = editorOf('console-editor');
-  setSource(pathEditor, '#check move\n#target\nhttp://{{.var.magento}}/rest/default/V1/categories/\n#action\nPUT');
+  setSource(pathEditor, '#check move\n#target\nhttp://{{.var.shop}}/rest/default/V1/categories/\n#action\nPUT');
   pathEditor.setCursor({line: 2, ch: pathEditor.getLine(2).length});
   await pick(pathEditor, categoryPath);
   const checkPathParameterColor = async (editor, line) => {
@@ -410,18 +410,18 @@
     editor.replaceRange('42', {line, ch: start}, {line, ch: start + '{categoryId}'.length});
     await wait(() => !editor.getLineTokens(line).some(token => token.type?.includes('rest-path-param')));
     assert(editor.getLine(line).includes('/categories/42/move')
-      && editor.getLine(line).includes('{{.var.magento}}'),
+      && editor.getLine(line).includes('{{.var.shop}}'),
     'Replacing a path parameter must clear its highlight without modifying URL variables');
   };
   await checkPathParameterColor(pathEditor, 2);
-  assert(pathEditor.getLine(2) === 'http://{{.var.magento}}/rest/default/V1/categories/42/move',
+  assert(pathEditor.getLine(2) === 'http://{{.var.shop}}/rest/default/V1/categories/42/move',
     'Discovery insertion must retain the full method and variable-based URL');
-  setSource(pathEditor, `#check move\n#target\nhttp://{{.var.magento}}${categoryPath}\n#action\nPUT\n#payload\n{"note":"{categoryId}"}`);
+  setSource(pathEditor, `#check move\n#target\nhttp://{{.var.shop}}${categoryPath}\n#action\nPUT\n#payload\n{"note":"{categoryId}"}`);
   await checkPathParameterColor(pathEditor, 2);
   assert(!pathEditor.getLineTokens(4).some(token => token.type?.includes('rest-path-param')),
     'Braces inside a REST JSON body must not become URL-parameter tokens');
   assert(restDiscoveryCount() === enumLoaded, 'Highlighting and replacing path parameters must not run discovery');
-  await checkRestEnums(editorOf('console-editor'), magentoPrefix(enumUrl));
+  await checkRestEnums(editorOf('console-editor'), shopPrefix(enumUrl));
   await click(testid('console-service-graphql'));
   const discoveryEditor = editorOf('console-editor');
   const discoveryEndpoint = `${fixtureUrl}/graphql-native-discovery`;

@@ -1159,8 +1159,8 @@ fn share_cli_login(source: &std::path::Path, target: &std::path::Path) -> Result
 /// The folder of the Copilot CLI's MCP sign-ins (OAuth tokens of HTTP servers).
 const MCP_OAUTH: &str = "mcp-oauth-config";
 
-/// Lets the isolated Copilot home use the MCP sign-ins of the Copilot CLI: HTTP servers such
-/// as Jira or Glean answer "requires authentication" without them. The folder is linked, so a
+/// Lets the isolated Copilot home use the MCP sign-ins of the Copilot CLI: HTTP servers
+/// that need a sign-in answer "requires authentication" without them. The folder is linked, so a
 /// token the Agent refreshes is the one the CLI uses too. It is a protected path: the Agent
 /// cannot read it.
 fn share_mcp_oauth(source: &std::path::Path, target: &std::path::Path) -> Result<()> {

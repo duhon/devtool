@@ -1276,9 +1276,9 @@ fn seed_data(data: &Path) -> Result<Vec<(PathBuf, String)>> {
 fn seed_storage(fixture_port: u16) -> String {
     let variables = json!({
         "sku":"fixture-materialized-sku",
-        "magento":format!("localhost:{fixture_port}"),
-        "magentoBase":format!("http://localhost:{fixture_port}"),
-        "magentoToken":format!("http://localhost:{fixture_port}/rest/default/V1/integration/admin/token")
+        "shop":format!("localhost:{fixture_port}"),
+        "shopBase":format!("http://localhost:{fixture_port}"),
+        "shopToken":format!("http://localhost:{fixture_port}/rest/default/V1/integration/admin/token")
     });
     format!(
         "if (location.protocol === 'chrome-extension:' && localStorage.getItem('__fixtureSeeded') === null) {{\n\
@@ -1507,7 +1507,7 @@ fn fixture_router(sync: PathBuf) -> Router {
         if path == "/rest/default/swagger.json" {
             return Json(json!({
                 "swagger":"2.0",
-                "info":{"title":"Magento-shaped local fixture","version":"1"},
+                "info":{"title":"Local REST fixture","version":"1"},
                 "basePath":"/rest/default",
                 "paths":{"/V1/integration/admin/token":{"post":{
                     "parameters":[{"name":"body","in":"body","required":true,

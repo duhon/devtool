@@ -14,7 +14,7 @@ SELECT * FROM catalog_product_entity LIMIT 10;
 ```
 
 Confirm tables and columns through the actual cached schema before using them.
-Do not assume every Magento database has identical tables or permissions.
+Do not assume every database has identical tables or permissions.
 
 Result columns are formatted using the query's MySQL column metadata,
 including aliases: numbers, booleans, dates/times and native JSON. An optional
@@ -31,5 +31,5 @@ times print exactly as the server returns them. A server error prints as
 `ERROR code (state): message` after the tables of the statements before it.
 
 Use the discovered schema when available; do not invent table names. For
-example, Magento commonly uses catalog_product_entity, but confirm the actual
+example, a shop database may use a products table, but confirm the actual
 schema before proposing a query.
