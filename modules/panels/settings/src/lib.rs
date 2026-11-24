@@ -51,6 +51,8 @@ pub enum Msg {
     Forget,
     RemoveCancel,
     RemoveConfirm,
+    /// Updates every installed module that has a newer version, the App last.
+    UpdateAll,
     /// Installs `(source, module, version)`; the App row updates the App.
     Install(String, String, String),
     Reload,
@@ -159,6 +161,10 @@ pub struct Settings {
     /// The App is being updated, or is installed and waits for the reload.
     updating: bool,
     installed: Option<String>,
+    /// Update all runs.
+    batch: Option<Batch>,
+    /// What Update all did before it updated the App, for the App's status.
+    batched: Option<(String, &'static str)>,
     sources: Vec<Value>,
     sources_loaded: bool,
     warning: Option<String>,
@@ -186,6 +192,18 @@ struct System {
     skills: Vec<(String, String)>,
     agents: Vec<(String, String)>,
     instructions: bool,
+}
+
+/// Update all: the modules still to update `(source, module, version, name)`, then the App
+/// `(source, version)`.
+#[derive(Default)]
+struct Batch {
+    queue: Vec<(String, String, String, String)>,
+    app: Option<(String, String)>,
+    total: usize,
+    current: String,
+    updated: Vec<String>,
+    failed: Vec<String>,
 }
 
 /// A sync whose conflicts are settled one by one in Diff.
@@ -290,6 +308,19 @@ impl Row<'_> {
             .and_then(|offer| offer["description"].as_str())
             .or_else(|| self.installed?["description"].as_str())
             .unwrap_or_default()
+    }
+
+    /// The newer version an installed module (or the App, running `app_version`) updates to.
+    fn update(&self, app_version: Option<&str>) -> Option<&str> {
+        let installed = self.installed?;
+        self.slug?;
+        let base = match self.app() {
+            true => app_version,
+            false => installed["version"].as_str(),
+        };
+        let offered = self.newest()?["version"].as_str()?;
+        base.is_none_or(|base| newer(offered, base))
+            .then_some(offered)
     }
 
     /// The newest version the source offers that can be installed here.
@@ -538,6 +569,86 @@ impl Settings {
         vec![command, self.running(operation_tab(operation), operation)]
     }
 
+    fn update_all(&mut self) -> Vec<Cmd> {
+        if self.busy.is_some() || self.updating || self.batch.is_some() {
+            return Vec::new();
+        }
+        let Some(check) = self.check.as_ref() else {
+            return Vec::new();
+        };
+        let app_version = check["installed"][APPLICATION_ID]["version"].as_str();
+        let mut batch = Batch::default();
+        for row in rows(check) {
+            let Some(version) = row.update(app_version) else {
+                continue;
+            };
+            let slug = row.slug.unwrap_or_default().to_owned();
+            match row.app() {
+                true => batch.app = Some((slug, version.to_owned())),
+                false => batch.queue.push((
+                    slug,
+                    row.id.to_owned(),
+                    version.to_owned(),
+                    row.title().to_owned(),
+                )),
+            }
+        }
+        batch.total = batch.queue.len();
+        if batch.total == 0 && batch.app.is_none() {
+            return Vec::new();
+        }
+        self.batch = Some(batch);
+        self.next_update()
+    }
+
+    /// Update all installs its next module; after the last one, the App or a new check.
+    fn next_update(&mut self) -> Vec<Cmd> {
+        let Some(batch) = self.batch.as_mut() else {
+            return Vec::new();
+        };
+        if !batch.queue.is_empty() {
+            let (source, id, version, name) = batch.queue.remove(0);
+            let text = format!(
+                "Update all · Running… {}/{} {name}",
+                batch.total - batch.queue.len(),
+                batch.total
+            );
+            batch.current = name;
+            self.busy = Some(("Install module".into(), None));
+            return vec![
+                cmd::modules_install(CHANGE, &source, &id, &version),
+                self.report(MODULES, text, "busy"),
+            ];
+        }
+        let batch = self.batch.take().unwrap_or_default();
+        let mut text = match batch.updated.is_empty() {
+            true => "Update all".to_owned(),
+            false => format!("Update all · Updated {}", batch.updated.join(", ")),
+        };
+        let indicator = match batch.failed.is_empty() {
+            true => "ok",
+            false => {
+                text.push_str(&format!(" · ERROR · {}", batch.failed.join("; ")));
+                "error"
+            }
+        };
+        if let Some((source, version)) = batch.app {
+            self.batched = (batch.total > 0).then_some((text, indicator));
+            self.updating = true;
+            self.installed = Some(source.clone());
+            return vec![
+                cmd::app_update(UPDATE, &source, &version),
+                self.running(MODULES, "Install update"),
+            ];
+        }
+        if indicator == "ok" {
+            text = text.replacen("Update all", "Update all · OK", 1);
+        }
+        let mut commands = self.check(false);
+        commands.push(self.report(MODULES, text, indicator));
+        commands
+    }
+
     /// Saves `list`; configured sources are sent with their slug so they keep their data.
     fn save(&mut self, operation: &str, list: Vec<Value>) -> Vec<Cmd> {
         let entries: Vec<Value> = list
@@ -563,6 +674,21 @@ impl Settings {
         let Some((operation, _)) = self.busy.take() else {
             return Vec::new();
         };
+        if operation == "Install module"
+            && let Some(batch) = self.batch.as_mut()
+        {
+            match &result {
+                Ok(value) => batch.updated.push(format!(
+                    "{} {}",
+                    text_of(&value["installed"], "name"),
+                    text_of(&value["installed"], "version")
+                )),
+                Err(failure) => batch
+                    .failed
+                    .push(format!("{}: {}", batch.current, failure.message)),
+            }
+            return self.next_update();
+        }
         let (mut text, indicator) = outcome(&operation, &result);
         let mut commands = Vec::new();
         if let Ok(value) = &result {
@@ -968,34 +1094,48 @@ impl Settings {
                     "error",
                 )],
             },
-            UPDATE => match result {
-                Ok(value) => {
-                    self.installed = self.installed.take().or_else(|| Some(String::new()));
-                    self.updating = false;
-                    // Installed, but the App could not reload itself: the Reload action retries.
-                    match value["warning"].as_str() {
-                        Some(warning) => vec![self.report(
-                            MODULES,
-                            format!("Install update · ERROR · {warning}"),
-                            "error",
-                        )],
-                        None => vec![self.report(
-                            MODULES,
-                            "Update installed. Reload the extension to finish.".into(),
-                            "ok",
-                        )],
+            UPDATE => {
+                let batched = self.batched.take();
+                let reported = match result {
+                    Ok(value) => {
+                        self.installed = self.installed.take().or_else(|| Some(String::new()));
+                        self.updating = false;
+                        // Installed, but the App could not reload itself: the Reload action retries.
+                        match value["warning"].as_str() {
+                            Some(warning) => vec![self.report(
+                                MODULES,
+                                format!("Install update · ERROR · {warning}"),
+                                "error",
+                            )],
+                            None => vec![self.report(
+                                MODULES,
+                                "Update installed. Reload the extension to finish.".into(),
+                                "ok",
+                            )],
+                        }
                     }
+                    Err(failure) => {
+                        self.updating = false;
+                        self.installed = None;
+                        vec![self.report(
+                            MODULES,
+                            format!("Install update · ERROR · {}", failure.message),
+                            "error",
+                        )]
+                    }
+                };
+                // Update all ended with the App: its status leads with the modules it updated.
+                match (batched, self.status.clone()) {
+                    (Some((text, indicator)), Some((app, app_indicator))) => {
+                        let indicator = match indicator {
+                            "error" => indicator,
+                            _ => app_indicator,
+                        };
+                        vec![self.report(MODULES, format!("{text} · {app}"), indicator)]
+                    }
+                    _ => reported,
                 }
-                Err(failure) => {
-                    self.updating = false;
-                    self.installed = None;
-                    vec![self.report(
-                        MODULES,
-                        format!("Install update · ERROR · {}", failure.message),
-                        "error",
-                    )]
-                }
-            },
+            }
             MODELS => self.models_loaded(result),
             SAVE_OPTIONS => {
                 let (text, indicator) = outcome("New Agent chat settings", &result);
@@ -1088,6 +1228,7 @@ impl Settings {
                 commands
             }
             Msg::Check => self.check(true),
+            Msg::UpdateAll => self.update_all(),
             Msg::Detail(key, detail) => {
                 if !self.open.remove(&(key.clone(), detail)) {
                     self.open.insert((key, detail));
@@ -1333,14 +1474,32 @@ impl Settings {
     }
 
     fn view_modules(&self) -> Vec<ui::Node> {
+        let updates = self.check.as_ref().is_some_and(|check| {
+            let app_version = check["installed"][APPLICATION_ID]["version"].as_str();
+            rows(check)
+                .iter()
+                .any(|row| row.update(app_version).is_some())
+        });
         let mut body = vec![
             ui::row(vec![
                 ui::heading("Modules").key("settings-modules-title"),
                 ui::spacer().key("settings-modules-spacer"),
+                ui::button("Update all", &Msg::UpdateAll)
+                    .variant("tab")
+                    .key("settings-modules-update-all")
+                    .title("Updates every installed module that has a newer version; installs nothing new")
+                    .disabled(
+                        !updates
+                            || self.checking
+                            || self.busy.is_some()
+                            || self.updating
+                            || self.batch.is_some()
+                            || self.installed.is_some(),
+                    ),
                 ui::button("Check for updates", &Msg::Check)
                     .variant("tab")
                     .key("settings-modules-check")
-                    .disabled(self.checking),
+                    .disabled(self.checking || self.batch.is_some()),
             ])
             .key("settings-modules-head"),
         ];

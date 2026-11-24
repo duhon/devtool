@@ -119,7 +119,10 @@ content do not trigger template suggestions.
 `editor.contribute {"functions": {service|"*": defs}}` (`services-jq`) with the
 variable tree as input; the Kernel resolves it at send time, completes names after
 `{{$` (and `{{$!`), shows the signature with the current parameter marked inside the
-arguments (a single item that inserts nothing), hovers the result and accepts it as a
+arguments (an item that inserts nothing) plus, by the argument's first character, variables
+(`.`/`:`), function names (`$`, nested calls recursively) and template names (`@`);
+arguments are comma-separated and a bare `$f(…)` argument passes its JSON value, a bare
+`@t(…)` its expansion (`refs::call_arguments`). It hovers the result and accepts it as a
 parameter domain. An eager call `{{$!name(args)}}` is replaced by its result
 (`editor::functions::eager`, verbatim, refused when it holds a secret) when a template call
 expands (`expand_call`) and by Enter at the end of a console line (`expand_eager`); an
@@ -208,6 +211,8 @@ changes size, without browser scroll anchoring to reveal the composer or message
 The Console is the only interface; the 2.x per-service forms were removed in 3.0.
 Service tabs and both side rails dock directly against the central workspace
 frame; the service strip has no separate underline or gap above the editor.
+Service tabs shrink with ellipses down to 40px; past that the strip scrolls
+sideways (wheel or trackpad, no scrollbar) and a newly selected tab scrolls into view.
 Right-panel set tabs and the tab-styled Hints title occupy the same top row
 above their editor. Set tabs use a Yew portal into a persistent header host;
 the independent Variables component retains its state and owns their callbacks.

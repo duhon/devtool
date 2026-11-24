@@ -73,6 +73,8 @@
   await wait(() => detail('updates', 'new-notes')?.includes('Fixture notes of 65000.0.0'),
     'The new version must show its release notes');
   assert(updateFixture.installs.length === 0, 'Checking must not install without user consent');
+  assert(testid('settings-modules-update-all').disabled,
+    'Update all must stay off while only modules that are not installed are offered');
 
   const install = () => part('updates', 'install');
   const getViews = chrome.extension.getViews;

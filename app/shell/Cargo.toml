@@ -54,5 +54,5 @@ web-sys = { version = "0.3", features = [
   "InputEvent", "KeyboardEvent", "MouseEvent", "PointerEvent", "DragEvent", "DataTransfer", "CssStyleDeclaration",
   "console", "DomRect", "Navigator",
   "Clipboard", "FocusEvent", "ResizeObserver", "StorageEvent",
-  "ClipboardEvent", "DomTokenList"
+  "ClipboardEvent", "DomTokenList", "WheelEvent", "ScrollIntoViewOptions", "ScrollLogicalPosition"
 ] }

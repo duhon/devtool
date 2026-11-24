@@ -82,6 +82,65 @@ fn installing_the_app_row_updates_the_app() {
 }
 
 #[test]
+fn update_all_updates_installed_modules_one_by_one_and_the_app_last() {
+    let mut settings = Settings::default();
+    settings.update(Event::Init {
+        settings: json!({}),
+    });
+    let check = json!({
+        "sources": [{"slug": "team", "name": "Team", "modules": [
+            {"id": "app", "version": "9.0.0"},
+            {"id": "kafka", "version": "1.1.0"},
+            {"id": "new", "version": "1.0.0"},
+            {"id": "rest", "version": "2.0.0"},
+            {"id": "same", "version": "1.0.0"},
+        ]}],
+        "installed": {
+            "app": {"source": "team", "version": "8.0.0"},
+            "kafka": {"source": "team", "version": "1.0.0", "name": "Kafka"},
+            "rest": {"source": "team", "version": "1.0.0", "name": "REST"},
+            "same": {"source": "team", "version": "1.0.0"},
+        },
+    });
+    settings.update(Event::Reply {
+        tag: "check:1".into(),
+        result: Ok(check),
+    });
+    let install = |cmds: &[Cmd]| {
+        assert_eq!(cmds[0].name, "modules.install");
+        let args = cmds[0].args();
+        (args["module"].clone(), args["version"].clone())
+    };
+    let cmds = settings.update(Event::Ui {
+        msg: Msg::UpdateAll,
+        value: None,
+    });
+    assert_eq!(install(&cmds), (json!("kafka"), json!("1.1.0")));
+    assert_eq!(cmds[1].args()["text"], "Update all · Running… 1/2 Kafka");
+    let cmds = settings.update(Event::Reply {
+        tag: "change".into(),
+        result: Err(services_sdk::Failure::new("broken")),
+    });
+    assert_eq!(install(&cmds), (json!("rest"), json!("2.0.0")));
+    let cmds = settings.update(Event::Reply {
+        tag: "change".into(),
+        result: Ok(json!({"installed": {"name": "REST", "version": "2.0.0"}})),
+    });
+    assert_eq!(cmds[0].name, "app.update");
+    assert_eq!(cmds[0].args()["version"], "9.0.0");
+    let cmds = settings.update(Event::Reply {
+        tag: "update".into(),
+        result: Ok(json!({})),
+    });
+    let status = cmds.last().unwrap().args();
+    assert_eq!(
+        status["text"],
+        "Update all · Updated REST 2.0.0 · ERROR · Kafka: broken · Update installed. Reload the extension to finish."
+    );
+    assert_eq!(status["indicator"], "error");
+}
+
+#[test]
 fn a_sync_opens_each_conflict_in_diff_and_resolves_it_on_done() {
     let mut settings = Settings::default();
     settings.update(Event::Init {

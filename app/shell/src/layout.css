@@ -112,7 +112,14 @@
   margin: 0;
   border: none;
   flex: 1 1 0;
-  overflow: hidden;
+  /* Tabs that no longer fit scroll sideways (wheel, trackpad) instead of disappearing. */
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.console-tab-strip::-webkit-scrollbar {
+  display: none;
 }
 
 .console-toolbar {
@@ -264,7 +271,7 @@
 
 .console-tab-strip > .tab-button {
   flex: 0 1 auto;
-  min-width: 0;
+  min-width: 40px;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;

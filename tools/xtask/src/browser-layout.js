@@ -281,11 +281,30 @@
     assert(tabs===document.querySelector('.console-tab-strip')||!tabs.isConnected,
       'Resizing must not recreate the service tab strip');
     const strip=document.querySelector('.console-tab-strip');
-    assert(strip.scrollWidth<=strip.clientWidth+1&&getComputedStyle(strip).flexWrap==='nowrap',
-      'Service tabs must shrink into the available width rather than wrap or overflow');
-    assert([...strip.querySelectorAll('.tab-button')].some(tab=>tab.scrollWidth>tab.clientWidth)
-      &&[...strip.querySelectorAll('.tab-button')].every(tab=>getComputedStyle(tab).textOverflow==='ellipsis'),
+    const buttons=[...strip.querySelectorAll('.tab-button')];
+    const shown=tab=>{const box=tab.getBoundingClientRect(),area=strip.getBoundingClientRect();return box.left>=area.left-1&&box.right<=area.right+1;};
+    const geometry=()=>JSON.stringify({scroll:strip.scrollWidth,client:strip.clientWidth,left:strip.scrollLeft,
+      tabs:buttons.map(tab=>[tab.textContent,Math.round(tab.getBoundingClientRect().width)])});
+    assert(getComputedStyle(strip).flexWrap==='nowrap'&&buttons.every(tab=>tab.getBoundingClientRect().width>=39),
+      ()=>`${panel}: service tabs must shrink only down to a readable width, without wrapping: ${geometry()}`);
+    assert(buttons.some(tab=>tab.scrollWidth>tab.clientWidth)
+      &&buttons.every(tab=>getComputedStyle(tab).textOverflow==='ellipsis'),
       'Narrow service tab names must be clipped with ellipses');
+    if(strip.scrollWidth>strip.clientWidth+1){
+      strip.dispatchEvent(new WheelEvent('wheel',{deltaY:10000,bubbles:true}));
+      await wait(()=>shown(buttons.at(-1)),()=>`${panel}: the wheel must scroll overflowing service tabs to the last one: ${geometry()}`);
+      strip.scrollLeft=0;
+    }
+  }
+  {
+    const strip=document.querySelector('.console-tab-strip');
+    const inside=tab=>{const box=tab.getBoundingClientRect(),area=strip.getBoundingClientRect();return box.left>=area.left-1&&box.right<=area.right+1;};
+    const before=strip.querySelector('.tab-button.active'),last=[...strip.querySelectorAll('.tab-button')].at(-1);
+    assert(strip.scrollWidth>strip.clientWidth+1&&!inside(last),'The widest panel must leave service tabs to scroll to');
+    await click(last);
+    await wait(()=>last.classList.contains('active')&&inside(last),'Selecting a hidden service tab must scroll it into view');
+    await click(before);
+    await wait(()=>before.classList.contains('active')&&inside(before),'Selecting a service tab must scroll back to it');
   }
   await open('history');
   await setWidth(410);

@@ -248,6 +248,14 @@ impl App {
                 all.extend(hints);
                 all
             });
+        // Calls of functions that come or go are underlined again.
+        let functions = services_kernel::modules::registry::functions();
+        if functions != self.functions {
+            self.functions = functions;
+            for service in services_kernel::modules::services::ids() {
+                crate::language::relight(&service);
+            }
+        }
     }
 
     /// The console shows another service: the open panel hears of its document.

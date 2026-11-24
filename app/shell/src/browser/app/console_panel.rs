@@ -565,6 +565,32 @@ impl App {
         hints.retain(|hint| seen.insert(hint.clone()));
         hints
     }
+    /// Scrolls a newly selected service's tab into view; other renders leave the strip where
+    /// the user scrolled it.
+    pub(super) fn reveal_tab(&mut self) {
+        if self.revealed_tab == self.console_service {
+            return;
+        }
+        let Some(tab) = web_sys::window()
+            .and_then(|window| window.document())
+            .and_then(|document| {
+                document
+                    .query_selector(&format!(
+                        "#tab-strip [data-testid=\"console-service-{}\"]",
+                        self.console_service
+                    ))
+                    .ok()
+                    .flatten()
+            })
+        else {
+            return;
+        };
+        let options = web_sys::ScrollIntoViewOptions::new();
+        options.set_block(web_sys::ScrollLogicalPosition::Nearest);
+        options.set_inline(web_sys::ScrollLogicalPosition::Nearest);
+        tab.scroll_into_view_with_scroll_into_view_options(&options);
+        self.revealed_tab = self.console_service.clone();
+    }
     pub(super) fn console_tabs(&self, ctx: &Context<Self>) -> Html {
         html! {for self.console_order.iter().map(|s|{
             let select=s.clone();let drag=s.clone();let drop=s.clone();
@@ -651,7 +677,7 @@ impl App {
         html! {<div class="console-editors">
             <div class={classes!("console-workspace",self.side.is_some().then_some("has-tools"))}>
                 <div class="console-top-bar">
-                    <div id="tab-strip" class="console-tab-strip">
+                    <div id="tab-strip" class="console-tab-strip" onwheel={Callback::from(scroll_tabs)}>
                         {self.console_tabs(ctx)}
                     </div>
                 </div>
@@ -700,4 +726,23 @@ fn interval(ms: u32) -> String {
         seconds if seconds.is_multiple_of(60) => format!("{}m", seconds / 60),
         seconds => format!("{seconds}s"),
     }
+}
+
+/// A vertical wheel scrolls the service tabs sideways once they overflow the strip.
+fn scroll_tabs(event: web_sys::WheelEvent) {
+    // Yew delegates events, so the current target is its root, not the strip.
+    let Some(strip) = event
+        .target()
+        .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+        .and_then(|target| target.closest("#tab-strip").ok().flatten())
+    else {
+        return;
+    };
+    if event.delta_x() != 0.0
+        || event.delta_y() == 0.0
+        || strip.scroll_width() <= strip.client_width()
+    {
+        return;
+    }
+    strip.set_scroll_left(strip.scroll_left() + event.delta_y() as i32);
 }

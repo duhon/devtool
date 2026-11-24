@@ -201,6 +201,10 @@ pub struct App {
     module_history: BTreeMap<String, Vec<ModuleStatus>>,
     hints: BTreeMap<String, String>,
     templates: services_contracts::templates::Library,
+    /// The jq functions the console editors were last highlighted with.
+    functions: services_kernel::editor::functions::Library,
+    /// The service whose tab was last scrolled into view in the tab strip.
+    revealed_tab: String,
     /// The panel module shown in the side panel.
     side: Option<String>,
     agent_workspace: services_kernel::agent::Workspace,
@@ -276,6 +280,8 @@ impl Component for App {
             module_history: BTreeMap::new(),
             hints: BTreeMap::new(),
             templates: Default::default(),
+            functions: Default::default(),
+            revealed_tab: String::new(),
             // A session switch creates the App anew; the right panel stays open.
             side: kernel_panel::OPEN_SIDE.with(|side| side.borrow().clone()),
             agent_workspace: services_kernel::agent::Workspace::new(Ok(
@@ -681,7 +687,18 @@ impl Component for App {
                 );
             }
             Msg::EditorError(message) => {
-                self.notice = Some(Notice::new(format!("Editor · ERROR · {message}")));
+                let service = self.console_service.clone();
+                let owner = self.status_owner(&service);
+                if owner.line.is_some() {
+                    self.set_module_status(
+                        &service,
+                        format!("{} · Editor · ERROR · {message}", time()),
+                        json!({"editor": service, "error": message}),
+                        owner,
+                    );
+                } else {
+                    self.notice = Some(Notice::new(format!("Editor · ERROR · {message}")));
+                }
             }
             Msg::AgentToolResult(tag, call_id, result) => {
                 self.kernel.agent_result(&tag, &call_id, result);
@@ -871,6 +888,7 @@ impl Component for App {
     }
     fn rendered(&mut self, ctx: &Context<Self>, _: bool) {
         self.sync_editors(ctx);
+        self.reveal_tab();
         let wait = self.observe_statuses();
         self.seen
             .schedule(wait, ctx.link().callback(|()| Msg::Seen));
