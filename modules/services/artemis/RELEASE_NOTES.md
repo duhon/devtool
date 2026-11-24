@@ -1,10 +1,14 @@
 # Artemis module release notes
+
+## 6.1.0
+
 - `Transform: {{$name(args)}}` in `#options` works here: `.` is `{columns, columnTypes, rows}` of the action; an array of objects or `{columns, rows}` shows as a table, anything else as JSON.
-- A `Format: json` reply is highlighted as JSON and folds by brackets.
-- `Format: vertical` is removed: `Format` takes `table` or `json`.
+- Discovered names stay offered (and visible to the Agent) after they age; the next hint after 10 minutes refreshes them, and a failed refresh keeps the old ones.
 
 ## 6.0.0
 
+- A `Format: json` reply is highlighted as JSON and folds by brackets.
+- `Format: vertical` is removed: `Format` takes `table` or `json`.
 - `#headers` is `#metadata` (`#headers` still works, unlisted). `Persistent` moved from `#options` to `#metadata` as `Message-Persistent`.
 
 ## 5.0.0

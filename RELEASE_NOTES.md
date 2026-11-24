@@ -1,5 +1,33 @@
 # Release notes
 
+## 6.0.0
+
+- Variables are a tree, shared by Variables and the Dictionary sets: `{{.var.x}}`,
+  `{{.env.X}}`, `{{.<set>.x}}` from the root and `{{:x}}` relative (Variables, then the sets in
+  order, then the environment); `*`, `**` and a trailing `~` select children, descendants and
+  keys, and references nest (`{{.a.{{:b}}}}`). **Breaking:** `{{var:x}}`, `{{env:X}}` and
+  `{{<set>:x}}` are gone, and a literal leading `@` is `\@` (was `@@`); saved checks and
+  templates are not converted.
+- Live templates: a template is a function with parameters, domains and defaults
+  (`@name(service: {{:services}}, type = "qa")`), called as `{{@name(args)}}` or on a section
+  line (`#target @name(...)`, expanded by Enter); a Global tab serves every service, and a
+  check template with parameters regenerates the check on Enter. `\{{` is a literal `{{`.
+- Functions (experimental): jq definitions in the new Functions panel, called as
+  `{{$name(args)}}` with the variable tree as input, `{{$!name(args)}}` to insert the result,
+  and `Transform: {{$name(args)}}` in `#options` to reshape a result before it is shown.
+  Completion shows the signature and suggests arguments; an unknown call is underlined.
+- Console editor errors (for example a template or function that fails on Enter) show in the
+  check's status line at the bottom instead of a banner at the top.
+- New services: Kafka (native `kafka` 1.1 driver: metadata, reads, live tail, produce, consumer
+  groups and admin writes), Kubernetes (native `kubernetes` driver, kubectl-style verbs) and
+  Prometheus (PromQL with tables and Unicode charts).
+- Discovery: names found by a service stay offered, and visible to the Agent, after they age;
+  the next hint refreshes them (after 10 minutes in most services) and a failed refresh keeps
+  them.
+- Settings → Modules: **Update all** installs every available module update in one go.
+- Service tabs shrink down to 40px and then scroll sideways; the selected tab scrolls into view.
+- Templates, Variables, Dictionary and Functions save every edit as typed; there are no drafts.
+
 ## 5.1.0
 
 - Agent access (Settings → Agent): a slider from level 0 (isolated, as before) through Internet,

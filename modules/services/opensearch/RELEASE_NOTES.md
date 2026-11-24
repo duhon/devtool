@@ -1,5 +1,9 @@
 # OpenSearch module release notes
 
+## 2.1.1
+
+- Discovered names stay offered (and visible to the Agent) after they age; the next hint after 10 minutes refreshes them, and a failed refresh keeps the old ones.
+
 ## 2.1.0
 
 - `#headers` is `#metadata`; `#headers` still works but is not offered.

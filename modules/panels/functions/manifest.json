@@ -5,7 +5,7 @@
   "version": "1.0.0",
   "description": "jq functions of each service and global ones that {{$name(args)}} runs on the variable tree.",
   "abi": 2,
-  "app": ">=4.0",
+  "app": ">=6.0.0",
   "order": 3,
   "toolbar": 3
 }

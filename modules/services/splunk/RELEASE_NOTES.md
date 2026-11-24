@@ -1,10 +1,13 @@
 # Splunk module release notes
+
+## 5.1.0
+
 - `Transform: {{$name(args)}}` in `#options` works here: `.` is `{columns, rows}` of the search; an array of objects or `{columns, rows}` shows as a table, anything else as JSON.
-- A `Format: json` reply is highlighted as JSON and folds by brackets.
-- `Format: vertical` is removed: `Format` takes `table` or `json`.
 
 ## 5.0.0
 
+- A `Format: json` reply is highlighted as JSON and folds by brackets.
+- `Format: vertical` is removed: `Format` takes `table` or `json`.
 - `#headers` is `#metadata`. `From`, `To`, `App` and `Preview` moved from `#options` to `#metadata` as `Search-From`, `Search-To`, `Search-App` and `Search-Preview`, so `From` stays a usable HTTP header. `Count` and `Offset` stay in `#options`. Saved checks are not converted.
 
 ## 4.0.0

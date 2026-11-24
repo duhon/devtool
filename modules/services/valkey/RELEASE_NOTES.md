@@ -1,4 +1,7 @@
+## 2.1.0
+
 - `Transform: {{$name(args)}}` in `#options` works here: `.` is the decoded reply; a string shows as text, anything else as JSON. A stopped `SUBSCRIBE` is transformed as text.
+- Discovered keys no longer disappear after 30 seconds: they stay offered (and visible to the Agent), the next hint refreshes them, and a failed refresh keeps them.
 
 ## 2.0.0
 

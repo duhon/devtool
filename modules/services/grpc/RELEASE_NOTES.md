@@ -1,5 +1,9 @@
 # gRPC module release notes
+
+## 5.1.0
+
 - `Transform: {{$name(args)}}` in `#options`: the module hands its driver answer to the Transform and shows what comes back.
+- Discovered names stay offered (and visible to the Agent) after they age; the next hint after 10 minutes refreshes them, and a failed refresh keeps the old ones.
 
 ## 5.0.0
 

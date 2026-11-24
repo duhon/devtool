@@ -2370,7 +2370,7 @@ dependencies = [
 
 [[package]]
 name = "kafka-contract"
-version = "5.1.0"
+version = "6.0.0"
 dependencies = [
  "base64 0.22.1",
  "serde",
@@ -4328,7 +4328,7 @@ dependencies = [
 
 [[package]]
 name = "services-contracts"
-version = "5.1.0"
+version = "6.0.0"
 dependencies = [
  "flate2",
  "serde",
@@ -4339,7 +4339,7 @@ dependencies = [
 
 [[package]]
 name = "services-installer"
-version = "5.1.0"
+version = "6.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -4356,7 +4356,7 @@ dependencies = [
 
 [[package]]
 name = "services-jq"
-version = "5.1.0"
+version = "6.0.0"
 dependencies = [
  "jaq-core",
  "jaq-json",
@@ -4366,7 +4366,7 @@ dependencies = [
 
 [[package]]
 name = "services-kernel"
-version = "5.1.0"
+version = "6.0.0"
 dependencies = [
  "base64 0.22.1",
  "js-sys",
@@ -4395,7 +4395,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-artemis"
-version = "6.0.0"
+version = "6.1.0"
 dependencies = [
  "base64 0.22.1",
  "percent-encoding",
@@ -4407,7 +4407,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-dictionary"
-version = "4.0.0"
+version = "5.0.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4443,7 +4443,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-graphql"
-version = "4.1.0"
+version = "4.2.0"
 dependencies = [
  "prost",
  "serde_json",
@@ -4452,7 +4452,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-grpc"
-version = "5.0.0"
+version = "5.1.0"
 dependencies = [
  "prost",
  "prost-reflect",
@@ -4512,7 +4512,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-mongodb"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "mongodb",
  "prost",
@@ -4527,7 +4527,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-mysql"
-version = "4.1.0"
+version = "4.2.0"
 dependencies = [
  "serde_json",
  "services-sdk",
@@ -4535,7 +4535,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-opensearch"
-version = "2.1.0"
+version = "2.1.1"
 dependencies = [
  "serde_json",
  "services-sdk",
@@ -4558,7 +4558,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-rest"
-version = "4.1.0"
+version = "4.1.1"
 dependencies = [
  "prost",
  "serde_json",
@@ -4586,7 +4586,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-splunk"
-version = "5.0.0"
+version = "5.1.0"
 dependencies = [
  "httpdate",
  "prost",
@@ -4597,7 +4597,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-templates"
-version = "4.0.0"
+version = "5.0.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4607,7 +4607,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-terminal"
-version = "5.0.0"
+version = "5.1.0"
 dependencies = [
  "prost",
  "serde",
@@ -4617,7 +4617,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-valkey"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "percent-encoding",
  "prost",
@@ -4635,7 +4635,7 @@ dependencies = [
 
 [[package]]
 name = "services-module-variables"
-version = "4.0.0"
+version = "5.0.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4644,7 +4644,7 @@ dependencies = [
 
 [[package]]
 name = "services-native"
-version = "5.1.0"
+version = "6.0.0"
 dependencies = [
  "async-trait",
  "axum 0.8.9",
@@ -4687,7 +4687,7 @@ dependencies = [
 
 [[package]]
 name = "services-sdk"
-version = "5.1.0"
+version = "6.0.0"
 dependencies = [
  "base64 0.22.1",
  "prost",
@@ -4698,7 +4698,7 @@ dependencies = [
 
 [[package]]
 name = "services-shell"
-version = "5.1.0"
+version = "6.0.0"
 dependencies = [
  "js-sys",
  "serde_json",
@@ -4739,7 +4739,7 @@ dependencies = [
 
 [[package]]
 name = "services-testkit"
-version = "5.1.0"
+version = "6.0.0"
 dependencies = [
  "axum 0.8.9",
  "serde_json",
@@ -4751,7 +4751,7 @@ dependencies = [
 
 [[package]]
 name = "services-widgets"
-version = "5.1.0"
+version = "6.0.0"
 dependencies = [
  "js-sys",
  "pulldown-cmark",
@@ -6157,7 +6157,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "5.1.0"
+version = "6.0.0"
 dependencies = [
  "anyhow",
  "axum 0.8.9",

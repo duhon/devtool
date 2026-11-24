@@ -1,4 +1,7 @@
 # Terminal module release notes
+
+## 5.1.0
+
 - `Transform: {{$name(args)}}` in `#options` works here: `.` is the whole output as one string, transformed when the command ends (on Stop, the output so far); a string shows as text, an array of strings as lines, anything else as JSON.
 
 ## 5.0.0

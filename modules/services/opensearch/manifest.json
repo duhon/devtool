@@ -2,7 +2,7 @@
   "id": "opensearch",
   "kind": "service",
   "name": "OpenSearch",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "OpenSearch HTTP API: search, documents, indices, bulk and multi-search.",
   "abi": 2,
   "app": ">=4.0",

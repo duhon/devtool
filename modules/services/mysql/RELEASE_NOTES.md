@@ -1,9 +1,13 @@
 # MySQL module release notes
+
+## 4.2.0
+
 - `Transform: {{$name(args)}}` in `#options`: the module hands its driver answer to the Transform and shows what comes back.
-- `Format: vertical` is removed: `Format` takes `table` or `json`. MySQL keeps `\G` after the query.
+- Discovered names stay offered (and visible to the Agent) after they age; the next hint after 10 minutes refreshes them, and a failed refresh keeps the old ones.
 
 ## 4.1.0
 
+- `Format: vertical` is removed: `Format` takes `table` or `json`. MySQL keeps `\G` after the query.
 - New `#options` key `Columns-Size` (`name=20`): the width of a column in characters.
 - `Format: table | json | vertical` is offered in `#options` hints.
 - A `Format: json` reply is highlighted as JSON and folds by brackets.
