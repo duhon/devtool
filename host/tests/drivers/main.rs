@@ -2,6 +2,7 @@
 //! covered with the Host transports).
 
 mod grpc;
+mod kafka;
 mod kubernetes;
 mod mongodb;
 mod mysql;

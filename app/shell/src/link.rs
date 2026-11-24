@@ -50,6 +50,7 @@ fn linked() -> Vec<Module> {
         "services/valkey" => services_module_valkey::Valkey,
         "services/mongodb" => services_module_mongodb::Mongodb,
         "services/kubernetes" => services_module_kubernetes::Kubernetes,
+        "services/kafka" => services_module_kafka::Kafka,
         "panels/variables" => services_module_variables::Variables,
         "panels/history" => services_module_history::History,
         "panels/templates" => services_module_templates::Templates,

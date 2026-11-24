@@ -1,7 +1,7 @@
 //! Drivers: protocols the App cannot speak from the browser. They know no services; a module
 //! describes the call, a driver runs it.
 //!
-//! `{"service":"drivers","driver":"http"|"grpc"|"kubernetes"|"mongodb"|"mysql"|"process"|"tcp",
+//! `{"service":"drivers","driver":"http"|"grpc"|"kafka"|"kubernetes"|"mongodb"|"mysql"|"process"|"tcp",
 //! "op":"call"|"stream","request":{…}}`. A call answers `{"ok":true,"result":…}`; a stream sends
 //! `data` events and ends with `exit`. A failure is
 //! `{"ok":false,"error":…,"failure":{"stage":…,"causes":[…]}}`.
@@ -11,6 +11,7 @@
 
 mod grpc;
 mod http;
+pub mod kafka;
 mod kubernetes;
 mod mongodb;
 mod mysql;
@@ -41,6 +42,7 @@ pub fn versions() -> Value {
     json!({
         services_sdk::http::DRIVER: "1",
         services_sdk::grpc::DRIVER: "1",
+        kafka_contract::DRIVER: "1",
         services_sdk::kubernetes::DRIVER: "1",
         services_sdk::mongodb::DRIVER: "1",
         services_sdk::mysql::DRIVER: "1",
@@ -124,6 +126,7 @@ fn stage(fallback: Stage, causes: &[String]) -> Stage {
 pub struct Drivers {
     http: http::Http,
     grpc: grpc::Grpc,
+    kafka: kafka::Kafka,
     kubernetes: kubernetes::Kubernetes,
     mongodb: mongodb::Mongodb,
     mysql: mysql::Mysql,
@@ -134,6 +137,7 @@ impl Drivers {
         Ok(Self {
             http: http::Http::new().map_err(|failure| crate::Error::new(failure.message))?,
             grpc: grpc::Grpc::default(),
+            kafka: kafka::Kafka::default(),
             kubernetes: kubernetes::Kubernetes::default(),
             mongodb: mongodb::Mongodb::default(),
             mysql: mysql::Mysql::default(),
@@ -147,9 +151,9 @@ impl Drivers {
         self
     }
 
-    /// The process, mysql, mongodb and kubernetes drivers handle `cancel` themselves: they stop the process
-    /// group, kill the query or drop the call with a note on what it leaves. The others drop the
-    /// call.
+    /// The process, mysql, mongodb, kafka and kubernetes drivers handle `cancel` themselves: they
+    /// stop the process group, kill the query or drop the call with a note on what it leaves. The
+    /// others drop the call.
     pub async fn call(&self, message: &Value, cancel: CancellationToken) -> Result<Value, Failure> {
         use services_sdk::{grpc, http, kubernetes, mongodb, mysql, tcp};
         match driver(message)? {
@@ -157,6 +161,7 @@ impl Drivers {
             grpc::DRIVER => cancellable(self.grpc.run(request(message)?, None), cancel).await,
             tcp::DRIVER => cancellable(self::tcp::run(request(message)?, None), cancel).await,
             mysql::DRIVER => self.mysql.run(request(message)?, cancel, None).await,
+            kafka_contract::DRIVER => self.kafka.run(request(message)?, cancel, None).await,
             kubernetes::DRIVER => self.kubernetes.run(request(message)?, cancel, None).await,
             mongodb::DRIVER => self.mongodb.run(request(message)?, cancel, None).await,
             _ => self::process::run(request(message)?, cancel, None).await,
@@ -190,6 +195,11 @@ impl Drivers {
                     .run(request(message)?, cancel, Some(&events))
                     .await
             }
+            kafka_contract::DRIVER => {
+                self.kafka
+                    .run(request(message)?, cancel, Some(&events))
+                    .await
+            }
             kubernetes::DRIVER => {
                 self.kubernetes
                     .run(request(message)?, cancel, Some(&events))
@@ -210,6 +220,7 @@ fn driver(message: &Value) -> Result<&'static str, Failure> {
     [
         http::DRIVER,
         grpc::DRIVER,
+        kafka_contract::DRIVER,
         kubernetes::DRIVER,
         mongodb::DRIVER,
         mysql::DRIVER,

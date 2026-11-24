@@ -36,6 +36,7 @@ fn every_manifest_is_valid_and_names_known_drivers() {
                 [
                     "http",
                     "grpc",
+                    "kafka",
                     "kubernetes",
                     "mongodb",
                     "mysql",

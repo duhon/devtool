@@ -2,7 +2,7 @@
 
 `services-native` (binary `services-devtools`) is the native host of Services DevTools.
 It knows no services: the modules run in the App's Kernel, and the host gives them
-the drivers they call (`http`, `grpc`, `kubernetes`, `mongodb`, `mysql`, `process`, `tcp`) plus the shared
+the drivers they call (`http`, `grpc`, `kafka`, `kubernetes`, `mongodb`, `mysql`, `process`, `tcp`) plus the shared
 stores: execution history, the modules folder and its installer, sources and updates,
 the environment and the Agent companion. It needs neither Node.js, `grpcurl`, the
 MySQL CLI, nor `protoc`.
@@ -81,7 +81,7 @@ preserved. Retrying the connection or reopening the panel reloads shell settings
   `service`: `drivers`, `history`, `modules`, `sources`, `updates`, `env`,
   `agent_models`, `agent_sessions` (and `health`).
 - `drivers::Drivers::{call,stream}` run the minimal, service-agnostic drivers
-  (`drivers/{http,grpc,kubernetes,mongodb,mysql,process,tcp}.rs`); `drivers::versions()` is what `health`
+  (`drivers/{http,grpc,kafka,kubernetes,mongodb,mysql,process,tcp}.rs`); `drivers::versions()` is what `health`
   reports and module manifests are checked against (`major.minor`: a module needing
   tcp `1.1` refuses a host with `1`). A tcp session (`session: true`, a stream) keeps one
   connection open: the App sends `{"id","type":"input","dataBase64"}` for its stream id,
@@ -95,6 +95,12 @@ preserved. Retrying the connection or reopening the panel reloads shell settings
   call. Exec credential plugins run without stdin, killed at a deadline, with stderr captured
   (a failure is `auth`, telling the user to log in once in a terminal); Secrets are redacted in
   the host.
+  Kafka (`kafka-contract`, `api/kafka`) runs on `krafka` (pure Rust, rustls): admin reads,
+  one standalone consumer per fetch with explicit assignment (no group, commits, topic creation
+  or metrics push; snapshot ends frozen per isolation level, an explicit offset never reset) and
+  one shared idempotent `acks=all` producer per connection, which a cancel never closes. At most
+  16 connection identities (salted hashes) are cached for 60 s; known secrets are redacted from
+  errors and sensitive config values are null.
 - `core::registry::Registry` loads the wasm module packages of the modules folder and
   keeps those that failed with their error; `core::install` installs and removes them.
 - `core::history`, `core::sources`, `core::updates` own the history database, the
@@ -167,10 +173,11 @@ Treat the database as private application data even with masking.
 
 `cargo test -p services-native` runs local, bounded fixtures for the drivers
 (`tests/drivers/`: actual MySQL wire protocol, dynamic gRPC/reflection and four stream
-shapes, process stop/EOF cleanup, TCP, Kubernetes against a fake API server, MongoDB against `MONGODB_URL` when set), history (`tests/core/`), the native protocol,
+shapes, process stop/EOF cleanup, TCP, Kubernetes against a fake API server, Kafka validation and limits, MongoDB against `MONGODB_URL` when set), history (`tests/core/`), the native protocol,
 packages, shell environment and TLS (`tests/host/`) and the rules every module obeys
 (`tests/conformance.rs`). `scripts/kubernetes-integration.sh` (opt-in, Docker) also runs the Kubernetes driver
-against a throwaway k3s cluster with its own kubeconfig files. Fixtures create and remove data under this crate's
+against a throwaway k3s cluster with its own kubeconfig files. `scripts/kafka-integration.sh` (opt-in, Docker)
+runs the Kafka driver and module against a throwaway single-node KRaft broker. Fixtures create and remove data under this crate's
 `target/test-data`, never the user's real data. `cargo clippy -p services-native --all-targets --
 -D warnings` checks all targets.
 

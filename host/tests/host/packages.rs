@@ -307,8 +307,8 @@ async fn the_host_lists_and_serves_wasm_modules_it_can_run_and_reports_the_rest(
     place("wasm-ok", manifest("wasm-ok", services_sdk::ABI, "http"));
     place("wasm-old", manifest("wasm-old", 99, "http"));
     place(
-        "wasm-kafka",
-        manifest("wasm-kafka", services_sdk::ABI, "kafka"),
+        "wasm-amqp",
+        manifest("wasm-amqp", services_sdk::ABI, "amqp"),
     );
     let host = Host::on(data);
 
@@ -329,7 +329,7 @@ async fn the_host_lists_and_serves_wasm_modules_it_can_run_and_reports_the_rest(
         .iter()
         .map(|failure| failure["module"].as_str().unwrap())
         .collect();
-    assert!(failed.contains(&"wasm-old") && failed.contains(&"wasm-kafka"));
+    assert!(failed.contains(&"wasm-old") && failed.contains(&"wasm-amqp"));
 
     let served = host
         .send(json!({"service":"modules","op":"wasm","module":"wasm-ok"}))
@@ -337,7 +337,7 @@ async fn the_host_lists_and_serves_wasm_modules_it_can_run_and_reports_the_rest(
     assert_eq!(served.ok()["wasm"], "AGFzbQ==");
     assert_eq!(served.ok()["digest"], wasm[0]["digest"]);
     let missing = host
-        .send(json!({"service":"modules","op":"wasm","module":"kafka"}))
+        .send(json!({"service":"modules","op":"wasm","module":"amqp"}))
         .await;
-    assert_eq!(missing.error(), "Module \"kafka\" is not a wasm module");
+    assert_eq!(missing.error(), "Module \"amqp\" is not a wasm module");
 }

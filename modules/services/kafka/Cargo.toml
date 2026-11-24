@@ -1,0 +1,25 @@
+[package]
+name = "services-module-kafka"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+description = "Kafka service module (metadata, bounded reads, live tail, produce and groups over the Host kafka driver)"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+kafka-contract = { path = "../../../api/kafka" }
+services-sdk = { path = "../../../api/sdk" }
+serde.workspace = true
+serde_json.workspace = true
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+
+[dev-dependencies]
+prost = "0.13"
+services-native = { path = "../../../host" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
+tokio-util = "0.7"
+
+[package.metadata.services]
+min-core = "5.1.0"

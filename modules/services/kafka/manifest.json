@@ -1,0 +1,11 @@
+{
+  "id": "kafka",
+  "kind": "service",
+  "name": "Kafka",
+  "version": "0.1.0",
+  "description": "Kafka metadata, bounded reads, live messages, production and group inspection. Requires the native Kafka driver.",
+  "abi": 2,
+  "app": ">=5.1.0",
+  "drivers": {"kafka": "1"},
+  "order": 12
+}

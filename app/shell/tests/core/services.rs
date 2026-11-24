@@ -21,7 +21,8 @@ fn the_linked_modules_give_the_tabs_labels_and_order() {
             "opensearch",
             "valkey",
             "mongodb",
-            "kubernetes"
+            "kubernetes",
+            "kafka"
         ]
     );
     let labels: Vec<_> = services::ids()
@@ -41,7 +42,8 @@ fn the_linked_modules_give_the_tabs_labels_and_order() {
             "OpenSearch",
             "Valkey",
             "MongoDB",
-            "Kubernetes"
+            "Kubernetes",
+            "Kafka"
         ]
     );
     assert_eq!(services::label("unknown"), "unknown");
