@@ -27,6 +27,7 @@ services-module-valkey = { path = "../../modules/services/valkey" }
 services-module-mongodb = { path = "../../modules/services/mongodb" }
 services-module-kubernetes = { path = "../../modules/services/kubernetes" }
 services-module-kafka = { path = "../../modules/services/kafka" }
+services-module-prometheus = { path = "../../modules/services/prometheus" }
 services-module-mysql = { path = "../../modules/services/mysql" }
 services-module-grpc = { path = "../../modules/services/grpc" }
 services-module-splunk = { path = "../../modules/services/splunk" }

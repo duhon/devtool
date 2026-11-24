@@ -1,0 +1,11 @@
+{
+  "id": "prometheus",
+  "kind": "service",
+  "name": "Prometheus",
+  "version": "0.2.0",
+  "description": "Run PromQL queries with copyable Unicode charts, table or JSON results and on-demand metric and label discovery.",
+  "abi": 2,
+  "app": ">=5.1.0",
+  "drivers": {"http": "1"},
+  "order": 13
+}
