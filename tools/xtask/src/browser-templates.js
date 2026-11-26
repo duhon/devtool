@@ -78,36 +78,30 @@
   await key('Escape');
   setSource(source,call);
   await key('Space');
-  await pick('my_create_book2');
-  assert(source.getValue()===call+' @my_create_book2',
-    'Choosing a template after #variables must only insert the call on the section line');
-  await expand();
+  await pick('@my_create_book2');
   assert(source.getValue()===call+' @my_create_book2\n'+body2,
-    'Enter on the section line must replace the section body with the expansion');
+    'Choosing a template without parameters must insert the call and expand it at once');
   setSource(source,prefix);
   await type('@');
   await wait(()=>entries().filter(item=>item.literal).length===2,'Typing @ must automatically show both template names');
-  assert(entries().every(item=>item.displayText.startsWith('my_create_book')),
+  assert(entries().every(item=>item.displayText.startsWith('@my_create_book')),
     'The menu must display template signatures, not their JSON bodies');
-  await pick('my_create_book');
-  assert(source.getValue()===call+' @my_create_book','The call must replace the typed @');
-  await expand();
-  assert(source.getValue()===call+' @my_create_book\n'+body,'Enter must insert the literal body on a new line');
+  await pick('@my_create_book');
+  assert(source.getValue()===call+' @my_create_book\n'+body,'The call must replace the typed @ and expand to the literal body');
   source.execCommand('undo');
   assert(source.getValue()===call+' @my_create_book','Expansion must be a single undoable editor change');
   source.execCommand('redo');
   assert(source.getValue()===call+' @my_create_book\n'+body,'Redo must restore exact multiline content and variable placeholders');
   setSource(source,prefix.trimEnd()+'\n');
   await type('@');
-  await holds(()=>!entries().some(item=>item.displayText?.startsWith('my_create_book')),'A standalone @ inside a section must not automatically suggest templates',100);
+  await holds(()=>!entries().some(item=>item.displayText?.startsWith('@my_create_book')),'A standalone @ inside a section must not automatically suggest templates',100);
   await key('Control+Space');
-  await holds(()=>!entries().some(item=>item.displayText?.startsWith('my_create_book')),'Manual completion inside section content must not suggest templates',100);
+  await holds(()=>!entries().some(item=>item.displayText?.startsWith('@my_create_book')),'Manual completion inside section content must not suggest templates',100);
   await select('metadata');
   await save('graphql','metadata','@auth Auth headers\nX-Template: yes\nContent-Type: application/json');
   setSource(source,'#check Headers\n#metadata ');
   await type('@');
-  await pick('auth');
-  await expand();
+  await pick('@auth');
   assert(source.getValue()==='#check Headers\n#metadata @auth\nX-Template: yes\nContent-Type: application/json',
     'A header template must expand under its own section marker');
   await select('check');
@@ -117,30 +111,33 @@
   setSource(source,'#check @test1');
   await key('Control+Space');
   await pick('@test1');
-  assert(source.getValue()==='#check mmm\n'+implicit,
-    'A check template must generate #check from its description without inserting @name');
+  assert(source.getValue()==='#check mmm @test1\n'+implicit,
+    `A check template must title the check from its description and keep its call: ${JSON.stringify(source.getValue())}`);
   source.execCommand('undo');
-  assert(source.getValue()==='#check @test1','Generated check header and body must undo together');
-  setSource(source,'#check @without_description');
+  assert(source.getValue()==='#check mmm @test1',
+    `Undo must take back the expansion and keep the picked call: ${JSON.stringify(source.getValue())}`);
+  setSource(source,'#check @without_desc');
   await key('Control+Space');
   await pick('@without_description');
-  assert(source.getValue()==='#check without_description\n'+implicit,
-    'An empty description must use the template name for the generated check title');
+  assert(source.getValue()==='#check @without_description\n'+implicit,
+    `Without a description the check stays untitled and keeps its call: ${JSON.stringify(source.getValue())}`);
   setSource(source,'#check ');
   await type('@');
   await pick('@full_book');
-  assert(source.getValue()===full,'A whole-check template must replace the reference and original #check marker');
+  const fullCall=full.replace('#check Full book','#check Full book @full_book');
+  assert(source.getValue()===fullCall,
+    `A whole-check template must take the template's own check title and keep its call: ${JSON.stringify(source.getValue())}`);
   const previous='#check Previous\n#target\nhttps://fixture.invalid/previous';
   setSource(source,previous+'\n#check @full_book');
   await key('Control+Space');
   await pick('@full_book');
-  assert(source.getValue()===previous+'\n\n'+full,
+  assert(source.getValue()===previous+'\n\n'+fullCall,
     'A check template must atomically add a missing separator before the new check');
   source.undo();
-  assert(source.getValue()===previous+'\n#check @full_book',
-    'The separator and complete check template must undo together');
+  assert(source.getValue()===previous+'\n\n#check Full book @full_book',
+    `Undo must take back the expansion and keep the picked call after its separator: ${JSON.stringify(source.getValue())}`);
   source.redo();
-  assert(source.getValue()===previous+'\n\n'+full,
+  assert(source.getValue()===previous+'\n\n'+fullCall,
     'Redo must restore the exact template and separator');
   await click(testid('console-service-mysql'));
   await wait(()=>document.querySelector('[data-testid="templates-section-payload"]'));
@@ -148,8 +145,7 @@
   await save('mysql','payload','@my_create_book SQL query\nSELECT 123 AS id;\n@by_id(id: "1" | "2" = "1") Row by id\nSELECT {{id}} AS id;');
   setSource(editorOf('console-editor'),'#check SQL\n#payload ');
   await type('@');
-  await pick('my_create_book');
-  await expand();
+  await pick('@my_create_book');
   assert(editorOf('console-editor').getValue()==='#check SQL\n#payload @my_create_book\nSELECT 123 AS id;',
     'Same template name must resolve independently for each service/section');
   assert(editorOf('templates-editor').getOption('mode').name==='services-console-mysql',
