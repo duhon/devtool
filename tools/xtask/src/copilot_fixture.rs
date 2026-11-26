@@ -1068,7 +1068,7 @@ Raw HTML: <img src="https://images.fixture.invalid/raw" onerror="globalThis.agen
                     .as_array()
                     .context("Missing custom tools")?;
                 ensure!(
-                    tools.len() == 28 && tools.iter().all(|tool| tool["skipPermission"] == true)
+                    tools.len() == 29 && tools.iter().all(|tool| tool["skipPermission"] == true)
                 );
                 for name in [
                     "console_read_debug",
