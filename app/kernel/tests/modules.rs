@@ -1043,3 +1043,31 @@ fn a_module_writes_only_to_its_own_running_sessions() {
     );
     assert_eq!(errors("other"), [format!("s: {refused}")]);
 }
+
+#[test]
+fn the_agent_reads_the_templates_and_functions_of_a_service_and_the_global_ones() {
+    let _modules = modules();
+    registry::contribute(
+        "templates",
+        &json!({"templates": {
+            "*": {"check": "@g Global check\n#target\n/g"},
+            "rest": {"target": "@own(name) Own\n/{{name}}"},
+            "graphql": {"target": "@other Other\n/o"}}}),
+    );
+    registry::contribute(
+        "functions",
+        &json!({"functions": {"*": "def up: ascii_upcase;", "rest": "def rows: .sets;"}}),
+    );
+    assert_eq!(
+        registry::library("templates", "rest").unwrap(),
+        "# Templates of rest\n\n## target\n@own(name) Own\n/{{name}}\n\n# Global templates\n\n\
+         ## check\n@g Global check\n#target\n/g\n\n\
+         Built in: the check template @copy(check = \"prev\") of every service."
+    );
+    assert_eq!(
+        registry::library("functions", "mysql").unwrap(),
+        "# Functions of mysql\n\n(none)\n\n# Global functions\n\ndef up: ascii_upcase;\n\n\
+         Built in: the jq function copy($n) used by @copy."
+    );
+    assert!(registry::library("hints", "rest").is_err());
+}

@@ -1160,6 +1160,11 @@ impl App {
                     }),
                 }
             }
+            "console_read_library" => page(
+                &services_kernel::modules::registry::library(string(args, "kind")?, &service)?,
+                offset,
+                limit,
+            ),
             "console_schema" => {
                 let schema = self.module_schema(&service).ok_or(
                     "No discovered schema for this check. Run Discovery (hints) in Console first.",

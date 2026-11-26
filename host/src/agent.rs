@@ -837,6 +837,7 @@ fn workspace_tools(bridge: Arc<Mutex<Option<Bridge>>>) -> Vec<Tool> {
         ("console_read_check", "Read a request page. Requires service and checkId; optional offset/limit."),
         ("console_read_response", "Read a bounded response page. Requires service, checkId; optional offset and limit."),
         ("console_read_debug", "Read a check's current status and Debug: the error, exit code, stderr, timing and request/connection details the user sees. Requires service, checkId. Long values are clipped; read output with console_read_response."),
+        ("console_read_library", "Read the user's Templates or jq Functions as written: those of the service, then the Global ones. Requires service and kind (templates or functions); optional offset and limit."),
         ("console_schema", "Read a bounded page of the schema the service module discovered for the active check. Requires service; optional offset and limit."),
         ("console_edit_check", "Edit a check's title, request, or both through editor/Undo. Requires service, checkId, revision and at least one of title/request. Omit request for rename-only. title is a plain name without #check or #request."),
         ("console_create_check", "Append a check through the editor/Undo. Requires service, revision, title, request; title is a plain name without #check or #request because the app adds the marker. Optional checkId reuses its connection locally."),
@@ -854,6 +855,10 @@ fn workspace_tools(bridge: Arc<Mutex<Option<Bridge>>>) -> Vec<Tool> {
             "title":{"type":"string","description":"Plain check name, without #check or #request; the application adds the marker. Maximum 200 UTF-8 bytes."},
             "offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":16000}
         },"additionalProperties":false});
+            if name=="console_read_library" {
+                parameters["properties"]["kind"]=json!({"type":"string","enum":["templates","functions"]});
+                parameters["required"]=json!(["service","kind"]);
+            }
             if name=="console_edit_check" {
                 parameters["required"]=json!(["service","checkId","revision"]);
                 parameters["anyOf"]=json!([{"required":["title"]},{"required":["request"]}]);

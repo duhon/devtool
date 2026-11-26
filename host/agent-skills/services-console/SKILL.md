@@ -52,6 +52,9 @@ adds #check automatically and rejects prefixed titles. To fix an existing
 "#check #check products overview" header, edit title to "products overview";
 do not put a #check header into request or delete/recreate the check.
 console_select_service changes the visible service, not the chat session.
+console_read_library reads the user's Templates or jq Functions (kind templates or
+functions) of a service and the Global ones as written; read it before saying
+whether a template or function exists, and use or explain those that do.
 
 Request bodies use Console directives, not bare protocol text. Each service's
 directives are in its module skill, `module-<id>` (for example `module-rest`);

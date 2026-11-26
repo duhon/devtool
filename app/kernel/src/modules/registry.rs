@@ -219,6 +219,72 @@ pub fn functions() -> crate::editor::functions::Library {
     library
 }
 
+/// The user's definitions the Agent reads (`console_read_library`): `kind` is `templates`
+/// (per section) or `functions`, of `service` and then the Global ones. Built-ins are
+/// named, not listed.
+pub fn library(kind: &str, service: &str) -> Result<String, String> {
+    let mut out = Vec::new();
+    match kind {
+        "templates" => {
+            let mut library = services_contracts::templates::Library::new();
+            for value in contributions("templates") {
+                if let Ok(part) =
+                    serde_json::from_value::<services_contracts::templates::Library>(value)
+                {
+                    for (service, sections) in part {
+                        library.entry(service).or_default().extend(sections);
+                    }
+                }
+            }
+            for (scope, heading) in [
+                (service, format!("Templates of {service}")),
+                ("*", "Global templates".into()),
+            ] {
+                out.push(format!("# {heading}"));
+                let sections = library.get(scope).into_iter().flatten();
+                let sections: Vec<_> = sections
+                    .filter(|(_, text)| !text.trim().is_empty())
+                    .collect();
+                if sections.is_empty() {
+                    out.push("(none)".into());
+                }
+                for (section, text) in sections {
+                    out.push(format!("## {section}\n{}", text.trim_end()));
+                }
+            }
+            out.push(
+                "Built in: the check template @copy(check = \"prev\") of every service.".into(),
+            );
+        }
+        "functions" => {
+            let mut library = crate::editor::functions::Library::new();
+            for value in contributions("functions") {
+                if let Ok(part) = serde_json::from_value::<crate::editor::functions::Library>(value)
+                {
+                    library.extend(part);
+                }
+            }
+            for (scope, heading) in [
+                (service, format!("Functions of {service}")),
+                ("*", "Global functions".into()),
+            ] {
+                out.push(format!("# {heading}"));
+                match library.get(scope).map(|text| text.trim()) {
+                    Some(text) if !text.is_empty() => out.push(text.to_owned()),
+                    _ => out.push("(none)".into()),
+                }
+            }
+            out.push("Built in: the jq function copy($n) used by @copy.".into());
+        }
+        other => {
+            return Err(format!(
+                "Unknown library {other:?}; use templates or functions"
+            ));
+        }
+    }
+    Ok(out.join("\n\n"))
+}
+
 /// The jq definitions a `{{$name(args)}}` in text of `service` sees (of every service
 /// without one); see [`crate::editor::functions::scoped`].
 pub fn function_defs(service: Option<&str>) -> String {

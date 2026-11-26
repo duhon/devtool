@@ -1,7 +1,9 @@
 # Templates and functions
 
 Templates and Functions are tools in the Console's right rail; the layout is the
-interface topic, variables and checks as variables are the variables topic.
+interface topic, variables and checks as variables are the variables topic. The
+Agent reads the user's definitions with console_read_library (read-only; the Agent
+cannot edit the panels).
 
 - Templates opens a library of named functions with scope tabs: per-service
   sections (REST: check, target, action, headers, payload) plus Global (all
