@@ -1,5 +1,12 @@
 # Release notes
 
+## 6.2.0
+
+- The Agent reads the Templates and jq Functions of a service and the Global ones
+  (`console_read_library`), so it can use and explain them.
+- Fixed: charts drawn with Braille patterns (Prometheus) were misaligned in the console
+  when the font lacked them; every pattern now keeps one column of the grid.
+
 ## 6.1.0
 
 - Checks as variables: `{{.checks.<service>.<n>.<section>}}` reads a section, the title or

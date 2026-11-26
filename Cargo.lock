@@ -2370,7 +2370,7 @@ dependencies = [
 
 [[package]]
 name = "kafka-contract"
-version = "6.1.0"
+version = "6.2.0"
 dependencies = [
  "base64 0.22.1",
  "serde",
@@ -4328,7 +4328,7 @@ dependencies = [
 
 [[package]]
 name = "services-contracts"
-version = "6.1.0"
+version = "6.2.0"
 dependencies = [
  "flate2",
  "serde",
@@ -4339,7 +4339,7 @@ dependencies = [
 
 [[package]]
 name = "services-installer"
-version = "6.1.0"
+version = "6.2.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -4356,7 +4356,7 @@ dependencies = [
 
 [[package]]
 name = "services-jq"
-version = "6.1.0"
+version = "6.2.0"
 dependencies = [
  "jaq-core",
  "jaq-json",
@@ -4366,7 +4366,7 @@ dependencies = [
 
 [[package]]
 name = "services-kernel"
-version = "6.1.0"
+version = "6.2.0"
 dependencies = [
  "base64 0.22.1",
  "js-sys",
@@ -4644,7 +4644,7 @@ dependencies = [
 
 [[package]]
 name = "services-native"
-version = "6.1.0"
+version = "6.2.0"
 dependencies = [
  "async-trait",
  "axum 0.8.9",
@@ -4687,7 +4687,7 @@ dependencies = [
 
 [[package]]
 name = "services-sdk"
-version = "6.1.0"
+version = "6.2.0"
 dependencies = [
  "base64 0.22.1",
  "prost",
@@ -4698,7 +4698,7 @@ dependencies = [
 
 [[package]]
 name = "services-shell"
-version = "6.1.0"
+version = "6.2.0"
 dependencies = [
  "js-sys",
  "serde_json",
@@ -4739,7 +4739,7 @@ dependencies = [
 
 [[package]]
 name = "services-testkit"
-version = "6.1.0"
+version = "6.2.0"
 dependencies = [
  "axum 0.8.9",
  "serde_json",
@@ -4751,7 +4751,7 @@ dependencies = [
 
 [[package]]
 name = "services-widgets"
-version = "6.1.0"
+version = "6.2.0"
 dependencies = [
  "js-sys",
  "pulldown-cmark",
@@ -6157,7 +6157,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "6.1.0"
+version = "6.2.0"
 dependencies = [
  "anyhow",
  "axum 0.8.9",
