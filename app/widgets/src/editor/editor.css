@@ -253,6 +253,12 @@ li.editor-hint-active {
   height: auto;
 }
 
+/* A Braille pattern (charts) drawn by a fallback font keeps one column of the grid. */
+.editor .editor-cell {
+  display: inline-block;
+  width: 1ch;
+}
+
 /* Receives keyboard and IME input: focusable but invisible, and too small to scroll anything. */
 .editor-input {
   position: absolute;

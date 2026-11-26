@@ -145,6 +145,36 @@ fn expand(text: &str, column: &mut usize, out: &mut String) {
     }
 }
 
+/// Braille patterns, which charts draw with and which monospace fonts rarely carry: the
+/// fallback font's glyphs are not one column wide.
+fn braille(c: char) -> bool {
+    ('\u{2800}'..='\u{28ff}').contains(&c)
+}
+
+/// `text`, with every Braille pattern held in a cell one column wide, so the columns after
+/// it stay where the layout puts them whatever font draws it.
+fn cells(text: String) -> Html {
+    if !text.chars().any(braille) {
+        return html! {{text}};
+    }
+    let mut out = Vec::new();
+    let mut plain = String::new();
+    for c in text.chars() {
+        if braille(c) {
+            if !plain.is_empty() {
+                out.push(html! {{std::mem::take(&mut plain)}});
+            }
+            out.push(html! {<span class="editor-cell">{c}</span>});
+        } else {
+            plain.push(c);
+        }
+    }
+    if !plain.is_empty() {
+        out.push(html! {{plain}});
+    }
+    html! {<>{ for out }</>}
+}
+
 /// The token spans of one piece of a row, merged where their classes match.
 fn piece(
     text: &str,
@@ -171,8 +201,9 @@ fn piece(
     let mut run: Option<(String, String)> = None;
     let flush = |run: Option<(String, String)>, out: &mut Vec<Html>| {
         if let Some((class, text)) = run {
+            let text = cells(text);
             out.push(if class.is_empty() {
-                html! {{text}}
+                text
             } else {
                 html! {<span class={class}>{text}</span>}
             });

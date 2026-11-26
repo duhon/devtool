@@ -95,6 +95,24 @@
   await paint('Unfocused selection');
   editor.focus();
   assert(editor.getValue()===selectionSource,'Changing selection must never modify the source document');
+  setSource(editor,'\u2800\u28ff\u2840\u2880\u28c0\u2801\u2802\u2804\u2808\u2810|\n0000000000|');
+  const bars=await wait(()=>{
+    const rows=[...editor.getWrapperElement().querySelectorAll('pre.editor-line')]
+      .filter(line=>line.textContent.endsWith('|'));
+    if(rows.length!==2) return null;
+    return rows.map(row=>{
+      const walker=document.createTreeWalker(row,NodeFilter.SHOW_TEXT);
+      let node;
+      while((node=walker.nextNode())&&!node.data.includes('|'));
+      const range=document.createRange();
+      const at=node.data.indexOf('|');
+      range.setStart(node,at);range.setEnd(node,at+1);
+      return range.getBoundingClientRect().left;
+    });
+  });
+  const column=editor.charCoords({line:0,ch:10},'window').left;
+  assert(Math.abs(bars[0]-bars[1])<0.5&&Math.abs(bars[0]-column)<0.5,
+    `Braille patterns must keep one column of the grid: ${JSON.stringify({bars,column})}`);
   const foldedSource='#check Folded\n'+('payload\n'.repeat(20000))+'#check Tail\nend';
   setSource(editor,foldedSource);
   await wait(()=>editor.getOption('servicesChecks')?.length===2);
