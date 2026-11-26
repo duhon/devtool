@@ -1,5 +1,21 @@
 # Release notes
 
+## 6.1.0
+
+- Checks as variables: `{{.checks.<service>.<n>.<section>}}` reads a section, the title or
+  the last response of another check; `.checks.this` is the current document, `prev` the
+  check above, and `&n` pins a check so its number follows edits above it.
+- Built-in check template `#check @copy(check = "prev")` (every service) copies every
+  section but the response of another check, titled `[vN] <title>` with the next free
+  version; changing its argument regenerates the title and the sections.
+- Templates: labels always start with `@`; picking a call whose arguments all have defaults
+  expands it at once, and Tab in the list asks for the arguments instead. Inside a call Tab
+  and Shift+Tab move between arguments; Tab on the last one leaves the call.
+- Global section templates are offered on every service's section lines too.
+- After a response, completion offers only `#check`.
+- Fixed: a check with `Transform: {{$fn}}` failed with "Variables could not be resolved"
+  when the function did not accept the variables; History keeps the call as written.
+
 ## 6.0.0
 
 - Variables are a tree, shared by Variables and the Dictionary sets: `{{.var.x}}`,
