@@ -31,7 +31,7 @@ mod skills;
 mod system;
 
 const SKILL: &str = include_str!("../agent-skills/services-console/SKILL.md");
-const KNOWLEDGE: [(&str, &str); 7] = [
+const KNOWLEDGE: [(&str, &str); 8] = [
     ("overview", SKILL),
     (
         "interface",
@@ -56,6 +56,10 @@ const KNOWLEDGE: [(&str, &str); 7] = [
     (
         "variables",
         include_str!("../agent-skills/services-console/references/variables.md"),
+    ),
+    (
+        "templates",
+        include_str!("../agent-skills/services-console/references/templates.md"),
     ),
 ];
 const INSTRUCTIONS: &str = "You are Services DevTools' embedded Copilot assistant. \

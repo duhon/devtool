@@ -20,6 +20,7 @@ how to use the application, read `console_skill` with the relevant `topic`:
 - `discovery`: how schemas are obtained, REST triggers, status and troubleshooting.
 - `services`: checks, service skills and the Terminal rule.
 - `variables`: Variables vs Dictionary, references, persistence and secrets.
+- `templates`: Templates (section, check and live calls, `@copy`) and jq Functions.
 - `overview` (or no topic): this guide and the knowledge index.
 
 These are bundled application documentation, not workspace or server content.

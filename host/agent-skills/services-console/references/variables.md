@@ -45,7 +45,7 @@ then `env`.
   any depth (`{{:envs.**}}`); a trailing `~` gives keys instead of values
   (`{{:envs~}}`). A missing key or a step into a string selects nothing.
 - `{{name}}` is a template parameter, valid only inside a template body.
-  `{{@name(args)}}` is a live template call (see the interface topic).
+  `{{@name(args)}}` is a live template call (see the templates topic).
 
 Contexts decide types. In request text a reference must select exactly one string:
 a hash gives `expected a string, got a hash`, several values give
