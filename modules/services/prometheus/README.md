@@ -66,6 +66,20 @@ An empty result is successful. Server warnings and information annotations remai
 visible. Special sample values and native histograms must not be silently lost.
 
 Discovery is on demand, not a scan of all series when opening the service.
+Metric names are followed by `/api/v1/metadata`: suggestions show each metric's
+type (`counter`, `gauge`, `histogram`, ...), and the agent's schema has its type,
+help and unit. A server without metadata still discovers names.
+
+Completion follows the query before the cursor: after `sum` come `by (…)`,
+`without (…)` or the argument; after an expression its range, operators,
+`offset` and `@`; after an operator another expression with `on (…)`,
+`ignoring (…)` and `bool`. Function arguments take what the function needs:
+`rate(` lists counters first as `name[…]`, `*_over_time(` gauges,
+`histogram_quantile(` a quantile and then bucket rates by `le`.
+
+The query is checked as it is typed, including function arity and range or
+instant vector types, and the part the error names is underlined. A query
+with a placeholder outside a string is left to the server.
 Local PromQL parsing is editor assistance; the server remains authoritative for
 its supported language and experimental functions.
 

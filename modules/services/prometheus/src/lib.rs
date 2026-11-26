@@ -1,9 +1,11 @@
 //! Prometheus service module. The Kernel owns Stop, Repeat and secret-masked history.
 pub mod chart;
+pub mod diagnostics;
 pub mod discovery;
 pub mod language;
 pub mod render;
 pub mod request;
+pub mod sequence;
 
 use serde_json::Value;
 use services_sdk::{Check, Cmd, Completions, Event, Line, Module, Subscriptions, cmd, run};
@@ -159,6 +161,10 @@ impl Module for Prometheus {
 
     fn fold(&self, check: &Check) -> Vec<services_sdk::Fold> {
         language::fold(check)
+    }
+
+    fn marks(&self, check: &Check) -> Vec<Line> {
+        diagnostics::marks(check)
     }
 
     fn schema(&self, check: &Check) -> Option<Value> {

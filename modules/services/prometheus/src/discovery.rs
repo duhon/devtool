@@ -11,6 +11,8 @@ const TAG: &str = "prom-discovery:";
 const CACHE: usize = 16;
 const CACHE_MS: f64 = 600_000.0;
 const ITEMS: usize = 1000;
+/// Metrics whose type and help one metadata request reads.
+const METADATA: usize = 5000;
 
 #[derive(Clone, PartialEq, Eq)]
 struct Connection {
@@ -56,6 +58,17 @@ struct Entry {
     data: BTreeMap<Query, (Vec<String>, f64)>,
     /// Queries and when they were requested.
     attempted: Vec<(Query, f64)>,
+    /// Metric types and help from `/api/v1/metadata`, and when they were stored.
+    metadata: Option<(BTreeMap<String, Metadata>, f64)>,
+    /// When metadata was last requested.
+    metadata_attempted: Option<f64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Metadata {
+    pub kind: String,
+    pub help: String,
+    pub unit: String,
 }
 
 struct Run {
@@ -72,6 +85,9 @@ pub struct Discovery {
     alias: Option<(Connection, Connection)>,
     cache: Vec<Entry>,
     run: Option<Run>,
+    /// The metadata request after the metric names: its id and connection. Hints don't
+    /// wait for it; another document cancels it.
+    metadata_run: Option<(u64, Connection)>,
     requested: Option<Query>,
     ids: u64,
 }
@@ -90,6 +106,9 @@ impl Discovery {
         let raw = Connection::of(check);
         if self.current.as_ref() != Some(&raw) {
             let mut commands = self.cancel();
+            if let Some((id, _)) = self.metadata_run.take() {
+                commands.push(cmd::cancel(&format!("{TAG}{id}:meta")));
+            }
             self.current = Some(raw);
             self.alias = None;
             self.requested = None;
@@ -177,7 +196,18 @@ impl Discovery {
         Some(json!({
             "metrics": entry.data.get(&Query::Metrics).map(|(values, _)| values.clone()).unwrap_or_default(),
             "labels": entry.data.get(&Query::Labels(None)).map(|(values, _)| values.clone()).unwrap_or_default(),
+            "types": entry.metadata.as_ref().map(|(metadata, _)| {
+                metadata
+                    .iter()
+                    .map(|(name, m)| (name.clone(), json!({"type": m.kind, "help": m.help, "unit": m.unit})))
+                    .collect::<serde_json::Map<_, _>>()
+            }).unwrap_or_default(),
         }))
+    }
+
+    /// The type, help and unit the server reports for metric `name`.
+    pub fn metadata(&self, check: &Check, name: &str) -> Option<&Metadata> {
+        self.entry(check)?.metadata.as_ref()?.0.get(name)
     }
 
     pub fn candidates(&self, check: &Check, context: &Context) -> Vec<String> {
@@ -194,6 +224,26 @@ impl Discovery {
         let rest = tag.strip_prefix(TAG)?;
         let (id, stage) = rest.split_once(':')?;
         let id: u64 = id.parse().ok()?;
+        if stage == "meta" {
+            let Some((_, connection)) = self.metadata_run.take_if(|(run, _)| *run == id) else {
+                return Some(vec![]);
+            };
+            // Metadata only adds types to the names; a server without it still discovers.
+            let metadata = result
+                .ok()
+                .and_then(|v| Response::parse(&v).ok())
+                .and_then(|response| decode_metadata(&response));
+            if let Some(entry) = self
+                .cache
+                .iter_mut()
+                .find(|entry| entry.connection == connection)
+                && let Some(metadata) = metadata
+            {
+                entry.metadata = Some((metadata, services_sdk::now()));
+                return Some(vec![cmd::relight()]);
+            }
+            return Some(vec![]);
+        }
         if !matches!(stage, "resolve" | "http") {
             return None;
         }
@@ -238,6 +288,8 @@ impl Discovery {
                     connection: resolved.clone(),
                     data: BTreeMap::new(),
                     attempted: vec![],
+                    metadata: None,
+                    metadata_attempted: None,
                 });
                 self.cache.len() - 1
             });
@@ -271,7 +323,7 @@ impl Discovery {
                 &request.call(),
             )]);
         }
-        let Some(connection) = run.resolved else {
+        let Some(connection) = run.resolved.clone() else {
             return Some(warning("Unexpected discovery response"));
         };
         let data = result
@@ -293,9 +345,11 @@ impl Discovery {
                     {
                         entry.data.remove(&first);
                     }
-                    entry.data.insert(run.query, (values, services_sdk::now()));
+                    entry
+                        .data
+                        .insert(run.query.clone(), (values, services_sdk::now()));
                 }
-                Some(vec![
+                let mut commands = vec![
                     cmd::status(
                         if warned {
                             "Discovery · WARNING · Results limited or server warnings"
@@ -305,11 +359,98 @@ impl Discovery {
                         if warned { "warning" } else { "ok" },
                     ),
                     cmd::relight(),
-                ])
+                ];
+                commands.extend(self.request_metadata(&run));
+                Some(commands)
             }
             Err(message) => Some(warning(&message)),
         }
     }
+}
+
+impl Discovery {
+    /// After the metric names, their types unless known within ten minutes or Discover asked.
+    fn request_metadata(&mut self, run: &Run) -> Vec<Cmd> {
+        let Some(connection) = run.resolved.clone() else {
+            return vec![];
+        };
+        let Some(entry) = self
+            .cache
+            .iter_mut()
+            .find(|entry| entry.connection == connection)
+        else {
+            return vec![];
+        };
+        let now = services_sdk::now();
+        let fresh = |at: f64| now - at < CACHE_MS;
+        if run.query != Query::Metrics
+            || (!run.manual
+                && (entry.metadata.as_ref().is_some_and(|(_, at)| fresh(*at))
+                    || entry.metadata_attempted.is_some_and(fresh)))
+        {
+            return vec![];
+        }
+        let Ok(request) = metadata_request(&connection) else {
+            return vec![];
+        };
+        entry.metadata_attempted = Some(now);
+        let mut commands = vec![];
+        if let Some((id, _)) = self.metadata_run.replace((run.id, connection)) {
+            commands.push(cmd::cancel(&format!("{TAG}{id}:meta")));
+        }
+        commands.push(cmd::driver(
+            format!("{TAG}{}:meta", run.id),
+            &request.call(),
+        ));
+        commands
+    }
+}
+
+fn metadata_request(connection: &Connection) -> Result<Request, &'static str> {
+    let mut request = request(connection, &Query::Metrics)?;
+    let mut url = Url::parse(&request.url).map_err(|_| "Invalid service address")?;
+    let base = url
+        .path()
+        .strip_suffix("/label/__name__/values")
+        .unwrap_or(url.path())
+        .to_owned();
+    url.set_path(&format!("{base}/metadata"));
+    url.set_query(None);
+    url.query_pairs_mut()
+        .append_pair("limit", &METADATA.to_string())
+        .append_pair("limit_per_metric", "1");
+    request.url = url.into();
+    Ok(request)
+}
+
+/// `{"data": {"<metric>": [{"type", "help", "unit"}]}}`; `None` for anything else.
+fn decode_metadata(response: &Response) -> Option<BTreeMap<String, Metadata>> {
+    if !(200..300).contains(&response.status) {
+        return None;
+    }
+    let body: Value = serde_json::from_str(response.body.as_deref()?).ok()?;
+    if body["status"] != "success" {
+        return None;
+    }
+    let text = |v: &Value, key: &str| v[key].as_str().unwrap_or_default().to_owned();
+    Some(
+        body["data"]
+            .as_object()?
+            .iter()
+            .take(METADATA)
+            .filter_map(|(name, entries)| {
+                let first = entries.as_array()?.first()?;
+                Some((
+                    name.clone(),
+                    Metadata {
+                        kind: text(first, "type"),
+                        help: text(first, "help"),
+                        unit: text(first, "unit"),
+                    },
+                ))
+            })
+            .collect(),
+    )
 }
 
 fn warning(message: &str) -> Vec<Cmd> {

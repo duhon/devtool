@@ -99,16 +99,22 @@ fn static_completions_work_before_any_discovery_and_sections_use_sdk() {
     let check = payload("ra");
     let completions = language::complete(&check, check.text.len(), &discovery);
     assert!(completions.items.iter().any(|i| i.insert == "rate($0)"));
-    let check = payload("group_l");
+    let check = payload("a * on (job) group_l");
     assert!(
         language::complete(&check, check.text.len(), &discovery)
             .items
             .iter()
-            .any(|i| i.insert == "group_left")
+            .any(|i| i.insert == "group_left ($0)")
     );
     for (text, expected) in [
         ("#options\nFormat: j", "json"),
         ("#metadata\nQuery-Mode: r", "range"),
+        ("#metadata\nQuery-M", "Query-Mode: "),
+        ("#metadata\nQuery-Mode: ", "instant"),
+        ("#metadata\nQuery-S", "Query-Step: "),
+        ("#options\nFor", "Format: chart"),
+        ("#options\nFormat: ", "chart"),
+        ("#options\nChart-H", "Chart-Height: "),
         ("#met", "#metadata\n"),
     ] {
         let check = Check {
@@ -123,6 +129,19 @@ fn static_completions_work_before_any_discovery_and_sections_use_sdk() {
             "{text}"
         );
     }
+    let check = Check {
+        text: "#metadata\nQuery-M".into(),
+        ..Check::default()
+    };
+    let completions = language::complete(&check, check.text.len(), &discovery);
+    let mode = completions
+        .items
+        .iter()
+        .find(|i| i.insert == "Query-Mode: ")
+        .unwrap();
+    assert!(mode.next);
+    assert_eq!(mode.label, "Query-Mode: instant | range");
+    assert_eq!(completions.from, "#metadata\n".len() as u32);
 }
 
 #[test]
@@ -265,4 +284,91 @@ fn multiline_raw_strings_continue_across_highlight_batches_and_marker_lines() {
             .iter()
             .any(|item| item.insert == "rate($0)")
     );
+}
+
+#[test]
+fn section_markers_look_like_comments_and_blank_lines_offer_unused_sections() {
+    let lines: Vec<String> = [
+        "#target",
+        "http://localhost",
+        "#payload",
+        "sum by (job) (up)",
+    ]
+    .map(String::from)
+    .into();
+    let highlighted = language::highlight(&[], &lines, &[]);
+    for line in [0, 2] {
+        assert_eq!(highlighted[line].tokens[0].kind, "comment");
+    }
+    assert_eq!(highlighted[3].tokens[0].kind, "keyword");
+
+    let text = "#target\nhttp://localhost\n\n";
+    let check = Check {
+        text: text.into(),
+        ..Check::default()
+    };
+    let labels: Vec<_> = language::complete(&check, text.len(), &Discovery::default())
+        .items
+        .into_iter()
+        .map(|item| item.label)
+        .collect();
+    assert_eq!(labels, ["#metadata", "#payload", "#options"]);
+}
+
+#[test]
+fn completion_offers_what_may_follow_the_expression_before_the_cursor() {
+    let discovery = Discovery::default();
+    let inserts = |query: &str| -> Vec<String> {
+        let check = payload(query);
+        language::complete(&check, check.text.len(), &discovery)
+            .items
+            .into_iter()
+            .map(|i| i.insert)
+            .collect()
+    };
+    assert_eq!(inserts("sum "), ["by ($0)", "without ($0)", "($0)"]);
+    assert_eq!(inserts("sum by (job) "), ["($0)"]);
+    let after = inserts("up ");
+    assert_eq!(after[0], "[$0]");
+    assert!(after.contains(&"offset".into()) && after.contains(&"and".into()));
+    assert!(!after.iter().any(|i| i == "rate($0)"));
+    let after = inserts("sum(up) ");
+    assert!(after.contains(&"by ($0)".into()) && !after.contains(&"[$0]".into()));
+    assert!(inserts("up > ").contains(&"bool".into()));
+    assert_eq!(inserts("topk("), ["5", "10"]);
+    assert_eq!(
+        inserts("histogram_quantile("),
+        ["0.5", "0.9", "0.95", "0.99"]
+    );
+    let operand = inserts("rate(up[5m]) / ");
+    assert!(operand.contains(&"rate($0)".into()) && operand.contains(&"on ($0)".into()));
+}
+
+#[test]
+fn payload_errors_are_underlined_where_the_message_points() {
+    use services_module_prometheus::diagnostics;
+    assert_eq!(diagnostics::problem("sum(rate(up[5m]))"), None);
+    let (message, start, end) = diagnostics::problem("sum(rate(up))").unwrap();
+    assert!(message.contains("rate"), "{message}");
+    assert_eq!((start, end), (4, 8));
+    let (_, start, _) = diagnostics::problem("sum(\n  up").unwrap();
+    assert_eq!(start, 3);
+    let (_, start, _) = diagnostics::problem("nope(up)").unwrap();
+    assert_eq!(start, 0);
+    assert_eq!(diagnostics::problem("rate(up[{{:range}}])"), None);
+    assert_eq!(diagnostics::problem("up{env=\"{{:env}}\"}"), None);
+
+    let check = Check {
+        text: "#check a\n#payload\nsum(\n  rate(up))".into(),
+        ..Check::default()
+    };
+    let marks = diagnostics::marks(&check);
+    assert_eq!(marks.len(), 4);
+    assert!(marks[..3].iter().all(|line| line.tokens.is_empty()));
+    let kinds: Vec<_> = marks[3]
+        .tokens
+        .iter()
+        .map(|t| (t.start, t.len, t.kind.as_str()))
+        .collect();
+    assert_eq!(kinds, [(2, 4, "def tpl-problem")]);
 }

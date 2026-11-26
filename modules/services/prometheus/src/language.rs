@@ -1,14 +1,15 @@
 //! Error-tolerant editor support; parser diagnostics are advisory, never an execution gate.
 use crate::discovery::Discovery;
+use crate::sequence;
 use promql_parser::parser::{self, Expr};
 use services_sdk::lang::{self, check::At, endpoint, key_value, table};
 use services_sdk::{Check, Completions, Fold, Line, LineColumns, Token};
 
 const SECTIONS: &[&str] = &["target", "metadata", "payload", "options"];
-const FUNCTIONS: &str = "abs absent absent_over_time acos acosh asin asinh atan atanh ceil changes clamp clamp_max clamp_min cos cosh count_over_time day_of_month day_of_week day_of_year days_in_month delta deriv double_exponential_smoothing exp floor histogram_avg histogram_count histogram_fraction histogram_quantile histogram_stddev histogram_stdvar histogram_sum hour idelta increase info irate label_join label_replace last_over_time ln log2 log10 mad_over_time max_over_time min_over_time minute month pi predict_linear present_over_time quantile_over_time rate resets round scalar sgn sin sinh sort sort_desc sort_by_label sort_by_label_desc sqrt stddev_over_time stdvar_over_time sum_over_time tan tanh time timestamp vector year avg_over_time ts_of_last_over_time ts_of_max_over_time ts_of_min_over_time";
+pub(crate) const FUNCTIONS: &str = "abs absent absent_over_time acos acosh asin asinh atan atanh ceil changes clamp clamp_max clamp_min cos cosh count_over_time day_of_month day_of_week day_of_year days_in_month delta deriv double_exponential_smoothing exp floor histogram_avg histogram_count histogram_fraction histogram_quantile histogram_stddev histogram_stdvar histogram_sum hour idelta increase info irate label_join label_replace last_over_time ln log2 log10 mad_over_time max_over_time min_over_time minute month pi predict_linear present_over_time quantile_over_time rate resets round scalar sgn sin sinh sort sort_desc sort_by_label sort_by_label_desc sqrt stddev_over_time stdvar_over_time sum_over_time tan tanh time timestamp vector year avg_over_time ts_of_last_over_time ts_of_max_over_time ts_of_min_over_time";
 const KEYWORDS: &str = "sum avg count min max group stddev stdvar topk bottomk count_values quantile limitk limit_ratio and or unless atan2 by without on ignoring group_left group_right bool offset start end smoothed anchored";
 
-fn known_marker(name: &str) -> bool {
+pub(crate) fn known_marker(name: &str) -> bool {
     matches!(
         name,
         "check"
@@ -72,15 +73,15 @@ pub enum Context {
 }
 
 #[derive(Clone, Debug)]
-struct Lexeme<'a> {
-    text: &'a str,
-    start: usize,
-    end: usize,
-    kind: &'static str,
-    closed: bool,
+pub(crate) struct Lexeme<'a> {
+    pub text: &'a str,
+    pub start: usize,
+    pub end: usize,
+    pub kind: &'static str,
+    pub closed: bool,
 }
 
-fn scan(text: &str) -> Vec<Lexeme<'_>> {
+pub(crate) fn scan(text: &str) -> Vec<Lexeme<'_>> {
     let mut out = Vec::new();
     let mut i = 0;
     while i < text.len() {
@@ -261,6 +262,12 @@ pub fn complete(check: &Check, pos: usize, discovery: &Discovery) -> Completions
     if let Some(markers) = at.markers(SECTIONS) {
         return markers;
     }
+    // A blank line can start the next section, except inside a multi-line PromQL query.
+    if at.name() != Some("payload")
+        && let Some(next) = at.next_section(SECTIONS)
+    {
+        return next;
+    }
     let mut from = at.line_start(at.line) + lang::token_start(at.before);
     let mut query = &at.text[from..at.pos];
     let mut items = Vec::new();
@@ -275,29 +282,55 @@ pub fn complete(check: &Check, pos: usize, discovery: &Discovery) -> Completions
                 };
                 items.extend(choices.iter().map(|s| lang::item(*s, "Value", "keyword")));
             } else {
-                let hints: &[&str] = if options {
-                    &[
-                        "Format",
-                        "Columns-Type",
-                        "Columns-Size",
-                        "Chart-Width",
-                        "Chart-Height",
-                        "Chart-Min",
-                        "Chart-Max",
-                    ]
+                let used = key_value::used(at.other_lines());
+                let typed = at.before.trim_start();
+                from = at.line_start(at.line) + at.before.len() - typed.len();
+                query = typed;
+                items = if options {
+                    // The console groups the values of one option into `Format: ` that asks
+                    // for the value next.
+                    key_value::items(
+                        &["Format: table", "Format: json", "Format: chart"],
+                        &[
+                            ("Columns-Type", "Column types"),
+                            ("Columns-Size", "Column widths"),
+                            ("Chart-Width", "Chart width"),
+                            ("Chart-Height", "Chart height"),
+                            ("Chart-Min", "Chart y-axis minimum"),
+                            ("Chart-Max", "Chart y-axis maximum"),
+                        ],
+                        &used,
+                    )
                 } else {
-                    &[
-                        "Authorization",
-                        "Accept",
-                        "Query-Mode",
-                        "Query-Time",
-                        "Query-Start",
-                        "Query-End",
-                        "Query-Step",
-                        "Query-Timeout",
-                    ]
+                    // The same for metadata, which the console leaves to the module.
+                    key_value::items(
+                        &[],
+                        &[
+                            ("Query-Mode", "Metadata"),
+                            ("Accept", "Header"),
+                            ("Authorization", "Header"),
+                            ("Query-Time", "Evaluation time"),
+                            ("Query-Start", "Range start"),
+                            ("Query-End", "Range end"),
+                            ("Query-Step", "Range step"),
+                            ("Query-Timeout", "Query timeout"),
+                        ],
+                        &used,
+                    )
+                    .into_iter()
+                    .map(|item| {
+                        if item.insert == "Query-Mode: " {
+                            services_sdk::Item {
+                                label: "Query-Mode: instant | range".into(),
+                                next: true,
+                                ..item
+                            }
+                        } else {
+                            item
+                        }
+                    })
+                    .collect()
                 };
-                items = key_value::items(hints, &[], &key_value::used(at.other_lines()));
             }
         }
         Some("payload") => {
@@ -318,32 +351,26 @@ pub fn complete(check: &Check, pos: usize, discovery: &Discovery) -> Completions
                             .find(|(_, c)| !c.is_alphanumeric() && !matches!(c, '_' | ':'))
                             .map_or(0, |(i, c)| i + c.len_utf8());
                     query = &at.text[from..at.pos];
-                    if let Some(schema) = discovery.schema_of(check) {
-                        items.extend(
+                    let body_start = at.line_start(at.body_start());
+                    let tokens: Vec<_> = scan(at.body())
+                        .into_iter()
+                        .filter(|t| body_start + t.end <= from && t.kind != "comment")
+                        .collect();
+                    let metrics: Vec<_> = discovery
+                        .schema_of(check)
+                        .map(|schema| {
                             schema["metrics"]
                                 .as_array()
                                 .into_iter()
                                 .flatten()
                                 .filter_map(|v| v.as_str())
-                                .map(|s| lang::item(s, "Metric", "variable")),
-                        );
-                    }
-                    items.extend(
-                        FUNCTIONS
-                            .split_whitespace()
-                            .map(|s| lang::item(format!("{s}($0)"), "PromQL function", "function")),
-                    );
-                    items.extend(
-                        KEYWORDS
-                            .split_whitespace()
-                            .map(|s| lang::item(s, "PromQL keyword", "keyword")),
-                    );
-                    items.extend(
-                        [
-                            "+", "-", "*", "/", "%", "^", "==", "!=", ">", "<", ">=", "<=",
-                        ]
-                        .map(|s| lang::item(s, "Operator", "operator")),
-                    );
+                                .map(|name| {
+                                    (name.to_owned(), sequence::kind(discovery, check, name))
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    items.extend(sequence::items(&sequence::slot(&tokens), &metrics, query));
                 }
                 Context::Labels { .. } | Context::Values { .. } => {
                     if let Context::Values { .. } = &context
@@ -406,7 +433,7 @@ pub fn highlight(state: &[u8], lines: &[String], columns: &[LineColumns]) -> Vec
             vec![Token {
                 start: 0,
                 len: text.len() as u32,
-                kind: "keyword".into(),
+                kind: "comment".into(),
             }]
         } else {
             match section.as_str() {

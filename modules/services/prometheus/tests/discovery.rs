@@ -336,3 +336,99 @@ fn values_older_than_ten_minutes_are_served_while_hints_refresh_them() {
     assert_eq!(metrics(), json!(["up"]));
     assert_eq!(hints(602_000.0), None);
 }
+
+#[test]
+fn metric_names_bring_their_types_and_a_server_without_metadata_still_discovers() {
+    let mut discovery = Discovery::default();
+    let check = check("{{.base}}", "", "");
+    let commands = discovery.hints(&check, check.text.len());
+    let commands = resolve(&mut discovery, &commands, "");
+    let tag = request(&commands).0.to_owned();
+    let commands = discovery
+        .reply(&tag, Ok(success(json!(["requests_total", "up"]))))
+        .unwrap();
+    let (meta, sent) = request(&commands);
+    let url = url::Url::parse(sent["url"].as_str().unwrap()).unwrap();
+    assert_eq!(url.path(), "/proxy/prom/api/v1/metadata");
+    let parameters: std::collections::BTreeMap<_, _> = url.query_pairs().collect();
+    assert_eq!(parameters["limit_per_metric"], "1");
+    let commands = discovery
+        .reply(
+            meta,
+            Ok(success(json!({
+                "requests_total": [{"type": "counter", "help": "Requests.", "unit": ""}]
+            }))),
+        )
+        .unwrap();
+    assert!(commands.iter().any(|c| c.name == "editor.relight"));
+    let details: Vec<_> = language::complete(&check, check.text.len(), &discovery)
+        .items
+        .into_iter()
+        .filter(|i| i.kind == "variable")
+        .map(|i| (i.label, i.detail))
+        .collect();
+    assert_eq!(
+        details,
+        [
+            ("requests_total".into(), "Metric · counter".into()),
+            ("up".into(), "Metric".into())
+        ]
+    );
+    assert_eq!(
+        discovery.schema_of(&check).unwrap()["types"]["requests_total"],
+        json!({"type": "counter", "help": "Requests.", "unit": ""})
+    );
+
+    let mut discovery = Discovery::default();
+    let commands = discovery.manual(&check);
+    let commands = resolve(&mut discovery, &commands, "");
+    let tag = request(&commands).0.to_owned();
+    let commands = discovery.reply(&tag, Ok(success(json!(["up"])))).unwrap();
+    let meta = request(&commands).0.to_owned();
+    let failed = Failure::new("not found");
+    assert!(discovery.reply(&meta, Err(failed)).unwrap().is_empty());
+    assert_eq!(
+        discovery.schema_of(&check).unwrap()["metrics"],
+        json!(["up"])
+    );
+}
+
+#[test]
+fn metric_types_order_and_wrap_the_metrics_a_function_takes() {
+    let mut discovery = Discovery::default();
+    let check = check("{{.base}}", "", "");
+    let commands = discovery.hints(&check, check.text.len());
+    let commands = resolve(&mut discovery, &commands, "");
+    let tag = request(&commands).0.to_owned();
+    let names = json!(["memory_bytes", "latency_seconds_bucket", "requests_total"]);
+    let commands = discovery.reply(&tag, Ok(success(names))).unwrap();
+    let meta = request(&commands).0.to_owned();
+    discovery
+        .reply(
+            &meta,
+            Ok(success(json!({
+                "memory_bytes": [{"type": "gauge", "help": "", "unit": ""}],
+                "latency_seconds": [{"type": "histogram", "help": "", "unit": ""}],
+                "requests_total": [{"type": "counter", "help": "", "unit": ""}]
+            }))),
+        )
+        .unwrap();
+    let complete = |query: &str| {
+        let check = query_check(query);
+        language::complete(&check, check.text.len(), &discovery).items
+    };
+    let inside = complete("rate(");
+    assert_eq!(inside[0].insert, "requests_total[$0]");
+    assert!(inside[0].next);
+    assert_eq!(complete("avg_over_time(")[0].insert, "memory_bytes[$0]");
+    assert_eq!(
+        complete("histogram_quantile(0.9, ")[0].insert,
+        "sum by (le) (rate(latency_seconds_bucket[$0]))"
+    );
+    let typed: Vec<_> = complete("req").into_iter().map(|i| i.insert).collect();
+    assert_eq!(typed[..2], ["requests_total", "rate(requests_total[$0])"]);
+}
+
+fn query_check(query: &str) -> Check {
+    check("{{.base}}", "", query)
+}
