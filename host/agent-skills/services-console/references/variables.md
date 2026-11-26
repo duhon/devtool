@@ -55,6 +55,28 @@ values and every value must be a string. With the example above, `{{:envs.*}}` i
 catalog, `{{:envs.**}}` is catalog|test, `{{:envs~}}` is qa|stage and
 `{{:envs.stage}}` is test; `{{:envs}}` as a list is an error (its child `qa` is a hash).
 
+## Checks
+
+The last panel, `checks`, is read-only and holds the console's checks:
+`.checks.<service>.<n>` is check `n` (from 1, top to bottom) of that service's document,
+with `number`, `title` (without a template call after it), `response` (the text of its last response, up to 64 KiB) and one key per
+section (`target`, `payload`, …) holding the section's text.
+
+- `.checks.this` is the document of the check being edited; `prev` (in `this` and in
+  the service) is the check above it. When a check is sent, `this` becomes its service
+  and `prev` the check number above it.
+- `&n` (`{{.checks.rest.&3.target}}`) pins a check: when checks above it are added or
+  removed, the App rewrites `&3` in every document to the check's new number; a deleted
+  check becomes `&gone`, an error. A plain `3` always means the third check.
+- A check's text is inserted as written: references in it stay references. The panel is
+  not offered among the Agent's variable names.
+- jq functions see the checks unresolved. The built-in check template
+  `#check @copy(check)` (every service, not shown in Templates) starts a check with
+  every section but the response of another, by default the check above; each section
+  is written below its marker. The original counts as v1 and the copy is titled
+  `[vN] <title>` with the next free version among copies of that title (a copy's own
+  `[v…]` dropped). A template or jq function `copy` of the user's wins.
+
 Values may contain references; they resolve recursively with cycle detection and a
 depth limit of 16. A value is treated as a secret when any segment of its path is
 sensitive (password, token, …). The old `{{var:x}}`, `{{env:X}}` and `{{set:x}}`

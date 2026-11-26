@@ -5,6 +5,7 @@
 pub mod checks;
 mod console;
 pub mod identity;
+pub mod numbered;
 
 pub use console::*;
 use serde_json::Value;

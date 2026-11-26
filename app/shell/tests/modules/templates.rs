@@ -40,7 +40,7 @@ fn lists_section_templates_and_normalizes_inline_sections() {
     assert_eq!(completion.candidates[0].text, " @my_create_book");
     assert_eq!(
         completion.candidates[0].label.as_deref(),
-        Some("my_create_book")
+        Some("@my_create_book")
     );
     assert!(suggest("artemis", "", "#payload\n@m", 1, 2, &templates).is_none());
     assert!(suggest("artemis", "", "#metadata\n@", 1, 1, &templates).is_none());
@@ -56,10 +56,7 @@ fn full_checks_and_unicode_are_literal() {
     )]);
     let completion = suggest("artemis", "", "#check @гот", 0, 11, &templates).unwrap();
     assert_eq!(completion.from, 0);
-    assert_eq!(
-        completion.candidates[0].text,
-        "#check new\n#target\n/books\n#payload\n{}"
-    );
+    assert_eq!(completion.candidates[0].text, "#check new @готово");
     assert!(completion.candidates[0].literal);
     assert!(suggest("artemis", "", "@", 0, 1, &templates).is_none());
 }
@@ -87,7 +84,7 @@ Accept: application/json
     let source = "#check @test1";
     let completion = suggest("artemis", "", source, 0, source.len(), &templates).unwrap();
     assert_eq!((completion.from, completion.to), (0, source.len()));
-    assert_eq!(completion.candidates[0].text, format!("#check mmm\n{body}"));
+    assert_eq!(completion.candidates[0].text, "#check mmm @test1");
     assert_eq!(completion.candidates[0].label.as_deref(), Some("@test1"));
     assert_eq!(completion.candidates[0].detail, "mmm");
     assert!(suggest("artemis", "", "@test1", 0, 6, &templates).is_none());
@@ -97,23 +94,20 @@ Accept: application/json
 fn check_names_fall_back_to_template_name_and_keep_explicit_headers() {
     services_shell::link();
     for (definition, expected) in [
-        ("@test1\n#target\n/books", "#check test1\n#target\n/books"),
+        ("@test1\n#target\n/books", "#check @test1"),
         (
             "@test1 Create a book\n#target\n/books",
-            "#check Create a book\n#target\n/books",
+            "#check Create a book @test1",
         ),
         (
             "@test1 mmm\n  #CHECK Existing\n#target\n/books",
-            "  #CHECK Existing\n#target\n/books",
+            "#check Existing @test1",
         ),
         (
             "@test1 mmm\n#request Existing\n#target\n/books",
-            "#request Existing\n#target\n/books",
+            "#check Existing @test1",
         ),
-        (
-            "@test1 mmm\n#checker\n#target\n/books",
-            "#check mmm\n#checker\n#target\n/books",
-        ),
+        ("@test1 mmm\n#checker\n#target\n/books", "#check mmm @test1"),
     ] {
         let templates = BTreeMap::from([("check".into(), definition.into())]);
         let completion = suggest("artemis", "", "#check @", 0, 8, &templates).unwrap();
@@ -161,16 +155,30 @@ fn space_after_section_marker_offers_templates_without_an_at_sign() {
     assert!(completion.automatic);
     assert_eq!((completion.from, completion.to), (8, 9));
     assert_eq!(completion.candidates[0].text, " @example");
-    assert_eq!(completion.candidates[0].label.as_deref(), Some("example"));
+    assert_eq!(completion.candidates[0].label.as_deref(), Some("@example"));
     assert_eq!(
         suggest("artemis", "", "#check ", 0, 7, &templates)
             .unwrap()
             .candidates[0]
             .text,
-        "#check Create book\n#target\n/books\n#action\nPUT\n#payload\n{}"
+        "#check Create book @create"
     );
     let existing = suggest("artemis", "", "#payload @example", 0, 9, &templates).unwrap();
     assert_eq!((existing.from, existing.to), (8, 17));
+    // Complete calls expand once picked, and are not offered again once typed.
+    assert!(completion.candidates[0].expand);
+    assert!(suggest("artemis", "", "#payload @example", 0, 17, &templates).is_none());
+    assert!(
+        suggest(
+            "artemis",
+            "",
+            "#check Create book @create",
+            0,
+            26,
+            &templates
+        )
+        .is_none()
+    );
     for source in [
         "#payload",
         "#payload\n ",
@@ -256,10 +264,10 @@ fn at_lists_section_templates_with_signatures_and_searches_descriptions() {
     assert_eq!(
         items,
         [
-            ("host(service)".into(), " @host(", "Host name", true),
-            ("order".into(), " @order", "Zero-parameter template", false),
+            ("@host(service)".into(), " @host(", "Host name", true),
+            ("@order".into(), " @order", "Zero-parameter template", false),
             (
-                "url_shared(service, type = \"qa\")".into(),
+                "@url_shared(service, type = \"qa\")".into(),
                 " @url_shared(",
                 "Service URL",
                 true
@@ -268,7 +276,7 @@ fn at_lists_section_templates_with_signatures_and_searches_descriptions() {
     );
     let found = complete("#check\n#target @zero", &library).unwrap();
     assert_eq!(found.candidates.len(), 1);
-    assert_eq!(found.candidates[0].label.as_deref(), Some("order"));
+    assert_eq!(found.candidates[0].label.as_deref(), Some("@order"));
 }
 
 #[test]
@@ -286,6 +294,25 @@ fn arguments_offer_domain_options_as_quoted_literals() {
     assert_eq!(filtered.candidates.len(), 1);
     assert_eq!(filtered.candidates[0].label.as_deref(), Some("checkout"));
     assert!(complete("#check\n#target @url_shared(\"a\", \"b\", ", &library).is_none());
+    // Back at a typed argument (Shift+Tab), a pick replaces it with its comma.
+    let at = |source: &str, ch: usize| {
+        services_kernel::editor::templates::suggest(
+            &Modules,
+            "rest",
+            "",
+            source,
+            1,
+            ch,
+            &library,
+            (&dictionary(), ""),
+        )
+        .unwrap()
+    };
+    let back = at("#check\n#target @url_shared(\"catalog\", \"dev\")", 20);
+    assert_eq!((back.from, back.to), (20, 31));
+    assert_eq!(back.candidates[0].text, "\"catalog\", ");
+    let last = at("#check\n#target @url_shared(\"catalog\", \"dev\")", 31);
+    assert_eq!((last.from, last.to), (31, 37));
 
     let hash = Library::from([(
         "rest".to_owned(),
@@ -458,7 +485,7 @@ fn check_templates_with_parameters_ask_for_arguments_and_expand_on_enter() {
     let names = suggest("rest", "", "#check @", 0, 8, &templates).unwrap();
     assert_eq!(names.candidates[0].text, "#check Pair @pair(");
     assert!(names.candidates[0].continue_hint);
-    assert_eq!(names.candidates[1].text, "#check Plain\n#target\n/x");
+    assert_eq!(names.candidates[1].text, "#check Plain @plain");
     let source = "#check Pair @pair(";
     let args = suggest("rest", "", source, 0, source.len(), &templates).unwrap();
     assert_eq!(args.candidates[0].text, "\"p\", ");
@@ -495,6 +522,11 @@ fn check_templates_with_parameters_ask_for_arguments_and_expand_on_enter() {
     assert!(expand(&format!("#check @pair(\"q\")\n{body}")).is_none());
     assert!(expand("#check Pair @pair()").unwrap().is_err());
     assert!(expand("#check title").is_none());
+    // Without parameters the call stays the header too.
+    assert_eq!(
+        expand("#check Plain @plain"),
+        Some(Ok((0, 0, "\n#target\n/x".to_owned())))
+    );
     assert!(expand("#check mail@pair(\"q\")").is_none());
 }
 
@@ -647,4 +679,105 @@ fn template_editors_band_each_template() {
     let plain = services_shell::language::Language::new("console-rest", "rest", "payload", "");
     plain.synchronize(text, 0);
     assert_eq!(plain.line_class(1), None);
+}
+
+#[test]
+fn the_built_in_copy_starts_a_check_with_sections_of_another() {
+    services_shell::link();
+    let mut library = spec_library();
+    for (service, sections) in services_kernel::modules::registry::templates() {
+        library.entry(service).or_default().extend(sections);
+    }
+    let defs = services_kernel::modules::registry::function_defs(Some("rest"));
+    let checks = serde_json::json!({
+        "1": {"number": 1, "title": "item list", "target": "{{:host}}/a", "action": "GET", "response": "{}"},
+        "2": {"number": 2, "title": "[v2] item list", "target": "/b", "payload": "{\n  \"x\": 1\n}", "response": ""},
+    });
+    let mut this = checks.as_object().unwrap().clone();
+    this.insert("prev".into(), checks["2"].clone());
+    let root = Root::new(vec![(
+        "checks".into(),
+        serde_json::json!({"rest": checks, "this": this})
+            .as_object()
+            .unwrap()
+            .clone(),
+    )]);
+    let names = services_kernel::editor::templates::suggest(
+        &Modules,
+        "rest",
+        "",
+        "#check @",
+        0,
+        8,
+        &library,
+        (&root, &defs),
+    )
+    .unwrap();
+    let copy = names
+        .candidates
+        .iter()
+        .find(|candidate| candidate.text == "#check @copy()")
+        .unwrap();
+    assert!(!copy.continue_hint);
+    // Tab opens it for its arguments instead of taking the defaults.
+    assert_eq!(copy.tab.as_deref(), Some("#check @copy("));
+    let expand = |source: &str| {
+        let lines: Vec<String> = source.split('\n').map(str::to_owned).collect();
+        services_kernel::editor::expand_call(
+            &Modules,
+            "rest",
+            &lines,
+            0,
+            &[],
+            &library,
+            (&root, &defs),
+        )
+        .map(|edit| edit.map(|edit| (edit.from.line, edit.from.ch, edit.text)))
+    };
+    // A copy of a copy takes the next version of the original.
+    let copied = "#target\n/b\n#payload\n{\n  \"x\": 1\n}";
+    assert_eq!(
+        expand("#check @copy()"),
+        Some(Ok((
+            0,
+            0,
+            format!("#check [v3] item list @copy()\n{copied}")
+        )))
+    );
+    assert_eq!(
+        expand("#check @copy(\"1\")\n#check next"),
+        Some(Ok((
+            0,
+            0,
+            "#check [v3] item list @copy(\"1\")\n#target\n{{:host}}/a\n#action\nGET".into()
+        )))
+    );
+    // With a title the call only fills the body, so Enter again changes nothing.
+    assert_eq!(
+        expand("#check Mine @copy(\"2\")"),
+        Some(Ok((0, 22, format!("\n{copied}"))))
+    );
+    assert_eq!(
+        expand(&format!("#check [v3] item list @copy()\n{copied}")),
+        None
+    );
+    // Another original renames a generated title; the same one keeps its version.
+    assert_eq!(
+        expand("#check [v3] other @copy(\"1\")\n#target\n/b"),
+        Some(Ok((
+            0,
+            0,
+            "#check [v3] item list @copy(\"1\")\n#target\n{{:host}}/a\n#action\nGET".into()
+        )))
+    );
+    assert_eq!(
+        expand("#check [v7] item list @copy(\"1\")\n#target\n/b"),
+        Some(Ok((1, 0, "#target\n{{:host}}/a\n#action\nGET".into())))
+    );
+    assert!(
+        expand("#check @copy(\"9\")")
+            .unwrap()
+            .unwrap_err()
+            .contains("no check 9")
+    );
 }

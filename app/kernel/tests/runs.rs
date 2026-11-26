@@ -809,6 +809,34 @@ fn a_transform_reshapes_the_driver_answer_before_its_module_renders_it() {
 }
 
 #[test]
+fn history_keeps_the_transform_call_as_written_while_it_runs_on_the_answer() {
+    let window = Window::new();
+    functions();
+    window.kernel.set_service("table");
+    // `$even` errors on the variables; it runs only on the answer.
+    let check = "#target x\n#options\nTransform: {{$even}}";
+    window.kernel.run(RunRequest {
+        service: "table".into(),
+        source: Source::Check(check.into()),
+        line: 0,
+        check: Some("t".into()),
+        title: "#check".into(),
+        history: Some(json!({"checkId": "t", "sessionId": "s",
+            "title": "#check", "source": format!("#check\n{check}")})),
+        origin: Origin::Console,
+    });
+    let rows = json!({"sets": [{"rows": [["one"], ["two"]]}]});
+    window.fake.answer(window.fake.last(), Reply::Result(rows));
+    let (_, responses) = window.heard();
+    let (status, body) = responses.last().unwrap();
+    assert!(status.contains("OK"), "{status}: {body}");
+    assert_eq!(
+        window.fake.to("history")[0]["source"],
+        format!("#check\n{check}")
+    );
+}
+
+#[test]
 fn a_module_run_hands_its_data_to_the_transform_and_shows_what_comes_back() {
     let window = Window::new();
     functions();

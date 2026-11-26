@@ -488,7 +488,7 @@ fn marker(line: &str, name: &str) -> bool {
             .next()
             .is_none_or(char::is_whitespace)
 }
-fn valid_regions(lines: &[&str], regions: &[ResponseRegion]) -> Vec<ResponseRegion> {
+pub(super) fn valid_regions(lines: &[&str], regions: &[ResponseRegion]) -> Vec<ResponseRegion> {
     let anchored = |region: &&ResponseRegion| {
         region.request < region.header
             && region.header < region.end
@@ -634,6 +634,8 @@ pub fn replace_response(
     regions.sort_by_key(|r| r.header);
     result
 }
+/// `source` with the output of `regions` blanked; each region's first line stays a bare
+/// `#response` marker, so completion still knows the check's response starts there.
 pub fn mask_output(source: &str, regions: &[ResponseRegion]) -> String {
     let lines: Vec<_> = source.split('\n').collect();
     let regions = valid_regions(&lines, regions);
@@ -641,7 +643,9 @@ pub fn mask_output(source: &str, regions: &[ResponseRegion]) -> String {
         .split('\n')
         .enumerate()
         .map(|(i, line)| {
-            if regions.iter().any(|r| i >= r.header && i < r.end) {
+            if regions.iter().any(|r| i == r.header) {
+                "#response".into()
+            } else if regions.iter().any(|r| i > r.header && i < r.end) {
                 String::new()
             } else {
                 line.into()

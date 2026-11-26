@@ -12,7 +12,7 @@ use services_widgets::editor::extension::{
     self, Candidate, Completion, Extension, Languages, Payload, Refresh, Tokens, Viewport,
 };
 use services_widgets::editor::model::{Context, Session};
-use services_widgets::editor::{Change, Fold, Position, TextChange, Transaction};
+use services_widgets::editor::{Change, Fold, Position, Selection, TextChange, Transaction};
 use std::any::Any;
 use std::cell::RefCell;
 use std::collections::BTreeSet;
@@ -255,6 +255,22 @@ impl Language {
 
     fn masked(&self, source: &str) -> String {
         document::mask_output(source, &self.state.borrow().regions)
+    }
+
+    /// The variable tree for the cursor at `line` of `source`: in a console document
+    /// `.checks.this` is its checks and `prev` the check above the cursor's.
+    fn root_at(&self, source: &str, line: usize) -> services_sdk::refs::Root {
+        let current = self
+            .module
+            .as_deref()
+            .filter(|_| self.field.is_empty() && self.document())
+            .zip(document::numbered::number_at(
+                source,
+                &self.state.borrow().regions,
+                line,
+            ));
+        kernel::set_current_check(current);
+        kernel::root()
     }
 }
 
@@ -618,7 +634,7 @@ impl Extension for Language {
 
     fn suggest(&self, source: &str, line: usize, ch: usize, context: &Context) -> Completion {
         let masked = self.masked(source);
-        let (root, defs) = (kernel::root(), self.function_defs());
+        let (root, defs) = (self.root_at(source, line), self.function_defs());
         let completion = language::suggest(
             &Modules,
             &self.service,
@@ -637,7 +653,11 @@ impl Extension for Language {
                 .into_iter()
                 .map(|candidate| Candidate {
                     continue_hint: candidate.continue_hint
-                        || (candidate.text.starts_with('#') && candidate.text != "#check"),
+                        || (!candidate.expand
+                            && candidate.text.starts_with('#')
+                            && candidate.text != "#check"),
+                    expand: candidate.expand,
+                    tab: candidate.tab,
                     text: candidate.text,
                     label: candidate.label,
                     detail: candidate.detail,
@@ -650,6 +670,26 @@ impl Extension for Language {
         }
     }
 
+    fn tab(
+        &self,
+        lines: &[String],
+        cursor: Position,
+        back: bool,
+        _context: &Context,
+    ) -> Option<(Transaction, bool)> {
+        if self.output(cursor.line) {
+            return None;
+        }
+        let stop = language::templates::tab_stop(lines.get(cursor.line)?, cursor.ch, back)?;
+        let at = |ch: usize| Position {
+            line: cursor.line,
+            ch,
+        };
+        let mut transaction = Transaction::replace(at(stop.from), at(stop.to), stop.text, "tab");
+        transaction.selection = Some(Selection::cursor(at(stop.cursor)));
+        Some((transaction, stop.hints))
+    }
+
     fn enter(
         &self,
         lines: &[String],
@@ -660,8 +700,9 @@ impl Extension for Language {
         if !self.field.is_empty() || !self.document() {
             return None;
         }
+        let root = self.root_at(&lines.join("\n"), cursor.line);
         let state = self.state.borrow();
-        let (root, defs) = (kernel::root(), self.function_defs());
+        let defs = self.function_defs();
         let expansion = language::expand_call(
             &Modules,
             service,

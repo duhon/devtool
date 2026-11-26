@@ -47,6 +47,10 @@ pub struct Candidate {
     pub badge: Option<char>,
     /// Completing it opens the hints again.
     pub continue_hint: bool,
+    /// Picking it also does what Enter at the end of its line does (expands a call).
+    pub expand: bool,
+    /// What picking it with Tab inserts instead: the call open for its first argument.
+    pub tab: Option<String>,
     /// It inserts exactly its text.
     pub literal: bool,
 }
@@ -170,6 +174,19 @@ pub trait Extension {
         _cursor: Position,
         _context: &Context,
     ) -> Option<Result<Transaction, String>> {
+        None
+    }
+
+    /// Tab (Shift+Tab when `back`) at `cursor` with nothing selected: `Some` is the owner's
+    /// move (an edit and the selection after it) and whether hints open there; `None` leaves
+    /// Tab to the editor.
+    fn tab(
+        &self,
+        _lines: &[String],
+        _cursor: Position,
+        _back: bool,
+        _context: &Context,
+    ) -> Option<(Transaction, bool)> {
         None
     }
 

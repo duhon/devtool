@@ -19,10 +19,10 @@ fn quoted(value: &str) -> String {
     format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
-/// `name(a, b = "default")`; just the name for a template without parameters.
+/// `@name(a, b = "default")`; just `@name` for a template without parameters.
 pub fn signature(template: &Template) -> String {
     if template.params.is_empty() {
-        return template.name.clone();
+        return format!("@{}", template.name);
     }
     let params: Vec<String> = template
         .params
@@ -32,7 +32,13 @@ pub fn signature(template: &Template) -> String {
             None => param.name.clone(),
         })
         .collect();
-    format!("{}({})", template.name, params.join(", "))
+    format!("@{}({})", template.name, params.join(", "))
+}
+
+/// The title after a generated `[vN] ` version (`@copy`), or None for one typed by hand.
+fn version_base(title: &str) -> Option<&str> {
+    let (version, rest) = title.strip_prefix("[v")?.split_once(']')?;
+    (!version.is_empty() && version.bytes().all(|b| b.is_ascii_digit())).then(|| rest.trim())
 }
 
 /// `name` and the text between the parentheses of an unfinished call `@name(args`.
@@ -94,6 +100,8 @@ pub fn name_candidates(
                 detail: template.description,
                 badge: None,
                 continue_hint: !call,
+                expand: false,
+                tab: None,
                 literal: true,
             }
         })
@@ -198,6 +206,24 @@ fn current_argument(args: &str) -> (usize, usize) {
     (index, start + skipped)
 }
 
+/// The length of the argument's text in `suffix` (after the cursor) up to its comma or the
+/// call's `)`; `quote` is whether the cursor is inside its quoted value.
+fn argument_rest(suffix: &str, mut quote: bool) -> usize {
+    let (mut escape, mut depth) = (false, 0usize);
+    for (at, c) in suffix.char_indices() {
+        match c {
+            _ if escape => escape = false,
+            '\\' if quote => escape = true,
+            '"' => quote = !quote,
+            '(' if !quote => depth += 1,
+            ')' if !quote && depth > 0 => depth -= 1,
+            ',' | ')' if !quote => return at,
+            _ => {}
+        }
+    }
+    suffix.len()
+}
+
 /// The domain options of the argument being typed in `args` (the text of the call after its
 /// `(`, which starts at UTF-16 column `args_col`) as quoted literals. `suffix` is the text after
 /// the cursor and `close` ends the call after its last argument.
@@ -251,6 +277,8 @@ pub fn argument_completion(
                     detail: template.params[index].name.clone(),
                     badge: Some('!'),
                     continue_hint: false,
+                    expand: false,
+                    tab: None,
                     literal: true,
                 }],
                 comma: None,
@@ -268,16 +296,20 @@ pub fn argument_completion(
             detail: template.params[index].name.clone(),
             badge: None,
             continue_hint: !last,
+            expand: false,
+            tab: None,
             literal: true,
         })
         .collect();
     if candidates.is_empty() {
         return None;
     }
-    // Typed closers (an auto-closed quote or parenthesis) are part of what is replaced.
-    let mut rest = suffix;
-    if partial.starts_with('"') && !partial[1..].contains('"') {
-        rest = rest.strip_prefix('"').unwrap_or(rest);
+    // The rest of the argument (an auto-closed quote, or a value Shift+Tab came back to) and
+    // its comma or the call's closers are part of what is replaced.
+    let quoted_partial = partial.starts_with('"') && !partial[1..].contains('"');
+    let mut rest = &suffix[argument_rest(suffix, quoted_partial)..];
+    if !last && let Some(after) = rest.strip_prefix(',') {
+        rest = after.trim_start();
     }
     if last {
         rest = rest.strip_prefix(')').unwrap_or(rest);
@@ -294,8 +326,151 @@ pub fn argument_completion(
     })
 }
 
+/// Where Tab or Shift+Tab (`back`) goes in a template call (`@name(…)`, `{{@name(…)}}`)
+/// around the cursor: replace UTF-16 `from..to` of the line with `text`, put the cursor at
+/// `cursor` and ask for `hints` (the argument's options) there.
+#[derive(Debug, PartialEq, Eq)]
+pub struct TabStop {
+    pub from: usize,
+    pub to: usize,
+    pub text: String,
+    pub cursor: usize,
+    pub hints: bool,
+}
+
+/// A call of `line`: where its arguments' segments are (byte ranges between `(`, the commas
+/// and `)` or the line end), its closing `)` if typed and where the call ends.
+struct CallSite {
+    segments: Vec<(usize, usize)>,
+    close: Option<usize>,
+    end: usize,
+    live: bool,
+}
+
+fn call_sites(line: &str) -> Vec<CallSite> {
+    let mut sites = Vec::new();
+    for (at, _) in line.match_indices('@') {
+        let name = line[at + 1..]
+            .find(|c: char| !name_char(c))
+            .map_or(line.len(), |length| at + 1 + length);
+        if name == at + 1 || !line[name..].starts_with('(') {
+            continue;
+        }
+        let live = line[..at].ends_with("{{");
+        let (mut quote, mut escape, mut depth) = (false, false, 0usize);
+        let (mut start, mut segments, mut close) = (name + 1, Vec::new(), None);
+        for (offset, c) in line[name + 1..].char_indices() {
+            let index = name + 1 + offset;
+            match c {
+                _ if escape => escape = false,
+                '\\' if quote => escape = true,
+                '"' => quote = !quote,
+                '(' if !quote => depth += 1,
+                ')' if !quote && depth > 0 => depth -= 1,
+                ',' if !quote && depth == 0 => {
+                    segments.push((start, index));
+                    start = index + 1;
+                }
+                ')' if !quote => {
+                    close = Some(index);
+                    break;
+                }
+                _ => {}
+            }
+        }
+        segments.push((start, close.unwrap_or(line.len())));
+        let end = close.map_or(line.len(), |close| {
+            let after = close + 1;
+            if live && line[after..].starts_with("}}") {
+                after + 2
+            } else {
+                after
+            }
+        });
+        sites.push(CallSite {
+            segments,
+            close,
+            end,
+            live,
+        });
+    }
+    sites
+}
+
+/// See [`TabStop`]; `None` outside a call, or Tab after one, leaves Tab to the editor.
+pub fn tab_stop(line: &str, ch: usize, back: bool) -> Option<TabStop> {
+    let mut units = 0;
+    let at = line
+        .char_indices()
+        .find(|(_, c)| {
+            units += c.len_utf16();
+            units > ch
+        })
+        .map_or(line.len(), |(at, _)| at);
+    let sites = call_sites(line);
+    let site = sites.iter().rev().find(|site| {
+        let open = site.segments[0].0;
+        (open <= at && at <= site.close.unwrap_or(line.len()))
+            || (site.close.is_some() && at == site.end)
+    })?;
+    let after = site.close.is_some() && at == site.end;
+    let value_start = |(start, end): (usize, usize)| {
+        start + (line[start..end].len() - line[start..end].trim_start().len())
+    };
+    let stop = |byte: usize, hints: bool| TabStop {
+        from: utf16(&line[..byte]),
+        to: utf16(&line[..byte]),
+        text: String::new(),
+        cursor: utf16(&line[..byte]),
+        hints,
+    };
+    let count = site.segments.len();
+    let index = if after {
+        count - 1
+    } else {
+        site.segments
+            .iter()
+            .position(|&(_, end)| at <= end)
+            .unwrap_or(count - 1)
+    };
+    if back {
+        let target = if after {
+            index
+        } else {
+            index.saturating_sub(1)
+        };
+        return Some(stop(value_start(site.segments[target]), true));
+    }
+    if after {
+        return None;
+    }
+    if index + 1 < count {
+        return Some(stop(value_start(site.segments[index + 1]), true));
+    }
+    // From the last argument Tab leaves the call; an empty one goes with its comma.
+    let (start, end) = site.segments[index];
+    let empty = line[start..end].trim().is_empty() && index > 0;
+    let from = if empty {
+        start - 1
+    } else {
+        end - (line[start..end].len() - line[start..end].trim_end().len())
+    };
+    let (to, text) = match site.close {
+        Some(close) => (close, String::new()),
+        None => (line.len(), if site.live { ")}}" } else { ")" }.to_owned()),
+    };
+    let cursor = utf16(&line[..from]) + utf16(&text) + utf16(&line[to..site.end]);
+    Some(TabStop {
+        from: utf16(&line[..from]),
+        to: utf16(&line[..to]),
+        text,
+        cursor,
+        hints: false,
+    })
+}
+
 /// Where the call `@name` or `@name(…` starts in the text of a `#check` line, after its title.
-fn call_start(text: &str) -> Option<usize> {
+pub(crate) fn call_start(text: &str) -> Option<usize> {
     text.match_indices('@').map(|(at, _)| at).find(|&at| {
         let rest = &text[at + 1..];
         let end = rest.find(|c| !name_char(c)).unwrap_or(rest.len());
@@ -376,6 +551,8 @@ pub fn suggest(
     let candidates: Vec<_> = matching(templates::own(library, service, &section), query)
         .into_iter()
         .map(|template| {
+            // Arguments are asked for only when a parameter has no default.
+            let asks = template.params.iter().any(|param| param.default.is_none());
             if section == "check" && !template.params.is_empty() {
                 let title = if template.description.is_empty() {
                     String::new()
@@ -383,42 +560,62 @@ pub fn suggest(
                     format!("{} ", template.description)
                 };
                 return Candidate {
-                    text: format!("#check {title}@{}(", template.name),
+                    text: format!(
+                        "#check {title}@{}({}",
+                        template.name,
+                        if asks { "" } else { ")" }
+                    ),
                     label: Some(signature(&template)),
                     detail: template.description,
                     badge: None,
                     literal: true,
-                    continue_hint: true,
+                    continue_hint: asks,
+                    expand: !asks,
+                    tab: (!asks).then(|| format!("#check {title}@{}(", template.name)),
                 };
             }
+            // Like one with parameters: the call stays the header and Enter expands it.
             if section == "check" {
-                let text = if !template.body.lines().next().is_some_and(is_check) {
-                    let title = if template.description.is_empty() {
-                        &template.name
-                    } else {
-                        &template.description
-                    };
-                    format!("#check {title}\n{}", template.body)
+                // The template's own `#check title` wins over its description.
+                let own = template
+                    .body
+                    .lines()
+                    .next()
+                    .filter(|line| is_check(line))
+                    .and_then(|line| line.trim().split_once(char::is_whitespace))
+                    .map(|(_, title)| title.trim());
+                let title = own.unwrap_or(&template.description);
+                let title = if title.is_empty() {
+                    String::new()
                 } else {
-                    template.body.clone()
+                    format!("{title} ")
                 };
                 return Candidate {
-                    text,
-                    label: Some(format!("@{}", template.name)),
+                    text: format!("#check {title}@{}", template.name),
+                    label: Some(signature(&template)),
                     detail: template.description,
                     badge: None,
                     literal: true,
                     continue_hint: false,
+                    expand: true,
+                    tab: None,
                 };
             }
             let zero = template.params.is_empty();
+            let call = match (zero, asks) {
+                (true, _) => "",
+                (false, true) => "(",
+                (false, false) => "()",
+            };
             Candidate {
-                text: format!(" @{}{}", template.name, if zero { "" } else { "(" }),
+                text: format!(" @{}{call}", template.name),
                 label: Some(signature(&template)),
                 detail: template.description,
                 badge: None,
                 literal: true,
-                continue_hint: !zero,
+                continue_hint: asks,
+                expand: !asks,
+                tab: (!zero && !asks).then(|| format!(" @{}(", template.name)),
             }
         })
         .collect();
@@ -436,9 +633,24 @@ pub fn suggest(
         _ => (after, 0),
     };
     let suffix: String = after.chars().take_while(|c| name_char(*c)).collect();
+    let to = ch + reference_length + utf16(&suffix);
+    // A name typed to its end is not offered again: Enter then reaches the expansion.
+    let units: Vec<u16> = current
+        .encode_utf16()
+        .skip(from)
+        .take(to.saturating_sub(from))
+        .collect();
+    let typed = String::from_utf16_lossy(&units);
+    let candidates: Vec<_> = candidates
+        .into_iter()
+        .filter(|candidate| ch < to || candidate.text != typed)
+        .collect();
+    if candidates.is_empty() {
+        return None;
+    }
     Some(Completion {
         from,
-        to: ch + reference_length + utf16(&suffix),
+        to,
         candidates,
         comma: None,
         automatic: true,
@@ -520,11 +732,29 @@ pub fn expand_call(
             .map_or("", |(_, body)| body)
             .to_owned();
     }
+    // An eager call may give the check its title (`#check title` first): it fills an empty
+    // one before the call, which stays to expand again, and replaces a generated `[vN] …`
+    // one of another original.
+    let mut header = None;
     if super::functions::has_eager(&text) {
         text = match super::functions::eager(&text, root, defs) {
             Ok(text) => text,
             Err(error) => return Some(Err(error)),
         };
+        if check && text.lines().next().is_some_and(is_check) {
+            let (head, body) = text.split_once('\n').unwrap_or((text.as_str(), ""));
+            let title = head.trim_start()["#check".len()..].trim();
+            let typed = current.trim_start()["#check".len()..].trim_start();
+            if let Some(start) = call_start(typed).filter(|_| !title.is_empty()) {
+                let own = typed[..start].trim();
+                let replace = own.is_empty()
+                    || version_base(own).is_some_and(|base| version_base(title) != Some(base));
+                if replace {
+                    header = Some(format!("#check {title} {}", &typed[start..]));
+                }
+            }
+            text = body.to_owned();
+        }
     }
     let start = line + 1;
     let mut end = (start..lines.len())
@@ -540,6 +770,24 @@ pub fn expand_call(
         .unwrap_or(lines.len());
     while end > start && lines[end - 1].trim().is_empty() {
         end -= 1;
+    }
+    if let Some(header) = header {
+        let to = if end > start {
+            Position {
+                line: end - 1,
+                ch: utf16(&lines[end - 1]),
+            }
+        } else {
+            Position {
+                line,
+                ch: utf16(current),
+            }
+        };
+        return Some(Ok(Expansion {
+            from: Position { line, ch: 0 },
+            to,
+            text: format!("{header}\n{text}"),
+        }));
     }
     if lines[start..end].join("\n") == text {
         return None;
@@ -664,5 +912,43 @@ mod tests {
         let error = offered("\"beta\", \"x\", ");
         assert_eq!(error[0].1, Some('!'));
         assert!(error[0].0.contains("boom"), "{error:?}");
+    }
+
+    #[test]
+    fn tab_walks_the_arguments_of_a_call_and_leaves_it() {
+        let at = |line: &str, ch: usize, back: bool| {
+            tab_stop(line, ch, back).map(|stop| {
+                let mut units: Vec<u16> = line.encode_utf16().collect();
+                let text: Vec<u16> = stop.text.encode_utf16().collect();
+                units.splice(stop.from..stop.to, text);
+                (String::from_utf16_lossy(&units), stop.cursor, stop.hints)
+            })
+        };
+        let line = "#target @u(\"a\", \"b\", \"c\")";
+        // Forward from the first argument, back from the second, then past the last.
+        assert_eq!(at(line, 12, false), Some((line.into(), 16, true)));
+        assert_eq!(at(line, 16, true), Some((line.into(), 11, true)));
+        assert_eq!(at(line, 21, false), Some((line.into(), 25, false)));
+        // Shift+Tab after the call goes into its last argument; Tab there is the editor's.
+        assert_eq!(at(line, 25, true), Some((line.into(), 21, true)));
+        assert_eq!(at(line, 25, false), None);
+        assert_eq!(at("#target x", 3, false), None);
+        // An empty last argument goes with its comma; an open call is closed.
+        assert_eq!(
+            at("#check T @c(\"a\", ", 17, false),
+            Some(("#check T @c(\"a\")".into(), 16, false))
+        );
+        assert_eq!(
+            at("#check T @c(\"a\", )", 17, false),
+            Some(("#check T @c(\"a\")".into(), 16, false))
+        );
+        assert_eq!(
+            at("x {{@n(\"a\"", 10, false),
+            Some(("x {{@n(\"a\")}}".into(), 13, false))
+        );
+        assert_eq!(
+            at("x {{@n(\"a\")}} y", 13, true),
+            Some(("x {{@n(\"a\")}} y".into(), 7, true))
+        );
     }
 }

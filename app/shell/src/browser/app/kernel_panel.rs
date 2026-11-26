@@ -232,15 +232,7 @@ impl App {
 
     /// What the modules add to the editors changed: the console editors complete anew.
     pub(super) fn contributed(&mut self) {
-        self.templates = services_kernel::modules::registry::contributions("templates")
-            .into_iter()
-            .filter_map(|library| {
-                serde_json::from_value::<services_contracts::templates::Library>(library).ok()
-            })
-            .fold(Default::default(), |mut all, library| {
-                all.extend(library);
-                all
-            });
+        self.templates = services_kernel::modules::registry::templates();
         self.hints = services_kernel::modules::registry::contributions("hints")
             .into_iter()
             .filter_map(|hints| serde_json::from_value::<BTreeMap<String, String>>(hints).ok())

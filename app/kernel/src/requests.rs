@@ -160,6 +160,45 @@ fn function_call(value: &str) -> bool {
     )
 }
 
+/// A placeholder line for the `n`th kept `Transform` line, free of `{{ }}`.
+fn transform_mark(n: usize) -> String {
+    format!("\u{1}transform {n}\u{1}")
+}
+
+/// The check text with each `#options` `Transform:` line swapped for a placeholder, and
+/// those lines: the call runs on the response later, so the text keeps it as written.
+fn keep_transforms(source: &str) -> (String, Vec<String>) {
+    let mut options = false;
+    let mut kept = Vec::new();
+    let lines: Vec<String> = source
+        .lines()
+        .map(|line| {
+            if let Some(marker) = line.trim_start().strip_prefix('#') {
+                let name = marker.split_whitespace().next().unwrap_or("");
+                options = name.eq_ignore_ascii_case("options");
+            } else if options
+                && line
+                    .split_once(':')
+                    .is_some_and(|(key, _)| key.trim().eq_ignore_ascii_case("transform"))
+            {
+                kept.push(line.to_owned());
+                return transform_mark(kept.len() - 1);
+            }
+            line.to_owned()
+        })
+        .collect();
+    (lines.join("\n"), kept)
+}
+
+/// The resolved text with the kept `Transform` lines back in place.
+fn restore_transforms(text: &str, kept: &[String]) -> String {
+    kept.iter()
+        .enumerate()
+        .fold(text.to_owned(), |text, (n, line)| {
+            text.replacen(&transform_mark(n), line, 1)
+        })
+}
+
 /// The console's keys of an `#options` text and the lines left for the module.
 fn console_options(text: &str, name: &str) -> Result<RunOptions, String> {
     let mut options = RunOptions::default();
@@ -385,8 +424,10 @@ impl Run {
             crate::modules::registry::with(|modules| modules.resolve_in(text, false, service))
                 .map(|resolution| (resolution.text, resolution.secrets))
         };
-        let resolved =
-            resolve(history["source"].as_str().unwrap_or("")).and_then(|(source, mut secrets)| {
+        let (masked, kept) = keep_transforms(history["source"].as_str().unwrap_or(""));
+        let resolved = resolve(&masked)
+            .map(|(source, secrets)| (restore_transforms(&source, &kept), secrets))
+            .and_then(|(source, mut secrets)| {
                 let (title, more) = resolve(history["title"].as_str().unwrap_or(""))?;
                 secrets.extend(more);
                 Ok((source, title, secrets))

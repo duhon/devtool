@@ -90,6 +90,8 @@ pub enum Command {
     Delete,
     Discover,
     Tab,
+    /// Tab (Shift+Tab when true): the owner's stop, else [`Command::Tab`] or outdent.
+    TabStop(bool),
     Indent(Indent),
     Undo,
     Redo,
@@ -108,6 +110,8 @@ pub enum Command {
     HintFirst,
     HintLast,
     HintPick,
+    /// Picks with Tab: an item's [`Item::tab`] text instead of its own.
+    HintTab,
     HintClose,
 }
 
@@ -188,6 +192,10 @@ pub struct Item {
     pub display: String,
     pub badge: Option<char>,
     pub continue_hint: bool,
+    /// Picking it also does what Enter at the end of its line does (expands a call).
+    pub expand: bool,
+    /// What picking it with Tab inserts instead (it then asks for more).
+    pub tab: Option<String>,
     pub literal: bool,
     pub comma: Option<Position>,
 }
@@ -456,7 +464,9 @@ impl Session {
                 }
                 ("Home", false) => Some(Command::HintFirst),
                 ("End", false) => Some(Command::HintLast),
-                ("Enter" | "Tab", false) => Some(Command::HintPick),
+                ("Enter", false) => Some(Command::HintPick),
+                ("Tab", false) => Some(Command::HintTab),
+                ("Tab", true) => Some(Command::TabStop(true)),
                 ("Esc", _) => Some(Command::HintClose),
                 _ => None,
             };
@@ -471,13 +481,7 @@ impl Session {
             "Space" if key.ctrl && !key.alt && !key.meta && !key.shift => Command::Complete,
             "Space" if key.alt && !key.ctrl && !key.meta && !key.shift => Command::Discover,
             "Q" if key.ctrl && !key.alt && !key.meta && !key.shift => Command::ToggleFold,
-            "Tab" if !key.ctrl && !key.alt && !key.meta => {
-                if key.shift {
-                    Command::Indent(Indent::Prev)
-                } else {
-                    Command::Tab
-                }
-            }
+            "Tab" if !key.ctrl && !key.alt && !key.meta => Command::TabStop(key.shift),
             "Backspace" if key.mac && key.meta && !key.alt => Command::DeleteBy(-1, Unit::Line),
             "Delete" if key.mac && key.meta && !key.alt => Command::DeleteBy(1, Unit::Line),
             "Backspace" if key.alt || (!key.mac && key.ctrl) => Command::DeleteBy(-1, Unit::Group),
@@ -849,12 +853,14 @@ impl Session {
                 | Command::Backspace
                 | Command::Delete
                 | Command::Tab
+                | Command::TabStop(_)
                 | Command::Indent(_)
                 | Command::Undo
                 | Command::Redo
                 | Command::DeleteLine
                 | Command::DeleteBy(..)
                 | Command::HintPick
+                | Command::HintTab
         );
         if editing && self.setup.readonly {
             return;
@@ -884,6 +890,18 @@ impl Session {
             }
             Command::Discover => self.events.push(Event::Discover),
             Command::Tab => self.operation(|session| session.change(|state| state.tab(now))),
+            Command::TabStop(back) => {
+                if !self.tab_hook(back, now) {
+                    self.command(
+                        if back {
+                            Command::Indent(Indent::Prev)
+                        } else {
+                            Command::Tab
+                        },
+                        now,
+                    );
+                }
+            }
             Command::Indent(how) => {
                 self.operation(|session| session.change(|state| state.indent_selection(how, now)));
             }
@@ -931,6 +949,20 @@ impl Session {
                 }
             }
             Command::HintPick => {
+                if let Some(selected) = self.popup.as_ref().map(|popup| popup.selected) {
+                    self.pick(selected, now);
+                }
+            }
+            Command::HintTab => {
+                if let Some(popup) = &mut self.popup
+                    && let Some(item) = popup.items.get_mut(popup.selected)
+                    && let Some(text) = item.tab.take()
+                {
+                    item.text = text;
+                    item.continue_hint = true;
+                    item.expand = false;
+                    item.literal = true;
+                }
                 if let Some(selected) = self.popup.as_ref().map(|popup| popup.selected) {
                     self.pick(selected, now);
                 }
@@ -1156,6 +1188,28 @@ impl Session {
 
     /// Enter at the end of a line may be the owner's: it answers with the edit to make instead
     /// of a line break, or with an error to report. True when it did.
+    /// The owner's Tab stop; true when it took Tab.
+    fn tab_hook(&mut self, back: bool, now: f64) -> bool {
+        let selection = self.state.selection();
+        if selection.anchor != selection.head {
+            return false;
+        }
+        let extension = self.extension().clone();
+        let Some((mut transaction, hints)) =
+            extension.tab(self.state.lines(), self.state.cursor(), back, &self.context)
+        else {
+            return false;
+        };
+        self.close_hints();
+        transaction.origin = "tab".into();
+        self.operation(|session| session.change(|state| state.apply(transaction, now)));
+        if hints {
+            self.show_hints(false);
+            self.ask_hints();
+        }
+        true
+    }
+
     fn enter_hook(&mut self, now: f64) -> bool {
         let selection = self.state.selection();
         let cursor = self.state.cursor();
@@ -1500,6 +1554,8 @@ impl Session {
                     },
                     badge: candidate.badge,
                     continue_hint: candidate.continue_hint,
+                    expand: candidate.expand,
+                    tab: candidate.tab.clone(),
                     literal: candidate.literal,
                     comma,
                 }
@@ -1585,6 +1641,10 @@ impl Session {
             }
             changes
         });
+        if item.expand {
+            self.enter_hook(now);
+            return;
+        }
         let continuation = item.continue_hint
             || text.ends_with([':', '/', ' '])
             || (text.contains('\n') && target.is_some());
@@ -1762,6 +1822,74 @@ mod tests {
                 _ => None,
             }
         }
+
+        fn tab(
+            &self,
+            lines: &[String],
+            cursor: Position,
+            back: bool,
+            _context: &Context,
+        ) -> Option<(Transaction, bool)> {
+            lines[cursor.line].starts_with('t').then(|| {
+                let mark = if back { "<" } else { ">" };
+                (Transaction::replace(cursor, cursor, mark, "tab"), false)
+            })
+        }
+
+        fn suggest(
+            &self,
+            source: &str,
+            _line: usize,
+            ch: usize,
+            _context: &Context,
+        ) -> super::extension::Completion {
+            super::extension::Completion {
+                from: 0,
+                to: ch,
+                candidates: source
+                    .starts_with("g\n")
+                    .then(|| super::extension::Candidate {
+                        text: "go".into(),
+                        label: None,
+                        detail: String::new(),
+                        badge: None,
+                        continue_hint: false,
+                        expand: true,
+                        tab: Some("g(".into()),
+                        literal: true,
+                    })
+                    .into_iter()
+                    .collect(),
+                ..Default::default()
+            }
+        }
+    }
+
+    #[test]
+    fn tab_goes_to_the_owner_first_and_picks_its_alternative() {
+        let mut editor = Session::new(Setup::default(), Rc::new(Owner), "t\nx");
+        editor.select(Selection::cursor(at(0, 1)), false);
+        editor.update(Msg::Command(Command::TabStop(false)), 0.0);
+        editor.update(Msg::Command(Command::TabStop(true)), 0.0);
+        assert_eq!(editor.source().as_ref(), "t><\nx");
+        editor.select(Selection::cursor(at(1, 1)), false);
+        editor.update(Msg::Command(Command::TabStop(false)), 0.0);
+        assert_ne!(editor.source().as_ref(), "t><\nx");
+
+        let mut editor = Session::new(Setup::default(), Rc::new(Owner), "g\nx");
+        editor.select(Selection::cursor(at(0, 1)), false);
+        editor.update(Msg::Command(Command::Complete), 0.0);
+        editor.update(Msg::Command(Command::HintTab), 0.0);
+        assert_eq!(editor.source().as_ref(), "g(\nx");
+    }
+
+    #[test]
+    fn a_picked_expanding_hint_also_does_enter() {
+        let mut editor = Session::new(Setup::default(), Rc::new(Owner), "g\nx");
+        editor.select(Selection::cursor(at(0, 1)), false);
+        editor.update(Msg::Command(Command::Complete), 0.0);
+        editor.update(Msg::PickHint(0), 0.0);
+        assert_eq!(editor.source().as_ref(), "go\nnew");
     }
 
     #[test]

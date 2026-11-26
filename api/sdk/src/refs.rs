@@ -203,7 +203,10 @@ impl Path {
                 segments.push(match part {
                     "*" => Segment::Star,
                     "**" => Segment::DoubleStar,
-                    key if is_name(key) => Segment::Key(key.to_owned()),
+                    // `&3`: a numbered key that the editor keeps pointing at the same item.
+                    key if is_name(key.strip_prefix('&').unwrap_or(key)) => {
+                        Segment::Key(key.to_owned())
+                    }
                     _ => return None,
                 });
             }
@@ -556,7 +559,8 @@ fn select(start: Vec<Node<'static>>, path: &Path) -> Selection {
             match segment {
                 Segment::Key(key) => {
                     if let Value::Object(map) = node.1.as_ref()
-                        && let Some(value) = map.get(key)
+                        && let Some(value) =
+                            map.get(key).or_else(|| map.get(key.strip_prefix('&')?))
                     {
                         let mut path = node.0.clone();
                         path.push(key.clone());
@@ -1263,6 +1267,8 @@ mod tests {
         assert_eq!(list(&root, "{{:envs~}}").unwrap(), ["qa", "prod", "stage"]);
         assert_eq!(list(&root, "{{:envs.stage}}").unwrap(), ["test"]);
         assert_eq!(run("{{:envs.qa.2}}", &root).unwrap(), "checkout");
+        assert_eq!(run("{{:envs.qa.&2}}", &root).unwrap(), "checkout");
+        assert!(scan("{{:envs.&}} {{:envs.a&2}}").is_empty());
         assert_eq!(
             run("{{:envs.*.1}}", &root).unwrap_err(),
             "{{:envs.*.1}}: expected a string, got a list (2)"

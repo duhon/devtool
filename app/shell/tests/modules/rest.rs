@@ -358,3 +358,36 @@ fn a_field_after_a_value_puts_its_comma_after_the_value() {
     assert_eq!(value.text, "\"say \\\"hi\\\"\"");
     assert!(value.literal);
 }
+
+#[test]
+fn below_a_response_only_a_new_check_is_offered() {
+    services_shell::link();
+    let texts = |source: &str, line: usize, ch: usize| {
+        suggest("rest", "", source, line, ch, &[])
+            .candidates
+            .into_iter()
+            .map(|candidate| candidate.text)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        texts("#check a\n#target\nhttp://x\n#response\n{}\n#", 5, 1),
+        ["#check"]
+    );
+    assert_eq!(
+        texts("#check a\n#target\nhttp://x\n#response\n{}\n", 5, 0),
+        ["#check"]
+    );
+    // A run's output is masked to a bare marker.
+    let regions = [services_kernel::document::ResponseRegion {
+        request: 0,
+        header: 3,
+        end: 5,
+        columns: vec![],
+    }];
+    let masked = services_kernel::document::mask_output(
+        "#check a\n#target\nhttp://x\n#response 200\n{}\n#",
+        &regions,
+    );
+    assert_eq!(masked, "#check a\n#target\nhttp://x\n#response\n\n#");
+    assert_eq!(texts(&masked, 5, 1), ["#check"]);
+}

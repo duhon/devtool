@@ -31,6 +31,8 @@ fn candidate(text: String, label: Option<String>, detail: String, more: bool) ->
         detail,
         badge: None,
         continue_hint: more,
+        expand: false,
+        tab: None,
     }
 }
 

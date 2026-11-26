@@ -38,9 +38,26 @@ fn resolved(root: &Root, value: &Value) -> Value {
 }
 
 /// The input of every function: the variable tree without comments, its references resolved
-/// where they resolve (and kept as written where they do not).
+/// where they resolve (and kept as written where they do not). The `checks` panel stays as the
+/// documents have it, so a function can copy a check.
 pub fn input(root: &Root) -> Value {
-    resolved(root, &refs::without_comments(root.tree()))
+    let tree = refs::without_comments(root.tree());
+    match tree {
+        Value::Object(panels) => Value::Object(
+            panels
+                .into_iter()
+                .map(|(name, value)| {
+                    let value = if name == "checks" {
+                        value
+                    } else {
+                        resolved(root, &value)
+                    };
+                    (name, value)
+                })
+                .collect(),
+        ),
+        other => resolved(root, &other),
+    }
 }
 
 /// The outputs of `name(args)` among `defs` run on `input`.
@@ -130,6 +147,8 @@ pub fn name_candidates(defs: &str, query: &str, open: &str) -> Vec<Candidate> {
                 },
                 badge: None,
                 continue_hint: !zero,
+                expand: false,
+                tab: None,
                 literal: true,
             }
         })

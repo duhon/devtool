@@ -305,6 +305,7 @@ impl Component for App {
         {
             app.persist_console();
         }
+        app.publish_checks();
         app.kernel.set_service(&app.console_service);
         app.kernel.load_modules();
         for (event, visible) in [
@@ -913,6 +914,7 @@ impl App {
             self.docs.insert(service.clone(), document);
             self.response_regions.insert(service, regions);
         }
+        self.publish_checks();
         self.console_order = storage::console_order(&json!(self.console_order));
         if !services_kernel::modules::services::contains(&self.console_service) {
             self.console_service = self.console_order.first().cloned().unwrap_or_default();
@@ -1405,6 +1407,7 @@ fn agent_debug(debug: &Value, response: bool) -> Value {
 fn variable_refs() -> Vec<(String, String)> {
     services_sdk::refs::leaves(&services_kernel::modules::registry::root())
         .into_iter()
+        .filter(|leaf| leaf.panel != "checks")
         .map(|leaf| (format!("{{{{.{}.{}}}}}", leaf.panel, leaf.path), leaf.value))
         .collect()
 }
@@ -1413,7 +1416,11 @@ fn variable_refs() -> Vec<(String, String)> {
 /// the environment, the relative `{{:x}}`.
 fn variable_names() -> Vec<String> {
     let mut names = Vec::new();
-    for leaf in services_sdk::refs::leaves(&services_kernel::modules::registry::root()) {
+    // The console's checks are documents, not variables to offer.
+    for leaf in services_sdk::refs::leaves(&services_kernel::modules::registry::root())
+        .into_iter()
+        .filter(|leaf| leaf.panel != "checks")
+    {
         names.push(format!("{{{{.{}.{}}}}}", leaf.panel, leaf.path));
         if leaf.panel != "env" {
             names.push(format!("{{{{:{}}}}}", leaf.path));

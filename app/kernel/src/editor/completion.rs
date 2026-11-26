@@ -50,6 +50,8 @@ fn finish(from: usize, to: usize, query: &str, candidates: Vec<(String, String)>
                 detail,
                 badge: None,
                 continue_hint: false,
+                expand: false,
+                tab: None,
                 literal: false,
             })
             .collect(),
@@ -227,7 +229,10 @@ fn kernel_suggest(
         full[..word_end].encode_utf16().count(),
     );
     let source = lines.join("\n");
-    let Some(block) = check_at(&source, line).filter(|block| block.start < line) else {
+    // Below a check's response only a new check may start.
+    let Some(block) =
+        check_at(&source, line).filter(|block| block.start < line && line <= block.end)
+    else {
         let marker = typed.starts_with('#') || full.trim().is_empty();
         let candidates = if marker {
             vec![("#check".to_owned(), "Section".to_owned())]
@@ -310,6 +315,8 @@ fn kernel_suggest(
                 detail: item.detail,
                 badge: None,
                 continue_hint: item.next,
+                expand: false,
+                tab: None,
             }
         })
         .collect();
@@ -337,6 +344,8 @@ fn kernel_suggest(
             detail: String::new(),
             badge: Some('g'),
             continue_hint: false,
+            expand: false,
+            tab: None,
             literal: false,
         });
         let mut ordered: Vec<Candidate> = global.chain(candidates).collect();
@@ -377,6 +386,8 @@ fn kernel_suggest(
                     detail: String::new(),
                     badge: Some('u'),
                     continue_hint: false,
+                    expand: false,
+                    tab: None,
                     literal: false,
                 }),
         );

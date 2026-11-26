@@ -30,7 +30,8 @@ Undock into separate window.
   with `@name(params) description` at the start of a line, or `@name description`
   for no parameters, followed by literal multiline content until the next
   definition. `\@` escapes a leading literal `@` in a body or a section line. A section line
-  (`#target @name(...)`, `#check @`) offers only the templates of that section;
+  (`#target @name(...)`, `#check @`) offers only the templates of that section
+  (and built-in ones of it);
   a live call `{{@name(...)}}` may also use the Global ones, and on a name clash
   the section's template wins. Definitions autosave as typed, errors included: the
   status shows the first error, and a definition with an error (or a repeated
@@ -64,13 +65,19 @@ Undock into separate window.
   section body is silently replaced by the result. Editing the arguments and
   pressing Enter again regenerates the body, overwriting manual edits. Only Enter
   triggers this. `{{@name(args)}}` inside a body is a live call: kept in the text
-  and expanded at send time. A check template without parameters is inserted whole
-  by `#check @name`; one that does not start with a check header gets
-  `#check <description>` (or the template name) added. A check template with
-  parameters works like a section call: `#check @name` completes to
-  `#check <description> @name(` and then the arguments, and Enter replaces the whole check (up to the next check) with the
-  expansion, dropping the template's own check header; the call line stays the
-  check's header and Enter regenerates it. Templates
+  and expanded at send time. Every check template works like a section call:
+  `#check @name` completes to `#check <title> @name` (the template's own check
+  title, else its description), or `@name(` and then the arguments while a parameter
+  has no default (`@name()` when all have one). Enter replaces the whole check (up to
+  the next check) with the expansion, dropping the template's own check header; the
+  call line stays the check's header and Enter regenerates it. An eager call whose
+  result starts with `#check title` gives an untitled check that title. The built-in
+  `@copy(check = "prev")` (every service, not in the Templates panel; see the
+  variables topic) copies another check without its response and titles the copy
+  `[vN] <title>`. Picking a complete call (no parameters, or all with
+  defaults) from the popup expands it at once, as if Enter was pressed (Tab instead
+inserts `@name(` and asks for its arguments); a call
+  already typed in full is not offered again. Templates
   remain global when switching Console sessions, including session 0, unlike Hints.
   When editing, preserve section-line calls, `{{@...}}` calls and references
   instead of inlining their results.
@@ -210,7 +217,10 @@ selects the check; revealing the cursor restores its selection. Numbered check
 tabs also move the cursor. Execution, status, Debug, Stop, export and Agent
 context use the same active check.
 Enter inserts a newline. Ctrl+Space requests completions. Ctrl+Q toggles a fold
-at the cursor. Tab indents a selection or inserts two spaces.
+at the cursor. Tab indents a selection or inserts two spaces. Inside a template call
+(`@name(…)`, `{{@name(…)}}`) Tab moves to the next argument and offers its options,
+Shift+Tab to the previous one (picking replaces it); Tab on the last argument leaves the
+call, closing it and dropping an empty trailing argument.
 Alt+Space requests discovery for services that have it.
 These are the application's bindings; do not substitute Command for Control
 when explaining Ctrl+Space on macOS.

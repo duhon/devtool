@@ -693,14 +693,28 @@ fn reference_end(text: &str) -> Option<usize> {
     None
 }
 
-/// The templates a section line (`#section @name(...)`, `#check @`) offers: only those of
-/// `service`/`section`.
+/// The templates a section line (`#section @name(...)`, `#check @`) offers: those of
+/// `service`/`section` and the global ones of that section (`*`/`section`), which lose on a
+/// name clash.
 pub fn own(library: &Library, service: &str, section: &str) -> Vec<Template> {
-    let mut templates = library
-        .get(service)
-        .and_then(|entries| entries.get(section))
-        .map(|text| parse_partial(text).0)
-        .unwrap_or_default();
+    let parsed = |service: &str| {
+        library
+            .get(service)
+            .and_then(|entries| entries.get(section))
+            .map(|text| parse_partial(text).0)
+            .unwrap_or_default()
+    };
+    let mut templates = parsed(service);
+    if service != "*" {
+        for global in parsed("*") {
+            if !templates
+                .iter()
+                .any(|template| template.name == global.name)
+            {
+                templates.push(global);
+            }
+        }
+    }
     templates.sort_by(|a, b| a.name.cmp(&b.name));
     templates
 }

@@ -50,6 +50,10 @@ pub struct Candidate {
     /// A letter in front of the item that tells where it comes from.
     pub badge: Option<char>,
     pub continue_hint: bool,
+    /// Picking it also does what Enter at the end of its line does (expands a call).
+    pub expand: bool,
+    /// What picking it with Tab inserts instead: the call open for its first argument.
+    pub tab: Option<String>,
     pub literal: bool,
 }
 

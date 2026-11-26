@@ -379,12 +379,22 @@ impl App {
             .checks
             .get(service)
             .and_then(|checks| checks.iter().find(|check| check.line == line));
+        // A run keeps no cursor: `prev` becomes the number of the check above this one.
+        let number =
+            services_kernel::document::numbered::number_at(doc, self.regions(service), line)
+                .unwrap_or(0);
+        let prev =
+            |text: &str| services_kernel::document::numbered::with_prev(text, service, number);
         let history = identity.and_then(|check| {
             let block = services_kernel::document::request_at(doc, line, self.regions(service))?;
             Some(json!({"checkId":check.id,"sessionId":self.workspace_id,
-                "title":doc.lines().nth(line).unwrap_or("#check"),"createdAt":check.created_at,
-                "source":doc.lines().skip(line).take(block.end-line).collect::<Vec<_>>().join("\n")}))
+                "title":prev(doc.lines().nth(line).unwrap_or("#check")),"createdAt":check.created_at,
+                "source":prev(&doc.lines().skip(line).take(block.end-line).collect::<Vec<_>>().join("\n"))}))
         });
+        let source = match source {
+            Source::Check(text) => Source::Check(prev(&text)),
+            other => other,
+        };
         RunRequest {
             service: service.to_owned(),
             source,
@@ -429,17 +439,61 @@ impl App {
                 .is_some_and(|previous| previous != line)
         });
     }
+    /// Keeps every `{{.checks.<service>.&n…}}` on its check when checks above it come and go.
+    fn renumber_check_references(&mut self) {
+        let mut moved = Vec::new();
+        for (service, identities) in &self.checks {
+            let mut ordered: Vec<_> = identities.iter().collect();
+            ordered.sort_by_key(|check| check.line);
+            let ids: Vec<String> = ordered.iter().map(|check| check.id.clone()).collect();
+            if let Some(before) =
+                services_kernel::modules::registry::reorder_checks(service, ids.clone())
+            {
+                moved.push((service.clone(), before, ids));
+            }
+        }
+        for (owner, before, after) in moved {
+            for (service, text) in self.docs.iter_mut() {
+                if let Some(next) = services_kernel::document::numbered::renumber(
+                    text,
+                    &owner,
+                    *service == owner,
+                    &before,
+                    &after,
+                ) {
+                    *text = next;
+                }
+            }
+        }
+    }
+    /// The checks of every console document as the `.checks` variables.
+    pub(super) fn publish_checks(&self) {
+        for (service, source) in &self.docs {
+            services_kernel::modules::registry::publish_checks(
+                service,
+                source,
+                self.regions(service),
+            );
+        }
+        services_kernel::modules::registry::retain_checks(
+            &self.docs.keys().map(String::as_str).collect::<Vec<_>>(),
+        );
+    }
     pub(super) fn persist_console(&mut self) {
         for (service, source) in &self.docs {
+            let regions = self
+                .response_regions
+                .get(service)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
             services_kernel::document::identity::normalize(
                 source,
-                self.response_regions
-                    .get(service)
-                    .map(Vec::as_slice)
-                    .unwrap_or(&[]),
+                regions,
                 self.checks.entry(service.clone()).or_default(),
             );
         }
+        self.renumber_check_references();
+        self.publish_checks();
         let value = json!({"version":1,"service":self.console_service,"documents":self.docs,"order":self.console_order,"responses":self.response_regions,
             "workspaceId":self.workspace_id,"checkIdentities":self.checks});
         let result = self.sessions.borrow_mut().update(|s| {

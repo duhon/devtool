@@ -13,8 +13,18 @@ use std::sync::OnceLock;
 /// The App version modules declare compatibility with.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// A document's checks tree with the digest of the text it was read from.
+type Published = (u64, serde_json::Map<String, Value>);
+
 thread_local! {
     static KERNEL: RefCell<Option<Modules>> = const { RefCell::new(None) };
+    /// The checks of each console document as variables ([`set_checks`]).
+    static CHECKS: RefCell<BTreeMap<String, Published>> =
+        const { RefCell::new(BTreeMap::new()) };
+    /// The ids of each document's checks in their order, as [`reorder_checks`] last saw them.
+    static ORDERS: RefCell<BTreeMap<String, Vec<String>>> = const { RefCell::new(BTreeMap::new()) };
+    /// The service and number of the check being edited ([`set_current_check`]).
+    static CURRENT: RefCell<Option<(String, usize)>> = const { RefCell::new(None) };
     static DECLARED: RefCell<Vec<Manifest>> = RefCell::new(seed(services_sdk::Kind::Service));
     static PANELS: RefCell<Vec<Manifest>> = RefCell::new(seed(services_sdk::Kind::Panel));
     static DRIVERS: RefCell<Option<BTreeMap<String, String>>> = const { RefCell::new(None) };
@@ -85,13 +95,105 @@ pub fn root() -> services_sdk::refs::Root {
     };
     let mut panels = part("first");
     panels.extend(part("last"));
+    panels.push(("checks".into(), checks()));
     services_sdk::refs::Root::new(panels)
 }
+
+/// Reads the checks of `service`'s console document again when it changed.
+pub fn publish_checks(service: &str, source: &str, regions: &[crate::document::ResponseRegion]) {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    source.hash(&mut hasher);
+    for region in regions {
+        (region.request, region.header, region.end).hash(&mut hasher);
+    }
+    let digest = hasher.finish();
+    CHECKS.with(|all| {
+        let mut all = all.borrow_mut();
+        if all.get(service).is_none_or(|(known, _)| *known != digest) {
+            let checks = crate::document::numbered::tree(source, regions);
+            all.insert(service.to_owned(), (digest, checks));
+        }
+    });
+}
+
+/// Records the order of `service`'s checks (their ids, first check first) and returns the
+/// order before it when the checks it shares with it moved: what `&n` references follow. A
+/// document whose checks all changed (another session) has nothing to follow.
+pub fn reorder_checks(service: &str, ids: Vec<String>) -> Option<Vec<String>> {
+    ORDERS.with(|orders| {
+        let before = orders
+            .borrow_mut()
+            .insert(service.to_owned(), ids.clone())?;
+        (before != ids && before.iter().any(|id| ids.contains(id))).then_some(before)
+    })
+}
+
+/// Forgets the checks of the documents not among `services`.
+pub fn retain_checks(services: &[&str]) {
+    CHECKS.with(|all| {
+        all.borrow_mut()
+            .retain(|service, _| services.contains(&service.as_str()))
+    });
+}
+
+/// The check the cursor is in now: `.checks.this` is its document, `prev` the check above it.
+pub fn set_current_check(current: Option<(&str, usize)>) {
+    CURRENT.with(|cell| *cell.borrow_mut() = current.map(|(s, n)| (s.to_owned(), n)));
+}
+
+/// The `checks` panel: every document's checks, the current one also as `this`, with `prev`.
+fn checks() -> serde_json::Map<String, Value> {
+    let mut panel: serde_json::Map<String, Value> = CHECKS.with(|all| {
+        all.borrow()
+            .iter()
+            .filter(|(_, (_, checks))| !checks.is_empty())
+            .map(|(service, (_, checks))| (service.clone(), Value::Object(checks.clone())))
+            .collect()
+    });
+    if let Some((service, number)) = CURRENT.with(|cell| cell.borrow().clone()) {
+        let mut this = panel
+            .get(&service)
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        if let Some(prev) = number.checked_sub(1).and_then(|n| this.get(&n.to_string())) {
+            let prev = prev.clone();
+            this.insert("prev".into(), prev.clone());
+            if let Some(Value::Object(own)) = panel.get_mut(&service) {
+                own.insert("prev".into(), prev);
+            }
+        }
+        panel.insert("this".into(), Value::Object(this));
+    }
+    panel
+}
+
+/// The built-in check template no panel shows: `#check @copy(check)` starts a check with every
+/// section but the response of another one of the document, by default the check above.
+const COPY_TEMPLATE: &str = "@copy(check: {{.checks.this~}} = \"prev\")\n#check\n{{$!copy(check)}}";
+
+/// The jq function of [`COPY_TEMPLATE`]: check `n` of `.checks.this` as a `#check [vN] title`
+/// line and its sections. The original is v1 and a copy takes the next free version of its
+/// title (a copy's own `[v…]` dropped).
+const COPY_FUNCTION: &str = r##"def copy($n):
+  (.checks.this[$n | tostring] // error("no check \($n) to copy")) as $c
+  | ($c.title | sub("^\\[v[0-9]+\\] *"; "")) as $t
+  | ([1] + [.checks.this[] | objects | .title | strings
+      | capture("^\\[v(?<v>[0-9]+)\\] *(?<t>.*)$") | select(.t == $t) | .v | tonumber]
+     | max + 1) as $v
+  | [$c | to_entries[] | select(.key != "title" and .key != "response" and .key != "number")
+      | "#\(.key)\n\(.value)"]
+  | ["#check [v\($v)] \($t)"] + . | join("\n");"##;
 
 /// Every template the modules contribute (`{"templates": {service: {section: text}}}`), merged;
 /// service `*` holds the global ones.
 pub fn templates() -> services_contracts::templates::Library {
     let mut library = services_contracts::templates::Library::new();
+    library
+        .entry("*".into())
+        .or_default()
+        .insert("check".into(), COPY_TEMPLATE.into());
     for value in contributions("templates") {
         if let Ok(part) = serde_json::from_value::<services_contracts::templates::Library>(value) {
             for (service, sections) in part {
@@ -111,6 +213,9 @@ pub fn functions() -> crate::editor::functions::Library {
             library.extend(part);
         }
     }
+    // Built in first: a function of the user's with the same name shadows it.
+    let global = library.entry("*".into()).or_default();
+    *global = format!("{COPY_FUNCTION}\n{global}");
     library
 }
 
@@ -463,4 +568,34 @@ pub fn markers(id: &str) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn checks_panel_has_this_and_prev_and_orders_follow_moves() {
+        publish_checks("svc", "#check a\n#target one\n#check b\n#target two", &[]);
+        set_current_check(Some(("svc", 2)));
+        let panel = checks();
+        assert_eq!(panel["svc"]["1"]["target"], "one");
+        assert_eq!(panel["svc"]["prev"]["target"], "one");
+        assert_eq!(panel["this"]["prev"]["title"], panel["svc"]["1"]["title"]);
+        assert_eq!(panel["this"]["2"]["target"], "two");
+        set_current_check(Some(("svc", 1)));
+        assert!(checks()["this"].get("prev").is_none());
+        set_current_check(None);
+        retain_checks(&[]);
+        assert!(checks().is_empty());
+
+        let ids = |all: &[&str]| all.iter().map(|id| id.to_string()).collect::<Vec<_>>();
+        assert_eq!(reorder_checks("svc", ids(&["a", "b"])), None);
+        assert_eq!(reorder_checks("svc", ids(&["a", "b"])), None);
+        assert_eq!(
+            reorder_checks("svc", ids(&["n", "a", "b"])),
+            Some(ids(&["a", "b"]))
+        );
+        assert_eq!(reorder_checks("svc", ids(&["x"])), None);
+    }
 }
